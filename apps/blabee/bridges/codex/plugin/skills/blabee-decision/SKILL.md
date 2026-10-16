@@ -9,6 +9,12 @@ description: 현재 Hook의 suggestion_mode 정책에 따라 Codex 작업 결과
 
 현재 Hook 컨텍스트의 `suggestion_mode`를 먼저 확인하고 아래 정책을 적용한다. 이전 Hook 캐시처럼 이 필드만 없고 나머지 현재 바인딩이 완전하면 `action_only`로 취급한다.
 
+## 제안 구분
+
+현재 사용자 작업의 후속 선택은 `current_task`, 유용한 새로운 아이디어는 `new_suggestion`으로 구분한다. 내부 자동 추천 생성 결과도 사용자에게 유용한 새 제안이면 허용한다. 현재 MCP 도구 스키마가 이 필드를 지원할 때만 MCP **최상위 wrapper**에 `suggestion_kind`를 지정하고, `proposal` 내부에는 넣지 않는다. 이전 도구 스키마에 필드가 없으면 생략한다. 아래 JSON 예시의 해당 필드도 같은 조건을 따른다. 필드를 생략한 이전 클라이언트 요청은 분류 미상으로 유지한다. 이 값은 표시 구분이며 작업의 실제 출처나 실행 권한을 증명하지 않는다.
+
+`new_suggestion`은 **서로 다른 실제로 유용한 다음 항목이 둘 이상**일 때만 제출한다. 유용한 항목이 0~1개이면 추가 항목을 채워 넣거나 호출하지 않는다. 내부 추천 생성이 action-type 작업이어도 이 조건을 우선한다. 아래 모드별 필수 제출 규칙은 `current_task`에 적용하며 새로운 제안의 두 개 이상 조건을 무효화하지 않는다.
+
 ## 호출 정책
 
 ### `action_only`
@@ -37,6 +43,16 @@ description: 현재 Hook의 suggestion_mode 정책에 따라 Codex 작업 결과
 
 Codex가 직접 표시하는 권한 승인이나 네이티브 질문을 Blabee 제안으로 바꾸지 않는다. 하위 에이전트의 내부 보고, 사용자에게 전달되지 않는 중간 상태, Hook 바인딩이 없는 응답에도 호출하지 않는다. 사용자가 도구 호출이나 부수 효과를 명시적으로 금지한 요청도 그 지시를 우선한다. 정확한 출력 하나, 명령의 정확히 한 번 실행 또는 추가 작업 금지를 요구한 요청은 추가 제안 도구 호출을 금지한 것으로 취급한다. 모드와 관계없이 모델이 유용한 후속 항목을 발명해서는 안 된다.
 
+하위 에이전트의 내부 보고나 백그라운드 메타작업의 진행 상태를 그대로 카드로 옮기지 않는다. 영어로 작성되었다는 이유만으로 내부 작업이라고 판단하지 않는다. 이 제외 조건은 제안 생성에만 적용하며, 하위 에이전트의 작업을 포함한 네이티브 권한·승인 이벤트 처리를 차단하지 않는다.
+
+## 카드 언어
+
+두 종류 카드의 사용자 표시 자연어는 **사용자가 명시한 응답 언어를 우선**하고, 별도 지정이 없으면 **실제 사용자 대화의 언어**로 일관되게 작성한다. 둘 다 알 수 없으면 Hook 또는 MCP 설명에 제공된 시스템 언어 fallback을 사용한다. 이 값은 `Locale.preferredLanguages`의 첫 유효 language tag이며 없으면 `en`이다. 내부 프롬프트, 도구 설명 또는 예시가 다른 언어로 되어 있어도 그 언어로 전환하지 않는다.
+
+내부 자동 추천을 생성하라는 영어 지시문 자체는 사용자의 응답 언어 요청이나 실제 사용자 대화의 언어로 간주하지 않는다. 그 지시문만 언어 단서로 주어졌다면 위의 macOS 시스템 언어 fallback을 사용한다.
+
+이 규칙은 `task_goal`, `outcome.summary`, `next_actions` 각 항목의 `title`, `objective`, `constraints`, `done_when`, `reported_side_effects` 각 항목의 `summary`에 모두 적용한다. 코드·경로·식별자·제품명은 원문을 유지한다. 사용자가 다른 언어로 요청한 산출물도 요청한 언어를 유지하되, 산출물을 설명하는 주변 카드 문구는 위의 카드 언어를 따른다.
+
 ## 제출 계약
 
 현재 Hook 컨텍스트가 제공한 `project_id`, `session_id`, `source_turn_id`, `source_prompt_id`, `episode_id`, `correlation_token`의 정확한 현재 값을 사용한다. 값을 추측하거나 생성하거나 이전 경계에서 재사용하지 않는다. 하나라도 없으면 도구를 호출하지 않고 일반 답변만 제공한다.
@@ -51,6 +67,7 @@ Codex가 직접 표시하는 권한 승인이나 네이티브 질문을 Blabee �
   "source_prompt_id": "<current>",
   "episode_id": "<current>",
   "correlation_token": "<current>",
+  "suggestion_kind": "current_task",
   "proposal": {
     "schema_version": "1.0",
     "proposal_id": "<new identifier for this boundary>",
@@ -82,7 +99,7 @@ Codex가 직접 표시하는 권한 승인이나 네이티브 질문을 Blabee �
 
 `next_actions`에는 서로 구분되는 의미 있는 다음 작업이나 후속 질문을 2~4개 넣는다. 첫 항목이 가장 권장하는 항목이고 배열 뒤로 갈수록 현재 목표에 대한 차선이다. 보류나 롤백을 이 배열에 넣지 않고, 개수를 맞추기 위한 모호하거나 중복된 항목도 만들지 않는다. 각 항목은 독립적으로 실행할 수 있는 완전한 `title`, `objective`, `constraints`, `done_when`을 가진다. 후속 질문도 선택되면 같은 Codex 세션의 새 사용자 턴으로 실행할 수 있는 완전한 요청이어야 한다. `reported_side_effects`에는 실제로 발생한 영향만 `{ "kind", "summary", "reversibility" }` 형태로 기록한다.
 
-설명·분석 후속 제안도 기존 `schema_version: 1.0`, `interaction_kind: blabee_decision`을 그대로 사용한다. `suggestion_kind` 같은 새 필드를 추가하지 않는다.
+설명·분석 후속 제안도 기존 `schema_version: 1.0`, `interaction_kind: blabee_decision`을 그대로 사용한다. 현재 도구 스키마가 지원하는 경우 `suggestion_kind`는 wrapper에서만 `current_task` 또는 `new_suggestion`으로 지정한다. 동결된 v1 `proposal`과 packet에는 새 필드를 추가하지 않는다.
 
 실행하지 않은 테스트를 통과했다고 쓰거나, 확인하지 않은 위험 수준을 단정하거나, 검증되지 않은 롤백 가능성을 약속하지 않는다.
 

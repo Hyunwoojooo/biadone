@@ -5,14 +5,15 @@ import Testing
 
 private let updateOldIdentity = "sha256:" + String(repeating: "a", count: 64)
 private let updateNewIdentity = "sha256:" + String(repeating: "b", count: 64)
-private enum UpdateTestFailure: Error { case injected }
+private enum UpdateTestFailure: Error, Equatable { case injected }
 
 private func updateSession(_ number: Int, state: UpdateManagedSessionState = .running) -> UpdateManagedSession {
     .init(id: "session-\(number)", threadID: String(format: "00000000-0000-0000-0000-%012d", number),
         cwd: "/private/tmp/project-\(number)", state: state, detail: nil)
 }
 
-private func updateJournalFixture(sessions: [UpdateManagedSession] = [updateSession(1), updateSession(2)]) throws -> AppUpdateJournal {
+private func updateJournalFixture(sessions: [UpdateManagedSession] = [updateSession(1), updateSession(2)],
+                                  preservingConnections: Bool = false) throws -> AppUpdateJournal {
     let version = try #require(PetAppUpdateVersion(version: "0.1.0", build: "41"))
     let name = AppUpdateDownloadPolicy.diskImageName(version)
     let base = URL(string: "https://github.com/test/Blabee/releases/download/blabee-v0.1.0+build.41/")!
@@ -24,10 +25,12 @@ private func updateJournalFixture(sessions: [UpdateManagedSession] = [updateSess
     let prepared = AppUpdatePreparedDownload(release: release, workRootURL: root,
         applicationURL: root.appendingPathComponent("Blabee.app"), diskImageURL: root.appendingPathComponent(name),
         sha256: String(repeating: "b", count: 64), runtimeIdentity: updateNewIdentity)
-    return AppUpdateJournal(schema: 1, jobID: UUID().uuidString.lowercased(), nonce: UUID().uuidString.lowercased(),
+    let jobID = UUID().uuidString.lowercased()
+    let helper = preservingConnections ? "helper-runtime-\(jobID)/Blabee.app" : "helper-runtime/Blabee.app"
+    return AppUpdateJournal(schema: preservingConnections ? 2 : 1, jobID: jobID, nonce: UUID().uuidString.lowercased(),
         parentPID: getpid(), parentStartTime: 1, createdAt: Date(),
         previousIdentity: updateOldIdentity, candidateIdentity: updateNewIdentity,
-        download: try .init(prepared), helperApplicationURL: root.appendingPathComponent("helper-runtime/Blabee.app", isDirectory: true),
+        download: try .init(prepared), helperApplicationURL: root.appendingPathComponent(helper, isDirectory: true),
         phase: .waitingForExit, sessions: sessions.map { .init(value: $0) }, updatedAt: Date())
 }
 
@@ -47,6 +50,9 @@ private final class UpdateTransactionFixture {
     var failSaveOnceAt: AppUpdateJournal.Phase?
     var claudeCheckCount = 0
     var blockedClaudeCheck: Int?
+    var preservedCheckCount = 0
+    var blockedPreservedCheck: Int?
+    var failServiceHealth = false
     let backup = URL(fileURLWithPath: "/Applications/.Blabee.backup-0123.app")
     var effects: AppUpdateTransactionEffects {
         .init(reverify: { _ in
@@ -81,11 +87,19 @@ private final class UpdateTransactionFixture {
                 if self.blockedClaudeCheck == self.claudeCheckCount {
                     throw AppInstallationError(.claudeRuntimeBlocked)
                 }
+            }, requirePreservedConnectionsReady: { _ in
+                self.preservedCheckCount += 1
+                self.events.append("preserve-preflight")
+                if self.blockedPreservedCheck == self.preservedCheckCount { throw UpdateTestFailure.injected }
+            }, requireLaunchedServiceHealthy: { identity in
+                #expect(identity == updateNewIdentity)
+                self.events.append("health:new")
+                if self.failServiceHealth { throw AppUpdateTransactionError.serviceHealthNotConfirmed }
             })
     }
 }
 
-@Suite("Automatic update transaction") @MainActor
+@Suite("Automatic update transaction", .petLanguage(.korean)) @MainActor
 struct AppUpdateTransactionTests {
     @Test("verify and freeze every session before stopping, then publish and restore")
     func successfulOrdering() async throws {
@@ -264,23 +278,344 @@ struct AppUpdateTransactionTests {
         #expect(fixture.events.last == "open:old")
     }
 
-    @Test("Controller checks Claude before downloading or touching the update journal")
-    func controllerClaudeBlocker() async throws {
-        let unused = URL(fileURLWithPath: "/private/tmp/claude-update-blocker-" + UUID().uuidString.lowercased())
-        let controller = AppUpdateTransactionController(store: .init(rootURL: unused), requireClaudeInactive: {
-            throw AppInstallationError(.claudeRuntimeBlocked)
-        })
-        let version = try #require(PetAppUpdateVersion(version: "0.1.0", build: "99"))
-        let release = PetAppUpdateRelease(version: version,
-            releaseURL: URL(string: "https://github.com/test/Blabee/releases/tag/blabee-v0.1.0+build.99")!)
-        await controller.prepare(release)
-        #expect(controller.phase == .failed)
-        #expect(controller.detail == AppInstallationError(.claudeRuntimeBlocked).userMessage)
-        #expect(!FileManager.default.fileExists(atPath: unused.path))
+    @Test("preserving update ignores managed registry count and never pauses or restores conversations")
+    func preservedConnections() async throws {
+        let fixture = UpdateTransactionFixture()
+        fixture.current = [updateSession(1, state: .busy), updateSession(3, state: .starting)]
+        let journal = try updateJournalFixture(sessions: [], preservingConnections: true)
+        let result = await AppUpdateTransactionEngine(effects: fixture.effects).execute(journal)
+        #expect(result.phase == .succeeded && result.sessions.isEmpty)
+        #expect(fixture.events == ["verify", "preserve-preflight", "verify", "preserve-preflight", "install", "open:new", "health:new"])
+        #expect(fixture.claudeCheckCount == 0)
+        #expect(result.detail.contains("기존 대화는 종료하지 않았습니다"))
+    }
+
+    @Test("changed connection readiness prevents publication without session effects", arguments: [1, 2])
+    func preservingPreflightFailsClosed(_ check: Int) async throws {
+        let fixture = UpdateTransactionFixture(); fixture.blockedPreservedCheck = check
+        let result = await AppUpdateTransactionEngine(effects: fixture.effects)
+            .execute(try updateJournalFixture(sessions: [], preservingConnections: true))
+        #expect(result.phase == .failed)
+        #expect(!fixture.events.contains("install"))
+        #expect(!fixture.events.contains { $0.hasPrefix("pause:") || $0.hasPrefix("resume:") })
+        #expect(fixture.events.last == "open:old")
+    }
+
+    @Test("preserve schema cannot carry implicit legacy shutdown authority")
+    func preserveSchemaRejectsSessions() async throws {
+        let fixture = UpdateTransactionFixture()
+        let journal = try updateJournalFixture(preservingConnections: true)
+        #expect(throws: AppUpdateTransactionError.invalidJournal) { try journal.requireValid() }
+        let result = await AppUpdateTransactionEngine(effects: fixture.effects).execute(journal)
+        #expect(result.phase == .recoveryRequired && fixture.events.isEmpty)
+    }
+
+    @Test("a preserving update never falls back to an old app after new launch is uncertain")
+    func preservingLaunchUncertain() async throws {
+        let fixture = UpdateTransactionFixture(); fixture.failNewLaunch = true
+        let result = await AppUpdateTransactionEngine(effects: fixture.effects)
+            .execute(try updateJournalFixture(sessions: [], preservingConnections: true))
+        #expect(result.phase == .recoveryRequired && result.backupURL == fixture.backup)
+        #expect(!fixture.events.contains("open:old"))
+        #expect(!fixture.events.contains { $0.hasPrefix("pause:") || $0.hasPrefix("resume:") })
+    }
+
+    @Test("new process launch without a healthy new service is not update success")
+    func preservingServiceUnconfirmed() async throws {
+        let fixture = UpdateTransactionFixture(); fixture.failServiceHealth = true
+        let result = await AppUpdateTransactionEngine(effects: fixture.effects)
+            .execute(try updateJournalFixture(sessions: [], preservingConnections: true))
+        #expect(result.phase == .recoveryRequired && result.backupURL == fixture.backup)
+        #expect(fixture.identity == updateNewIdentity)
+        #expect(Array(fixture.events.suffix(2)) == ["open:new", "health:new"])
+        #expect(!fixture.events.contains("open:old"))
+        #expect(!fixture.records.contains { $0.phase == .succeeded })
+        #expect(result.detail.contains("서비스가 정상 실행됐는지 확인하지 못했습니다"))
     }
 }
 
-@Suite("Private update journal")
+@Suite("Updated app service health", .petLanguage(.korean)) @MainActor
+struct AppUpdateLaunchedServiceHealthTests {
+    private func status(pendingCards: Int = 0) throws -> AppUpdateServiceReadiness {
+        try .parse(JSONSerialization.data(withJSONObject: [
+            "schema_version": "1.0", "kind": "blabee_update_status", "ready": pendingCards == 0,
+            "pending_approvals": 0, "pending_deliveries": 0, "pending_cards": pendingCards,
+            "pending_queued_actions": 0, "pending_reconciliation": 0, "pending_claim_responses": 0,
+            "pending_prompt_contexts": 0, "service_pid": 21, "service_parent_pid": 20,
+        ]))
+    }
+
+    @Test("new pending work does not make an available new service unhealthy")
+    func healthyMayBeBusy() async throws {
+        let active = try status(pendingCards: 1)
+        #expect(!active.ready)
+        let health = AppUpdateLaunchedServiceHealth(probe: { identity in
+            #expect(identity == updateNewIdentity)
+            return active
+        }, sleep: { _ in Issue.record("Healthy service must not wait for work to finish") })
+        try await health.requireHealthy(expectedIdentity: updateNewIdentity)
+    }
+
+    @Test("service startup is checked again within a bounded read-only window")
+    func eventuallyHealthy() async throws {
+        let healthy = try status()
+        var probes = 0
+        var clock: TimeInterval = 0
+        let health = AppUpdateLaunchedServiceHealth(probe: { _ in
+            probes += 1
+            if probes < 3 { throw UpdateTestFailure.injected }
+            return healthy
+        }, uptime: { clock }, sleep: { _ in clock += 0.5 })
+        try await health.requireHealthy(expectedIdentity: updateNewIdentity)
+        #expect(probes == 3 && clock == 1)
+    }
+
+    @Test("service startup timeout does not become success")
+    func healthTimeout() async throws {
+        var probes = 0
+        var clock: TimeInterval = 0
+        let health = AppUpdateLaunchedServiceHealth(probe: { _ in
+            probes += 1; throw UpdateTestFailure.injected
+        }, uptime: { clock }, sleep: { _ in clock += 0.5 }, timeout: 1)
+        await #expect(throws: AppUpdateTransactionError.serviceHealthNotConfirmed) {
+            try await health.requireHealthy(expectedIdentity: updateNewIdentity)
+        }
+        #expect(probes == 3 && clock == 1)
+    }
+
+    @Test("wrong signed identity or invalid status is rejected without retrying", arguments: [
+        AppUpdateTransactionError.serviceHealthIdentityMismatch, .serviceHealthResponseInvalid,
+    ])
+    func unverifiedHealth(_ failure: AppUpdateTransactionError) async throws {
+        let health = AppUpdateLaunchedServiceHealth(probe: { _ in throw failure },
+            sleep: { _ in Issue.record("Invalid identity or shape must fail closed") })
+        await #expect(throws: failure) { try await health.requireHealthy(expectedIdentity: updateNewIdentity) }
+    }
+
+    @Test("installed app, executing service and parent must all have the exact new identity")
+    func exactIdentity() throws {
+        try AppUpdateLaunchedServiceHealth.requireIdentity(expected: updateNewIdentity,
+            installed: updateNewIdentity, service: updateNewIdentity, parent: updateNewIdentity)
+        for component in 0..<3 {
+            #expect(throws: AppUpdateTransactionError.serviceHealthIdentityMismatch) {
+                try AppUpdateLaunchedServiceHealth.requireIdentity(expected: updateNewIdentity,
+                    installed: component == 0 ? updateOldIdentity : updateNewIdentity,
+                    service: component == 1 ? updateOldIdentity : updateNewIdentity,
+                    parent: component == 2 ? nil : updateNewIdentity)
+            }
+        }
+    }
+}
+
+@Suite("Update safe point and progress", .petLanguage(.korean)) @MainActor
+struct AppUpdateSafePointTests {
+    private let candidate = URL(fileURLWithPath: "/private/tmp/unused-Blabee.app")
+
+    @Test("a transient pending request is inspected again and can become ready")
+    func eventuallyReady() async throws {
+        var attempts = 0
+        var clock: TimeInterval = 0
+        var reasons: [String] = []
+        let waiter = AppUpdateSafePointWaiter(requireReady: { _ in
+            attempts += 1
+            if attempts < 3 { throw UpdateTestFailure.injected }
+        }, isTransient: { _ in true }, uptime: { clock }, sleep: { _ in clock += 0.5 }, timeout: 30)
+        try await waiter.wait(candidateApplicationURL: candidate, onWaiting: { reasons.append($0) })
+        #expect(attempts == 3 && reasons.count == 2)
+    }
+
+    @Test("readiness waiting is bounded and does not call any approval or installer")
+    func readinessTimeout() async throws {
+        var attempts = 0
+        var clock: TimeInterval = 0
+        let waiter = AppUpdateSafePointWaiter(requireReady: { _ in
+            attempts += 1; throw UpdateTestFailure.injected
+        }, isTransient: { _ in true }, uptime: { clock }, sleep: { _ in clock += 0.5 }, timeout: 1)
+        await #expect(throws: AppUpdateTransactionError.safePointTimedOut) {
+            try await waiter.wait(candidateApplicationURL: candidate, onWaiting: { _ in })
+        }
+        #expect(attempts == 3 && clock == 1)
+    }
+
+    @Test("unsupported connection does not keep polling")
+    func permanentBlocker() async throws {
+        var attempts = 0
+        let waiter = AppUpdateSafePointWaiter(requireReady: { _ in
+            attempts += 1; throw UpdateTestFailure.injected
+        }, isTransient: { _ in false }, sleep: { _ in Issue.record("Permanent blockers must not wait") })
+        await #expect(throws: UpdateTestFailure.injected) {
+            try await waiter.wait(candidateApplicationURL: candidate, onWaiting: { _ in Issue.record("Not transient") })
+        }
+        #expect(attempts == 1)
+    }
+
+    @Test("a late successful readiness response cannot authorize a cancelled update")
+    func lateReadinessAfterCancellation() async throws {
+        var generation = 1
+        var continuation: CheckedContinuation<Void, Never>?
+        let waiter = AppUpdateSafePointWaiter(requireReady: { _ in
+            await withCheckedContinuation { continuation = $0 }
+        }, isTransient: { _ in false })
+        let request = generation
+        let task = Task {
+            try await waiter.wait(candidateApplicationURL: candidate,
+                isCurrent: { request == generation }, onWaiting: { _ in })
+        }
+        while continuation == nil { await Task.yield() }
+        generation += 1
+        continuation?.resume()
+        await #expect(throws: CancellationError.self) { try await task.value }
+    }
+
+    @Test("a live but stalled helper is reported rather than displayed as progressing forever")
+    func stalledProgress() throws {
+        var journal = try updateJournalFixture(sessions: [], preservingConnections: true)
+        journal.phase = .ready
+        let updated = Date(timeIntervalSince1970: 100_000)
+        journal.updatedAt = updated
+        #expect(!AppUpdateProgressPolicy.isStalled(journal, now: updated.addingTimeInterval(44)))
+        #expect(AppUpdateProgressPolicy.isStalled(journal, now: updated.addingTimeInterval(46)))
+        journal.phase = .installing
+        #expect(!AppUpdateProgressPolicy.isStalled(journal, now: updated.addingTimeInterval(599)))
+        #expect(AppUpdateProgressPolicy.isStalled(journal, now: updated.addingTimeInterval(601)))
+        journal.phase = .succeeded
+        #expect(!AppUpdateProgressPolicy.isStalled(journal, now: updated.addingTimeInterval(100_000)))
+    }
+
+    @Test("a harmless concurrent request does not force the user to restart the update")
+    func admissionRetriesReadOnlyCollision() async throws {
+        let root = URL(fileURLWithPath: "/private/tmp/blabee-update-gate-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let request = try AppUpdateAdmissionGate.acquireRequest(directoryURL: root)
+        defer { request.release() }
+        var attempts = 0
+        var clock: TimeInterval = 0
+        let admission = try await AppUpdateHelper.acquireAdmissionWhenReady(candidateApplicationURL: candidate,
+            acquire: {
+                attempts += 1
+                return try AppUpdateAdmissionGate.acquireForUpdate(directoryURL: root)
+            }, waiter: .init(requireReady: { _ in }, uptime: { clock }, sleep: { _ in
+                request.release(); clock += 0.5
+            }))
+        defer { admission.release() }
+        #expect(attempts == 2)
+        #expect(throws: AppUpdateAdmissionError.busy) {
+            _ = try AppUpdateAdmissionGate.acquireRequest(directoryURL: root)
+        }
+    }
+
+    @Test("readiness retry releases the update gate so pending approvals can finish")
+    func admissionReleasedBetweenReadinessChecks() async throws {
+        let root = URL(fileURLWithPath: "/private/tmp/blabee-update-gate-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        var checks = 0
+        var clock: TimeInterval = 0
+        let admission = try await AppUpdateHelper.acquireAdmissionWhenReady(candidateApplicationURL: candidate,
+            acquire: { try AppUpdateAdmissionGate.acquireForUpdate(directoryURL: root) },
+            waiter: .init(requireReady: { _ in
+                checks += 1
+                if checks == 1 { throw AppUpdateAdmissionError.busy }
+            }, uptime: { clock }, sleep: { _ in
+                let pendingApproval = try AppUpdateAdmissionGate.acquireRequest(directoryURL: root)
+                pendingApproval.release()
+                clock += 0.5
+            }))
+        admission.release()
+        #expect(checks == 2)
+        let request = try AppUpdateAdmissionGate.acquireRequest(directoryURL: root)
+        request.release()
+    }
+}
+
+private actor UpdatePreparationFixture {
+    let download: AppUpdatePreparedDownload
+    var holdDownload = false
+    var continuation: CheckedContinuation<AppUpdatePreparedDownload, Error>?
+    var preparations = 0
+    var cleanups = 0
+
+    init(download: AppUpdatePreparedDownload) { self.download = download }
+    func setHoldDownload() { holdDownload = true }
+    var isWaiting: Bool { continuation != nil }
+    func prepare() async throws -> AppUpdatePreparedDownload {
+        preparations += 1
+        if holdDownload {
+            return try await withCheckedThrowingContinuation { continuation = $0 }
+        }
+        return download
+    }
+    func finish() { continuation?.resume(returning: download); continuation = nil }
+    func cleanup() { cleanups += 1 }
+}
+
+@Suite("Preserving update controller", .petLanguage(.korean)) @MainActor
+struct AppUpdatePreservingControllerTests {
+    private func fixture(waiter: AppUpdateSafePointWaiter = .init(requireReady: { _ in })) throws
+        -> (AppUpdateTransactionController, UpdatePreparationFixture, PetAppUpdateRelease) {
+        let download = try updateJournalFixture(sessions: [], preservingConnections: true).download.prepared()
+        let preparation = UpdatePreparationFixture(download: download)
+        let current = try #require(PetAppUpdateVersion(version: "0.1.0", build: "40"))
+        let controller = AppUpdateTransactionController(
+            store: .init(rootURL: download.workRootURL.appendingPathComponent("unused-journal")),
+            safePointWaiter: waiter,
+            prepareDownload: { _ in try await preparation.prepare() },
+            cleanupDownload: { _ in await preparation.cleanup() },
+            installedVersion: { (version: current, identity: updateOldIdentity) })
+        return (controller, preparation, download.release)
+    }
+
+    @Test("a cancelled late download never changes the newer UI state")
+    func lateDownloadAfterCancel() async throws {
+        let (controller, preparation, release) = try fixture()
+        await preparation.setHoldDownload()
+        let request = Task { await controller.prepare(release) }
+        while !(await preparation.isWaiting) { await Task.yield() }
+        await controller.cancel()
+        await preparation.finish()
+        await request.value
+        #expect(controller.phase == .idle && controller.preparedReview == nil)
+        #expect(await preparation.cleanups == 1)
+    }
+
+    @Test("a late readiness reply cannot overwrite a newly prepared update or start its helper")
+    func cancelledReadinessGeneration() async throws {
+        var response: CheckedContinuation<Void, Never>?
+        let waiter = AppUpdateSafePointWaiter(requireReady: { _ in
+            await withCheckedContinuation { response = $0 }
+        }, isTransient: { _ in false })
+        let (controller, preparation, release) = try fixture(waiter: waiter)
+        await controller.prepare(release)
+        let attempt = Task { try await controller.beginInstallation() }
+        while response == nil { await Task.yield() }
+        #expect(controller.phase == .waitingForSafePoint && controller.canCancel)
+        await controller.cancel()
+        await controller.prepare(release)
+        response?.resume()
+        let began = try await attempt.value
+        #expect(!began)
+        #expect(controller.phase == .review && controller.canBeginInstallation)
+        #expect(await preparation.preparations == 2)
+    }
+
+    @Test("unsupported connections defer after download and retries reuse the verified preparation")
+    func deferredRetryDoesNotDownloadAgain() async throws {
+        var readinessChecks = 0
+        let waiter = AppUpdateSafePointWaiter(requireReady: { _ in
+            readinessChecks += 1; throw UpdateTestFailure.injected
+        }, isTransient: { _ in false })
+        let (controller, preparation, release) = try fixture(waiter: waiter)
+        await controller.prepare(release)
+        #expect(controller.phase == .review && controller.preparedReview?.sessions.isEmpty == true)
+        for _ in 0..<2 {
+            await #expect(throws: UpdateTestFailure.injected) { try await controller.beginInstallation() }
+            #expect(controller.phase == .deferred && controller.canBeginInstallation && controller.canCancel)
+        }
+        #expect(readinessChecks == 2)
+        #expect(await preparation.preparations == 1)
+    }
+}
+
+@Suite("Private update journal", .petLanguage(.korean))
 struct AppUpdateJournalTests {
     private func fixture() throws -> (URL, AppUpdateJournalStore) {
         guard let physical = realpath(FileManager.default.temporaryDirectory.path, nil) else {
@@ -308,6 +643,20 @@ struct AppUpdateJournalTests {
         #expect(info.st_mode & 0o777 == 0o700)
         #expect(lstat(try store.journalURL(journal.jobID).path, &info) == 0)
         #expect(info.st_mode & 0o777 == 0o600)
+    }
+
+    @Test("schema 2 preserves conversations and retains legacy decoding without converting it")
+    func preservingJournalRoundtrip() throws {
+        let (root, store) = try fixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let legacy = try updateJournalFixture()
+        try store.save(legacy)
+        #expect(try !store.load(jobID: legacy.jobID).preservesConnections)
+        let current = try updateJournalFixture(sessions: [], preservingConnections: true)
+        try store.save(current)
+        let loaded = try store.load(jobID: current.jobID)
+        #expect(loaded == current && loaded.preservesConnections && loaded.sessions.isEmpty)
+        #expect(loaded.helperApplicationURL.path.contains("helper-runtime-\(loaded.jobID)/Blabee.app"))
     }
 
     @Test("physical private tmp path works while the tmp symlink alias remains refused")

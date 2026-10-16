@@ -13,7 +13,7 @@ private let petRepositoryRoot: URL = {
         .deletingLastPathComponent()
 }()
 
-@Test("BlabeePet process lease rejects another holder and releases cleanly")
+@Test("BlabeePet process lease rejects another holder and releases cleanly", .petLanguage(.korean))
 func blabeePetSingleProcessLease() throws {
     let root = FileManager.default.temporaryDirectory
         .appendingPathComponent("blabee-pet-lease-\(UUID().uuidString)", isDirectory: true)
@@ -39,7 +39,7 @@ func blabeePetSingleProcessLease() throws {
     withExtendedLifetime(replacement) {}
 }
 
-@Test("BlabeePet clamps frames purely across negative and oversized displays")
+@Test("BlabeePet clamps frames purely across negative and oversized displays", .petLanguage(.korean))
 func blabeePetMultiDisplayFrameClamp() {
     let leftVisible = CGRect(x: -1_920, y: 24, width: 1_920, height: 1_056)
     let offscreen = CGRect(x: -2_400, y: -300, width: 440, height: 620)
@@ -77,7 +77,7 @@ func blabeePetMultiDisplayFrameClamp() {
     )?.id == 2)
 }
 
-@Test("BlabeePet anchors its event panel below the menu-bar item")
+@Test("BlabeePet anchors its event panel below the menu-bar item", .petLanguage(.korean))
 func blabeePetStatusItemPanelAnchor() {
     let visibleFrame = CGRect(x: 0, y: 0, width: 1_440, height: 875)
     let statusFrame = CGRect(x: 1_180, y: 875, width: 28, height: 25)
@@ -102,7 +102,7 @@ func blabeePetStatusItemPanelAnchor() {
     #expect(visibleFrame.contains(edgeFrame))
 }
 
-@Test("BlabeePet dismisses only for clicks outside the panel and menu-bar item")
+@Test("BlabeePet dismisses only for clicks outside the panel and menu-bar item", .petLanguage(.korean))
 func blabeePetOutsideClickDismissalPolicy() {
     let panelFrame = CGRect(x: 960, y: 395, width: 460, height: 480)
     let statusItemFrame = CGRect(x: 1_180, y: 875, width: 28, height: 25)
@@ -147,7 +147,7 @@ func blabeePetOutsideClickDismissalPolicy() {
     ))
 }
 
-@Test("BlabeePet routes only a secondary menu-bar click to its quit menu")
+@Test("BlabeePet routes only a secondary menu-bar click to its quit menu", .petLanguage(.korean))
 func blabeePetMenuBarInteractionPolicy() {
     #expect(PetMenuBarInteractionPolicy.action(for: .leftMouseUp) == .togglePanel)
     #expect(PetMenuBarInteractionPolicy.action(for: .rightMouseDown) == .showQuitMenu)
@@ -159,12 +159,12 @@ func blabeePetMenuBarInteractionPolicy() {
     #expect(PetMenuBarInteractionPolicy.action(for: nil) == .togglePanel)
 }
 
-@Test("BlabeePet exposes one clear quit-menu label")
+@Test("BlabeePet exposes one clear quit-menu label", .petLanguage(.korean))
 func blabeePetQuitMenuMetadata() {
     #expect(PetMenuBarInteractionPolicy.quitMenuTitle == "Blabee 종료")
 }
 
-@Test("BlabeePet updates its status item only on initial render and attention transitions")
+@Test("BlabeePet updates its status item only on initial render and attention transitions", .petLanguage(.korean))
 func blabeePetStatusItemUpdatePolicy() {
     #expect(PetStatusItemUpdatePolicy.shouldApply(
         previousAttention: nil,
@@ -196,7 +196,7 @@ private final class RecordingStatusItemButton: NSButton {
     override var attributedTitle: NSAttributedString { didSet { titleWrites += 1 } }
 }
 
-@Test("BlabeePet appearance snapshots never rewrite an unchanged status icon or title")
+@Test("BlabeePet appearance snapshots never rewrite an unchanged status icon or title", .petLanguage(.korean))
 @MainActor
 func blabeePetStatusItemAppearanceDoesNotRedraw() async throws {
     let button = RecordingStatusItemButton(frame: .zero)
@@ -258,7 +258,7 @@ func blabeePetStatusItemAppearanceDoesNotRedraw() async throws {
     #expect(button.titleWrites == titleWrites)
 }
 
-@Test("BlabeePet auto-presentation is owned by the exact approval head")
+@Test("BlabeePet auto-presentation is owned by the exact approval head", .petLanguage(.korean))
 func blabeePetExactApprovalPresentationPolicy() {
     let first = PetApprovalHeadIdentity.permission(requestID: "permission_first")
     let second = PetApprovalHeadIdentity.managed(managedRequestID: "managed_second")
@@ -310,14 +310,14 @@ func blabeePetExactApprovalPresentationPolicy() {
     ) == .none)
 }
 
-@Test("BlabeePet permission cards scroll so full authority remains inspectable")
+@Test("BlabeePet permission cards scroll so full authority remains inspectable", .petLanguage(.korean))
 func blabeePetPermissionContentCanScroll() {
     #expect(PetPanelContentPolicy.allowsScrolling(in: .permission))
     #expect(!PetPanelContentPolicy.allowsScrolling(in: .ready))
     #expect(PetPanelContentPolicy.allowsScrolling(in: .shortcutSettings))
 }
 
-@Test("BlabeePet separates durable user actions from approval and polling deadlines")
+@Test("BlabeePet separates durable user actions from approval and polling deadlines", .petLanguage(.korean))
 func blabeePetUserDecisionTimeoutPolicy() {
     #expect(PetTransportTimeoutPolicy.responseTimeoutMilliseconds(
         for: "select",
@@ -368,7 +368,34 @@ func blabeePetUserDecisionTimeoutPolicy() {
     }
 }
 
-@Test("BlabeePet loads the Air bee template and preserves a colored attention badge")
+@Test("Inbox reads use short deadlines without shortening exact provider selections", .petLanguage(.korean))
+func blabeePetInboxReadDeadlinePolicy() {
+    let snapshotPayload: [String: Any] = ["envelope": [
+        "schema_version": "blabee.pet-provider.v1", "operation": "snapshot",
+    ]]
+    #expect(PetTransportTimeoutPolicy.operationType("pet_provider_v1", payload: snapshotPayload)
+        == "pet_provider_snapshot")
+    for operation in ["pet_provider_snapshot", "pet_directory_v1", "pet_inbox_v1"] {
+        #expect(PetTransportTimeoutPolicy.responseTimeoutMilliseconds(
+            for: operation, defaultTimeoutMilliseconds: 2_000,
+            userDecisionTimeoutMilliseconds: 12_000
+        ) == 500)
+        #expect(PetTransportTimeoutPolicy.responseTimeoutMilliseconds(
+            for: operation, defaultTimeoutMilliseconds: 200,
+            userDecisionTimeoutMilliseconds: 12_000
+        ) == 200)
+    }
+    let selectionPayload: [String: Any] = ["envelope": [
+        "schema_version": "blabee.pet-provider.v1", "operation": "select",
+    ]]
+    let operation = PetTransportTimeoutPolicy.operationType("pet_provider_v1", payload: selectionPayload)
+    #expect(PetTransportTimeoutPolicy.responseTimeoutMilliseconds(
+        for: operation, defaultTimeoutMilliseconds: 2_000,
+        userDecisionTimeoutMilliseconds: 12_000
+    ) == 60_000)
+}
+
+@Test("BlabeePet loads the Air bee template and preserves a colored attention badge", .petLanguage(.korean))
 @MainActor
 func blabeePetStatusItemIconAsset() throws {
     let asset = petRepositoryRoot
@@ -418,7 +445,7 @@ func blabeePetStatusItemIconAsset() throws {
     }
 }
 
-@Test("BlabeePet resizing preserves the lower-trailing anchor and round-trips")
+@Test("BlabeePet resizing preserves the lower-trailing anchor and round-trips", .petLanguage(.korean))
 @MainActor
 func blabeePetLowerTrailingResizeRoundTrip() {
     let visibleFrame = CGRect(x: 0, y: 24, width: 1_920, height: 1_056)
@@ -451,7 +478,7 @@ func blabeePetLowerTrailingResizeRoundTrip() {
     #expect(movedExpanded.minY == moved.minY)
 }
 
-@Test("BlabeePet lower-trailing resizing supports negative and tiny displays")
+@Test("BlabeePet lower-trailing resizing supports negative and tiny displays", .petLanguage(.korean))
 @MainActor
 func blabeePetLowerTrailingResizeDisplaySafety() {
     let negativeVisibleFrame = CGRect(x: -1_920, y: 24, width: 1_920, height: 1_056)
@@ -494,7 +521,7 @@ func blabeePetLowerTrailingResizeDisplaySafety() {
     #expect(restoredVisibleFrame.contains(restored))
 }
 
-@Test("BlabeePet panel policy is accessory-safe and never requests activation")
+@Test("BlabeePet panel policy is accessory-safe and never requests activation", .petLanguage(.korean))
 func blabeePetNonactivatingPanelPolicy() {
     #expect(PetPanelPolicy.styleMask.contains(.borderless))
     #expect(PetPanelPolicy.styleMask.contains(.nonactivatingPanel))
@@ -510,7 +537,7 @@ func blabeePetNonactivatingPanelPolicy() {
     #expect(PetPanelPolicy.canBecomeMain == false)
 }
 
-@Test("BlabeePet startup failure stops the run loop and propagates to the CLI error path")
+@Test("BlabeePet startup failure stops the run loop and propagates to the CLI error path", .petLanguage(.korean))
 @MainActor
 func blabeePetStartupFailurePropagation() throws {
     var stopped = false
@@ -559,7 +586,7 @@ private final class PetFakeShortcutStore: PetShortcutConfigurationStoring, @unch
     }
 }
 
-@Test("BlabeePet shortcut catalog requires Option and rejects unsafe or duplicate drafts")
+@Test("BlabeePet shortcut catalog requires Option and rejects unsafe or duplicate drafts", .petLanguage(.korean))
 func blabeePetShortcutCatalogSafety() {
     #expect(PetShortcutCatalog.modifierPresets.allSatisfy {
         $0.modifiers & UInt32(optionKey) != 0
@@ -597,7 +624,7 @@ func blabeePetShortcutCatalogSafety() {
     #expect(duplicate.validationIssue() == .duplicate(owner: .toggle, duplicate: .slot1))
 }
 
-@Test("BlabeePet user defaults store rejects invalid loads and invalid overwrites")
+@Test("BlabeePet user defaults store rejects invalid loads and invalid overwrites", .petLanguage(.korean))
 func blabeePetShortcutStoreValidation() throws {
     let suiteName = "com.biadone.blabee.tests.shortcuts.\(UUID().uuidString)"
     let key = "shortcuts"
@@ -617,7 +644,7 @@ func blabeePetShortcutStoreValidation() throws {
     #expect(store.load() == nil)
 }
 
-@Test("BlabeePet shortcut settings use draft cancel defaults and validated persistence")
+@Test("BlabeePet shortcut settings use draft cancel defaults and validated persistence", .petLanguage(.korean))
 @MainActor
 func blabeePetShortcutSettingsDraftLifecycle() throws {
     let store = PetFakeShortcutStore()
@@ -706,7 +733,7 @@ func blabeePetShortcutSettingsDraftLifecycle() throws {
     #expect(viewModel.shortcutDraft == .defaults)
 }
 
-@Test("BlabeePet keeps shortcut editor open and restores bindings when registration fails")
+@Test("BlabeePet keeps shortcut editor open and restores bindings when registration fails", .petLanguage(.korean))
 @MainActor
 func blabeePetShortcutSettingsRegistrationFailureRollback() throws {
     let defaults = PetShortcutConfiguration.defaults
@@ -756,7 +783,7 @@ func blabeePetShortcutSettingsRegistrationFailureRollback() throws {
     }
 }
 
-@Test("BlabeePet restores configuration for generic registration errors")
+@Test("BlabeePet restores configuration for generic registration errors", .petLanguage(.korean))
 @MainActor
 func blabeePetShortcutGenericRegistrationFailureRollback() throws {
     let defaults = PetShortcutConfiguration.defaults
@@ -790,7 +817,7 @@ func blabeePetShortcutGenericRegistrationFailureRollback() throws {
     #expect(backend.registrations.values.contains { $0.shortcut == defaults.slot1 })
 }
 
-@Test("BlabeePet reports when both candidate registration and binding restoration fail")
+@Test("BlabeePet reports when both candidate registration and binding restoration fail", .petLanguage(.korean))
 @MainActor
 func blabeePetShortcutRollbackFailureStatus() throws {
     let defaults = PetShortcutConfiguration.defaults
@@ -830,7 +857,7 @@ func blabeePetShortcutRollbackFailureStatus() throws {
     #expect(registry.statuses[.slot1] == .systemCollision)
 }
 
-@Test("BlabeePet rolls back a partially registered multi-shortcut update")
+@Test("BlabeePet rolls back a partially registered multi-shortcut update", .petLanguage(.korean))
 @MainActor
 func blabeePetShortcutPartialSwapRollbackAndRetiredCandidateID() async throws {
     let defaults = PetShortcutConfiguration.defaults
@@ -876,7 +903,7 @@ func blabeePetShortcutPartialSwapRollbackAndRetiredCandidateID() async throws {
     #expect(recorder.intents.isEmpty)
 }
 
-@Test("BlabeePet action labels reflect availability risk and actual registration")
+@Test("BlabeePet action labels reflect availability risk and actual registration", .petLanguage(.korean))
 @MainActor
 func blabeePetActionShortcutPresentation() throws {
     let backend = PetFakeHotKeyBackend()
@@ -966,7 +993,7 @@ private final class PetIntentRecorder {
     var intents: [PetShortcutIntent] = []
 }
 
-@Test("BlabeePet shortcut defaults persist and registry is one-handler dynamic exclusive")
+@Test("BlabeePet shortcut defaults persist and registry is one-handler dynamic exclusive", .petLanguage(.korean))
 @MainActor
 func blabeePetShortcutDefaultConfigAndRetiredIDs() async throws {
     let defaults = PetShortcutConfiguration.defaults
@@ -1025,7 +1052,7 @@ func blabeePetShortcutDefaultConfigAndRetiredIDs() async throws {
     #expect(backend.installCount == 1)
 }
 
-@Test("BlabeePet gives toggle priority for internal collisions and reports system collision")
+@Test("BlabeePet gives toggle priority for internal collisions and reports system collision", .petLanguage(.korean))
 @MainActor
 func blabeePetShortcutCollisionPolicy() throws {
     let defaults = PetShortcutConfiguration.defaults
@@ -1066,7 +1093,7 @@ func blabeePetShortcutCollisionPolicy() throws {
     #expect(invalidRegistry.statuses[.toggle] == .registrationFailure(status: OSStatus(paramErr)))
 }
 
-@Test("BlabeePet ignores inactive sibling collisions and swaps active chords in two phases")
+@Test("BlabeePet ignores inactive sibling collisions and swaps active chords in two phases", .petLanguage(.korean))
 @MainActor
 func blabeePetShortcutActiveCollisionAndSwapPolicy() throws {
     let defaults = PetShortcutConfiguration.defaults

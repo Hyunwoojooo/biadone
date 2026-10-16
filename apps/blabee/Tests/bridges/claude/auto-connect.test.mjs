@@ -21,6 +21,7 @@ const until = async predicate => {
   }
 };
 const sleep = milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds));
+const turn = () => new Promise(resolve => setImmediate(resolve));
 const envelope = (request, body) => ({ schema_version: AUTO_CONNECT_SCHEMA, request_id: request.request_id, ...body });
 
 async function fixture(t, { respond } = {}) {
@@ -122,7 +123,9 @@ function sessionClient(f, calls) {
         calls.push(value);
         if (value.operation === 'bridge.open') return { bridge_id: bridgeID };
         if (value.operation === 'bridge.close') return { closed: true };
-        if (value.operation === 'readiness.begin') return { probe_id: randomUUID(), expires_at_nanoseconds: '100', status: 'pending' };
+        // The model-visible probe nonce is distinct from all four private
+        // bootstrap/session role tokens used by this fixture (a through d).
+        if (value.operation === 'readiness.begin') return { probe_id: randomUUID(), nonce: 'e'.repeat(64), expires_at_nanoseconds: '100', status: 'pending' };
         throw new Error('fixture rejects unexpected operation');
       },
       async exchange(request) {
@@ -152,6 +155,33 @@ test('actual startup, resume and fork are consumed once without a second Hook or
   }
 });
 
+test('main --agent startup and resume retain native binding without sending agent metadata', async t => {
+  for (const source of ['startup', 'resume']) {
+    for (const agent_type of ['code-reviewer', null, { unexpected: 'metadata' }]) {
+      const f = await fixture(t);
+      const result = await handleAutoConnectHook(f.input('SessionStart', { source, agent_type }),
+        { env: f.hookEnv, createClient: async () => { assert.fail('initial observation must not be resent'); } });
+      assert.equal(result.hookSpecificOutput.hookEventName, 'SessionStart');
+      assert.equal(f.requests.length, 1);
+      assert.equal(f.requests[0].source, source);
+      assert.equal(f.requests[0].native_session_id, f.authority.native_session_id);
+      assert.equal(Object.hasOwn(f.requests[0], 'agent_type'), false);
+      assert.doesNotMatch(JSON.stringify(result), /code-reviewer|unexpected|boundary_id=/);
+    }
+  }
+});
+
+test('any actual agent_id prevents auto enrollment even with main-agent type metadata', async t => {
+  const f = await fixture(t);
+  for (const source of ['startup', 'resume']) {
+    for (const agent_id of ['child', '', null, undefined, 42, {}]) {
+      await assert.rejects(handleAutoConnectHook(f.input('SessionStart', { source, agent_id, agent_type: 'code-reviewer' }),
+        { env: f.hookEnv }), { code: 'session_v2_hook_subagent' });
+    }
+  }
+  assert.equal(f.requests.length, 0);
+});
+
 test('only the next actual prompt obtains a boundary; compact and Stop retain their native observations', async t => {
   const f = await fixture(t);
   await handleAutoConnectHook(f.input(), { env: f.hookEnv });
@@ -159,7 +189,7 @@ test('only the next actual prompt obtains a boundary; compact and Stop retain th
   const createClient = async configuration => {
     assert.equal(configuration.authToken, 'c'.repeat(64));
     assert.deepEqual([...new Set(configuration.credentialCorpus)], ['c'.repeat(64)]);
-    return { request: async value => { calls.push(value); return { observed: true, observation_status: 'accepted',
+    return { request: async value => { calls.push(value); return { observed: true, waiter: null, observation_status: 'accepted',
       boundary_id: value.event === 'UserPromptSubmit' ? boundary : null }; }, close: async () => {} };
   };
   const result = await handleAutoConnectHook(f.input('UserPromptSubmit', { prompt_id: promptID, prompt: 'new actual prompt' }),
@@ -200,7 +230,7 @@ for (const order of ['hook-first', 'mcp-first']) test(`${order}: SDK handshake a
     errorOutput: { write: value => { stderr += value; } }, createClient: sessionClient(f, calls), pollIntervalMs: 20 });
   t.after(() => runtime.close());
   const response = await sdk.initialize();
-  assert.deepEqual(response.result.capabilities.experimental, { 'claude/channel': {} });
+  assert.equal(response.result.capabilities.experimental, undefined);
   sdk.send({ id: 2, method: 'tools/list' });
   assert.equal((await sdk.reply(2)).result.tools.length, 5);
   if (order === 'mcp-first') {
@@ -208,33 +238,152 @@ for (const order of ['hook-first', 'mcp-first']) test(`${order}: SDK handshake a
     assert.equal(f.state.ready, false);
     assert.equal(calls.length, 0);
     sdk.send({ id: 3, method: 'tools/call', params: { name: 'check_connection_v1' } });
-    assert.match((await sdk.reply(3)).result.content[0].text, /session_v2_bridge_not_registered/);
+    await sleep(30);
+    assert.equal(sdk.messages.some(value => value.id === 3), false,
+      'the first tool must wait for actual SessionStart admission instead of reporting a disconnected bridge');
+    assert.equal(calls.length, 0);
     await handleAutoConnectHook(f.input(), { env: f.hookEnv });
   }
   await until(() => runtime.session?.snapshot().registered);
   sdk.send({ method: 'notifications/initialized' });
   await until(() => calls.some(value => value.operation === 'bridge.poll'));
   assert.equal(calls.filter(value => value.operation === 'bridge.open').length, 1);
-  assert.equal(calls.some(value => ['readiness.begin', 'readiness.ack', 'selection.claim'].includes(value.operation)), false);
-  sdk.send({ id: 4, method: 'tools/call', params: { name: 'check_connection_v1' } });
-  assert.equal(JSON.parse((await sdk.reply(4)).result.content[0].text).result.status, 'pending');
+  assert.equal(calls.some(value => ['readiness.ack', 'selection.claim'].includes(value.operation)), false);
+  if (order === 'hook-first') {
+    assert.equal(calls.some(value => value.operation === 'readiness.begin'), false);
+    sdk.send({ id: 3, method: 'tools/call', params: { name: 'check_connection_v1' } });
+  }
+  const probe = JSON.parse((await sdk.reply(3)).result.content[0].text).result;
+  assert.equal(probe.status, 'pending');
+  assert.equal(probe.nonce, 'e'.repeat(64));
   assert.equal(calls.filter(value => value.operation === 'readiness.begin').length, 1);
   await runtime.close();
   assert.equal(calls.filter(value => value.operation === 'bridge.close').length, 1);
   assert.doesNotMatch(stderr + JSON.stringify(sdk.messages), /[abcd]{64}|BLABEE_CLAUDE_SESSION_V2_/);
 });
 
-test('SDK EOF cancels both pending grant polling and an unanswered bootstrap request immediately', async t => {
-  for (const unanswered of [false, true]) {
+test('automatic MCP tools remain closed before a valid SDK initialized notification even with a ready grant', async t => {
+  const f = await fixture(t), sdk = sdkStreams(t), calls = [];
+  await handleAutoConnectHook(f.input(), { env: f.hookEnv });
+  const runtime = await runAutoConnectMCP({ env: f.mcpEnv, args: [], input: sdk.input, output: sdk.output,
+    errorOutput: { write() {} }, createClient: sessionClient(f, calls) });
+  t.after(() => runtime.close());
+  await until(() => runtime.session !== undefined);
+  sdk.send({ method: 'notifications/initialized' });
+  sdk.send({ id: 9, method: 'tools/call', params: { name: 'check_connection_v1' } });
+  assert.match((await sdk.reply(9)).result.content[0].text, /session_v2_bridge_not_registered/);
+  assert.equal(calls.length, 0);
+  await sdk.initialize();
+  await until(() => runtime.session.snapshot().registered);
+  sdk.send({ id: 3, method: 'tools/call', params: { name: 'check_connection_v1' } });
+  assert.equal(JSON.parse((await sdk.reply(3)).result.content[0].text).ok, true);
+  assert.equal(calls.filter(value => value.operation === 'bridge.open').length, 1);
+  assert.equal(calls.filter(value => value.operation === 'readiness.begin').length, 1);
+});
+
+test('pending native admission bounds tool callers and cancellation frees capacity without cancelling the shared grant', async t => {
+  const f = await fixture(t), sdk = sdkStreams(t), calls = []; let stderr = '';
+  const runtime = await runAutoConnectMCP({ env: f.mcpEnv, args: [], input: sdk.input, output: sdk.output,
+    errorOutput: { write: value => { stderr += value; } }, createClient: sessionClient(f, calls) });
+  t.after(() => runtime.close());
+  await sdk.initialize();
+  await until(() => f.requests.length > 0);
+  for (let id = 10; id < 42; id++) sdk.send({ id, method: 'tools/call', params: { name: 'check_connection_v1' } });
+  sdk.send({ id: 100, method: 'tools/list' });
+  assert.equal((await sdk.reply(100)).result.tools.length, 5);
+  assert.equal(sdk.messages.some(value => value.id >= 10 && value.id < 42), false);
+  sdk.send({ id: 42, method: 'tools/call', params: { name: 'check_connection_v1' } });
+  assert.match((await sdk.reply(42)).result.content[0].text, /session_v2_queue_full/);
+  sdk.send({ method: 'notifications/cancelled', params: { requestId: 10, reason: 'PRIVATE_CANCEL_REASON' } });
+  await turn();
+  sdk.send({ id: 43, method: 'tools/call', params: { name: 'check_connection_v1' } });
+  sdk.send({ id: 101, method: 'tools/list' });
+  await sdk.reply(101);
+  assert.equal(sdk.messages.some(value => value.id === 43), false, 'cancelled admission releases its slot promptly');
+  assert.equal(calls.length, 0);
+  assert.equal(f.state.ready, false);
+  await handleAutoConnectHook(f.input(), { env: f.hookEnv });
+  for (const id of [...Array.from({ length: 31 }, (_, index) => index + 11), 43]) {
+    assert.equal(JSON.parse((await sdk.reply(id)).result.content[0].text).ok, true);
+  }
+  assert.equal(sdk.messages.some(value => value.id === 10), false);
+  assert.equal(calls.filter(value => value.operation === 'bridge.open').length, 1);
+  assert.equal(calls.filter(value => value.operation === 'readiness.begin').length, 32);
+  assert.equal(calls.some(value => ['readiness.ack', 'selection.claim', 'selection.complete'].includes(value.operation)), false);
+  await runtime.close();
+  assert.equal(calls.filter(value => value.operation === 'bridge.close').length, 1);
+  assert.doesNotMatch(stderr + JSON.stringify(sdk.messages), /PRIVATE_CANCEL_REASON|[abcd]{64}|BLABEE_CLAUDE_SESSION_V2_/);
+});
+
+test('a failed shared bootstrap admission retires waiting tools without service requests or replay', async t => {
+  let rejectGrant, stderr = '', usedV2 = false;
+  const f = await fixture(t, { respond: (request, { socket, rejected }) => {
+    rejectGrant = () => socket.end(JSON.stringify(rejected(request, 'claude_bootstrap_unavailable')) + '\n');
+  } }), sdk = sdkStreams(t);
+  const runtime = await runAutoConnectMCP({ env: f.mcpEnv, args: [], input: sdk.input, output: sdk.output,
+    errorOutput: { write: value => { stderr += value; } }, createClient: async () => { usedV2 = true; assert.fail('rejected grant'); } });
+  t.after(() => runtime.close());
+  await sdk.initialize();
+  await until(() => f.requests.length === 1);
+  for (const id of [2, 3]) sdk.send({ id, method: 'tools/call', params: { name: 'check_connection_v1' } });
+  sdk.send({ id: 4, method: 'tools/list' });
+  await sdk.reply(4);
+  assert.equal(sdk.messages.some(value => value.id === 2 || value.id === 3), false);
+  const start = Date.now();
+  rejectGrant();
+  assert.equal(await runtime.closed, 0);
+  assert.ok(Date.now() - start < 300, 'failed admission must retire its waiting calls promptly');
+  await sleep(150);
+  assert.equal(f.requests.length, 1);
+  assert.equal(usedV2, false);
+  assert.equal(f.state.ready, false);
+  assert.match(stderr, /claude_bootstrap_unavailable/);
+  assert.doesNotMatch(stderr + JSON.stringify(sdk.messages), /[abcd]{64}|auth_token/);
+});
+
+test('SDK EOF during client admission closes a late client without opening a bridge or dispatching the waiting tool', async t => {
+  const f = await fixture(t), sdk = sdkStreams(t);
+  await handleAutoConnectHook(f.input(), { env: f.hookEnv });
+  let resolveClient, admissions = 0, closes = 0, requests = 0;
+  const runtime = await runAutoConnectMCP({ env: f.mcpEnv, args: [], input: sdk.input, output: sdk.output,
+    errorOutput: { write() {} }, createClient: () => {
+      admissions++;
+      return new Promise(resolve => { resolveClient = resolve; });
+    } });
+  t.after(() => runtime.close());
+  await sdk.initialize();
+  await until(() => admissions === 1);
+  sdk.send({ id: 2, method: 'tools/call', params: { name: 'check_connection_v1' } });
+  sdk.send({ id: 3, method: 'tools/list' });
+  await sdk.reply(3);
+  assert.equal(sdk.messages.some(value => value.id === 2), false);
+  const start = Date.now();
+  sdk.input.end();
+  assert.equal(await runtime.closed, 0);
+  assert.ok(Date.now() - start < 300, 'EOF must not wait for an unfinished client admission');
+  resolveClient({ request: async () => { requests++; assert.fail('late client cannot send requests'); },
+    close: async () => { closes++; } });
+  await until(() => closes === 1);
+  assert.equal(admissions, 1);
+  assert.equal(requests, 0);
+});
+
+test('SDK EOF or output failure cancels waiting tools, grant polling and unanswered bootstrap requests immediately', async t => {
+  for (const [unanswered, failure] of [[false, 'eof'], [true, 'eof'], [false, 'output'], [true, 'output']]) {
     const f = await fixture(t, unanswered ? { respond: () => undefined } : {}), sdk = sdkStreams(t);
     const before = process.listenerCount('SIGTERM');
-    let usedV2 = false;
+    let usedV2 = false, stderr = '';
     const runtime = await runAutoConnectMCP({ env: f.mcpEnv, args: [], input: sdk.input, output: sdk.output,
-      errorOutput: { write() {} }, createClient: async () => { usedV2 = true; assert.fail('no SessionStart'); } });
+      errorOutput: { write: value => { stderr += value; } }, createClient: async () => { usedV2 = true; assert.fail('no SessionStart'); } });
     await sdk.initialize();
     await until(() => f.requests.length > 0);
+    for (const id of [2, 3]) sdk.send({ id, method: 'tools/call', params: { name: 'check_connection_v1' } });
+    sdk.send({ id: 4, method: 'tools/list' });
+    await sdk.reply(4);
+    assert.equal(sdk.messages.some(value => value.id === 2 || value.id === 3), false);
     const start = Date.now();
-    sdk.input.end();
+    if (failure === 'eof') sdk.input.end();
+    else sdk.output.emit('error', Object.assign(new Error('PRIVATE_OUTPUT_ERROR'), { code: 'EPIPE' }));
     assert.equal(await runtime.closed, 0);
     assert.ok(Date.now() - start < 300, 'EOF must not wait for the grant timeout or future Hook');
     const count = f.requests.length;
@@ -243,6 +392,7 @@ test('SDK EOF cancels both pending grant polling and an unanswered bootstrap req
     assert.equal(usedV2, false);
     assert.equal(f.state.ready, false);
     assert.equal(process.listenerCount('SIGTERM'), before);
+    assert.doesNotMatch(stderr + JSON.stringify(sdk.messages), /PRIVATE_OUTPUT_ERROR|[abcd]{64}|auth_token/);
     await until(() => f.sockets.size === 0);
   }
 });
@@ -286,7 +436,7 @@ test('cancelling a post-grant Hook closes the v2 request and suppresses a late a
   assert.equal(await run, 0);
   assert.ok(Date.now() - start < 300, 'cancellation must not wait for the in-flight Hook response');
   assert.equal(closeCount, 1);
-  resolveRequest({ observed: true, observation_status: 'accepted', boundary_id: boundary });
+  resolveRequest({ observed: true, waiter: null, observation_status: 'accepted', boundary_id: boundary });
   await new Promise(resolve => setImmediate(resolve));
   assert.equal(requestCount, 1);
   assert.equal(stdout, '');
@@ -329,7 +479,7 @@ test('cancellation after an accepted Hook response but before cleanup completes 
     output: { write: value => { stdout += value; } }, errorOutput: { write: value => { stderr += value; } },
     createClient: async () => ({ request: async () => {
       requestCount++;
-      return { observed: true, observation_status: 'accepted', boundary_id: boundary };
+      return { observed: true, waiter: null, observation_status: 'accepted', boundary_id: boundary };
     }, close: async () => { closeCount++; controller.abort(); } }) });
   assert.equal(status, 0);
   assert.equal(requestCount, 1);

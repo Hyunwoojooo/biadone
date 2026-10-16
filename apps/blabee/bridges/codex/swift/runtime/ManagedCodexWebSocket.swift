@@ -351,8 +351,9 @@ final class ManagedCodexWebSocketConnection: @unchecked Sendable {
     private let sendLock = NSLock()
     private let closeLock = NSLock()
     private var closed = false
+    private var activeDescriptorUsers = 0
 
-    fileprivate init(descriptor: Int32, connectionID: String) {
+    init(descriptor: Int32, connectionID: String) {
         self.descriptor = descriptor
         self.connectionID = connectionID
         managedCodexSetCloseOnExec(descriptor)
@@ -362,6 +363,8 @@ final class ManagedCodexWebSocketConnection: @unchecked Sendable {
     deinit { close() }
 
     func readMessages(_ handler: (Data) throws -> Void) throws {
+        guard beginDescriptorUse() else { return }
+        defer { endDescriptorUse() }
         var parser = ManagedCodexWebSocketFrameParser()
         var bytes = [UInt8](repeating: 0, count: 16_384)
         while true {
@@ -418,15 +421,29 @@ final class ManagedCodexWebSocketConnection: @unchecked Sendable {
             return
         }
         closed = true
-        closeLock.unlock()
 
-        // `shutdown` is deliberately performed before waiting for the writer
-        // lock. It wakes a blocked read/write immediately; the descriptor is
-        // closed only after the in-flight writer has released its ownership.
+        // Wake I/O without waiting for a reader's handler or a stalled writer.
+        // Keep the descriptor allocated until every reader/writer has returned,
+        // so a concurrent accept cannot reuse its number between poll and I/O.
+        // The lock also prevents the last user from closing it before shutdown.
         _ = shutdown(descriptor, SHUT_RDWR)
-        sendLock.lock()
-        Darwin.close(descriptor)
-        sendLock.unlock()
+        if activeDescriptorUsers == 0 { Darwin.close(descriptor) }
+        closeLock.unlock()
+    }
+
+    private func beginDescriptorUse() -> Bool {
+        closeLock.lock()
+        defer { closeLock.unlock() }
+        guard !closed else { return false }
+        activeDescriptorUsers += 1
+        return true
+    }
+
+    private func endDescriptorUse() {
+        closeLock.lock()
+        defer { closeLock.unlock() }
+        activeDescriptorUsers -= 1
+        if closed, activeDescriptorUsers == 0 { Darwin.close(descriptor) }
     }
 
     private var isClosed: Bool {
@@ -442,9 +459,10 @@ final class ManagedCodexWebSocketConnection: @unchecked Sendable {
         )
         sendLock.lock()
         defer { sendLock.unlock() }
-        guard !isClosed else {
+        guard beginDescriptorUse() else {
             throw ManagedCodexWebSocketError.connectionClosed
         }
+        defer { endDescriptorUse() }
         try managedCodexWriteAll(frame, descriptor: descriptor)
     }
 }

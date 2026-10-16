@@ -19,7 +19,7 @@ struct PetAppUpdateVersion: Equatable, Sendable, Comparable {
         self.buildNumber = buildNumber
     }
 
-    var displayLabel: String { "\(version) (빌드 \(build))" }
+    var displayLabel: String { PetL10n.text("\(version) (build \(build))", korean: "\(version) (빌드 \(build))") }
 
     static func < (lhs: Self, rhs: Self) -> Bool {
         if lhs.components != rhs.components {
@@ -81,30 +81,30 @@ enum PetAppUpdateState: Equatable, Sendable {
 
     var title: String {
         switch self {
-        case .notChecked: "업데이트 확인"
-        case .checking: "업데이트 확인 중"
-        case .upToDate: "최신 버전입니다"
-        case .noPublishedRelease: "등록된 배포 버전이 없습니다"
-        case .available: "업데이트할 수 있습니다"
-        case .unavailable: "업데이트를 확인하지 못했습니다"
+        case .notChecked: PetL10n.text("Check for Updates", korean: "업데이트 확인")
+        case .checking: PetL10n.text("Checking for updates", korean: "업데이트 확인 중")
+        case .upToDate: PetL10n.text("You're up to date", korean: "최신 버전입니다")
+        case .noPublishedRelease: PetL10n.text("No release available", korean: "등록된 배포 버전이 없습니다")
+        case .available: PetL10n.text("An update is available", korean: "업데이트할 수 있습니다")
+        case .unavailable: PetL10n.text("Unable to check for updates", korean: "업데이트를 확인하지 못했습니다")
         }
     }
 
     var detail: String {
         switch self {
         case .notChecked:
-            "GitHub Releases에서 배포된 Blabee 버전을 확인합니다."
+            PetL10n.text("Check GitHub Releases for distributed Blabee versions.", korean: "GitHub Releases에서 배포된 Blabee 버전을 확인합니다.")
         case .checking:
-            "GitHub Releases의 최신 배포 정보를 가져오고 있습니다."
+            PetL10n.text("Fetching the latest release information from GitHub Releases.", korean: "GitHub Releases의 최신 배포 정보를 가져오고 있습니다.")
         case .upToDate:
-            "GitHub Releases에 현재 앱보다 새로운 배포 버전이 없습니다."
+            PetL10n.text("GitHub Releases has no newer release than your current app.", korean: "GitHub Releases에 현재 앱보다 새로운 배포 버전이 없습니다.")
         case .noPublishedRelease:
-            "이 저장소의 GitHub Releases에 공개된 정식 Blabee 배포 버전이 아직 없습니다."
+            PetL10n.text("This repository has no public stable Blabee releases yet.", korean: "이 저장소의 GitHub Releases에 공개된 정식 Blabee 배포 버전이 아직 없습니다.")
         case let .available(release):
             if release.installerAssets != nil {
-                "업데이트를 누르면 설치 파일을 다운로드하고 검증합니다. 설치 전 종료·복원할 작업을 확인할 수 있습니다."
+                PetL10n.text("Choose Update to download and verify the installer. You can review which tasks will close and resume before installation.", korean: "업데이트를 누르면 설치 파일을 다운로드하고 검증합니다. 설치 전 종료·복원할 작업을 확인할 수 있습니다.")
             } else {
-                "\(release.version.displayLabel) 버전이 있지만 앱에서 설치할 수 있는 배포 파일을 확인하지 못했습니다. 릴리스 페이지에서 설치본을 확인하세요."
+                PetL10n.text("Version \(release.version.displayLabel) is available, but no in-app installer could be verified. Check the release page for installation files.", korean: "\(release.version.displayLabel) 버전이 있지만 앱에서 설치할 수 있는 배포 파일을 확인하지 못했습니다. 릴리스 페이지에서 설치본을 확인하세요.")
             }
         case let .unavailable(reason):
             reason
@@ -125,7 +125,7 @@ enum PetAppUpdateState: Equatable, Sendable {
     var latestVersionDisplay: String? { availableRelease?.version.displayLabel }
     var locationActionTitle: String? {
         guard let release = availableRelease, release.installerAssets == nil else { return nil }
-        return "릴리스 페이지 열기"
+        return PetL10n.text("Open Release Page", korean: "릴리스 페이지 열기")
     }
     var isChecking: Bool { self == .checking }
     var isFailure: Bool {
@@ -149,7 +149,7 @@ struct PetUnavailableAppUpdateChecker: PetAppUpdateChecking {
 
     init(
         currentVersion: PetAppUpdateVersion? = nil,
-        reason: String = "이 앱에는 GitHub 업데이트 저장소가 설정되어 있지 않습니다."
+        reason: String = PetL10n.text("This app has no GitHub update repository configured.", korean: "이 앱에는 GitHub 업데이트 저장소가 설정되어 있지 않습니다.")
     ) {
         self.currentVersion = currentVersion
         self.reason = reason
@@ -203,10 +203,10 @@ struct PetGitHubAppUpdateChecker: PetAppUpdateChecking {
     func checkForUpdates() async -> PetAppUpdateState {
         guard !Task.isCancelled else { return .notChecked }
         guard let currentVersion else {
-            return .unavailable("현재 앱의 버전 정보를 읽을 수 없어 업데이트를 비교할 수 없습니다.")
+            return .unavailable(PetL10n.text("Unable to read the current app version to compare updates.", korean: "현재 앱의 버전 정보를 읽을 수 없어 업데이트를 비교할 수 없습니다."))
         }
         guard let repository else {
-            return .unavailable("이 앱의 GitHub 업데이트 저장소가 설정되지 않았거나 올바르지 않습니다.")
+            return .unavailable(PetL10n.text("The GitHub update repository is missing or invalid.", korean: "이 앱의 GitHub 업데이트 저장소가 설정되지 않았거나 올바르지 않습니다."))
         }
         let deadline = ProcessInfo.processInfo.systemUptime + Self.maximumCheckDuration
         var latest: PetAppUpdateRelease?
@@ -224,23 +224,23 @@ struct PetGitHubAppUpdateChecker: PetAppUpdateChecking {
                 try Task.checkCancellation()
                 guard ProcessInfo.processInfo.systemUptime < deadline else { return Self.timedOut }
                 guard response.url == request.url else {
-                    return .unavailable("GitHub 업데이트 응답의 주소를 확인할 수 없습니다.")
+                    return .unavailable(PetL10n.text("Unable to verify the GitHub update response address.", korean: "GitHub 업데이트 응답의 주소를 확인할 수 없습니다."))
                 }
                 guard response.statusCode == 200 else {
                     return Self.httpFailure(response.statusCode)
                 }
                 guard response.data.count <= Self.maximumResponseBytes else {
-                    return .unavailable("GitHub 배포 정보가 너무 커서 업데이트를 확인하지 못했습니다.")
+                    return .unavailable(PetL10n.text("GitHub release information is too large to check for updates.", korean: "GitHub 배포 정보가 너무 커서 업데이트를 확인하지 못했습니다."))
                 }
                 let releases = try JSONDecoder().decode([GitHubRelease].self, from: response.data)
                 guard releases.count <= Self.pageSize else {
-                    return .unavailable("GitHub 배포 목록의 형식을 확인할 수 없습니다.")
+                    return .unavailable(PetL10n.text("Unable to verify the GitHub release list format.", korean: "GitHub 배포 목록의 형식을 확인할 수 없습니다."))
                 }
                 for release in releases where !release.draft && !release.prerelease {
                     try Task.checkCancellation()
                     guard release.tagName.hasPrefix(Self.releaseTagPrefix) else { continue }
                     guard let version = Self.version(forTag: release.tagName) else {
-                        return .unavailable("GitHub에 게시된 Blabee 배포 버전 표기가 올바르지 않습니다. 릴리스 정보를 확인하세요.")
+                        return .unavailable(PetL10n.text("A published Blabee version on GitHub has an invalid format. Check the release information.", korean: "GitHub에 게시된 Blabee 배포 버전 표기가 올바르지 않습니다. 릴리스 정보를 확인하세요."))
                     }
                     if latest.map({ version > $0.version }) ?? true {
                         let installer = Self.installerAssets(
@@ -260,19 +260,19 @@ struct PetGitHubAppUpdateChecker: PetAppUpdateChecking {
                     return latest.version > currentVersion ? .available(latest) : .upToDate
                 }
             }
-            return .unavailable("GitHub 배포 목록이 확인 범위를 초과했습니다. 전체 버전을 비교할 수 없어 최신 여부를 판단하지 않았습니다.")
+            return .unavailable(PetL10n.text("The GitHub release list exceeds the check limit. Not all versions could be compared, so update status is unknown.", korean: "GitHub 배포 목록이 확인 범위를 초과했습니다. 전체 버전을 비교할 수 없어 최신 여부를 판단하지 않았습니다."))
         } catch is CancellationError {
             return .notChecked
         } catch let error as URLError {
             if Task.isCancelled { return .notChecked }
             if error.code == .timedOut { return Self.timedOut }
             if error.code == .dataLengthExceedsMaximum {
-                return .unavailable("GitHub 배포 정보가 너무 커서 업데이트를 확인하지 못했습니다.")
+                return .unavailable(PetL10n.text("GitHub release information is too large to check for updates.", korean: "GitHub 배포 정보가 너무 커서 업데이트를 확인하지 못했습니다."))
             }
-            return .unavailable("GitHub에 연결하지 못했습니다. 인터넷 연결을 확인한 뒤 다시 시도하세요.")
+            return .unavailable(PetL10n.text("Unable to connect to GitHub. Check your internet connection and try again.", korean: "GitHub에 연결하지 못했습니다. 인터넷 연결을 확인한 뒤 다시 시도하세요."))
         } catch {
             if Task.isCancelled { return .notChecked }
-            return .unavailable("GitHub 배포 정보를 읽을 수 없습니다. 잠시 후 다시 확인하세요.")
+            return .unavailable(PetL10n.text("Unable to read GitHub release information. Check again shortly.", korean: "GitHub 배포 정보를 읽을 수 없습니다. 잠시 후 다시 확인하세요."))
         }
     }
 
@@ -308,10 +308,10 @@ struct PetGitHubAppUpdateChecker: PetAppUpdateChecking {
         let images = assets.filter { $0.name == name }
         let checksums = assets.filter { $0.name == name + ".sha256" }
         guard !images.isEmpty, !checksums.isEmpty else {
-            return (nil, "자동 업데이트용 DMG 또는 SHA-256 파일이 이 릴리스에 등록되지 않았습니다.")
+            return (nil, PetL10n.text("The DMG or SHA-256 file for automatic updates is missing from this release.", korean: "자동 업데이트용 DMG 또는 SHA-256 파일이 이 릴리스에 등록되지 않았습니다."))
         }
         guard images.count == 1, checksums.count == 1 else {
-            return (nil, "자동 업데이트 파일 이름이 중복되어 설치본을 확인할 수 없습니다.")
+            return (nil, PetL10n.text("Duplicate automatic update filenames prevent identifying the installer.", korean: "자동 업데이트 파일 이름이 중복되어 설치본을 확인할 수 없습니다."))
         }
         func validated(_ asset: GitHubAsset, limit: Int64) -> PetAppUpdateAsset? {
             guard asset.state == "uploaded", (1...limit).contains(asset.size),
@@ -322,7 +322,7 @@ struct PetGitHubAppUpdateChecker: PetAppUpdateChecking {
         }
         guard let dmg = validated(images[0], limit: AppUpdateDownloadPolicy.maximumDiskImageBytes),
               let checksum = validated(checksums[0], limit: AppUpdateDownloadPolicy.maximumChecksumBytes)
-        else { return (nil, "자동 업데이트 파일의 업로드 상태, 크기 또는 GitHub 주소를 확인할 수 없습니다.") }
+        else { return (nil, PetL10n.text("Unable to verify the automatic update file's upload status, size, or GitHub address.", korean: "자동 업데이트 파일의 업로드 상태, 크기 또는 GitHub 주소를 확인할 수 없습니다.")) }
         return (PetAppUpdateInstallerAssets(dmg: dmg, checksum: checksum), nil)
     }
 
@@ -383,17 +383,17 @@ struct PetGitHubAppUpdateChecker: PetAppUpdateChecking {
     }
 
     private static var timedOut: PetAppUpdateState {
-        .unavailable("GitHub 업데이트 확인 시간이 초과됐습니다. 잠시 후 다시 시도하세요.")
+        .unavailable(PetL10n.text("The GitHub update check timed out. Try again shortly.", korean: "GitHub 업데이트 확인 시간이 초과됐습니다. 잠시 후 다시 시도하세요."))
     }
 
     private static func httpFailure(_ status: Int) -> PetAppUpdateState {
         switch status {
         case 403, 429:
-            .unavailable("GitHub 요청이 제한되었습니다. 잠시 후 다시 업데이트를 확인하세요.")
+            .unavailable(PetL10n.text("GitHub requests are rate-limited. Check for updates again shortly.", korean: "GitHub 요청이 제한되었습니다. 잠시 후 다시 업데이트를 확인하세요."))
         case 404:
-            .unavailable("GitHub 업데이트 저장소를 찾을 수 없습니다. 저장소 공개 여부와 배포 설정을 확인하세요.")
+            .unavailable(PetL10n.text("Unable to find the GitHub update repository. Check repository visibility and release settings.", korean: "GitHub 업데이트 저장소를 찾을 수 없습니다. 저장소 공개 여부와 배포 설정을 확인하세요."))
         default:
-            .unavailable("GitHub에서 배포 정보를 가져오지 못했습니다. 잠시 후 다시 시도하세요.")
+            .unavailable(PetL10n.text("Unable to fetch release information from GitHub. Try again shortly.", korean: "GitHub에서 배포 정보를 가져오지 못했습니다. 잠시 후 다시 시도하세요."))
         }
     }
 

@@ -1,0 +1,15 @@
+{
+  "schema_version": "blabee.claude-hook-notice-fixture.v1",
+  "selection_event": {
+    "kind": "selection",
+    "selection_id": "aaaaaaaa-1111-2222-3333-444444444444",
+    "delivery_token": "1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef",
+    "delivery_sequence": "9007199254740993",
+    "expires_at_nanoseconds": "18446744073709551615"
+  },
+  "stderr_text": "Blabee Stop Hook selection reference. Call claim_selection_v1 with these values; execute only the returned action after a successful claim.\n{\"selection_id\":\"aaaaaaaa-1111-2222-3333-444444444444\",\"delivery_token\":\"1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef\"}\n",
+  "stderr_sha256": "7c49f870b41709288e88727eb836cda8fa8a8e187679fa61160a8960cb523ce2",
+  "native_prompt_fixture_kind": "synthetic_product_notice_in_observed_claude_2.1.282_wrapper",
+  "native_prompt_text": "<task-notification>\n<summary>Stop hook feedback</summary>\n</task-notification>\n<system-reminder>\nStop hook blocking error from command \"Stop\": Blabee Stop Hook selection reference. Call claim_selection_v1 with these values; execute only the returned action after a successful claim.\n{\"selection_id\":\"aaaaaaaa-1111-2222-3333-444444444444\",\"delivery_token\":\"1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef\"}\n\n</system-reminder>",
+  "native_prompt_sha256": "037182764038b4f698c4e154135c07fdd34ae0d3eb9241b0a272fbfeb7bab5a8"
+}

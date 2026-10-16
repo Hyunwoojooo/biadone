@@ -125,6 +125,10 @@ public final class CoordinatorRoutingApplication: @unchecked Sendable {
     private var sealAttemptAnchors: [String: UInt64] = [:]
     private var ambiguousSelections: [CoordinatorBindingKey: RoutingAmbiguousSelection] = [:]
     private var lastClockNanoseconds: UInt64?
+    // Provider mutations may reject without writing due transitions. A clock
+    // regression still revokes live authority until successful scheduler
+    // cleanup, even when the clock recovers before that cleanup runs.
+    private var deferredClockRegression = false
     private var restartUnsealedBoundaryCount = 0
 
     public init(
@@ -206,9 +210,18 @@ public final class CoordinatorRoutingApplication: @unchecked Sendable {
             try prepareTransportCompletionLocked(&command)
         }
         let result: CoordinatorSemanticExecutionResult
+        let admissionCommand = command
         do {
             result = try semantic.execute(
-                command: StrictJSONTransport.data(forJSONObject: command)
+                command: StrictJSONTransport.data(forJSONObject: command),
+                validateAdmission: {
+                    var rechecked = admissionCommand
+                    if commandType == "claim_format_repair" {
+                        try self.prepareFormatRepairClaimLocked(&rechecked)
+                    } else if commandType == "complete_transport" {
+                        try self.prepareTransportCompletionLocked(&rechecked)
+                    }
+                }
             )
         } catch {
             if let recovered = try recoverCommittedNoEffectLifecycleLocked(
@@ -274,7 +287,8 @@ public final class CoordinatorRoutingApplication: @unchecked Sendable {
         let binding = try CoordinatorBinding(jsonObject: envelope)
         try require(binding == current.binding, "decision_boundary_binding_mismatch")
 
-        let state = try CoordinatorSemanticReplay.replay(journal.load())
+        let authority = try semantic.authorityProjection()
+        let state = authority.state
         guard let continuation = state.continuation(id: continuationID) else {
             throw CoordinatorError("continuation_not_dispatched")
         }
@@ -282,7 +296,7 @@ public final class CoordinatorRoutingApplication: @unchecked Sendable {
             continuation.binding == current.binding,
             "decision_boundary_binding_mismatch"
         )
-        let now = clock.nowNanoseconds()
+        let now = try authorityNowLocked(or: "routing_continuation_not_in_flight")
         let elapsed = elapsedNanoseconds(from: current.anchorNanoseconds, to: now)
         try require(elapsed < Self.continuationValidityNanoseconds, "continuation_expired")
         try require(continuation.issuedAt == current.issuedAt, "continuation_binding_mismatch")
@@ -293,11 +307,18 @@ public final class CoordinatorRoutingApplication: @unchecked Sendable {
         let result: CoordinatorSemanticExecutionResult
         do {
             result = try semantic.execute(
-                command: StrictJSONTransport.data(forJSONObject: command)
+                command: StrictJSONTransport.data(forJSONObject: command), using: authority,
+                validateAdmission: {
+                    let checkedNow = try self.authorityNowLocked(or: "routing_continuation_not_in_flight")
+                    let checkedElapsed = self.elapsedNanoseconds(from: current.anchorNanoseconds, to: checkedNow)
+                    try require(checkedElapsed < Self.continuationValidityNanoseconds, "continuation_expired")
+                    let checkedTime = try current.issuedAt.adding(nanoseconds: checkedElapsed)
+                    try require(checkedTime < continuation.expiresAt, "continuation_expired")
+                }
             )
         } catch {
             try? removeTerminalRuntimeEntriesLocked()
-            throw error
+            throw (error as? CoordinatorSemanticAppendOutcomeUnknown)?.underlying ?? error
         }
         lastClockNanoseconds = max(lastClockNanoseconds ?? now, now)
         return result
@@ -363,10 +384,15 @@ public final class CoordinatorRoutingApplication: @unchecked Sendable {
         if authority.state.continuation(id: continuationID)?.transport == nil {
             try prepareTransportCompletionLocked(&completion)
         }
+        let admissionCompletion = completion
         do {
             _ = try semantic.executeTransportCompletion(
                 completion: StrictJSONTransport.data(forJSONObject: completion),
-                close: closeData, using: authority
+                close: closeData, using: authority,
+                validateAdmission: {
+                    var rechecked = admissionCompletion
+                    try self.prepareTransportCompletionLocked(&rechecked)
+                }
             )
         } catch let ambiguity as CoordinatorSemanticAppendOutcomeUnknown {
             do {
@@ -393,6 +419,16 @@ public final class CoordinatorRoutingApplication: @unchecked Sendable {
         lastClockNanoseconds = max(lastClockNanoseconds ?? now, now)
     }
 
+    /// Trusted provider adapters may close only the exact pending foreground
+    /// ranked card. Reuses the same authenticated identity, expiry and durable
+    /// retry checks as the operational app, without granting non-head access.
+    /// Due transitions are left to the provider's snapshot/scheduler operation:
+    /// an ordinary refusal must not produce a partial failed core mutation.
+    public func dismissInteraction(_ requestData: Data, closingWith closeData: Data) throws {
+        try dismissInteraction(requestData, closingWith: closeData, allowNonHead: false,
+            processDueTransitions: false, validatePending: {})
+    }
+
     /// Dismissal validates and closes against one authenticated journal
     /// projection. Operational supplies its actor-local delivery/approval
     /// gates; they are not required for an exact already-committed retry.
@@ -400,6 +436,7 @@ public final class CoordinatorRoutingApplication: @unchecked Sendable {
         _ requestData: Data,
         closingWith closeData: Data,
         allowNonHead: Bool,
+        processDueTransitions: Bool = true,
         validatePending: () throws -> Void
     ) throws {
         lock.lock()
@@ -420,7 +457,20 @@ public final class CoordinatorRoutingApplication: @unchecked Sendable {
 
         var conflicts = 0
         while true {
-            try processDueLocked(reconcileTerminalRuntime: false)
+            if processDueTransitions {
+                try processDueLocked(reconcileTerminalRuntime: false)
+            } else {
+                // Preserve the admission-time high water that processDue
+                // normally supplies. Replay can cross expiry or move the
+                // clock behind this sample even when it stays above an older
+                // routing sample. Rejections keep this observation intact.
+                let admission = clock.nowNanoseconds()
+                if admission < (lastClockNanoseconds ?? admission) {
+                    deferredClockRegression = true
+                    foreground = nil
+                }
+                lastClockNanoseconds = max(lastClockNanoseconds ?? admission, admission)
+            }
             let authority = try semantic.authorityProjection()
             removeTerminalRuntimeEntriesLocked(using: authority.state)
             guard let durable = authority.state.boundary(for: binding),
@@ -463,10 +513,18 @@ public final class CoordinatorRoutingApplication: @unchecked Sendable {
             // An authenticated replay may take time. Do not allow that work
             // to carry a card past its monotonic expiry or clock regression.
             let now = clock.nowNanoseconds()
-            if now < (lastClockNanoseconds ?? now)
+            let clockRegressed = now < (lastClockNanoseconds ?? now)
+            if !processDueTransitions {
+                if clockRegressed {
+                    deferredClockRegression = true
+                    foreground = nil
+                }
+                lastClockNanoseconds = max(lastClockNanoseconds ?? now, now)
+            }
+            if deferredClockRegression || clockRegressed
                 || elapsedNanoseconds(from: current.anchorNanoseconds, to: now) >= Self.expiryAfterNanoseconds
             {
-                try processDueLocked(reconcileTerminalRuntime: false)
+                if processDueTransitions { try processDueLocked(reconcileTerminalRuntime: false) }
                 throw CoordinatorError("interaction_not_waiting")
             }
             do {
@@ -474,7 +532,10 @@ public final class CoordinatorRoutingApplication: @unchecked Sendable {
                 // must recheck dismissal's narrower pending/identity guards,
                 // not silently retry just that generic semantic command.
                 _ = try semantic.execute(
-                    command: closeData, using: authority, maxSequenceConflicts: 0
+                    command: closeData, using: authority, maxSequenceConflicts: 0,
+                    validateAdmission: {
+                        _ = try self.pendingAuthorityTimeLocked(current, errorCode: "interaction_not_waiting")
+                    }
                 )
             } catch let error as CoordinatorError where error.code == "journal_sequence_conflict" {
                 guard conflicts < 2 else { throw error }
@@ -561,7 +622,7 @@ public final class CoordinatorRoutingApplication: @unchecked Sendable {
         try requireRestartRecoveryWritableLocked()
 
         let command = try StrictJSONTransport.object(from: commandData)
-        let completion = try StrictJSONTransport.object(from: completionData)
+        var completion = try StrictJSONTransport.object(from: completionData)
         let close = try StrictJSONTransport.object(from: closeData)
         let completionType = try requiredCommandType(completion)
         let closeType = try requiredCommandType(close)
@@ -596,10 +657,23 @@ public final class CoordinatorRoutingApplication: @unchecked Sendable {
             "continuation_action_mismatch"
         )
 
+        // Authority replay may have outlasted the last scheduler tick. Use a
+        // fresh continuous sample for this not-yet-completed transport, never
+        // the Hook's wall time. Leave durable timeout cleanup to the scheduler
+        // so it cannot invalidate this projection or add journal scans here.
+        try prepareTransportCompletionLocked(&completion)
+        let admissionCompletion = completion
+
         do {
             _ = try semantic.executeQueuedActionDelivery(
-                commands: [completionData, closeData, commandData],
-                using: authority
+                commands: [
+                    StrictJSONTransport.data(forJSONObject: completion), closeData, commandData,
+                ],
+                using: authority,
+                validateAdmission: {
+                    var rechecked = admissionCompletion
+                    try self.prepareTransportCompletionLocked(&rechecked)
+                }
             )
         } catch let ambiguity as CoordinatorSemanticAppendOutcomeUnknown {
             do {
@@ -740,12 +814,33 @@ public final class CoordinatorRoutingApplication: @unchecked Sendable {
         defer { lock.unlock() }
         try requireRestartRecoveryWritableLocked()
         try processDueLocked()
+        // The verified journal read above may outlast a pending card. Check
+        // time again before granting focus, without another authority replay.
+        // Even an already-focused identity still goes through that full read.
+        try processDueLocked(reconcileTerminalRuntime: false)
         let target = try routingTarget(from: targetData)
         guard let current = pending[target.binding.fullKey],
               current.identity.matches(target)
         else { throw CoordinatorError("foreground_target_not_pending") }
-        foreground = current.identity
-        return try snapshotLocked()
+        // The second due pass can itself block on another continuation's
+        // timeout append. Check this target after all such work; the success
+        // path below must not do more storage work before granting focus.
+        let now = clock.nowNanoseconds()
+        if now < (lastClockNanoseconds ?? now) || now < current.anchorNanoseconds {
+            try failClosedForClockRegressionLocked()
+            lastClockNanoseconds = now
+            throw CoordinatorError("foreground_target_not_pending")
+        }
+        lastClockNanoseconds = now
+        let elapsed = elapsedNanoseconds(from: current.anchorNanoseconds, to: now)
+        if elapsed < Self.expiryAfterNanoseconds,
+           try current.sealedAt.adding(nanoseconds: elapsed) < current.expiresAt
+        {
+            foreground = current.identity
+            return try snapshotLocked()
+        }
+        try expirePendingLocked(current, reason: "selection_timeout")
+        throw CoordinatorError("foreground_target_not_pending")
     }
 
     public func clearForeground() throws -> CoordinatorRoutingSnapshot {
@@ -786,16 +881,8 @@ public final class CoordinatorRoutingApplication: @unchecked Sendable {
         try require(foreground.matches(supplied), "foreground_interaction_mismatch")
         try require(current.identity.matches(supplied), "foreground_interaction_mismatch")
 
-        let now = clock.nowNanoseconds()
-        let elapsed = elapsedNanoseconds(from: current.anchorNanoseconds, to: now)
-        guard elapsed < Self.expiryAfterNanoseconds else {
-            try expirePendingLocked(current, reason: "selection_timeout")
-            throw CoordinatorError("routing_interaction_expired")
-        }
-        let logicalNow = try current.sealedAt.adding(nanoseconds: elapsed)
-        try require(logicalNow < current.expiresAt, "routing_interaction_expired")
-
-        let state = try CoordinatorSemanticReplay.replay(journal.load())
+        let authority = try semantic.authorityProjection()
+        let state = authority.state
         guard let packet = state.packet(for: binding),
               let optionID = request["option_id"] as? String,
               let choice = packet.choices.first(where: {
@@ -803,6 +890,7 @@ public final class CoordinatorRoutingApplication: @unchecked Sendable {
               })
         else { throw CoordinatorError("decision_option_not_found") }
 
+        let (now, logicalNow) = try pendingAuthorityTimeLocked(current)
         command["occurred_at"] = logicalNow.rawValue
         var inFlightDuration: UInt64?
         if choice.isPetAction {
@@ -827,9 +915,11 @@ public final class CoordinatorRoutingApplication: @unchecked Sendable {
         )
         let result: CoordinatorSemanticExecutionResult
         do {
-            result = try semantic.execute(command: routedCommand)
+            result = try semantic.execute(command: routedCommand, using: authority,
+                validateAdmission: { _ = try self.pendingAuthorityTimeLocked(current) })
             ambiguousSelections.removeValue(forKey: binding.fullKey)
         } catch {
+            let underlying = (error as? CoordinatorSemanticAppendOutcomeUnknown)?.underlying ?? error
             // A concurrent process may have won the semantic CAS after the
             // foreground preflight. Reconcile local authority before surfacing
             // the semantic error so a stale card cannot remain selectable.
@@ -845,7 +935,7 @@ public final class CoordinatorRoutingApplication: @unchecked Sendable {
             } else {
                 ambiguousSelections.removeValue(forKey: binding.fullKey)
                 try? removeTerminalRuntimeEntriesLocked()
-                throw error
+                throw underlying
             }
         }
         pending.removeValue(forKey: binding.fullKey)
@@ -940,6 +1030,7 @@ public final class CoordinatorRoutingApplication: @unchecked Sendable {
         // make progress, so keep a bounded retry instead of falling into the
         // UDS scheduler's 1ms minimum loop.
         if !ambiguousSelections.isEmpty { return 250 }
+        if deferredClockRegression { return 0 }
         guard !pending.isEmpty || !inFlight.isEmpty || !formatRepairs.isEmpty else {
             return nil
         }
@@ -1459,8 +1550,9 @@ private extension CoordinatorRoutingApplication {
 
     func processDueLocked(reconcileTerminalRuntime: Bool = true) throws {
         let now = clock.nowNanoseconds()
-        if let previous = lastClockNanoseconds, now < previous {
+        if deferredClockRegression || lastClockNanoseconds.map({ now < $0 }) == true {
             try failClosedForClockRegressionLocked()
+            deferredClockRegression = false
             lastClockNanoseconds = now
             return
         }
@@ -1521,6 +1613,9 @@ private extension CoordinatorRoutingApplication {
     }
 
     func failClosedForClockRegressionLocked() throws {
+        // Revocation must survive a failed durable cleanup as well.
+        deferredClockRegression = true
+        foreground = nil
         for item in Array(pending.values) {
             try expirePendingLocked(item, reason: "monotonic_clock_regressed")
         }
@@ -1528,13 +1623,16 @@ private extension CoordinatorRoutingApplication {
             try timeoutInFlightLocked(item, reason: "monotonic_clock_regressed")
         }
         formatRepairs.removeAll()
-        foreground = nil
     }
 
     func expirePendingLocked(
         _ item: RoutingPendingInteraction,
         reason: String
     ) throws {
+        // This target is no longer eligible even if verification or expiry
+        // persistence fails. Keep its pending entry until authority proves
+        // how to retire it, but never retain its selection authority.
+        if foreground?.matches(item.identity) == true { foreground = nil }
         let command: [String: Any] = [
             "type": "expire_interaction",
             "event_id": eventIDGenerator("interaction_expiry"),
@@ -1542,28 +1640,48 @@ private extension CoordinatorRoutingApplication {
             "binding": item.identity.binding.jsonObject,
             "reason": reason,
         ]
+        let commandData = try StrictJSONTransport.data(forJSONObject: command)
         var appended = false
-        do {
-            _ = try semantic.execute(command: StrictJSONTransport.data(forJSONObject: command))
-            appended = true
-        } catch {
-            let authority = try authoritativeStateLocked()
-            if authority.boundary(for: item.identity.binding)?.expired == true {
-                // The expiry append may have committed before its response was
-                // lost. The authoritative terminal state still requires one
-                // process-local notice so Operational can resume its waiter.
-                appended = true
-            } else if let coordinatorError = error as? CoordinatorError,
-                      [
-                          "interaction_already_expired", "interaction_already_claimed",
-                          "decision_boundary_closed",
-                      ].contains(coordinatorError.code)
-            {
-                // Another writer made the card terminal for a different
-                // reason. Do not synthesize an expiry notice.
-            } else {
-                throw error
+        var conflicts = 0
+        while true {
+            let authority = try semantic.authorityProjection()
+            guard let boundary = matchingBoundary(for: item.identity, in: authority.state) else {
+                // An external reseal invalidates only this cached revision.
+                // Do not expire, adopt, or notify on behalf of its replacement.
+                break
             }
+            if boundary.expired {
+                appended = true
+                break
+            }
+            guard boundary.isPendingInteraction else { break }
+            do {
+                // Expiry's semantic command addresses a binding, not a
+                // revision. Every CAS retry must recheck the exact identity
+                // here, even if the replacement expires earlier or equally.
+                _ = try semantic.execute(
+                    command: commandData, using: authority, maxSequenceConflicts: 0
+                )
+                appended = true
+            } catch let error as CoordinatorError where error.code == "journal_sequence_conflict" {
+                guard conflicts < 2 else { throw error }
+                conflicts += 1
+                continue
+            } catch let ambiguity as CoordinatorSemanticAppendOutcomeUnknown {
+                // A lost response is recoverable only from fresh verified
+                // authority. Load/MAC/freshness failures still propagate.
+                let recovered = try authoritativeStateLocked()
+                if let boundary = matchingBoundary(for: item.identity, in: recovered) {
+                    if boundary.expired {
+                        appended = true
+                    } else if boundary.isPendingInteraction {
+                        throw ambiguity.underlying
+                    }
+                }
+                // A different revision or a different terminal state only
+                // retires this cached item; it cannot justify an expiry notice.
+            }
+            break
         }
         pending.removeValue(forKey: item.identity.binding.fullKey)
         if foreground?.matches(item.identity) == true { foreground = nil }
@@ -1576,6 +1694,22 @@ private extension CoordinatorRoutingApplication {
                 "revision": item.identity.revision,
             ], binding: item.identity.binding)
         }
+    }
+
+    func matchingBoundary(
+        for identity: RoutingInteractionIdentity,
+        in state: CoordinatorSemanticState
+    ) -> CoordinatorBoundaryState? {
+        guard let boundary = state.boundary(for: identity.binding),
+              let packet = boundary.packet,
+              identity.matches(RoutingInteractionIdentity(
+                  binding: boundary.binding,
+                  interactionID: packet.interactionID,
+                  packetID: packet.packetID,
+                  revision: packet.revision
+              ))
+        else { return nil }
+        return boundary
     }
 
     func timeoutInFlightLocked(
@@ -1632,6 +1766,14 @@ private extension CoordinatorRoutingApplication {
             StrictJSONTransport.data(forJSONObject: packetObject)
         )
         let state = try CoordinatorSemanticReplay.replay(journal.load())
+        // The same binding can have been resealed by a different writer after
+        // our commit. Only the exact committed document owns this local clock
+        // anchor; never combine the replacement identity with the old times.
+        guard state.packet(for: packet.binding)?.canonicalJSON == packet.canonicalJSON else {
+            pending.removeValue(forKey: packet.binding.fullKey)
+            if foreground?.binding.fullKey == packet.binding.fullKey { foreground = nil }
+            throw CoordinatorError("decision_packet_revision_stale")
+        }
         guard let boundary = state.boundary(for: packet.binding),
               boundary.isPendingInteraction,
               let reference = boundary.packet
@@ -1730,7 +1872,7 @@ private extension CoordinatorRoutingApplication {
         else { throw CoordinatorError("routing_format_repair_not_active") }
         let binding = try CoordinatorBinding(jsonObject: envelope)
         try require(binding == authority.binding, "decision_boundary_binding_mismatch")
-        let now = lastClockNanoseconds ?? clock.nowNanoseconds()
+        let now = try authorityNowLocked(or: "routing_format_repair_not_active")
         let elapsed = elapsedNanoseconds(from: authority.anchorNanoseconds, to: now)
         try require(
             elapsed < Self.continuationValidityNanoseconds,
@@ -1751,14 +1893,45 @@ private extension CoordinatorRoutingApplication {
         }
         let binding = try commandBinding(command)
         try require(binding == authority.binding, "decision_boundary_binding_mismatch")
-        let now = lastClockNanoseconds ?? clock.nowNanoseconds()
+        let now = try authorityNowLocked(or: "routing_continuation_not_in_flight")
         let elapsed = elapsedNanoseconds(from: authority.anchorNanoseconds, to: now)
+        try require(elapsed < authority.deadlineAfterNanoseconds,
+            "transport_completion_after_in_flight_deadline")
         let logicalNow = try authority.issuedAt.adding(nanoseconds: elapsed)
         try require(
             logicalNow < authority.deadlineAt,
             "transport_completion_after_in_flight_deadline"
         )
         command["occurred_at"] = logicalNow.rawValue
+    }
+
+    /// Safe inside journal admission: clock/local state only, no nested I/O.
+    /// Latch regression before any fallible cleanup so authority cannot revive
+    /// if the clock later catches up after a failed persistence attempt.
+    func authorityNowLocked(or errorCode: String) throws -> UInt64 {
+        let now = clock.nowNanoseconds()
+        if deferredClockRegression || now < (lastClockNanoseconds ?? now) {
+            deferredClockRegression = true
+            foreground = nil
+            throw CoordinatorError(errorCode)
+        }
+        lastClockNanoseconds = now
+        return now
+    }
+
+    func pendingAuthorityTimeLocked(
+        _ current: RoutingPendingInteraction,
+        errorCode: String = "routing_interaction_expired"
+    ) throws -> (UInt64, RFC3339Instant) {
+        let now = try authorityNowLocked(or: errorCode)
+        let elapsed = elapsedNanoseconds(from: current.anchorNanoseconds, to: now)
+        guard elapsed < Self.expiryAfterNanoseconds else {
+            if foreground?.matches(current.identity) == true { foreground = nil }
+            throw CoordinatorError(errorCode)
+        }
+        let logicalNow = try current.sealedAt.adding(nanoseconds: elapsed)
+        try require(logicalNow < current.expiresAt, errorCode)
+        return (now, logicalNow)
     }
 
     func commandBinding(_ command: [String: Any]) throws -> CoordinatorBinding {
@@ -1775,9 +1948,19 @@ private extension CoordinatorRoutingApplication {
 
     func removeTerminalRuntimeEntriesLocked(using state: CoordinatorSemanticState) {
         let pendingRemovals = pending.compactMap { key, item -> (CoordinatorBindingKey, RoutingPendingInteraction)? in
-            state.pendingInteractions.contains(where: {
-            $0.binding.fullKey == key
-            }) ? nil : (key, item)
+            // Another writer may reseal the same boundary. A pending binding
+            // alone cannot keep authority for its old packet revision alive.
+            guard let boundary = state.boundary(for: item.identity.binding),
+                  boundary.isPendingInteraction,
+                  let packet = boundary.packet,
+                  item.identity.matches(RoutingInteractionIdentity(
+                      binding: boundary.binding,
+                      interactionID: packet.interactionID,
+                      packetID: packet.packetID,
+                      revision: packet.revision
+                  ))
+            else { return (key, item) }
+            return nil
         }
         for (key, item) in pendingRemovals {
             pending.removeValue(forKey: key)

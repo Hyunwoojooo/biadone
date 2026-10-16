@@ -13,6 +13,27 @@ public enum ManagedCodexApprovalTimingPolicy {
     public static let socketResponseTimeoutMilliseconds: Int32 = 135_000
 }
 
+/// Opt-in, payload-free timing at the common actor boundary. The queue span
+/// starts in the nonisolated `handle` body; it excludes upstream socket/provider
+/// queues and any executor hop before that body starts. Handler elapsed time
+/// includes awaited work and is not CPU time or
+/// journal time. Storage/replay probes measure those narrower spans separately.
+public struct CoordinatorOperationalRequestTiming: Sendable, Equatable {
+    public enum Operation: String, Sendable {
+        case focusInteraction = "focus_interaction"
+        case focusEvent = "focus_event"
+        case userPromptSubmit = "user_prompt_submit"
+        case select
+        case getState = "get_state"
+        case other
+    }
+
+    public let operation: Operation
+    public let actorQueueWaitNanoseconds: UInt64
+    public let actorHandlerElapsedNanoseconds: UInt64
+    public let succeeded: Bool
+}
+
 /// Product-level coordinator boundary used by Hook, MCP, and Pet adapters.
 /// Adapters exchange only JSON `Data`; raw continuation envelopes stay inside
 /// this actor and are consumed before any public response is produced.
@@ -118,39 +139,78 @@ public actor CoordinatorOperationalApplication {
         var contextDelivered: Bool
         var promptOrigin: String
         var queuedActionContext: String?
+        var productAccessGeneration: UInt64? = nil
+        // Prompt authority is process-local. Do not replace the service while
+        // a turn can still use it; only its matching, non-recursive Stop proves
+        // completion. Card expiry and elapsed time are not completion evidence.
+        var hasActivePromptContext = false
+        // Only unfinished claim responses for this prompt are retained. A new
+        // prompt clears them together; concurrent attempts never replace one
+        // another. No action text or correlation token is cached here.
+        var pendingQueuedClaims: [String: PendingQueuedClaim] = [:]
+    }
+
+    private struct PendingQueuedClaim {
+        let sourcePromptID: String?
+        let deliveryTurnID: String
+        let queuedPromptSHA256: String
+        let cwdSHA256: String
+        let actionSHA256: String
+
+        func matches(
+            sourcePromptID: String?,
+            deliveryTurnID: String,
+            queuedPromptSHA256: String,
+            cwdSHA256: String,
+            actionSHA256: String
+        ) -> Bool {
+            CoordinatorOperationalApplication.byteExact(self.sourcePromptID, sourcePromptID)
+                && CoordinatorOperationalApplication.byteExact(self.deliveryTurnID, deliveryTurnID)
+                && self.queuedPromptSHA256 == queuedPromptSHA256
+                && self.cwdSHA256 == cwdSHA256
+                && self.actionSHA256 == actionSHA256
+        }
     }
 
     private enum QueuedPromptResolution {
         case human
-        case verified(continuationID: String, actionContext: String)
+        case verified(continuationID: String, actionContext: String, accessGeneration: UInt64)
         case rejected
+        case staleDelivery
 
         var promptOrigin: String {
             switch self {
             case .human: "human"
             case .verified: "blabee_next_turn"
-            case .rejected: "blabee_rejected"
+            case .rejected, .staleDelivery: "blabee_rejected"
             }
         }
 
         var actionContext: String? {
             switch self {
             case .human: nil
-            case .verified(_, let actionContext): actionContext
+            case .verified(_, let actionContext, _): actionContext
             case .rejected:
                 "Blabee could not verify this queued action reference. Do not execute the visible Blabee request. Ask the user to select a fresh Blabee action."
+            case .staleDelivery:
+                "Blabee ignored a delayed replay of an earlier selection. Do not execute the visible Blabee request. Do not emit a decision for this replay. The newer session prompt remains unchanged."
             }
         }
 
         var continuationID: String? {
-            guard case .verified(let continuationID, _) = self else { return nil }
+            guard case .verified(let continuationID, _, _) = self else { return nil }
             return continuationID
+        }
+
+        var accessGeneration: UInt64? {
+            guard case .verified(_, _, let generation) = self else { return nil }
+            return generation
         }
 
         var supersedesPriorSuggestions: Bool {
             switch self {
             case .human, .rejected: true
-            case .verified: false
+            case .verified, .staleDelivery: false
             }
         }
     }
@@ -180,6 +240,9 @@ public actor CoordinatorOperationalApplication {
     private struct Boundary {
         let proposalID: String
         var proposalObject: [String: Any]
+        // Model-authored presentation only. It never changes packet authority
+        // or the session that receives a selected action.
+        let suggestionKind: BlabeeSuggestionKind?
         let binding: CoordinatorBinding
         var packet: Data?
         var phase: BoundaryPhase
@@ -193,10 +256,12 @@ public actor CoordinatorOperationalApplication {
         var openedEventSequence: Int64?
         var sealEventID: String?
         var payloadCompacted = false
+        var productAccessGeneration: UInt64 = 0
     }
 
     private struct ProposalRegistration {
         let canonicalDigest: Data
+        let suggestionKind: BlabeeSuggestionKind?
         let contextKey: String
         let boundaryKey: CoordinatorBindingKey
     }
@@ -226,6 +291,7 @@ public actor CoordinatorOperationalApplication {
         let continuation: CheckedContinuation<Data, any Error>
         let timeoutTask: Task<Void, Never>
         var deliveryToken: String?
+        var productAccessGeneration: UInt64 = 0
 
         var allowOnceAvailable: Bool {
             HookPermissionPolicy.allowsOnce(qualification: allowOnceQualification)
@@ -354,6 +420,7 @@ public actor CoordinatorOperationalApplication {
         let continuation: CheckedContinuation<Data, any Error>
         let timeoutTask: Task<Void, Never>
         var deliveryToken: String?
+        var productAccessGeneration: UInt64 = 0
 
         var snapshotObject: [String: Any] {
             var result = binding.snapshotObject
@@ -410,8 +477,13 @@ public actor CoordinatorOperationalApplication {
     private let idGenerator: IDGenerator
     private let wallInstantGenerator: WallInstantGenerator
     private let monotonicInstantGenerator: MonotonicInstantGenerator
+    private nonisolated let requestTimingClock: MonotonicInstantGenerator
+    private nonisolated let requestTimingObserver:
+        (@Sendable (CoordinatorOperationalRequestTiming) -> Void)?
     private let stopObservationHMACKey: Data
     private let nextTurnDispatcher: CoordinatorNextTurnDispatcher
+    private let dispatchDiagnosticBuffer: CoordinatorDispatchDiagnosticBuffer?
+    private let dispatchDiagnosticFailureObserver: @Sendable () -> Void
     private let permissionRequestTimeoutNanoseconds: UInt64
     private let permissionLifecycleObserver: @Sendable (HookPermissionLifecycleEvent) -> Void
     private let permissionRequestDeliveryTimeoutNanoseconds: UInt64
@@ -458,6 +530,9 @@ public actor CoordinatorOperationalApplication {
     private var lastReconciliationErrorCode: String?
     private var foregroundAuthorityRecoveryBinding: CoordinatorBindingKey?
     private var pendingPetEventOrder: [PetEventIdentity] = []
+    private let petArrivalLedger: PetEventArrivalLedger
+    private let productAccessCheck: @Sendable () throws -> UInt64
+    private let productAccessEnforced: Bool
     private var explicitlyFocusedPetEvent: PetEventIdentity?
     private var hasExplicitPetEventFocus = false
     private var petEventNavigationRevision: Int64 = 0
@@ -483,12 +558,29 @@ public actor CoordinatorOperationalApplication {
         managedCommandApprovalTimeoutNanoseconds: UInt64 =
             ManagedCodexApprovalTimingPolicy.userDecisionTimeoutNanoseconds,
         managedCommandApprovalDeliveryTimeoutNanoseconds: UInt64 = 10_000_000_000,
-        maximumPendingManagedCommandApprovals: Int = 8
+        maximumPendingManagedCommandApprovals: Int = 8,
+        petArrivalLedger: PetEventArrivalLedger = PetEventArrivalLedger(),
+        requestTimingClock: @escaping MonotonicInstantGenerator = {
+            DispatchTime.now().uptimeNanoseconds
+        },
+        requestTimingObserver: (@Sendable (CoordinatorOperationalRequestTiming) -> Void)? = nil,
+        productAccessCheck: (@Sendable () throws -> UInt64)? = nil,
+        nextTurnDispatchRecorder: CoordinatorNextTurnDispatchRecording? = nil,
+        dispatchDiagnosticFailureObserver: @escaping @Sendable () -> Void = {}
     ) {
         let ids: IDGenerator = idGenerator ?? { purpose in
             "\(purpose)_\(UUID().uuidString.lowercased())"
         }
         self.routing = routing
+        self.dispatchDiagnosticBuffer = nextTurnDispatchRecorder.map {
+            CoordinatorDispatchDiagnosticBuffer(recorder: $0, onFailure: dispatchDiagnosticFailureObserver)
+        }
+        self.dispatchDiagnosticFailureObserver = dispatchDiagnosticFailureObserver
+        self.requestTimingClock = requestTimingClock
+        self.requestTimingObserver = requestTimingObserver
+        self.petArrivalLedger = petArrivalLedger
+        self.productAccessCheck = productAccessCheck ?? { 0 }
+        self.productAccessEnforced = productAccessCheck != nil
         self.suggestionMode = suggestionMode
         self.secretCorpus = secretCorpus
         self.idGenerator = ids
@@ -591,9 +683,65 @@ public actor CoordinatorOperationalApplication {
         ])
     }
 
+    private func updateStatus(payload: Data) throws -> Data {
+        let request = try StrictJSONTransport.object(from: payload)
+        try require(request.isEmpty, "update_status_payload_invalid")
+        // Update is infrequent and may replace the service. Validate durable
+        // authority here instead of inferring safety from a cached UI snapshot.
+        let authority = try routing.authoritativeState()
+        let now = try wallInstantGenerator()
+        let approvals = pendingPermissionRequests.count + pendingManagedCommandApprovals.count
+        let deliveries = pendingPermissionRequestDeliveries.count + pendingManagedCommandApprovalDeliveries.count
+        let cards = boundaries.values.filter { !$0.phase.isTerminal }.count
+        let queued = authority.continuations.values.filter {
+            $0.dispatchMode == "queued_next_turn" && $0.queuedActionContextClaim == nil
+                && $0.consumedAt != nil && now < $0.expiresAt
+        }.count
+        let reconciliation = pendingInitialActivations.count + pendingCompletionClosures.count
+        let pendingClaims = sessions.values.reduce(0) { $0 + $1.pendingQueuedClaims.count }
+        let promptContexts = sessions.values.filter(\.hasActivePromptContext).count
+        return try publicData([
+            "schema_version": "1.0", "kind": "blabee_update_status",
+            "ready": approvals + deliveries + cards + queued + reconciliation + pendingClaims + promptContexts == 0,
+            "pending_approvals": approvals, "pending_deliveries": deliveries,
+            "pending_cards": cards, "pending_queued_actions": queued,
+            "pending_reconciliation": reconciliation, "pending_claim_responses": pendingClaims,
+            "pending_prompt_contexts": promptContexts,
+        ])
+    }
+
     /// Handles only high-level operational requests. Low-level semantic
     /// commands are deliberately not exposed through this dispatch surface.
-    public func handle(type: String, payload: Data) async throws -> Data {
+    public nonisolated func handle(type: String, payload: Data) async throws -> Data {
+        // No extra clock reads or telemetry when the optional probe is absent.
+        let enqueuedAt = requestTimingObserver == nil ? nil : requestTimingClock()
+        return try await handleOnActor(type: type, payload: payload, enqueuedAt: enqueuedAt)
+    }
+
+    private func handleOnActor(type: String, payload: Data, enqueuedAt: UInt64?) async throws -> Data {
+        guard let enqueuedAt, let observer = requestTimingObserver else {
+            return try await handleActorRequest(type: type, payload: payload)
+        }
+        let enteredAt = requestTimingClock()
+        var succeeded = false
+        defer {
+            let finishedAt = requestTimingClock()
+            observer(CoordinatorOperationalRequestTiming(
+                operation: .init(rawValue: type) ?? .other,
+                actorQueueWaitNanoseconds: enteredAt >= enqueuedAt ? enteredAt - enqueuedAt : 0,
+                actorHandlerElapsedNanoseconds: finishedAt >= enteredAt ? finishedAt - enteredAt : 0,
+                succeeded: succeeded
+            ))
+        }
+        let response = try await handleActorRequest(type: type, payload: payload)
+        succeeded = true
+        return response
+    }
+
+    private func handleActorRequest(type: String, payload: Data) async throws -> Data {
+        // Called while the updater holds the ingress fence. This observation
+        // must not expire cards, reconcile work, or create a queued claim.
+        if type == "update_status" { return try updateStatus(payload: payload) }
         defer { compactTerminalPayloads() }
         // A delayed timer must not leave an expired card selectable. This is
         // process-local cleanup and never advances the journal/freshness clock.
@@ -711,6 +859,7 @@ public actor CoordinatorOperationalApplication {
 
     public func processTime() async throws -> [Data] {
         defer { compactTerminalPayloads() }
+        expireApprovalsWithoutProductAccess()
         guard !routing.recoveryStatus().isQuarantined else {
             throw CoordinatorError("routing_restart_unsealed_boundary_quarantined")
         }
@@ -776,6 +925,8 @@ public actor CoordinatorOperationalApplication {
         _ error: Error,
         awaitingForegroundAuthority binding: CoordinatorBindingKey? = nil
     ) {
+        // Account policy is not evidence of a corrupt or unavailable journal.
+        if error.coordinatorError.code.hasPrefix("product_access_") { return }
         if let binding {
             foregroundAuthorityRecoveryBinding = binding
         }
@@ -901,13 +1052,7 @@ public actor CoordinatorOperationalApplication {
     ) -> CoordinatorBindingKey? {
         do {
             let wrapper = try StrictJSONTransport.object(from: payload)
-            try exactKeys(
-                wrapper,
-                required: [
-                    "project_id", "session_id", "source_turn_id", "source_prompt_id",
-                    "episode_id", "correlation_token", "proposal",
-                ]
-            )
+            let suggestionKind = try validateSuggestionWrapper(wrapper)
             guard let proposal = wrapper["proposal"] as? [String: Any] else {
                 return nil
             }
@@ -919,6 +1064,7 @@ public actor CoordinatorOperationalApplication {
             let proposalID = try identifier(string(proposal, "proposal_id"), "proposal_id")
             guard let registration = registrations[proposalID],
                   registration.canonicalDigest == Data(SHA256.hash(data: canonical)),
+                  registration.suggestionKind == suggestionKind,
                   quarantinedInitialActivations[registration.boundaryKey] != nil
             else { return nil }
             let contextKey = [
@@ -1118,6 +1264,10 @@ public actor CoordinatorOperationalApplication {
             return
         }
         try require(boundary.phase == .activating, "proposal_retry_state_missing")
+        guard productAccessMatches(boundary) else {
+            try discardUnstartedProductBoundary(boundaryKey)
+            return
+        }
         do {
             try activate(&boundary)
             boundary.acceptance = try acceptanceData(boundary)
@@ -1127,6 +1277,10 @@ public actor CoordinatorOperationalApplication {
             // regenerates authority after a failed or ambiguous response.
             retainBoundary(boundary, for: boundaryKey)
             let errorCode = reconciliationErrorCode(error)
+            if errorCode.hasPrefix("product_access_") {
+                try discardUnstartedProductBoundary(boundaryKey)
+                return
+            }
             let maximumAttempts = Self.transientInitialActivationErrorCodes.contains(errorCode)
                 ? Self.maximumTransientInitialActivationAttempts
                 : Self.maximumPermanentInitialActivationAttempts
@@ -1169,6 +1323,11 @@ public actor CoordinatorOperationalApplication {
         }
         do {
             if staged.phase == .staged {
+                guard productAccessMatches(staged) else {
+                    try discardUnstartedProductBoundary(stagedKey)
+                    if activeByTurn[turnKey] == terminalKey { activeByTurn.removeValue(forKey: turnKey) }
+                    return
+                }
                 try activate(&staged)
                 staged.acceptance = try acceptanceData(staged)
             }
@@ -1181,6 +1340,10 @@ public actor CoordinatorOperationalApplication {
         // The originating Codex answer has already finished. A promoted
         // successor therefore becomes selectable immediately instead of
         // waiting for another Stop invocation from that old turn.
+        guard productAccessMatches(staged) else {
+            try discardUnstartedProductBoundary(stagedKey)
+            return
+        }
         staged.phase = .waiting
         retainBoundary(staged, for: stagedKey)
         registerPendingDecisionEvent(staged)
@@ -1192,15 +1355,25 @@ public actor CoordinatorOperationalApplication {
 // MARK: - Hook and MCP operations
 
 private extension CoordinatorOperationalApplication {
+    /// Extends the operational wrapper, not the frozen v1 proposal or packet.
+    /// Omission preserves legacy calls without attesting their suggestion kind.
+    func validateSuggestionWrapper(_ wrapper: [String: Any]) throws -> BlabeeSuggestionKind? {
+        var keys: Set<String> = [
+            "project_id", "session_id", "source_turn_id", "source_prompt_id",
+            "episode_id", "correlation_token", "proposal",
+        ]
+        if wrapper["suggestion_kind"] != nil { keys.insert("suggestion_kind") }
+        try exactKeys(wrapper, required: keys)
+        guard let rawKind = wrapper["suggestion_kind"] else { return nil }
+        guard let value = rawKind as? String,
+              let kind = BlabeeSuggestionKind(rawValue: value)
+        else { throw CoordinatorError("invalid_suggestion_kind") }
+        return kind
+    }
+
     func validateEmitDecisionAuthority(_ data: Data) throws {
         let wrapper = try StrictJSONTransport.object(from: data)
-        try exactKeys(
-            wrapper,
-            required: [
-                "project_id", "session_id", "source_turn_id", "source_prompt_id",
-                "episode_id", "correlation_token", "proposal",
-            ]
-        )
+        _ = try validateSuggestionWrapper(wrapper)
         let projectID = try identifier(string(wrapper, "project_id"), "project_id")
         let sessionID = try identifier(string(wrapper, "session_id"), "session_id")
         let turnID = try identifier(string(wrapper, "source_turn_id"), "source_turn_id")
@@ -1292,6 +1465,9 @@ private extension CoordinatorOperationalApplication {
         let sessionID = try identifier(string(payload, "session_id"), "session_id")
         let turnID = try identifier(string(payload, "turn_id"), "turn_id")
         let prompt = try string(payload, "prompt")
+        if case .human = QueuedPromptEnvelope.classify(prompt), (try? productAccessCheck()) == nil {
+            return try publicData(["enabled": false])
+        }
         let cwd = try Self.normalizedPath(try string(payload, "cwd"))
         guard let project = project(containing: cwd), project.enabled else {
             return try publicData(["enabled": false])
@@ -1303,13 +1479,6 @@ private extension CoordinatorOperationalApplication {
         )
 
         let promptDigest = Data(SHA256.hash(data: Data(prompt.utf8)))
-        // Codex may canonically decompose queued command-line text before the
-        // queue receipt returns. Use NFC only to recognize that in-flight
-        // transport; retries and durable claims remain bound to the exact Hook
-        // prompt bytes through `promptDigest` and `queuedPromptSHA256`.
-        let promptRecognitionDigest = Data(SHA256.hash(
-            data: Data(prompt.precomposedStringWithCanonicalMapping.utf8)
-        ))
         if Self.byteExact(session.latestTurnID, turnID) {
             try require(Self.byteExact(session.path, cwd), "user_prompt_retry_conflict")
             try require(session.promptDigest == promptDigest, "user_prompt_retry_conflict")
@@ -1325,82 +1494,45 @@ private extension CoordinatorOperationalApplication {
                 "identifiers": try publicIdentifiers(session: session),
             ])
         }
-        var promptResolution: QueuedPromptResolution?
-        if let previousTurn = session.latestTurnID {
-            let key = CoordinatorTurnKey(
+        let previousTurnKey = session.latestTurnID.map {
+            CoordinatorTurnKey(
                 projectID: session.projectID,
                 sessionID: sessionID,
-                sourceTurnID: previousTurn
+                sourceTurnID: $0
             )
-            if let activeKey = activeByTurn[key],
-               let active = boundaries[activeKey]
-            {
-                switch active.phase {
-                case .dispatched:
-                    // `codex queue` can invoke UserPromptSubmit before its
-                    // command returns the queue receipt. Only the exact prompt
-                    // that this boundary queued is authority that its transport
-                    // happened. An unrelated human prompt may start normally,
-                    // while the old dispatch remains owned by its receipt,
-                    // failure, or timeout path.
-                    if active.expectedQueuedPromptDigest == promptRecognitionDigest {
-                        guard active.nextTurnDispatchPhase == .inFlight
-                                || active.nextTurnDispatchPhase == .accepted
-                        else { throw CoordinatorError("session_decision_boundary_active") }
-                        let resolution = try queuedPromptResolution(
-                            prompt: prompt,
-                            sessionID: sessionID,
-                            turnID: turnID,
-                            cwd: cwd,
-                            completingInFlightBoundary: activeKey
-                        )
-                        if case .verified = resolution {
-                            if var completed = boundaries[activeKey] {
-                                completed.phase = .closed
-                                retainBoundary(completed, for: activeKey)
-                            }
-                            try promoteStagedAfterRecoveredTerminal(
-                                turnKey: key,
-                                terminalKey: activeKey
-                            )
-                            pendingCompletionClosures.remove(activeKey)
-                        }
-                        promptResolution = resolution
-                    } else {
-                        let resolution = try queuedPromptResolution(
-                            prompt: prompt,
-                            sessionID: sessionID,
-                            turnID: turnID,
-                            cwd: cwd
-                        )
-                        promptResolution = resolution
-                    }
-                case .closed, .paused, .expired:
-                    activeByTurn.removeValue(forKey: key)
-                case .sealed, .waiting:
-                    let resolution = try queuedPromptResolution(
-                        prompt: prompt,
-                        sessionID: sessionID,
-                        turnID: turnID,
-                        cwd: cwd
-                    )
-                    promptResolution = resolution
-                case .activating, .staged:
-                    throw CoordinatorError("session_decision_boundary_active")
-                }
-            }
         }
-
-        let queuedResolution: QueuedPromptResolution
-        if let promptResolution {
-            queuedResolution = promptResolution
-        } else {
-            queuedResolution = try queuedPromptResolution(
-                prompt: prompt,
-                sessionID: sessionID,
-                turnID: turnID,
-                cwd: cwd
-            )
+        if let previousTurnKey,
+           let activeKey = activeByTurn[previousTurnKey],
+           let active = boundaries[activeKey],
+           active.phase == .activating || active.phase == .staged
+        {
+            throw CoordinatorError("session_decision_boundary_active")
+        }
+        let queuedResolution = try queuedPromptResolution(
+            prompt: prompt,
+            projectID: session.projectID,
+            sessionID: sessionID,
+            turnID: turnID,
+            cwd: cwd,
+            hasCurrentPrompt: session.latestTurnID != nil
+        )
+        if case .staleDelivery = queuedResolution {
+            // A durable claim can recover a lost response after restart, but
+            // it must not turn an old delivery retry into a new active prompt.
+            // Return no action or Hook identifiers, and preserve the current
+            // prompt, pending cards, and native approval requests.
+            return try publicData([
+                "enabled": true,
+                "prompt_origin": queuedResolution.promptOrigin,
+                "additionalContext": queuedResolution.actionContext!,
+            ])
+        }
+        if let previousTurnKey,
+           let activeKey = activeByTurn[previousTurnKey],
+           let active = boundaries[activeKey],
+           active.phase.isTerminal
+        {
+            activeByTurn.removeValue(forKey: previousTurnKey)
         }
         if queuedResolution.supersedesPriorSuggestions {
             try supersedeSessionSuggestionsForNewPrompt(
@@ -1439,8 +1571,11 @@ private extension CoordinatorOperationalApplication {
         session.correlationToken = correlationToken
         session.promptDigest = promptDigest
         session.contextDelivered = true
+        session.hasActivePromptContext = true
         session.promptOrigin = queuedResolution.promptOrigin
         session.queuedActionContext = queuedResolution.actionContext
+        session.productAccessGeneration = queuedResolution.accessGeneration
+        session.pendingQueuedClaims.removeAll()
         let response = try promptContext(session: session)
         sessions[sessionID] = session
         recordRecentSnapshotSession(sessionID)
@@ -1486,14 +1621,9 @@ private extension CoordinatorOperationalApplication {
     }
 
     func emitDecision(_ data: Data) throws -> Data {
+        let accessGeneration = try productAccessCheck()
         let wrapper = try StrictJSONTransport.object(from: data)
-        try exactKeys(
-            wrapper,
-            required: [
-                "project_id", "session_id", "source_turn_id", "source_prompt_id",
-                "episode_id", "correlation_token", "proposal",
-            ]
-        )
+        let suggestionKind = try validateSuggestionWrapper(wrapper)
         let projectID = try identifier(string(wrapper, "project_id"), "project_id")
         let sessionID = try identifier(string(wrapper, "session_id"), "session_id")
         let turnID = try identifier(string(wrapper, "source_turn_id"), "source_turn_id")
@@ -1547,6 +1677,7 @@ private extension CoordinatorOperationalApplication {
         )
         if let existing = registrations[proposalID] {
             try require(existing.canonicalDigest == Data(SHA256.hash(data: canonical)), "proposal_id_conflict")
+            try require(existing.suggestionKind == suggestionKind, "proposal_id_conflict")
             try require(existing.contextKey.utf8.elementsEqual(contextKey.utf8), "proposal_id_conflict")
             if let terminal = boundaries[existing.boundaryKey], terminal.payloadCompacted {
                 // Exact retries remain byte-identical after compaction. Only
@@ -1609,6 +1740,7 @@ private extension CoordinatorOperationalApplication {
         var boundary = Boundary(
             proposalID: proposalID,
             proposalObject: proposal,
+            suggestionKind: suggestionKind,
             binding: binding,
             packet: nil,
             phase: phase,
@@ -1622,6 +1754,7 @@ private extension CoordinatorOperationalApplication {
             openedEventSequence: nil,
             sealEventID: nil
         )
+        boundary.productAccessGeneration = accessGeneration
         if phase == .staged {
             boundary.acceptance = try publicData([
                 "accepted": true,
@@ -1638,6 +1771,7 @@ private extension CoordinatorOperationalApplication {
             activeByTurn[turnKey] = key
             registrations[proposalID] = ProposalRegistration(
                 canonicalDigest: Data(SHA256.hash(data: canonical)),
+                suggestionKind: suggestionKind,
                 contextKey: contextKey,
                 boundaryKey: key
             )
@@ -1651,6 +1785,7 @@ private extension CoordinatorOperationalApplication {
         retainBoundary(boundary, for: key)
         registrations[proposalID] = ProposalRegistration(
             canonicalDigest: Data(SHA256.hash(data: canonical)),
+            suggestionKind: suggestionKind,
             contextKey: contextKey,
             boundaryKey: key
         )
@@ -1756,6 +1891,9 @@ private extension CoordinatorOperationalApplication {
             permissionLifecycleObserver(.noLiveConsumer)
             return try permissionHookResponse(decision: "defer_to_codex")
         }
+        guard let accessGeneration = try? productAccessCheck() else {
+            return try permissionHookResponse(decision: "defer_to_codex")
+        }
         try require(
             pendingPermissionRequests.count < maximumPendingPermissionRequests,
             "permission_request_capacity_exceeded"
@@ -1811,7 +1949,8 @@ private extension CoordinatorOperationalApplication {
                     timeoutNanoseconds: timeoutNanoseconds,
                     continuation: continuation,
                     timeoutTask: timeoutTask,
-                    deliveryToken: nil
+                    deliveryToken: nil,
+                    productAccessGeneration: accessGeneration
                 ))
                 registerPendingPetEvent(.init(kind: .permission, eventID: requestID))
                 permissionLifecycleObserver(isNativeSubagent ? .admittedSubagent : .admittedRoot)
@@ -1915,6 +2054,10 @@ private extension CoordinatorOperationalApplication {
             throw CoordinatorError("permission_request_binding_invalid")
         }
 
+        if decision == "allow_once" {
+            let generation = try productAccessCheck()
+            try require(generation == head.productAccessGeneration, "product_access_changed")
+        }
         let deliveryToken = try permissionRequestDeliveryToken(
             idGenerator("permission_request_delivery")
         )
@@ -2015,6 +2158,7 @@ private extension CoordinatorOperationalApplication {
     private func expireApprovalsWithoutLivePetConsumer(
         at nowNanoseconds: UInt64
     ) {
+        expireApprovalsWithoutProductAccess()
         guard !petConsumerLeaseIsLive(at: nowNanoseconds) else { return }
         let invalidatesLeaseTimer = lastPetConsumerHeartbeatNanoseconds != nil
             || petConsumerLeaseExpiryTask != nil
@@ -2418,6 +2562,9 @@ private extension CoordinatorOperationalApplication {
             "managed_command_approval_invalid"
         )
         let binding = try managedCommandApprovalBinding(payload)
+        guard let accessGeneration = try? productAccessCheck() else {
+            return try managedCommandApprovalOutcome(decision: "decide_in_codex")
+        }
         let approvalAdmissionInstant = monotonicInstantGenerator()
         expireApprovalsWithoutLivePetConsumer(at: approvalAdmissionInstant)
         guard petConsumerLeaseIsLive(at: approvalAdmissionInstant) else {
@@ -2491,7 +2638,8 @@ private extension CoordinatorOperationalApplication {
                     binding: binding,
                     continuation: continuation,
                     timeoutTask: timeoutTask,
-                    deliveryToken: nil
+                    deliveryToken: nil,
+                    productAccessGeneration: accessGeneration
                 ))
                 registerPendingPetEvent(.init(kind: .managed, eventID: managedRequestID))
             }
@@ -2584,6 +2732,8 @@ private extension CoordinatorOperationalApplication {
             "managed_command_approval_binding_mismatch"
         )
         if decision == "accept_once" {
+            let generation = try productAccessCheck()
+            try require(generation == head.productAccessGeneration, "product_access_changed")
             try require(
                 head.binding.allowOnceAvailable,
                 "managed_command_approval_decision_unavailable"
@@ -2659,6 +2809,7 @@ private extension CoordinatorOperationalApplication {
         }), pendingManagedCommandApprovals[index].deliveryToken == nil
         else { return }
         let request = pendingManagedCommandApprovals.remove(at: index)
+        request.timeoutTask.cancel()
         do {
             request.continuation.resume(
                 returning: try managedCommandApprovalOutcome(
@@ -3097,6 +3248,9 @@ private extension CoordinatorOperationalApplication {
         guard Self.byteExact(session.latestTurnID, turnID) else {
             return try publicData(["status": "no_proposal"])
         }
+        if !activeFlag {
+            sessions[sessionID]?.hasActivePromptContext = false
+        }
         let turnKey = CoordinatorTurnKey(
             projectID: session.projectID,
             sessionID: sessionID,
@@ -3130,6 +3284,10 @@ private extension CoordinatorOperationalApplication {
         guard boundary.phase == .sealed else {
             return try publicData(["status": "decision_wait_already_active"])
         }
+        guard productAccessMatches(boundary) else {
+            try discardUnstartedProductBoundary(key)
+            return try publicData(["status": "no_proposal"])
+        }
         boundary.phase = .waiting
         retainBoundary(boundary, for: key)
         registerPendingDecisionEvent(boundary)
@@ -3142,6 +3300,7 @@ private extension CoordinatorOperationalApplication {
     }
 
     private func registerPendingPetEvent(_ identity: PetEventIdentity) {
+        petArrivalLedger.record(scopeID: "codex-primary", kind: identity.kind.rawValue, eventID: identity.eventID)
         if !pendingPetEventOrder.contains(identity) {
             pendingPetEventOrder.append(identity)
         }
@@ -3257,6 +3416,9 @@ private extension CoordinatorOperationalApplication {
         for identity in decisionIdentities + permissionIdentities + managedIdentities {
             registerPendingPetEvent(identity)
         }
+        petArrivalLedger.retain(scopeID: "codex-primary", eventKeys: Set(live.map {
+            PetEventArrivalLedger.Key(scopeID: "codex-primary", kind: $0.kind.rawValue, eventID: $0.eventID)
+        }))
 
         let focused: PetEventIdentity?
         if hasExplicitPetEventFocus {
@@ -3478,6 +3640,10 @@ private extension CoordinatorOperationalApplication {
         }
         let isPetAction = choiceKind == "recommended_action" || choiceKind == "alternative_action"
         let isPause = choiceKind == "pause"
+        let accessGeneration = isPause ? boundary.productAccessGeneration : try productAccessCheck()
+        if !isPause {
+            try require(accessGeneration == boundary.productAccessGeneration, "product_access_changed")
+        }
 
         var request = boundary.binding.jsonObject
         request["schema_version"] = "1.0"
@@ -3547,6 +3713,11 @@ private extension CoordinatorOperationalApplication {
             boundary.continuationID = continuationID
             boundary.nextTurnDispatchPhase = .failed
             retainBoundary(boundary, for: candidate.key)
+            if let continuationID {
+                recordNextTurnDispatch(continuationID: continuationID, sessionID: sessionID,
+                    outcome: .failed, failure: .init(code: error.coordinatorError.code,
+                        stage: .unknown, commandInvocationAttempted: false, elapsedMilliseconds: 0))
+            }
             throw error
         }
         guard let envelope, let continuationID,
@@ -3571,7 +3742,13 @@ private extension CoordinatorOperationalApplication {
         retainBoundary(boundary, for: candidate.key)
 
         let receipt: CoordinatorNextTurnDispatchReceipt
+        let dispatchStarted = requestTimingClock()
+        var dispatcherEntered = false
+        recordNextTurnDispatch(continuationID: continuationID, sessionID: sessionID, outcome: .started)
         do {
+            let dispatchGeneration = try productAccessCheck()
+            try require(dispatchGeneration == accessGeneration, "product_access_changed")
+            dispatcherEntered = true
             receipt = try await nextTurnDispatcher(CoordinatorNextTurnDispatchRequest(
                 sessionID: sessionID,
                 message: message,
@@ -3584,11 +3761,21 @@ private extension CoordinatorOperationalApplication {
                 current.nextTurnDispatchPhase = .failed
                 retainBoundary(current, for: candidate.key)
             }
-            if let coordinatorError = error as? CoordinatorError {
-                throw coordinatorError
-            }
-            throw CoordinatorError("next_turn_dispatch_failed")
+            let coordinatorError = (error as? CoordinatorError) ?? CoordinatorError("next_turn_dispatch_failed")
+            let end = requestTimingClock()
+            let elapsed = end >= dispatchStarted ? (end - dispatchStarted) / 1_000_000 : 0
+            let diagnostic = coordinatorError.dispatchFailure ?? .init(
+                code: coordinatorError.code, stage: dispatcherEntered ? .unknown : .access,
+                commandInvocationAttempted: dispatcherEntered,
+                elapsedMilliseconds: Int64(min(elapsed, 86_400_000)))
+            recordNextTurnDispatch(continuationID: continuationID, sessionID: sessionID,
+                outcome: .failed, failure: diagnostic)
+            throw CoordinatorError(coordinatorError.code, coordinatorError.message,
+                                   dispatchFailure: diagnostic)
         }
+
+        recordNextTurnDispatch(continuationID: continuationID, sessionID: sessionID,
+                              outcome: .accepted, queuedSubmissionID: receipt.queuedSubmissionID)
 
         if var current = boundaries[candidate.key] {
             current.nextTurnDispatchPhase = .accepted
@@ -3610,6 +3797,24 @@ private extension CoordinatorOperationalApplication {
                 "queued_submission_id": receipt.queuedSubmissionID,
             ],
         ])
+    }
+
+    private func recordNextTurnDispatch(
+        continuationID: String, sessionID: String, outcome: CoordinatorNextTurnDispatchRecord.Outcome,
+        failure: CoordinatorNextTurnDispatchFailure? = nil, queuedSubmissionID: String? = nil
+    ) {
+        guard let dispatchDiagnosticBuffer else { return }
+        do {
+            let record = CoordinatorNextTurnDispatchRecord(continuationID: continuationID,
+                sessionID: sessionID, occurredAt: try wallInstantGenerator().rawValue,
+                outcome: outcome, failure: failure, queuedSubmissionID: queuedSubmissionID)
+            try secretCorpus.assertNoKnownSecret(in: JSONEncoder().encode(record))
+            try dispatchDiagnosticBuffer.enqueue(record)
+        } catch {
+            // Diagnostics cannot turn an accepted queue request into a failure
+            // or cause a retry. The authenticated journal retains its own state.
+            dispatchDiagnosticFailureObserver()
+        }
     }
 
     func complete(boundaryKey: CoordinatorBindingKey) throws {
@@ -3737,12 +3942,56 @@ private extension CoordinatorOperationalApplication {
             return
         }
     }
+
+    private func productAccessMatches(_ boundary: Boundary) -> Bool {
+        (try? productAccessCheck()) == boundary.productAccessGeneration
+    }
+
+    private func expireApprovalsWithoutProductAccess() {
+        guard productAccessEnforced,
+              !pendingPermissionRequests.isEmpty || !pendingManagedCommandApprovals.isEmpty else { return }
+        let generation = try? productAccessCheck()
+        // Return unanswered approvals to their provider. Delivery receipts for
+        // decisions already exposed are preserved and may still be acknowledged.
+        for id in pendingPermissionRequests.filter({ $0.deliveryToken == nil && $0.productAccessGeneration != generation }).map(\.requestID) {
+            expirePermissionRequest(requestID: id, reason: .bindingInvalidated)
+        }
+        for id in pendingManagedCommandApprovals.filter({ $0.deliveryToken == nil && $0.productAccessGeneration != generation }).map(\.managedRequestID) {
+            expireManagedCommandApproval(managedRequestID: id)
+        }
+    }
+
+    /// Only work which has not been dispatched is retired here. A permission
+    /// change must never promote a cached successor or replay a lost selection.
+    /// Durable closure still uses the normal journal integrity/freshness path.
+    private func discardUnstartedProductBoundary(_ key: CoordinatorBindingKey) throws {
+        guard var boundary = boundaries[key],
+              [.staged, .activating, .sealed, .waiting].contains(boundary.phase) else { return }
+        if boundary.openEventID != nil {
+            let authority = try routing.authoritativeState()
+            if let existing = authority.boundary(for: boundary.binding), !existing.closed {
+                try closeTerminalBoundaryIdempotently(&boundary, reason: "product_access_revoked")
+            }
+        }
+        boundary.phase = .closed
+        retainBoundary(boundary, for: key)
+        pendingInitialActivations.remove(key)
+        initialActivationFailures.removeValue(forKey: key)
+        quarantinedInitialActivations.removeValue(forKey: key)
+        if stagedByTurn[boundary.binding.turnKey] == key {
+            stagedByTurn.removeValue(forKey: boundary.binding.turnKey)
+        }
+        if activeByTurn[boundary.binding.turnKey] == key {
+            activeByTurn.removeValue(forKey: boundary.binding.turnKey)
+        }
+    }
 }
 
 // MARK: - Packet construction and snapshots
 
 private extension CoordinatorOperationalApplication {
     private func activate(_ boundary: inout Boundary) throws {
+        try require(productAccessMatches(boundary), "product_access_changed")
         if boundary.openEventID == nil {
             boundary.openEventID = idGenerator("event_boundary_opened")
         }
@@ -3903,6 +4152,7 @@ private extension CoordinatorOperationalApplication {
             guard let routingBinding = try? CoordinatorBinding(jsonObject: pending),
                   let boundary = boundaries[routingBinding.fullKey],
                   [.sealed, .waiting].contains(boundary.phase),
+                  productAccessMatches(boundary),
                   let packetData = boundary.packet
             else { return nil }
             let packet = try StrictJSONTransport.object(from: packetData)
@@ -3938,6 +4188,9 @@ private extension CoordinatorOperationalApplication {
                 "reminder_due": pending["reminder_due"]!,
                 "milliseconds_until_expiry": pending["milliseconds_until_expiry"]!,
             ]
+            if let suggestionKind = boundary.suggestionKind {
+                result["suggestion_kind"] = suggestionKind.rawValue
+            }
             result.merge(boundary.binding.jsonObject) { current, _ in current }
             return result
         }
@@ -4046,10 +4299,11 @@ private extension CoordinatorOperationalApplication {
 private extension CoordinatorOperationalApplication {
     private func queuedPromptResolution(
         prompt: String,
+        projectID: String,
         sessionID: String,
         turnID: String,
         cwd: String,
-        completingInFlightBoundary: CoordinatorBindingKey? = nil
+        hasCurrentPrompt: Bool
     ) throws -> QueuedPromptResolution {
         // `codex queue` may canonically decompose non-ASCII command-line
         // message text before it reaches UserPromptSubmit. Normalize only for
@@ -4059,18 +4313,42 @@ private extension CoordinatorOperationalApplication {
         guard !normalizedPrompt.hasPrefix(Self.legacyQueuedPromptPrefix) else {
             return .rejected
         }
-        let reference: String
-        switch QueuedPromptEnvelope.classify(prompt) {
-        case .human:
-            return .human
-        case .malformed:
-            return .rejected
-        case .exact(let value):
-            reference = value
-        }
+        let classification = QueuedPromptEnvelope.classify(prompt)
+        if case .human = classification { return .human }
+        guard let accessGeneration = try? productAccessCheck() else { return .rejected }
 
         let authority = try routing.queuedActionAuthorityProjection()
         let state = authority.state
+        let queuedPromptSHA256 = Self.sha256Fingerprint(Data(prompt.utf8))
+        let cwdSHA256 = Self.sha256Fingerprint(Data(cwd.utf8))
+        func isUnpublishedClaimRetry(_ continuation: CoordinatorContinuationState) -> Bool {
+            guard let claim = continuation.queuedActionContextClaim,
+                  let session = sessions[sessionID],
+                  let pending = session.pendingQueuedClaims[continuation.continuationID]
+            else { return false }
+            return pending.matches(
+                sourcePromptID: session.latestPromptID,
+                deliveryTurnID: turnID,
+                queuedPromptSHA256: queuedPromptSHA256,
+                cwdSHA256: cwdSHA256,
+                actionSHA256: claim.actionSHA256
+            )
+        }
+        // This history is used only to reject a stale delivery. Returning an
+        // action still requires the exact reference and all three claim digests.
+        // Check before reference matching so a changed ref/cwd or malformed
+        // suffix cannot make an old delivery supersede the current prompt.
+        if hasCurrentPrompt, state.continuations.values.contains(where: {
+            Self.byteExact($0.binding.sessionID, sessionID)
+                && Self.byteExact($0.queuedActionContextClaim?.deliveryTurnID, turnID)
+                && !isUnpublishedClaimRetry($0)
+        }) {
+            return .staleDelivery
+        }
+        guard case .exact(let reference) = classification else { return .rejected }
+        // NFC recognizes only the in-flight envelope. The durable claim below
+        // remains bound to the exact prompt bytes observed by this Hook.
+        let promptRecognitionDigest = Data(SHA256.hash(data: Data(normalizedPrompt.utf8)))
         var matches: [(
             continuation: CoordinatorContinuationState,
             actionJSON: Data,
@@ -4079,8 +4357,16 @@ private extension CoordinatorOperationalApplication {
         for continuation in state.continuations.values {
             let isTerminalDelivery = continuation.transport?.status == .completed
                 && state.boundary(for: continuation.binding)?.closed == true
-            let isExpectedInFlightDelivery = completingInFlightBoundary
-                == continuation.binding.fullKey
+            let active = boundaries[continuation.binding.fullKey]
+            // A human prompt may have become latest while this selected action
+            // was being queued. Find its own exact in-flight boundary instead
+            // of deriving delivery authority from the latest prompt's turn.
+            let isExpectedInFlightDelivery = active?.phase == .dispatched
+                && (active?.nextTurnDispatchPhase == .inFlight
+                    || active?.nextTurnDispatchPhase == .accepted)
+                && Self.byteExact(continuation.binding.projectID, projectID)
+                && Self.byteExact(active?.continuationID, continuation.continuationID)
+                && active?.expectedQueuedPromptDigest == promptRecognitionDigest
                 && continuation.transport == nil
                 && state.boundary(for: continuation.binding)?.closed == false
             guard continuation.dispatchMode == "queued_next_turn",
@@ -4113,9 +4399,30 @@ private extension CoordinatorOperationalApplication {
         guard matches.count == 1, let match = matches.first else {
             return .rejected
         }
-        let queuedPromptSHA256 = Self.sha256Fingerprint(Data(prompt.utf8))
-        let cwdSHA256 = Self.sha256Fingerprint(Data(cwd.utf8))
+        if productAccessEnforced,
+           boundaries[match.continuation.binding.fullKey]?.productAccessGeneration != accessGeneration {
+            return .rejected
+        }
+        if hasCurrentPrompt, match.continuation.queuedActionContextClaim != nil,
+           !isUnpublishedClaimRetry(match.continuation)
+        {
+            // An already claimed reference on another delivery turn is a
+            // replay too. It is not a fresh human prompt and must not displace
+            // the current session context when the exact claim rejects it.
+            return .staleDelivery
+        }
         let actionSHA256 = Self.sha256Fingerprint(match.actionJSON)
+        // Commit may succeed while its response (or successor promotion)
+        // fails. Remember this exact attempt under the current prompt before
+        // claiming; only a retry under that unchanged prompt can recover it.
+        let pendingClaim = PendingQueuedClaim(
+            sourcePromptID: sessions[sessionID]?.latestPromptID,
+            deliveryTurnID: turnID,
+            queuedPromptSHA256: queuedPromptSHA256,
+            cwdSHA256: cwdSHA256,
+            actionSHA256: actionSHA256
+        )
+        sessions[sessionID]?.pendingQueuedClaims[match.continuation.continuationID] = pendingClaim
         let claimedActionJSON: Data
         do {
             let occurredAt = try wallInstantGenerator().rawValue
@@ -4131,11 +4438,7 @@ private extension CoordinatorOperationalApplication {
                 "action_sha256": actionSHA256,
             ]
             let command = try StrictJSONTransport.data(forJSONObject: commandObject)
-            if let completingInFlightBoundary, match.needsCompletion {
-                try require(
-                    completingInFlightBoundary == match.continuation.binding.fullKey,
-                    "decision_boundary_binding_mismatch"
-                )
+            if match.needsCompletion {
                 let completion = try StrictJSONTransport.data(forJSONObject: [
                     "type": "complete_transport",
                     "event_id": idGenerator("event_transport_completed"),
@@ -4186,9 +4489,26 @@ private extension CoordinatorOperationalApplication {
         )
         try secretCorpus.assertNoKnownSecret(in: claimedActionJSON)
         let actionContext = try queuedActionContext(actionJSON: claimedActionJSON)
+        let binding = match.continuation.binding
+        if match.needsCompletion || boundaries[binding.fullKey]?.phase == .dispatched {
+            if var completed = boundaries[binding.fullKey] {
+                completed.phase = .closed
+                retainBoundary(completed, for: binding.fullKey)
+            }
+            // The claim has committed. Keep only the local completion work
+            // retryable if a staged successor cannot be activated yet.
+            pendingCompletionClosures.insert(binding.fullKey)
+            try promoteStagedAfterRecoveredTerminal(
+                turnKey: binding.turnKey,
+                terminalKey: binding.fullKey
+            )
+            pendingCompletionClosures.remove(binding.fullKey)
+        }
+        guard (try? productAccessCheck()) == accessGeneration else { return .rejected }
         return .verified(
             continuationID: match.continuation.continuationID,
-            actionContext: actionContext
+            actionContext: actionContext,
+            accessGeneration: accessGeneration
         )
     }
 
@@ -4224,6 +4544,11 @@ private extension CoordinatorOperationalApplication {
     }
 
     private func promptContext(session: Session) throws -> Data {
+        if session.promptOrigin == "blabee_next_turn",
+           ((try? productAccessCheck()) == nil || (try? productAccessCheck()) != session.productAccessGeneration) {
+            return try publicData(["enabled": true, "prompt_origin": "blabee_rejected",
+                "additionalContext": QueuedPromptResolution.rejected.actionContext!])
+        }
         guard let episode = session.episode,
               let turnID = session.latestTurnID,
               let promptID = session.latestPromptID,

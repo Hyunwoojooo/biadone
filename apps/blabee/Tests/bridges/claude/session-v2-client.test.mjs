@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
+import { getEventListeners } from 'node:events';
 import { chmod, mkdtemp, realpath, rm, symlink } from 'node:fs/promises';
 import { createServer } from 'node:net';
 import { join } from 'node:path';
@@ -41,7 +42,7 @@ async function fixture(t, respond = request => JSON.stringify(reply(request)) + 
   return { directory, configuration, requests };
 }
 
-test('authenticated explicit v2 request uses the fixed authority and private outer credential wrapper', async t => {
+test('authenticated v3 wire uses the fixed authority and existing private outer credential wrapper', async t => {
   const f = await fixture(t);
   const original = structuredClone(f.configuration.authority);
   const client = await createSessionV2Client(f.configuration);
@@ -55,6 +56,7 @@ test('authenticated explicit v2 request uses the fixed authority and private out
   assert.equal(request.type, 'blabee.runtime-identity.v1/claude_session_v2');
   assert.deepEqual(Object.keys(request.payload).sort(), ['auth_token', 'envelope']);
   assert.equal(request.payload.auth_token, f.configuration.authToken);
+  assert.equal(request.payload.envelope.schema_version, 'blabee.claude-session.v3');
   assert.deepEqual(request.payload.envelope.authority, original);
   assert.deepEqual(request.payload.envelope.payload, {});
   assert.equal(JSON.stringify(request.payload.envelope).includes(f.configuration.authToken), false);
@@ -66,6 +68,7 @@ test('authenticated explicit v2 request uses the fixed authority and private out
 test('v2 denies every mismatched response authority/correlation and does not retry', async t => {
   const changes = [request => ({ request_id: randomUUID() }), () => ({ operation: 'readiness.begin' }),
     () => ({ role: 'hook' }), () => ({ provider: 'codex' }), () => ({ schema_version: 'blabee.claude-session.v1' }),
+    () => ({ schema_version: 'blabee.claude-session.v2' }),
     ...SESSION_V2_AUTHORITY_KEYS.map(key => request => ({ authority: { ...request.payload.envelope.authority, [key]: randomUUID() } }))];
   for (const mutate of changes) {
     const f = await fixture(t, request => JSON.stringify(reply(request, { bridge_id: randomUUID() }, mutate(request))) + '\n');
@@ -75,6 +78,36 @@ test('v2 denies every mismatched response authority/correlation and does not ret
     assert.equal(f.requests.length, 1);
     await client.close();
   }
+});
+
+test('Hook waiter operations retain their original identity and cannot cross into the bridge role', async t => {
+  const f = await fixture(t, request => JSON.stringify(reply(request,
+    request.payload.envelope.operation === 'hook.poll' ? { status: 'waiting', event: null } : { cancelled: true })) + '\n');
+  const payload = { native_session_id: f.configuration.authority.native_session_id,
+    cwd: f.directory, prompt_id: randomUUID(), waiter_generation: randomUUID() };
+  const hook = await createSessionV2Client({ ...f.configuration, role: 'hook' });
+  const bridge = await createSessionV2Client(f.configuration);
+  t.after(async () => { await hook.close(); await bridge.close(); });
+  for (const operation of ['hook.poll', 'hook.cancel']) {
+    await assert.rejects(bridge.request({ operation, ...payload }), { code: 'session_v2_invalid_request' });
+    await hook.request({ operation, ...payload });
+  }
+  await assert.rejects(hook.request({ operation: 'bridge.open' }), { code: 'session_v2_invalid_request' });
+  await assert.rejects(hook.request({ operation: 'readiness.begin', bridge_id: randomUUID() }), { code: 'session_v2_invalid_request' });
+  assert.deepEqual(f.requests.map(request => request.payload.envelope.payload), [payload, payload]);
+  assert.ok(f.requests.every(request => request.payload.envelope.role === 'hook'));
+});
+
+test('bridge heartbeat refuses a legacy selection event without notifying or retrying', async t => {
+  const f = await fixture(t, request => JSON.stringify(reply(request, { event: { kind: 'selection',
+    selection_id: randomUUID(), delivery_token: 'd'.repeat(64), delivery_sequence: '1',
+    expires_at_nanoseconds: '999999', channel_source: 'blabee-claude' } })) + '\n');
+  const client = await createSessionV2Client(f.configuration);
+  t.after(() => client.close());
+  const command = { operation: 'bridge.poll', bridge_id: randomUUID() };
+  await assert.rejects(client.request(command), { code: 'session_v2_invalid_response' });
+  await assert.rejects(client.request(command), { code: 'session_v2_invalid_response' });
+  assert.equal(f.requests.length, 1);
 });
 
 test('raw framing, invalid UTF-8, duplicate keys, secret reflection and malformed results are terminal', async t => {
@@ -102,6 +135,97 @@ test('raw framing, invalid UTF-8, duplicate keys, secret reflection and malforme
   assert.deepEqual(parseSessionV2JSON(Buffer.from('{"x":9007199254740991,"safe":"18446744073709551615"}')),
     { x: Number.MAX_SAFE_INTEGER, safe: '18446744073709551615' });
 });
+
+for (const phase of ['already aborted', 'during private socket check']) {
+  test(`cancellation ${phase} sends no frame and leaves the shared client reusable`, async t => {
+    const f = await fixture(t);
+    const client = await createSessionV2Client(f.configuration);
+    t.after(() => client.close());
+    const cancellation = new AbortController();
+    const privateReason = new Error('PRIVATE CANCELLATION REASON');
+    if (phase === 'already aborted') cancellation.abort(privateReason);
+    const pending = client.request(command, { signal: cancellation.signal });
+    // request enters requirePrivateSocket synchronously before its first await;
+    // cancellation here covers the check-to-connect window without a timer.
+    if (phase === 'during private socket check') cancellation.abort(privateReason);
+    await assert.rejects(pending, error => {
+      assert.equal(error.code, 'session_v2_request_cancelled');
+      assert.equal(error.message, 'session_v2_request_cancelled');
+      return true;
+    });
+    assert.equal(f.requests.length, 0);
+    const result = await client.request(command);
+    assert.match(result.bridge_id, /^[0-9a-f-]{36}$/);
+    assert.equal(f.requests.length, 1);
+  });
+}
+
+test('cancellation after socket creation but before connect sends no frame and removes its listener', async t => {
+  const f = await fixture(t);
+  const client = await createSessionV2Client(f.configuration);
+  t.after(() => client.close());
+  const cancellation = new AbortController();
+  const signal = cancellation.signal;
+  const addEventListener = signal.addEventListener.bind(signal);
+  let registrations = 0;
+  t.mock.method(signal, 'addEventListener', (type, listener, options) => {
+    const result = addEventListener(type, listener, options);
+    if (type === 'abort') {
+      registrations++;
+      assert.equal(getEventListeners(signal, 'abort').length, 1);
+      // This per-request listener is installed only after the socket exists.
+      // Aborting synchronously here precedes its asynchronous connect event.
+      cancellation.abort(new Error('PRIVATE CANCELLATION REASON'));
+    }
+    return result;
+  });
+  await assert.rejects(client.request(command, { signal }), {
+    code: 'session_v2_request_cancelled', message: 'session_v2_request_cancelled',
+  });
+  assert.equal(registrations, 1);
+  assert.equal(getEventListeners(signal, 'abort').length, 0);
+  assert.equal(f.requests.length, 0);
+  const result = await client.request(command);
+  assert.match(result.bridge_id, /^[0-9a-f-]{36}$/);
+  assert.equal(f.requests.length, 1);
+});
+
+for (const outcome of ['valid response', 'invalid authority', 'timeout']) {
+  test(`cancellation after sending preserves ${outcome} validation without retry`, async t => {
+    const cancellation = new AbortController();
+    let received;
+    let release;
+    const observed = new Promise(resolve => { received = resolve; });
+    const f = await fixture(t, (request, socket) => {
+      cancellation.abort(new Error('PRIVATE CANCELLATION REASON'));
+      const changes = outcome === 'invalid authority'
+        ? { authority: { ...request.payload.envelope.authority, authority_epoch: randomUUID() } } : {};
+      release = () => socket.end(JSON.stringify(reply(request, { bridge_id: randomUUID() }, changes)) + '\n');
+      received();
+    });
+    const client = await createSessionV2Client({ ...f.configuration, timeoutMs: 100 });
+    t.after(() => client.close());
+    const pending = client.request(command, { signal: cancellation.signal })
+      .then(result => ({ result }), error => ({ error }));
+    const frameObserved = await Promise.race([observed.then(() => true), pending.then(() => false)]);
+    assert.equal(frameObserved, true, 'request settled before the service observed its frame');
+    // An aborted in-flight request still owns the transport slot until its
+    // actual response or bounded timeout settles. No follow-up may overlap it.
+    await assert.rejects(client.request(command), { code: 'session_v2_client_busy' });
+    assert.equal(f.requests.length, 1);
+    if (outcome !== 'timeout') release();
+    const settled = await pending;
+    if (outcome === 'valid response') {
+      assert.equal(settled.error, undefined);
+      assert.match(settled.result.bridge_id, /^[0-9a-f-]{36}$/);
+    } else {
+      const code = outcome === 'invalid authority' ? 'session_v2_invalid_response' : 'session_v2_response_unknown';
+      assert.equal(settled.error?.code, code);
+      await assert.rejects(client.request(command), { code });
+    }
+    assert.equal(f.requests.length, 1);
+  });
+}
 
 test('timed out mutation stays unknown; closing a pending request is bounded and never replays it', async t => {
   const f = await fixture(t, () => undefined);

@@ -1,6 +1,7 @@
 import CoordinatorSwift
 import Darwin
 import Foundation
+import OSLog
 
 private let hookEvents: [String: String] = [
     "SessionStart": "session_start",
@@ -61,6 +62,67 @@ enum HookRequestOutcome {
     case unavailable
 }
 
+/// Fixed transport diagnostics only: no prompt, ref, action, binding, path or
+/// error description. A received response does not attest action execution.
+enum HookQueuedPromptDiagnostics {
+    enum AttemptOutcome: String, Sendable {
+        case responseReceived = "response_received"
+        case failed
+    }
+
+    enum FinalResult: String, Sendable {
+        case responseReceived = "response_received"
+        case noActionContext = "no_action_context"
+        case unavailable
+    }
+
+    enum FailureCode: String, Sendable {
+        case socketInvalid = "operational_socket_invalid"
+        case socketUnavailable = "operational_socket_unavailable"
+        case socketUnsafe = "operational_socket_unsafe"
+        case connectRefused = "operational_connect_refused"
+        case connectFailed = "operational_connect_failed"
+        case connectTimeout = "operational_connect_timeout"
+        case peerRejected = "operational_peer_rejected"
+        case runtimeIdentityInvalid = "operational_runtime_identity_invalid"
+        case runtimeIdentityMismatch = "operational_runtime_identity_mismatch"
+        case runtimeIdentityUnverified = "operational_runtime_identity_unverified"
+        case runtimeRequestNotCompatible = "operational_runtime_request_not_compatible"
+        case responseInvalid = "operational_response_invalid"
+        case responseTimeout = "operational_response_timeout"
+        case transportClosed = "operational_transport_closed"
+        case transportFailed = "operational_transport_failed"
+        case messageInvalid = "operational_message_invalid"
+        case messageTooLarge = "operational_message_too_large"
+        case requestTooLarge = "operational_request_too_large"
+        case requestFailed = "operational_request_failed"
+        case unknown = "queued_hook_unknown_error"
+    }
+
+    enum Event: Equatable, Sendable {
+        case attemptCompleted(
+            attempt: Int, outcome: AttemptOutcome, code: FailureCode?, elapsedMilliseconds: UInt64
+        )
+        case requestCompleted(result: FinalResult, attempts: Int, elapsedMilliseconds: UInt64)
+    }
+
+    private static let logger = Logger(subsystem: "com.biadone.blabee", category: "queued-hook")
+
+    static func record(_ event: Event) {
+        switch event {
+        case .attemptCompleted(let attempt, let outcome, let code, let elapsed):
+            logger.notice("event=queued_hook_attempt_completed attempt=\(attempt, privacy: .public) outcome=\(outcome.rawValue, privacy: .public) code=\(code?.rawValue ?? "none", privacy: .public) elapsed_ms=\(elapsed, privacy: .public)")
+        case .requestCompleted(let result, let attempts, let elapsed):
+            logger.notice("event=queued_hook_request_completed result=\(result.rawValue, privacy: .public) attempts=\(attempts, privacy: .public) elapsed_ms=\(elapsed, privacy: .public)")
+        }
+    }
+
+    static func failureCode(for error: Error) -> FailureCode {
+        guard let error = error as? CoordinatorError else { return .unknown }
+        return FailureCode(rawValue: error.code) ?? .unknown
+    }
+}
+
 enum HookRequestPolicy {
     private static let queuedPromptPrimaryAttempt = HookRequestAttempt(
         connectTimeoutMilliseconds: 400,
@@ -80,6 +142,8 @@ enum HookRequestPolicy {
         eventName: String,
         payload: [String: Any],
         onPermissionFailure: (HookPermissionDiagnostics.FailureCode) -> Void = { _ in },
+        onQueuedDiagnostic: (HookQueuedPromptDiagnostics.Event) -> Void = { _ in },
+        monotonicNowMilliseconds: () -> UInt64 = { DispatchTime.now().uptimeNanoseconds / 1_000_000 },
         request: (HookRequestAttempt) throws -> [String: Any]
     ) -> HookRequestOutcome {
         guard isExactQueuedPromptSubmit(eventName: eventName, payload: payload) else {
@@ -99,15 +163,54 @@ enum HookRequestPolicy {
             }
         }
 
+        let startedAt = monotonicNowMilliseconds()
+        var attempts = 0
+        var finalResult = HookQueuedPromptDiagnostics.FinalResult.unavailable
+        func elapsedMilliseconds(since start: UInt64) -> UInt64 {
+            let now = monotonicNowMilliseconds()
+            return now >= start ? now - start : 0
+        }
+        defer {
+            onQueuedDiagnostic(.requestCompleted(
+                result: finalResult,
+                attempts: attempts,
+                elapsedMilliseconds: elapsedMilliseconds(since: startedAt)
+            ))
+        }
+        func queuedRequest(_ attempt: HookRequestAttempt) throws -> [String: Any] {
+            attempts += 1
+            let attemptStartedAt = monotonicNowMilliseconds()
+            do {
+                let result = try request(attempt)
+                onQueuedDiagnostic(.attemptCompleted(
+                    attempt: attempts, outcome: .responseReceived, code: nil,
+                    elapsedMilliseconds: elapsedMilliseconds(since: attemptStartedAt)
+                ))
+                return result
+            } catch {
+                onQueuedDiagnostic(.attemptCompleted(
+                    attempt: attempts, outcome: .failed,
+                    code: HookQueuedPromptDiagnostics.failureCode(for: error),
+                    elapsedMilliseconds: elapsedMilliseconds(since: attemptStartedAt)
+                ))
+                throw error
+            }
+        }
+
         do {
-            return .response(try request(queuedPromptPrimaryAttempt))
+            let result = try queuedRequest(queuedPromptPrimaryAttempt)
+            finalResult = .responseReceived
+            return .response(result)
         } catch {
             guard isAmbiguousResponseFailure(error) else { return .unavailable }
         }
 
         do {
-            return .response(try request(queuedPromptRetryAttempt))
+            let result = try queuedRequest(queuedPromptRetryAttempt)
+            finalResult = .responseReceived
+            return .response(result)
         } catch {
+            finalResult = .noActionContext
             return .queuedPromptUnavailable
         }
     }
@@ -231,15 +334,18 @@ func runHookCommand(arguments: [String]) {
                     ? .callerQualified : .callerUnqualified
             )
         }
-        let client = try UnixDomainSocketClient(socketPath: socketPath)
+        // Keep initialization failures inside the same diagnostic boundary as
+        // request failures, without repeating runtime identity validation.
+        let client = Result { try UnixDomainSocketClient(socketPath: socketPath) }
         let outcome = HookRequestPolicy.perform(
             eventName: eventName,
             payload: payload,
             onPermissionFailure: { code in
                 HookPermissionDiagnostics.recordFailure(.requestFailed, code: code)
-            }
+            },
+            onQueuedDiagnostic: HookQueuedPromptDiagnostics.record
         ) { attempt in
-            try client.request(
+            try client.get().request(
                 type: requestType,
                 payload: payload,
                 connectTimeoutMilliseconds: attempt.connectTimeoutMilliseconds,
@@ -333,7 +439,7 @@ func runHookCommand(arguments: [String]) {
             } else if decision == "deny" {
                 HookPermissionDiagnostics.record(.denyOutputPrepared)
             }
-            let acknowledgement = try client.request(
+            let acknowledgement = try client.get().request(
                 type: "ack_permission_request_delivery",
                 payload: [
                     "schema_version": "1.0",
@@ -583,13 +689,19 @@ private func validateEmitDecisionWrapper(_ wrapper: [String: Any]) throws {
         "correlation_token",
         "proposal",
     ]
-    guard Set(wrapper.keys) == wrapperKeys,
+    let suppliedKeys = Set(wrapper.keys)
+    guard (suppliedKeys == wrapperKeys || suppliedKeys == wrapperKeys.union(["suggestion_kind"])),
           wrapperKeys.subtracting(Set(["proposal"])).allSatisfy({
               guard let value = wrapper[$0] as? String else { return false }
               return !value.isEmpty
           }),
           let proposal = wrapper["proposal"] as? [String: Any]
     else { throw CoordinatorError("operational_request_invalid") }
+    if let rawKind = wrapper["suggestion_kind"] {
+        guard let value = rawKind as? String, BlabeeSuggestionKind(rawValue: value) != nil else {
+            throw CoordinatorError("operational_request_invalid")
+        }
+    }
 
     let commonProposalKeys: Set<String> = [
         "schema_version",
@@ -621,7 +733,9 @@ private func emitDecisionTool() -> [String: Any] {
     [
         "name": "emit_decision",
         "title": "Emit Blabee decision",
-        "description": "Send two to four ranked next actions for the exact active project, session, prompt episode, and turn.",
+        "description": "Send two to four ranked next actions for the exact active project, session, prompt episode, and turn. "
+            + BlabeeSuggestionContext.cardEligibilityInstructions + " "
+            + BlabeeSuggestionContext.cardLanguageInstructions,
         "inputSchema": [
             "type": "object",
             "additionalProperties": false,
@@ -641,6 +755,11 @@ private func emitDecisionTool() -> [String: Any] {
                 "source_prompt_id": identifierSchema(),
                 "episode_id": identifierSchema(),
                 "correlation_token": opaqueTokenSchema(),
+                "suggestion_kind": [
+                    "type": "string",
+                    "enum": BlabeeSuggestionKind.allCases.map(\.rawValue),
+                    "description": "Presentation category only: current_task for follow-ups to the user's current work; new_suggestion for separately discovered ideas. It does not attest host origin or change session routing. Omit only for legacy callers.",
+                ] as [String: Any],
                 "proposal": [
                     "type": "object",
                     "additionalProperties": false,
@@ -831,21 +950,30 @@ private func writeStandardOutputJSON(
     try FileHandle.standardOutput.write(contentsOf: data)
 }
 
-private final class StandardInputLineReader {
+final class StandardInputLineReader {
     private let maximumBytes: Int
+    private let inputDescriptor: Int32
     private var buffer = Data()
     private var reachedEnd = false
 
-    init(maximumBytes: Int) {
+    // The caller owns the descriptor; the reader only borrows it.
+    init(maximumBytes: Int, inputDescriptor: Int32 = STDIN_FILENO) {
         self.maximumBytes = maximumBytes
+        self.inputDescriptor = inputDescriptor
     }
 
     func nextLine() throws -> Data? {
         while true {
             if let newline = buffer.firstIndex(of: 0x0A) {
+                guard buffer.distance(from: buffer.startIndex, to: newline) <= maximumBytes else {
+                    throw CoordinatorError("operational_message_too_large")
+                }
                 let line = Data(buffer[..<newline])
                 buffer.removeSubrange(...newline)
                 return line
+            }
+            guard buffer.count <= maximumBytes else {
+                throw CoordinatorError("operational_message_too_large")
             }
             if reachedEnd {
                 guard !buffer.isEmpty else { return nil }
@@ -855,7 +983,7 @@ private final class StandardInputLineReader {
 
             var chunk = [UInt8](repeating: 0, count: 16 * 1024)
             let count = chunk.withUnsafeMutableBytes { bytes in
-                Darwin.read(STDIN_FILENO, bytes.baseAddress, bytes.count)
+                Darwin.read(inputDescriptor, bytes.baseAddress, bytes.count)
             }
             if count < 0 {
                 if errno == EINTR { continue }
@@ -866,9 +994,6 @@ private final class StandardInputLineReader {
                 continue
             }
             buffer.append(contentsOf: chunk.prefix(count))
-            guard buffer.count <= maximumBytes else {
-                throw CoordinatorError("operational_message_too_large")
-            }
         }
     }
 }

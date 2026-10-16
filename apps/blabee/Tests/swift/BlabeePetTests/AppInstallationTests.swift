@@ -3,7 +3,7 @@ import Foundation
 import Testing
 @testable import BlabeeCoordinator
 
-@Suite("AppInstallation", .serialized)
+@Suite("AppInstallation", .petLanguage(.korean), .serialized)
 struct AppInstallationTests {
     @Test("a renamed source installs its entire bundle and preserves quarantine and xattrs")
     func freshInstallationPreservesWholeBundle() throws {
@@ -240,6 +240,105 @@ struct AppInstallationTests {
         #expect(try fixture.identity(at: fixture.destination) == AppInstallationFixture.oldIdentity)
         #expect(try fixture.children(prefix: ".Blabee.install-").isEmpty)
         #expect(try fixture.children(prefix: ".Blabee.backup-").isEmpty)
+    }
+
+    @Test("update transition refusal leaves source and destination unchanged before copying", arguments: [false, true])
+    func updateTransitionGuardRejectsBeforeCopy(replacing: Bool) throws {
+        let fixture = try AppInstallationFixture()
+        defer { fixture.remove() }
+        if replacing {
+            try fixture.makeApp(at: fixture.destination, identity: AppInstallationFixture.oldIdentity)
+        }
+        let originalSource = try fixture.inode(at: fixture.source)
+        let originalDestination = replacing ? try fixture.inode(at: fixture.destination) : nil
+        let checkpoints = AppInstallationCheckpointRecorder()
+        let attempts = AppInstallationTransitionRecorder()
+        let service = fixture.service(updateTransitionGuard: { candidate in
+            #expect(candidate == fixture.source)
+            attempts.guardCalled()
+            throw AppInstallationError(.destinationActive)
+        }, copyBundle: { _, _ in
+            attempts.copyCalled()
+            Issue.record("A refused update transition must not start copying")
+            throw AppInstallationError(.copyFailed)
+        }, checkpoint: { phase, _ in checkpoints.record(phase) })
+        let plan = try service.inspect(source: fixture.source)
+        #expect(attempts.guardCalls == 0)
+        let failure = try installationFailure {
+            _ = try service.install(plan, replacementApproved: replacing)
+        }
+        #expect(failure.code == .destinationActive)
+        #expect(attempts.guardCalls == 1)
+        #expect(attempts.copyCalls == 0)
+        #expect(checkpoints.phases().isEmpty)
+        #expect(try fixture.inode(at: fixture.source) == originalSource)
+        #expect(try fixture.identity(at: fixture.source) == AppInstallationFixture.sourceIdentity)
+        if let originalDestination {
+            #expect(try fixture.inode(at: fixture.destination) == originalDestination)
+            #expect(try fixture.identity(at: fixture.destination) == AppInstallationFixture.oldIdentity)
+        } else {
+            #expect(!FileManager.default.fileExists(atPath: fixture.destination.path))
+        }
+        // The transaction lock may have been created; no app staging or
+        // backup is allowed before the ingress reservation succeeds.
+        #expect(try fixture.children(prefix: ".Blabee.install-").isEmpty)
+        #expect(try fixture.children(prefix: ".Blabee.backup-").isEmpty)
+    }
+
+    @Test("update transition reservation survives copy, publish and rollback until installation returns",
+          arguments: ["success", "rollback", "published_failure"])
+    func updateTransitionGuardCoversTransaction(outcome: String) throws {
+        let fixture = try AppInstallationFixture()
+        defer { fixture.remove() }
+        try fixture.makeApp(at: fixture.destination, identity: AppInstallationFixture.oldIdentity)
+        let previousInode = try fixture.inode(at: fixture.destination)
+        let lifetime = AppInstallationTransitionRecorder()
+        let checkpoints = AppInstallationCheckpointRecorder()
+        let service = fixture.service(updateTransitionGuard: { candidate in
+            #expect(candidate == fixture.source)
+            lifetime.guardCalled()
+            // Only the returned token holds this reservation. Neither the
+            // closure nor recorder retains it on the installer's behalf.
+            return AppInstallationTransitionToken(recorder: lifetime)
+        }, checkpoint: { phase, _ in
+            checkpoints.record(phase)
+            #expect(lifetime.activeReservations == 1)
+            #expect(lifetime.releases == 0)
+            if outcome == "rollback" && phase == .beforePublish {
+                throw AppInstallationError(.publishFailed)
+            }
+            if outcome == "published_failure" && phase == .afterPublish {
+                throw AppInstallationError(.publishFailed)
+            }
+        })
+        let plan = try service.inspect(source: fixture.source)
+        #expect(lifetime.guardCalls == 0)
+        if outcome == "success" {
+            _ = try service.install(plan, replacementApproved: true)
+        } else {
+            let failure = try installationFailure {
+                _ = try service.install(plan, replacementApproved: true)
+            }
+            #expect(failure.code == (outcome == "rollback" ? .publishFailed : .recoveryRequired))
+        }
+        #expect(lifetime.guardCalls == 1)
+        #expect(lifetime.activeReservations == 0)
+        #expect(lifetime.releases == 1)
+        let observed = checkpoints.phases()
+        #expect(observed.contains(.beforeCopy))
+        #expect(observed.contains(.beforeBackup))
+        #expect(observed.contains(.afterPublish) == (outcome != "rollback"))
+        #expect(observed.contains(.beforeRestore) == (outcome == "rollback"))
+        if outcome == "rollback" {
+            #expect(try fixture.identity(at: fixture.destination) == AppInstallationFixture.oldIdentity)
+            #expect(try fixture.inode(at: fixture.destination) == previousInode)
+            #expect(try fixture.children(prefix: ".Blabee.backup-").isEmpty)
+        } else {
+            #expect(try fixture.identity(at: fixture.destination) == AppInstallationFixture.sourceIdentity)
+            let backup = try #require(fixture.children(prefix: ".Blabee.backup-").first)
+            #expect(try fixture.identity(at: backup) == AppInstallationFixture.oldIdentity)
+            #expect(try fixture.inode(at: backup) == previousInode)
+        }
     }
 
     @Test("explicit legacy quit confirmation accepts only a completed path gap and retains the old app")
@@ -1040,6 +1139,7 @@ private struct AppInstallationFixture: Sendable {
         expectedIdentity: String = AppInstallationFixture.sourceIdentity,
         activityGuard: @escaping AppInstallationService.ActivityGuard = { _ in },
         claudeInstallationGuard: @escaping AppInstallationService.ClaudeInstallationGuard = { () },
+        updateTransitionGuard: @escaping @Sendable (URL) throws -> any Sendable = { _ in () },
         copyBundle: @escaping @Sendable (URL, URL) throws -> Void = { try FileManager().copyItem(at: $0, to: $1) },
         checkpoint: @escaping AppInstallationService.Checkpoint = { _, _ in },
         limits: AppInstallationLimits = AppInstallationLimits()
@@ -1050,6 +1150,7 @@ private struct AppInstallationFixture: Sendable {
             validator: { try self.identity(at: $0) },
             activityGuard: activityGuard,
             claudeInstallationGuard: claudeInstallationGuard,
+            updateTransitionGuard: updateTransitionGuard,
             copyBundle: copyBundle,
             checkpoint: checkpoint,
             limits: limits
@@ -1200,4 +1301,26 @@ private final class AppInstallationCheckpointRecorder: @unchecked Sendable {
         defer { lock.unlock() }
         return stored
     }
+}
+
+private final class AppInstallationTransitionRecorder: @unchecked Sendable {
+    private let lock = NSLock()
+    private var guards = 0, copies = 0, active = 0, released = 0
+    func guardCalled() { lock.withLock { guards += 1 } }
+    func copyCalled() { lock.withLock { copies += 1 } }
+    func acquired() { lock.withLock { active += 1 } }
+    func release() { lock.withLock { active -= 1; released += 1 } }
+    var guardCalls: Int { lock.withLock { guards } }
+    var copyCalls: Int { lock.withLock { copies } }
+    var activeReservations: Int { lock.withLock { active } }
+    var releases: Int { lock.withLock { released } }
+}
+
+private final class AppInstallationTransitionToken: @unchecked Sendable {
+    private let recorder: AppInstallationTransitionRecorder
+    init(recorder: AppInstallationTransitionRecorder) {
+        self.recorder = recorder
+        recorder.acquired()
+    }
+    deinit { recorder.release() }
 }

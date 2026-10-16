@@ -15,6 +15,7 @@ CP-07의 runtime·업데이트 보호 구현·관련 격리 검증을 마쳤다.
 | CP-07 | 제품/배포 implementer + root + reviewer | RuntimePayload·앱 build manifest·Node·update/lease guard; 일반 Channels 배포 승인 분리 | runtime/update·preview 검증 완료 / 일반 plugin 후속 |
 | CP-08 | native/packaging implementer + root + reviewer + 사용자 실제 클릭 | 하나의 앱/DMG·AC-01~16·G1~G5별 증거·현재/미확인 구분 | 통합 후보 구현·서명·설치 전 검증 완료 / 실제 수용 대기 |
 | CP-08 자동 연결 | launcher/registry/Node/shell implementer + root + reviewer | 일반 claude/resume·관측 후 등록·관리 zsh 설정·관련 회귀·r63 후보 | 구현·격리 회귀 완료 / 새 후보 실제 수용 대기 |
+| CP-08 연결 화면 개선 | launcher/setup implementer + root + reviewer | 환경 재탐색·Terminal/Ghostty 새 창·동일 세션 ACK 추적·설정/연결 상태 구분 | 소스 구현·테스트 추가·구문 검토 / 빌드·테스트 실행·실사용 미수행 |
 
 공유 파일은 각 단계에서 한 담당자만 쓴다. 다음 담당자는 앞 단계 diff와 테스트 결과를 인계받는다. `main.swift`, UDS, NativeSession, Pet 공용 모델, build/업데이트 파일은 특히 병렬 편집하지 않는다. 다른 작업자의 기존 변경을 되돌리거나 broad-stage/checkout/stash하지 않는다.
 

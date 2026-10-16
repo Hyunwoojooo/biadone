@@ -222,11 +222,11 @@
       }
     },
     {
-      "name": "claude-session.v2/claude/request/hook",
-      "contract": "claude-session.v2",
+      "name": "claude-session.v3/claude/request/hook",
+      "contract": "claude-session.v3",
       "valid": true,
       "value": {
-        "schema_version": "blabee.claude-session.v2",
+        "schema_version": "blabee.claude-session.v3",
         "kind": "request",
         "request_id": "00000001-0000-4000-8000-000000000001",
         "provider": "claude",
@@ -249,11 +249,11 @@
       }
     },
     {
-      "name": "claude-session.v2/claude/response/hook/ok",
-      "contract": "claude-session.v2",
+      "name": "claude-session.v3/claude/response/hook/ok",
+      "contract": "claude-session.v3",
       "valid": true,
       "value": {
-        "schema_version": "blabee.claude-session.v2",
+        "schema_version": "blabee.claude-session.v3",
         "kind": "response",
         "request_id": "00000001-0000-4000-8000-000000000001",
         "provider": "claude",
@@ -271,16 +271,17 @@
         "result": {
           "observed": true,
           "boundary_id": "00000011-0000-4000-8000-000000000011",
-          "observation_status": "accepted"
+          "observation_status": "accepted",
+          "waiter": null
         }
       }
     },
     {
-      "name": "claude-session.v2/claude/response/hook/error",
-      "contract": "claude-session.v2",
+      "name": "claude-session.v3/claude/response/hook/error",
+      "contract": "claude-session.v3",
       "valid": true,
       "value": {
-        "schema_version": "blabee.claude-session.v2",
+        "schema_version": "blabee.claude-session.v3",
         "kind": "response",
         "request_id": "00000001-0000-4000-8000-000000000001",
         "provider": "claude",
@@ -301,11 +302,11 @@
       }
     },
     {
-      "name": "claude-session.v2/claude/request/bridge.open",
-      "contract": "claude-session.v2",
+      "name": "claude-session.v3/claude/request/bridge.open",
+      "contract": "claude-session.v3",
       "valid": true,
       "value": {
-        "schema_version": "blabee.claude-session.v2",
+        "schema_version": "blabee.claude-session.v3",
         "kind": "request",
         "request_id": "00000001-0000-4000-8000-000000000001",
         "provider": "claude",
@@ -323,11 +324,11 @@
       }
     },
     {
-      "name": "claude-session.v2/claude/response/bridge.open/ok",
-      "contract": "claude-session.v2",
+      "name": "claude-session.v3/claude/response/bridge.open/ok",
+      "contract": "claude-session.v3",
       "valid": true,
       "value": {
-        "schema_version": "blabee.claude-session.v2",
+        "schema_version": "blabee.claude-session.v3",
         "kind": "response",
         "request_id": "00000001-0000-4000-8000-000000000001",
         "provider": "claude",
@@ -348,11 +349,11 @@
       }
     },
     {
-      "name": "claude-session.v2/claude/response/bridge.open/error",
-      "contract": "claude-session.v2",
+      "name": "claude-session.v3/claude/response/bridge.open/error",
+      "contract": "claude-session.v3",
       "valid": true,
       "value": {
-        "schema_version": "blabee.claude-session.v2",
+        "schema_version": "blabee.claude-session.v3",
         "kind": "response",
         "request_id": "00000001-0000-4000-8000-000000000001",
         "provider": "claude",
@@ -373,11 +374,11 @@
       }
     },
     {
-      "name": "claude-session.v2/claude/request/bridge.poll",
-      "contract": "claude-session.v2",
+      "name": "claude-session.v3/claude/request/bridge.poll",
+      "contract": "claude-session.v3",
       "valid": true,
       "value": {
-        "schema_version": "blabee.claude-session.v2",
+        "schema_version": "blabee.claude-session.v3",
         "kind": "request",
         "request_id": "00000001-0000-4000-8000-000000000001",
         "provider": "claude",
@@ -397,11 +398,11 @@
       }
     },
     {
-      "name": "claude-session.v2/claude/response/bridge.poll/ok",
-      "contract": "claude-session.v2",
+      "name": "claude-session.v3/claude/response/bridge.poll/ok",
+      "contract": "claude-session.v3",
       "valid": true,
       "value": {
-        "schema_version": "blabee.claude-session.v2",
+        "schema_version": "blabee.claude-session.v3",
         "kind": "response",
         "request_id": "00000001-0000-4000-8000-000000000001",
         "provider": "claude",
@@ -422,11 +423,11 @@
       }
     },
     {
-      "name": "claude-session.v2/claude/response/bridge.poll/error",
-      "contract": "claude-session.v2",
+      "name": "claude-session.v3/claude/response/bridge.poll/error",
+      "contract": "claude-session.v3",
       "valid": true,
       "value": {
-        "schema_version": "blabee.claude-session.v2",
+        "schema_version": "blabee.claude-session.v3",
         "kind": "response",
         "request_id": "00000001-0000-4000-8000-000000000001",
         "provider": "claude",
@@ -447,11 +448,11 @@
       }
     },
     {
-      "name": "claude-session.v2/claude/request/bridge.close",
-      "contract": "claude-session.v2",
+      "name": "claude-session.v3/claude/request/bridge.close",
+      "contract": "claude-session.v3",
       "valid": true,
       "value": {
-        "schema_version": "blabee.claude-session.v2",
+        "schema_version": "blabee.claude-session.v3",
         "kind": "request",
         "request_id": "00000001-0000-4000-8000-000000000001",
         "provider": "claude",
@@ -471,11 +472,11 @@
       }
     },
     {
-      "name": "claude-session.v2/claude/response/bridge.close/ok",
-      "contract": "claude-session.v2",
+      "name": "claude-session.v3/claude/response/bridge.close/ok",
+      "contract": "claude-session.v3",
       "valid": true,
       "value": {
-        "schema_version": "blabee.claude-session.v2",
+        "schema_version": "blabee.claude-session.v3",
         "kind": "response",
         "request_id": "00000001-0000-4000-8000-000000000001",
         "provider": "claude",
@@ -496,11 +497,11 @@
       }
     },
     {
-      "name": "claude-session.v2/claude/response/bridge.close/error",
-      "contract": "claude-session.v2",
+      "name": "claude-session.v3/claude/response/bridge.close/error",
+      "contract": "claude-session.v3",
       "valid": true,
       "value": {
-        "schema_version": "blabee.claude-session.v2",
+        "schema_version": "blabee.claude-session.v3",
         "kind": "response",
         "request_id": "00000001-0000-4000-8000-000000000001",
         "provider": "claude",
@@ -521,11 +522,11 @@
       }
     },
     {
-      "name": "claude-session.v2/claude/request/readiness.begin",
-      "contract": "claude-session.v2",
+      "name": "claude-session.v3/claude/request/readiness.begin",
+      "contract": "claude-session.v3",
       "valid": true,
       "value": {
-        "schema_version": "blabee.claude-session.v2",
+        "schema_version": "blabee.claude-session.v3",
         "kind": "request",
         "request_id": "00000001-0000-4000-8000-000000000001",
         "provider": "claude",
@@ -545,11 +546,11 @@
       }
     },
     {
-      "name": "claude-session.v2/claude/response/readiness.begin/ok",
-      "contract": "claude-session.v2",
+      "name": "claude-session.v3/claude/response/readiness.begin/ok",
+      "contract": "claude-session.v3",
       "valid": true,
       "value": {
-        "schema_version": "blabee.claude-session.v2",
+        "schema_version": "blabee.claude-session.v3",
         "kind": "response",
         "request_id": "00000001-0000-4000-8000-000000000001",
         "provider": "claude",
@@ -567,16 +568,17 @@
         "result": {
           "probe_id": "00000014-0000-4000-8000-000000000014",
           "expires_at_nanoseconds": "1",
-          "status": "pending"
+          "status": "pending",
+          "nonce": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
         }
       }
     },
     {
-      "name": "claude-session.v2/claude/response/readiness.begin/error",
-      "contract": "claude-session.v2",
+      "name": "claude-session.v3/claude/response/readiness.begin/error",
+      "contract": "claude-session.v3",
       "valid": true,
       "value": {
-        "schema_version": "blabee.claude-session.v2",
+        "schema_version": "blabee.claude-session.v3",
         "kind": "response",
         "request_id": "00000001-0000-4000-8000-000000000001",
         "provider": "claude",
@@ -597,11 +599,11 @@
       }
     },
     {
-      "name": "claude-session.v2/claude/request/readiness.ack",
-      "contract": "claude-session.v2",
+      "name": "claude-session.v3/claude/request/readiness.ack",
+      "contract": "claude-session.v3",
       "valid": true,
       "value": {
-        "schema_version": "blabee.claude-session.v2",
+        "schema_version": "blabee.claude-session.v3",
         "kind": "request",
         "request_id": "00000001-0000-4000-8000-000000000001",
         "provider": "claude",
@@ -623,11 +625,11 @@
       }
     },
     {
-      "name": "claude-session.v2/claude/response/readiness.ack/ok",
-      "contract": "claude-session.v2",
+      "name": "claude-session.v3/claude/response/readiness.ack/ok",
+      "contract": "claude-session.v3",
       "valid": true,
       "value": {
-        "schema_version": "blabee.claude-session.v2",
+        "schema_version": "blabee.claude-session.v3",
         "kind": "response",
         "request_id": "00000001-0000-4000-8000-000000000001",
         "provider": "claude",
@@ -648,11 +650,11 @@
       }
     },
     {
-      "name": "claude-session.v2/claude/response/readiness.ack/error",
-      "contract": "claude-session.v2",
+      "name": "claude-session.v3/claude/response/readiness.ack/error",
+      "contract": "claude-session.v3",
       "valid": true,
       "value": {
-        "schema_version": "blabee.claude-session.v2",
+        "schema_version": "blabee.claude-session.v3",
         "kind": "response",
         "request_id": "00000001-0000-4000-8000-000000000001",
         "provider": "claude",
@@ -673,11 +675,11 @@
       }
     },
     {
-      "name": "claude-session.v2/claude/request/proposal.emit",
-      "contract": "claude-session.v2",
+      "name": "claude-session.v3/claude/request/proposal.emit",
+      "contract": "claude-session.v3",
       "valid": true,
       "value": {
-        "schema_version": "blabee.claude-session.v2",
+        "schema_version": "blabee.claude-session.v3",
         "kind": "request",
         "request_id": "00000001-0000-4000-8000-000000000001",
         "provider": "claude",
@@ -705,11 +707,11 @@
       }
     },
     {
-      "name": "claude-session.v2/claude/response/proposal.emit/ok",
-      "contract": "claude-session.v2",
+      "name": "claude-session.v3/claude/response/proposal.emit/ok",
+      "contract": "claude-session.v3",
       "valid": true,
       "value": {
-        "schema_version": "blabee.claude-session.v2",
+        "schema_version": "blabee.claude-session.v3",
         "kind": "response",
         "request_id": "00000001-0000-4000-8000-000000000001",
         "provider": "claude",
@@ -731,11 +733,11 @@
       }
     },
     {
-      "name": "claude-session.v2/claude/response/proposal.emit/error",
-      "contract": "claude-session.v2",
+      "name": "claude-session.v3/claude/response/proposal.emit/error",
+      "contract": "claude-session.v3",
       "valid": true,
       "value": {
-        "schema_version": "blabee.claude-session.v2",
+        "schema_version": "blabee.claude-session.v3",
         "kind": "response",
         "request_id": "00000001-0000-4000-8000-000000000001",
         "provider": "claude",
@@ -756,11 +758,11 @@
       }
     },
     {
-      "name": "claude-session.v2/claude/request/selection.claim",
-      "contract": "claude-session.v2",
+      "name": "claude-session.v3/claude/request/selection.claim",
+      "contract": "claude-session.v3",
       "valid": true,
       "value": {
-        "schema_version": "blabee.claude-session.v2",
+        "schema_version": "blabee.claude-session.v3",
         "kind": "request",
         "request_id": "00000001-0000-4000-8000-000000000001",
         "provider": "claude",
@@ -782,11 +784,11 @@
       }
     },
     {
-      "name": "claude-session.v2/claude/response/selection.claim/ok",
-      "contract": "claude-session.v2",
+      "name": "claude-session.v3/claude/response/selection.claim/ok",
+      "contract": "claude-session.v3",
       "valid": true,
       "value": {
-        "schema_version": "blabee.claude-session.v2",
+        "schema_version": "blabee.claude-session.v3",
         "kind": "response",
         "request_id": "00000001-0000-4000-8000-000000000001",
         "provider": "claude",
@@ -815,11 +817,11 @@
       }
     },
     {
-      "name": "claude-session.v2/claude/response/selection.claim/error",
-      "contract": "claude-session.v2",
+      "name": "claude-session.v3/claude/response/selection.claim/error",
+      "contract": "claude-session.v3",
       "valid": true,
       "value": {
-        "schema_version": "blabee.claude-session.v2",
+        "schema_version": "blabee.claude-session.v3",
         "kind": "response",
         "request_id": "00000001-0000-4000-8000-000000000001",
         "provider": "claude",
@@ -840,11 +842,11 @@
       }
     },
     {
-      "name": "claude-session.v2/claude/request/selection.complete",
-      "contract": "claude-session.v2",
+      "name": "claude-session.v3/claude/request/selection.complete",
+      "contract": "claude-session.v3",
       "valid": true,
       "value": {
-        "schema_version": "blabee.claude-session.v2",
+        "schema_version": "blabee.claude-session.v3",
         "kind": "request",
         "request_id": "00000001-0000-4000-8000-000000000001",
         "provider": "claude",
@@ -867,11 +869,11 @@
       }
     },
     {
-      "name": "claude-session.v2/claude/response/selection.complete/ok",
-      "contract": "claude-session.v2",
+      "name": "claude-session.v3/claude/response/selection.complete/ok",
+      "contract": "claude-session.v3",
       "valid": true,
       "value": {
-        "schema_version": "blabee.claude-session.v2",
+        "schema_version": "blabee.claude-session.v3",
         "kind": "response",
         "request_id": "00000001-0000-4000-8000-000000000001",
         "provider": "claude",
@@ -894,11 +896,11 @@
       }
     },
     {
-      "name": "claude-session.v2/claude/response/selection.complete/error",
-      "contract": "claude-session.v2",
+      "name": "claude-session.v3/claude/response/selection.complete/error",
+      "contract": "claude-session.v3",
       "valid": true,
       "value": {
-        "schema_version": "blabee.claude-session.v2",
+        "schema_version": "blabee.claude-session.v3",
         "kind": "response",
         "request_id": "00000001-0000-4000-8000-000000000001",
         "provider": "claude",
@@ -1743,10 +1745,10 @@
     },
     {
       "name": "hook/variant-1",
-      "contract": "claude-session.v2",
+      "contract": "claude-session.v3",
       "valid": true,
       "value": {
-        "schema_version": "blabee.claude-session.v2",
+        "schema_version": "blabee.claude-session.v3",
         "kind": "request",
         "request_id": "00000001-0000-4000-8000-000000000001",
         "provider": "claude",
@@ -1770,10 +1772,10 @@
     },
     {
       "name": "hook/variant-2",
-      "contract": "claude-session.v2",
+      "contract": "claude-session.v3",
       "valid": true,
       "value": {
-        "schema_version": "blabee.claude-session.v2",
+        "schema_version": "blabee.claude-session.v3",
         "kind": "request",
         "request_id": "00000001-0000-4000-8000-000000000001",
         "provider": "claude",
@@ -1798,10 +1800,10 @@
     },
     {
       "name": "hook/variant-3",
-      "contract": "claude-session.v2",
+      "contract": "claude-session.v3",
       "valid": true,
       "value": {
-        "schema_version": "blabee.claude-session.v2",
+        "schema_version": "blabee.claude-session.v3",
         "kind": "request",
         "request_id": "00000001-0000-4000-8000-000000000001",
         "provider": "claude",
@@ -1825,10 +1827,10 @@
     },
     {
       "name": "hook/variant-4",
-      "contract": "claude-session.v2",
+      "contract": "claude-session.v3",
       "valid": true,
       "value": {
-        "schema_version": "blabee.claude-session.v2",
+        "schema_version": "blabee.claude-session.v3",
         "kind": "request",
         "request_id": "00000001-0000-4000-8000-000000000001",
         "provider": "claude",
@@ -1852,10 +1854,10 @@
     },
     {
       "name": "hook/variant-5",
-      "contract": "claude-session.v2",
+      "contract": "claude-session.v3",
       "valid": true,
       "value": {
-        "schema_version": "blabee.claude-session.v2",
+        "schema_version": "blabee.claude-session.v3",
         "kind": "request",
         "request_id": "00000001-0000-4000-8000-000000000001",
         "provider": "claude",
@@ -1878,10 +1880,10 @@
     },
     {
       "name": "hook/variant-6",
-      "contract": "claude-session.v2",
+      "contract": "claude-session.v3",
       "valid": true,
       "value": {
-        "schema_version": "blabee.claude-session.v2",
+        "schema_version": "blabee.claude-session.v3",
         "kind": "request",
         "request_id": "00000001-0000-4000-8000-000000000001",
         "provider": "claude",
@@ -1905,15 +1907,15 @@
     },
     {
       "name": "poll/variant-1",
-      "contract": "claude-session.v2",
+      "contract": "claude-session.v3",
       "valid": true,
       "value": {
-        "schema_version": "blabee.claude-session.v2",
+        "schema_version": "blabee.claude-session.v3",
         "kind": "response",
         "request_id": "00000001-0000-4000-8000-000000000001",
         "provider": "claude",
         "role": "bridge",
-        "operation": "bridge.poll",
+        "operation": "readiness.begin",
         "authority": {
           "scope_id": "00000002-0000-4000-8000-000000000002",
           "native_session_id": "00000003-0000-4000-8000-000000000003",
@@ -1924,28 +1926,24 @@
         },
         "ok": true,
         "result": {
-          "event": {
-            "kind": "readiness_probe",
-            "probe_id": "00000014-0000-4000-8000-000000000014",
-            "nonce": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-            "expires_at_nanoseconds": "1",
-            "channel_source": "blabee-claude",
-            "delivery_sequence": "1"
-          }
+          "probe_id": "00000014-0000-4000-8000-000000000014",
+          "nonce": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "expires_at_nanoseconds": "1",
+          "status": "pending"
         }
       }
     },
     {
       "name": "poll/variant-2",
-      "contract": "claude-session.v2",
+      "contract": "claude-session.v3",
       "valid": true,
       "value": {
-        "schema_version": "blabee.claude-session.v2",
+        "schema_version": "blabee.claude-session.v3",
         "kind": "response",
         "request_id": "00000001-0000-4000-8000-000000000001",
         "provider": "claude",
-        "role": "bridge",
-        "operation": "bridge.poll",
+        "role": "hook",
+        "operation": "hook.poll",
         "authority": {
           "scope_id": "00000002-0000-4000-8000-000000000002",
           "native_session_id": "00000003-0000-4000-8000-000000000003",
@@ -1956,12 +1954,12 @@
         },
         "ok": true,
         "result": {
+          "status": "delivered",
           "event": {
             "kind": "selection",
             "selection_id": "00000013-0000-4000-8000-000000000013",
             "delivery_token": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
             "expires_at_nanoseconds": "1",
-            "channel_source": "blabee-claude",
             "delivery_sequence": "1"
           }
         }
@@ -1969,10 +1967,10 @@
     },
     {
       "name": "session/reject-nonce-in-ack",
-      "contract": "claude-session.v2",
+      "contract": "claude-session.v3",
       "valid": false,
       "value": {
-        "schema_version": "blabee.claude-session.v2",
+        "schema_version": "blabee.claude-session.v3",
         "kind": "response",
         "request_id": "00000001-0000-4000-8000-000000000001",
         "provider": "claude",
@@ -1995,10 +1993,10 @@
     },
     {
       "name": "session/reject-ref-in-action",
-      "contract": "claude-session.v2",
+      "contract": "claude-session.v3",
       "valid": false,
       "value": {
-        "schema_version": "blabee.claude-session.v2",
+        "schema_version": "blabee.claude-session.v3",
         "kind": "response",
         "request_id": "00000001-0000-4000-8000-000000000001",
         "provider": "claude",
@@ -2220,11 +2218,11 @@
       }
     },
     {
-      "name": "claude-session.v2/reject-unknown-key",
-      "contract": "claude-session.v2",
+      "name": "claude-session.v3/reject-unknown-key",
+      "contract": "claude-session.v3",
       "valid": false,
       "value": {
-        "schema_version": "blabee.claude-session.v2",
+        "schema_version": "blabee.claude-session.v3",
         "kind": "request",
         "request_id": "00000001-0000-4000-8000-000000000001",
         "provider": "claude",
@@ -2248,11 +2246,11 @@
       }
     },
     {
-      "name": "claude-session.v2/reject-unknown-payload-key",
-      "contract": "claude-session.v2",
+      "name": "claude-session.v3/reject-unknown-payload-key",
+      "contract": "claude-session.v3",
       "valid": false,
       "value": {
-        "schema_version": "blabee.claude-session.v2",
+        "schema_version": "blabee.claude-session.v3",
         "kind": "request",
         "request_id": "00000001-0000-4000-8000-000000000001",
         "provider": "claude",
@@ -2276,8 +2274,8 @@
       }
     },
     {
-      "name": "claude-session.v2/reject-legacy-version",
-      "contract": "claude-session.v2",
+      "name": "claude-session.v3/reject-legacy-version",
+      "contract": "claude-session.v3",
       "valid": false,
       "value": {
         "schema_version": "blabee.claude-session.v1",
@@ -2303,11 +2301,11 @@
       }
     },
     {
-      "name": "claude-session.v2/reject-wrong-role",
-      "contract": "claude-session.v2",
+      "name": "claude-session.v3/reject-wrong-role",
+      "contract": "claude-session.v3",
       "valid": false,
       "value": {
-        "schema_version": "blabee.claude-session.v2",
+        "schema_version": "blabee.claude-session.v3",
         "kind": "request",
         "request_id": "00000001-0000-4000-8000-000000000001",
         "provider": "claude",
@@ -2330,11 +2328,11 @@
       }
     },
     {
-      "name": "claude-session.v2/reject-unknown-operation",
-      "contract": "claude-session.v2",
+      "name": "claude-session.v3/reject-unknown-operation",
+      "contract": "claude-session.v3",
       "valid": false,
       "value": {
-        "schema_version": "blabee.claude-session.v2",
+        "schema_version": "blabee.claude-session.v3",
         "kind": "request",
         "request_id": "00000001-0000-4000-8000-000000000001",
         "provider": "claude",
@@ -2357,11 +2355,11 @@
       }
     },
     {
-      "name": "claude-session.v2/reject-result-and-error",
-      "contract": "claude-session.v2",
+      "name": "claude-session.v3/reject-result-and-error",
+      "contract": "claude-session.v3",
       "valid": false,
       "value": {
-        "schema_version": "blabee.claude-session.v2",
+        "schema_version": "blabee.claude-session.v3",
         "kind": "response",
         "request_id": "00000001-0000-4000-8000-000000000001",
         "provider": "claude",
@@ -2379,7 +2377,8 @@
         "result": {
           "observed": true,
           "boundary_id": "00000011-0000-4000-8000-000000000011",
-          "observation_status": "accepted"
+          "observation_status": "accepted",
+          "waiter": null
         },
         "error": {
           "code": "unavailable"
@@ -2387,11 +2386,11 @@
       }
     },
     {
-      "name": "claude-session.v2/reject-response-credential",
-      "contract": "claude-session.v2",
+      "name": "claude-session.v3/reject-response-credential",
+      "contract": "claude-session.v3",
       "valid": false,
       "value": {
-        "schema_version": "blabee.claude-session.v2",
+        "schema_version": "blabee.claude-session.v3",
         "kind": "response",
         "request_id": "00000001-0000-4000-8000-000000000001",
         "provider": "claude",
@@ -2409,17 +2408,18 @@
         "result": {
           "observed": true,
           "boundary_id": "00000011-0000-4000-8000-000000000011",
-          "observation_status": "accepted"
+          "observation_status": "accepted",
+          "waiter": null
         },
         "auth_token": "synthetic-fixture-capability"
       }
     },
     {
-      "name": "claude-session.v2/reject-error-message",
-      "contract": "claude-session.v2",
+      "name": "claude-session.v3/reject-error-message",
+      "contract": "claude-session.v3",
       "valid": false,
       "value": {
-        "schema_version": "blabee.claude-session.v2",
+        "schema_version": "blabee.claude-session.v3",
         "kind": "response",
         "request_id": "00000001-0000-4000-8000-000000000001",
         "provider": "claude",
@@ -3366,11 +3366,11 @@
       }
     },
     {
-      "name": "claude-session.v2/reject-numeric-ok-0",
-      "contract": "claude-session.v2",
+      "name": "claude-session.v3/reject-numeric-ok-0",
+      "contract": "claude-session.v3",
       "valid": false,
       "value": {
-        "schema_version": "blabee.claude-session.v2",
+        "schema_version": "blabee.claude-session.v3",
         "kind": "response",
         "request_id": "00000001-0000-4000-8000-000000000001",
         "provider": "claude",
@@ -3388,16 +3388,17 @@
         "result": {
           "observed": true,
           "boundary_id": "00000011-0000-4000-8000-000000000011",
-          "observation_status": "accepted"
+          "observation_status": "accepted",
+          "waiter": null
         }
       }
     },
     {
-      "name": "claude-session.v2/reject-numeric-ok-1",
-      "contract": "claude-session.v2",
+      "name": "claude-session.v3/reject-numeric-ok-1",
+      "contract": "claude-session.v3",
       "valid": false,
       "value": {
-        "schema_version": "blabee.claude-session.v2",
+        "schema_version": "blabee.claude-session.v3",
         "kind": "response",
         "request_id": "00000001-0000-4000-8000-000000000001",
         "provider": "claude",
@@ -3415,7 +3416,8 @@
         "result": {
           "observed": true,
           "boundary_id": "00000011-0000-4000-8000-000000000011",
-          "observation_status": "accepted"
+          "observation_status": "accepted",
+          "waiter": null
         }
       }
     },
@@ -3477,10 +3479,10 @@
     },
     {
       "name": "session/reject-numeric-acknowledged",
-      "contract": "claude-session.v2",
+      "contract": "claude-session.v3",
       "valid": false,
       "value": {
-        "schema_version": "blabee.claude-session.v2",
+        "schema_version": "blabee.claude-session.v3",
         "kind": "response",
         "request_id": "00000001-0000-4000-8000-000000000001",
         "provider": "claude",
@@ -3502,10 +3504,10 @@
     },
     {
       "name": "session/reject-numeric-closed",
-      "contract": "claude-session.v2",
+      "contract": "claude-session.v3",
       "valid": false,
       "value": {
-        "schema_version": "blabee.claude-session.v2",
+        "schema_version": "blabee.claude-session.v3",
         "kind": "response",
         "request_id": "00000001-0000-4000-8000-000000000001",
         "provider": "claude",
@@ -3527,10 +3529,10 @@
     },
     {
       "name": "session/reject-numeric-recorded",
-      "contract": "claude-session.v2",
+      "contract": "claude-session.v3",
       "valid": false,
       "value": {
-        "schema_version": "blabee.claude-session.v2",
+        "schema_version": "blabee.claude-session.v3",
         "kind": "response",
         "request_id": "00000001-0000-4000-8000-000000000001",
         "provider": "claude",
@@ -3554,10 +3556,10 @@
     },
     {
       "name": "session/reject-numeric-observed",
-      "contract": "claude-session.v2",
+      "contract": "claude-session.v3",
       "valid": false,
       "value": {
-        "schema_version": "blabee.claude-session.v2",
+        "schema_version": "blabee.claude-session.v3",
         "kind": "response",
         "request_id": "00000001-0000-4000-8000-000000000001",
         "provider": "claude",
@@ -3575,7 +3577,8 @@
         "result": {
           "observed": 1,
           "boundary_id": "00000011-0000-4000-8000-000000000011",
-          "observation_status": "accepted"
+          "observation_status": "accepted",
+          "waiter": null
         }
       }
     },
@@ -3720,16 +3723,16 @@
       }
     },
     {
-      "name": "claude-session.v2/poll/delivery-sequence/maximum",
-      "contract": "claude-session.v2",
+      "name": "claude-session.v3/poll/delivery-sequence/maximum",
+      "contract": "claude-session.v3",
       "valid": true,
       "value": {
-        "schema_version": "blabee.claude-session.v2",
+        "schema_version": "blabee.claude-session.v3",
         "kind": "response",
         "request_id": "00000001-0000-4000-8000-000000000001",
         "provider": "claude",
-        "role": "bridge",
-        "operation": "bridge.poll",
+        "role": "hook",
+        "operation": "hook.poll",
         "authority": {
           "scope_id": "00000002-0000-4000-8000-000000000002",
           "native_session_id": "00000003-0000-4000-8000-000000000003",
@@ -3740,28 +3743,28 @@
         },
         "ok": true,
         "result": {
+          "status": "delivered",
           "event": {
-            "kind": "readiness_probe",
-            "probe_id": "00000014-0000-4000-8000-000000000014",
-            "nonce": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "kind": "selection",
+            "selection_id": "00000013-0000-4000-8000-000000000013",
+            "delivery_token": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
             "expires_at_nanoseconds": "1",
-            "channel_source": "blabee-claude",
             "delivery_sequence": "18446744073709551615"
           }
         }
       }
     },
     {
-      "name": "claude-session.v2/poll/delivery-sequence/zero",
-      "contract": "claude-session.v2",
+      "name": "claude-session.v3/poll/delivery-sequence/zero",
+      "contract": "claude-session.v3",
       "valid": false,
       "value": {
-        "schema_version": "blabee.claude-session.v2",
+        "schema_version": "blabee.claude-session.v3",
         "kind": "response",
         "request_id": "00000001-0000-4000-8000-000000000001",
         "provider": "claude",
-        "role": "bridge",
-        "operation": "bridge.poll",
+        "role": "hook",
+        "operation": "hook.poll",
         "authority": {
           "scope_id": "00000002-0000-4000-8000-000000000002",
           "native_session_id": "00000003-0000-4000-8000-000000000003",
@@ -3772,28 +3775,28 @@
         },
         "ok": true,
         "result": {
+          "status": "delivered",
           "event": {
-            "kind": "readiness_probe",
-            "probe_id": "00000014-0000-4000-8000-000000000014",
-            "nonce": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "kind": "selection",
+            "selection_id": "00000013-0000-4000-8000-000000000013",
+            "delivery_token": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
             "expires_at_nanoseconds": "1",
-            "channel_source": "blabee-claude",
             "delivery_sequence": "0"
           }
         }
       }
     },
     {
-      "name": "claude-session.v2/poll/delivery-sequence/overflow",
-      "contract": "claude-session.v2",
+      "name": "claude-session.v3/poll/delivery-sequence/overflow",
+      "contract": "claude-session.v3",
       "valid": false,
       "value": {
-        "schema_version": "blabee.claude-session.v2",
+        "schema_version": "blabee.claude-session.v3",
         "kind": "response",
         "request_id": "00000001-0000-4000-8000-000000000001",
         "provider": "claude",
-        "role": "bridge",
-        "operation": "bridge.poll",
+        "role": "hook",
+        "operation": "hook.poll",
         "authority": {
           "scope_id": "00000002-0000-4000-8000-000000000002",
           "native_session_id": "00000003-0000-4000-8000-000000000003",
@@ -3804,28 +3807,28 @@
         },
         "ok": true,
         "result": {
+          "status": "delivered",
           "event": {
-            "kind": "readiness_probe",
-            "probe_id": "00000014-0000-4000-8000-000000000014",
-            "nonce": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "kind": "selection",
+            "selection_id": "00000013-0000-4000-8000-000000000013",
+            "delivery_token": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
             "expires_at_nanoseconds": "1",
-            "channel_source": "blabee-claude",
             "delivery_sequence": "18446744073709551616"
           }
         }
       }
     },
     {
-      "name": "claude-session.v2/poll/delivery-sequence/leading-zero",
-      "contract": "claude-session.v2",
+      "name": "claude-session.v3/poll/delivery-sequence/leading-zero",
+      "contract": "claude-session.v3",
       "valid": false,
       "value": {
-        "schema_version": "blabee.claude-session.v2",
+        "schema_version": "blabee.claude-session.v3",
         "kind": "response",
         "request_id": "00000001-0000-4000-8000-000000000001",
         "provider": "claude",
-        "role": "bridge",
-        "operation": "bridge.poll",
+        "role": "hook",
+        "operation": "hook.poll",
         "authority": {
           "scope_id": "00000002-0000-4000-8000-000000000002",
           "native_session_id": "00000003-0000-4000-8000-000000000003",
@@ -3836,28 +3839,28 @@
         },
         "ok": true,
         "result": {
+          "status": "delivered",
           "event": {
-            "kind": "readiness_probe",
-            "probe_id": "00000014-0000-4000-8000-000000000014",
-            "nonce": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "kind": "selection",
+            "selection_id": "00000013-0000-4000-8000-000000000013",
+            "delivery_token": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
             "expires_at_nanoseconds": "1",
-            "channel_source": "blabee-claude",
             "delivery_sequence": "01"
           }
         }
       }
     },
     {
-      "name": "claude-session.v2/poll/delivery-sequence/number",
-      "contract": "claude-session.v2",
+      "name": "claude-session.v3/poll/delivery-sequence/number",
+      "contract": "claude-session.v3",
       "valid": false,
       "value": {
-        "schema_version": "blabee.claude-session.v2",
+        "schema_version": "blabee.claude-session.v3",
         "kind": "response",
         "request_id": "00000001-0000-4000-8000-000000000001",
         "provider": "claude",
-        "role": "bridge",
-        "operation": "bridge.poll",
+        "role": "hook",
+        "operation": "hook.poll",
         "authority": {
           "scope_id": "00000002-0000-4000-8000-000000000002",
           "native_session_id": "00000003-0000-4000-8000-000000000003",
@@ -3868,28 +3871,28 @@
         },
         "ok": true,
         "result": {
+          "status": "delivered",
           "event": {
-            "kind": "readiness_probe",
-            "probe_id": "00000014-0000-4000-8000-000000000014",
-            "nonce": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "kind": "selection",
+            "selection_id": "00000013-0000-4000-8000-000000000013",
+            "delivery_token": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
             "expires_at_nanoseconds": "1",
-            "channel_source": "blabee-claude",
             "delivery_sequence": 1
           }
         }
       }
     },
     {
-      "name": "claude-session.v2/poll/delivery-sequence/boolean",
-      "contract": "claude-session.v2",
+      "name": "claude-session.v3/poll/delivery-sequence/boolean",
+      "contract": "claude-session.v3",
       "valid": false,
       "value": {
-        "schema_version": "blabee.claude-session.v2",
+        "schema_version": "blabee.claude-session.v3",
         "kind": "response",
         "request_id": "00000001-0000-4000-8000-000000000001",
         "provider": "claude",
-        "role": "bridge",
-        "operation": "bridge.poll",
+        "role": "hook",
+        "operation": "hook.poll",
         "authority": {
           "scope_id": "00000002-0000-4000-8000-000000000002",
           "native_session_id": "00000003-0000-4000-8000-000000000003",
@@ -3900,28 +3903,28 @@
         },
         "ok": true,
         "result": {
+          "status": "delivered",
           "event": {
-            "kind": "readiness_probe",
-            "probe_id": "00000014-0000-4000-8000-000000000014",
-            "nonce": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "kind": "selection",
+            "selection_id": "00000013-0000-4000-8000-000000000013",
+            "delivery_token": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
             "expires_at_nanoseconds": "1",
-            "channel_source": "blabee-claude",
             "delivery_sequence": true
           }
         }
       }
     },
     {
-      "name": "claude-session.v2/poll/delivery-sequence/negative",
-      "contract": "claude-session.v2",
+      "name": "claude-session.v3/poll/delivery-sequence/negative",
+      "contract": "claude-session.v3",
       "valid": false,
       "value": {
-        "schema_version": "blabee.claude-session.v2",
+        "schema_version": "blabee.claude-session.v3",
         "kind": "response",
         "request_id": "00000001-0000-4000-8000-000000000001",
         "provider": "claude",
-        "role": "bridge",
-        "operation": "bridge.poll",
+        "role": "hook",
+        "operation": "hook.poll",
         "authority": {
           "scope_id": "00000002-0000-4000-8000-000000000002",
           "native_session_id": "00000003-0000-4000-8000-000000000003",
@@ -3932,28 +3935,28 @@
         },
         "ok": true,
         "result": {
+          "status": "delivered",
           "event": {
-            "kind": "readiness_probe",
-            "probe_id": "00000014-0000-4000-8000-000000000014",
-            "nonce": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "kind": "selection",
+            "selection_id": "00000013-0000-4000-8000-000000000013",
+            "delivery_token": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
             "expires_at_nanoseconds": "1",
-            "channel_source": "blabee-claude",
             "delivery_sequence": "-1"
           }
         }
       }
     },
     {
-      "name": "claude-session.v2/poll/delivery-sequence/decimal",
-      "contract": "claude-session.v2",
+      "name": "claude-session.v3/poll/delivery-sequence/decimal",
+      "contract": "claude-session.v3",
       "valid": false,
       "value": {
-        "schema_version": "blabee.claude-session.v2",
+        "schema_version": "blabee.claude-session.v3",
         "kind": "response",
         "request_id": "00000001-0000-4000-8000-000000000001",
         "provider": "claude",
-        "role": "bridge",
-        "operation": "bridge.poll",
+        "role": "hook",
+        "operation": "hook.poll",
         "authority": {
           "scope_id": "00000002-0000-4000-8000-000000000002",
           "native_session_id": "00000003-0000-4000-8000-000000000003",
@@ -3964,28 +3967,28 @@
         },
         "ok": true,
         "result": {
+          "status": "delivered",
           "event": {
-            "kind": "readiness_probe",
-            "probe_id": "00000014-0000-4000-8000-000000000014",
-            "nonce": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "kind": "selection",
+            "selection_id": "00000013-0000-4000-8000-000000000013",
+            "delivery_token": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
             "expires_at_nanoseconds": "1",
-            "channel_source": "blabee-claude",
             "delivery_sequence": "1.0"
           }
         }
       }
     },
     {
-      "name": "claude-session.v2/poll/delivery-sequence/newline",
-      "contract": "claude-session.v2",
+      "name": "claude-session.v3/poll/delivery-sequence/newline",
+      "contract": "claude-session.v3",
       "valid": false,
       "value": {
-        "schema_version": "blabee.claude-session.v2",
+        "schema_version": "blabee.claude-session.v3",
         "kind": "response",
         "request_id": "00000001-0000-4000-8000-000000000001",
         "provider": "claude",
-        "role": "bridge",
-        "operation": "bridge.poll",
+        "role": "hook",
+        "operation": "hook.poll",
         "authority": {
           "scope_id": "00000002-0000-4000-8000-000000000002",
           "native_session_id": "00000003-0000-4000-8000-000000000003",
@@ -3996,28 +3999,28 @@
         },
         "ok": true,
         "result": {
+          "status": "delivered",
           "event": {
-            "kind": "readiness_probe",
-            "probe_id": "00000014-0000-4000-8000-000000000014",
-            "nonce": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "kind": "selection",
+            "selection_id": "00000013-0000-4000-8000-000000000013",
+            "delivery_token": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
             "expires_at_nanoseconds": "1",
-            "channel_source": "blabee-claude",
             "delivery_sequence": "1\n"
           }
         }
       }
     },
     {
-      "name": "claude-session.v2/poll/delivery-sequence/missing",
-      "contract": "claude-session.v2",
+      "name": "claude-session.v3/poll/delivery-sequence/missing",
+      "contract": "claude-session.v3",
       "valid": false,
       "value": {
-        "schema_version": "blabee.claude-session.v2",
+        "schema_version": "blabee.claude-session.v3",
         "kind": "response",
         "request_id": "00000001-0000-4000-8000-000000000001",
         "provider": "claude",
-        "role": "bridge",
-        "operation": "bridge.poll",
+        "role": "hook",
+        "operation": "hook.poll",
         "authority": {
           "scope_id": "00000002-0000-4000-8000-000000000002",
           "native_session_id": "00000003-0000-4000-8000-000000000003",
@@ -4028,12 +4031,12 @@
         },
         "ok": true,
         "result": {
+          "status": "delivered",
           "event": {
-            "kind": "readiness_probe",
-            "probe_id": "00000014-0000-4000-8000-000000000014",
-            "nonce": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-            "expires_at_nanoseconds": "1",
-            "channel_source": "blabee-claude"
+            "kind": "selection",
+            "selection_id": "00000013-0000-4000-8000-000000000013",
+            "delivery_token": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "expires_at_nanoseconds": "1"
           }
         }
       }
@@ -4288,6 +4291,983 @@
           "channel_source": "blabee-claude",
           "native_session_id": "00000003-0000-4000-8000-000000000003",
           "source": "resume"
+        }
+      }
+    },
+    {
+      "name": "pet-provider.v1/claude/request/dismiss_interaction",
+      "contract": "pet-provider.v1",
+      "valid": true,
+      "value": {
+        "schema_version": "blabee.pet-provider.v1",
+        "kind": "request",
+        "request_id": "00000001-0000-4000-8000-000000000001",
+        "provider": "claude",
+        "role": "selector",
+        "operation": "dismiss_interaction",
+        "target": {
+          "scope_id": "00000002-0000-4000-8000-000000000002",
+          "service_incarnation": "00000005-0000-4000-8000-000000000005",
+          "session_incarnation": "00000004-0000-4000-8000-000000000004",
+          "ui_generation": "1",
+          "authority_epoch": "00000007-0000-4000-8000-000000000007"
+        },
+        "payload": {
+          "binding": {
+            "project_id": "project_id-fixture",
+            "session_id": "session_id-fixture",
+            "source_turn_id": "source_turn_id-fixture",
+            "source_prompt_id": "source_prompt_id-fixture",
+            "episode_id": "episode_id-fixture",
+            "episode_root_prompt_id": "episode_root_prompt_id-fixture",
+            "episode_baseline_checkpoint_id": "episode_baseline_checkpoint_id-fixture",
+            "decision_boundary_id": "decision_boundary_id-fixture",
+            "boundary_sequence": 1
+          },
+          "interaction_id": "dismiss-interaction-fixture",
+          "packet_id": "packet_id-fixture",
+          "revision": 1
+        }
+      }
+    },
+    {
+      "name": "pet-provider.v1/claude/response/dismiss_interaction/ok",
+      "contract": "pet-provider.v1",
+      "valid": true,
+      "value": {
+        "schema_version": "blabee.pet-provider.v1",
+        "kind": "response",
+        "request_id": "00000001-0000-4000-8000-000000000001",
+        "provider": "claude",
+        "role": "selector",
+        "operation": "dismiss_interaction",
+        "target": {
+          "scope_id": "00000002-0000-4000-8000-000000000002",
+          "service_incarnation": "00000005-0000-4000-8000-000000000005",
+          "session_incarnation": "00000004-0000-4000-8000-000000000004",
+          "ui_generation": "1",
+          "authority_epoch": "00000007-0000-4000-8000-000000000007"
+        },
+        "ok": true,
+        "result": {
+          "dismissal": {
+            "binding": {
+              "project_id": "project_id-fixture",
+              "session_id": "session_id-fixture",
+              "source_turn_id": "source_turn_id-fixture",
+              "source_prompt_id": "source_prompt_id-fixture",
+              "episode_id": "episode_id-fixture",
+              "episode_root_prompt_id": "episode_root_prompt_id-fixture",
+              "episode_baseline_checkpoint_id": "episode_baseline_checkpoint_id-fixture",
+              "decision_boundary_id": "decision_boundary_id-fixture",
+              "boundary_sequence": 1
+            },
+            "interaction_id": "dismiss-interaction-fixture",
+            "packet_id": "packet_id-fixture",
+            "revision": 1
+          },
+          "dismissed": true
+        }
+      }
+    },
+    {
+      "name": "pet-provider.v1/claude/response/dismiss_interaction/error",
+      "contract": "pet-provider.v1",
+      "valid": true,
+      "value": {
+        "schema_version": "blabee.pet-provider.v1",
+        "kind": "response",
+        "request_id": "00000001-0000-4000-8000-000000000001",
+        "provider": "claude",
+        "role": "selector",
+        "operation": "dismiss_interaction",
+        "target": {
+          "scope_id": "00000002-0000-4000-8000-000000000002",
+          "service_incarnation": "00000005-0000-4000-8000-000000000005",
+          "session_incarnation": "00000004-0000-4000-8000-000000000004",
+          "ui_generation": "1",
+          "authority_epoch": "00000007-0000-4000-8000-000000000007"
+        },
+        "ok": false,
+        "error": {
+          "code": "invalid_request"
+        }
+      }
+    },
+    {
+      "name": "pet-provider.v1/claude/dismiss_interaction/invalid/execution_option",
+      "contract": "pet-provider.v1",
+      "valid": false,
+      "value": {
+        "schema_version": "blabee.pet-provider.v1",
+        "kind": "request",
+        "request_id": "00000001-0000-4000-8000-000000000001",
+        "provider": "claude",
+        "role": "selector",
+        "operation": "dismiss_interaction",
+        "target": {
+          "scope_id": "00000002-0000-4000-8000-000000000002",
+          "service_incarnation": "00000005-0000-4000-8000-000000000005",
+          "session_incarnation": "00000004-0000-4000-8000-000000000004",
+          "ui_generation": "1",
+          "authority_epoch": "00000007-0000-4000-8000-000000000007"
+        },
+        "payload": {
+          "binding": {
+            "project_id": "project_id-fixture",
+            "session_id": "session_id-fixture",
+            "source_turn_id": "source_turn_id-fixture",
+            "source_prompt_id": "source_prompt_id-fixture",
+            "episode_id": "episode_id-fixture",
+            "episode_root_prompt_id": "episode_root_prompt_id-fixture",
+            "episode_baseline_checkpoint_id": "episode_baseline_checkpoint_id-fixture",
+            "decision_boundary_id": "decision_boundary_id-fixture",
+            "boundary_sequence": 1
+          },
+          "interaction_id": "dismiss-interaction-fixture",
+          "packet_id": "packet_id-fixture",
+          "revision": 1,
+          "option_id": "do-not-execute"
+        }
+      }
+    },
+    {
+      "name": "pet-provider.v1/claude/dismiss_interaction/invalid/missing_identity",
+      "contract": "pet-provider.v1",
+      "valid": false,
+      "value": {
+        "schema_version": "blabee.pet-provider.v1",
+        "kind": "request",
+        "request_id": "00000001-0000-4000-8000-000000000001",
+        "provider": "claude",
+        "role": "selector",
+        "operation": "dismiss_interaction",
+        "target": {
+          "scope_id": "00000002-0000-4000-8000-000000000002",
+          "service_incarnation": "00000005-0000-4000-8000-000000000005",
+          "session_incarnation": "00000004-0000-4000-8000-000000000004",
+          "ui_generation": "1",
+          "authority_epoch": "00000007-0000-4000-8000-000000000007"
+        },
+        "payload": {
+          "binding": {
+            "project_id": "project_id-fixture",
+            "session_id": "session_id-fixture",
+            "source_turn_id": "source_turn_id-fixture",
+            "source_prompt_id": "source_prompt_id-fixture",
+            "episode_id": "episode_id-fixture",
+            "episode_root_prompt_id": "episode_root_prompt_id-fixture",
+            "episode_baseline_checkpoint_id": "episode_baseline_checkpoint_id-fixture",
+            "decision_boundary_id": "decision_boundary_id-fixture",
+            "boundary_sequence": 1
+          },
+          "packet_id": "packet_id-fixture",
+          "revision": 1
+        }
+      }
+    },
+    {
+      "name": "pet-provider.v1/claude/dismiss_interaction/invalid/missing_binding",
+      "contract": "pet-provider.v1",
+      "valid": false,
+      "value": {
+        "schema_version": "blabee.pet-provider.v1",
+        "kind": "request",
+        "request_id": "00000001-0000-4000-8000-000000000001",
+        "provider": "claude",
+        "role": "selector",
+        "operation": "dismiss_interaction",
+        "target": {
+          "scope_id": "00000002-0000-4000-8000-000000000002",
+          "service_incarnation": "00000005-0000-4000-8000-000000000005",
+          "session_incarnation": "00000004-0000-4000-8000-000000000004",
+          "ui_generation": "1",
+          "authority_epoch": "00000007-0000-4000-8000-000000000007"
+        },
+        "payload": {
+          "binding": {
+            "project_id": "project_id-fixture",
+            "session_id": "session_id-fixture",
+            "source_turn_id": "source_turn_id-fixture",
+            "episode_id": "episode_id-fixture",
+            "episode_root_prompt_id": "episode_root_prompt_id-fixture",
+            "episode_baseline_checkpoint_id": "episode_baseline_checkpoint_id-fixture",
+            "decision_boundary_id": "decision_boundary_id-fixture",
+            "boundary_sequence": 1
+          },
+          "interaction_id": "dismiss-interaction-fixture",
+          "packet_id": "packet_id-fixture",
+          "revision": 1
+        }
+      }
+    },
+    {
+      "name": "pet-provider.v1/claude/dismiss_interaction/invalid/boolean_revision",
+      "contract": "pet-provider.v1",
+      "valid": false,
+      "value": {
+        "schema_version": "blabee.pet-provider.v1",
+        "kind": "request",
+        "request_id": "00000001-0000-4000-8000-000000000001",
+        "provider": "claude",
+        "role": "selector",
+        "operation": "dismiss_interaction",
+        "target": {
+          "scope_id": "00000002-0000-4000-8000-000000000002",
+          "service_incarnation": "00000005-0000-4000-8000-000000000005",
+          "session_incarnation": "00000004-0000-4000-8000-000000000004",
+          "ui_generation": "1",
+          "authority_epoch": "00000007-0000-4000-8000-000000000007"
+        },
+        "payload": {
+          "binding": {
+            "project_id": "project_id-fixture",
+            "session_id": "session_id-fixture",
+            "source_turn_id": "source_turn_id-fixture",
+            "source_prompt_id": "source_prompt_id-fixture",
+            "episode_id": "episode_id-fixture",
+            "episode_root_prompt_id": "episode_root_prompt_id-fixture",
+            "episode_baseline_checkpoint_id": "episode_baseline_checkpoint_id-fixture",
+            "decision_boundary_id": "decision_boundary_id-fixture",
+            "boundary_sequence": 1
+          },
+          "interaction_id": "dismiss-interaction-fixture",
+          "packet_id": "packet_id-fixture",
+          "revision": true
+        }
+      }
+    },
+    {
+      "name": "pet-provider.v1/claude/dismiss_interaction/invalid/codex_provider",
+      "contract": "pet-provider.v1",
+      "valid": false,
+      "value": {
+        "schema_version": "blabee.pet-provider.v1",
+        "kind": "request",
+        "request_id": "00000001-0000-4000-8000-000000000001",
+        "provider": "codex",
+        "role": "selector",
+        "operation": "dismiss_interaction",
+        "target": {
+          "scope_id": "00000002-0000-4000-8000-000000000002",
+          "service_incarnation": "00000005-0000-4000-8000-000000000005",
+          "session_incarnation": "00000004-0000-4000-8000-000000000004",
+          "ui_generation": "1"
+        },
+        "payload": {
+          "binding": {
+            "project_id": "project_id-fixture",
+            "session_id": "session_id-fixture",
+            "source_turn_id": "source_turn_id-fixture",
+            "source_prompt_id": "source_prompt_id-fixture",
+            "episode_id": "episode_id-fixture",
+            "episode_root_prompt_id": "episode_root_prompt_id-fixture",
+            "episode_baseline_checkpoint_id": "episode_baseline_checkpoint_id-fixture",
+            "decision_boundary_id": "decision_boundary_id-fixture",
+            "boundary_sequence": 1
+          },
+          "interaction_id": "dismiss-interaction-fixture",
+          "packet_id": "packet_id-fixture",
+          "revision": 1
+        }
+      }
+    },
+    {
+      "name": "pet-provider.v1/claude/dismiss_interaction/invalid/bridge_role",
+      "contract": "pet-provider.v1",
+      "valid": false,
+      "value": {
+        "schema_version": "blabee.pet-provider.v1",
+        "kind": "request",
+        "request_id": "00000001-0000-4000-8000-000000000001",
+        "provider": "claude",
+        "role": "bridge",
+        "operation": "dismiss_interaction",
+        "target": {
+          "scope_id": "00000002-0000-4000-8000-000000000002",
+          "service_incarnation": "00000005-0000-4000-8000-000000000005",
+          "session_incarnation": "00000004-0000-4000-8000-000000000004",
+          "ui_generation": "1",
+          "authority_epoch": "00000007-0000-4000-8000-000000000007"
+        },
+        "payload": {
+          "binding": {
+            "project_id": "project_id-fixture",
+            "session_id": "session_id-fixture",
+            "source_turn_id": "source_turn_id-fixture",
+            "source_prompt_id": "source_prompt_id-fixture",
+            "episode_id": "episode_id-fixture",
+            "episode_root_prompt_id": "episode_root_prompt_id-fixture",
+            "episode_baseline_checkpoint_id": "episode_baseline_checkpoint_id-fixture",
+            "decision_boundary_id": "decision_boundary_id-fixture",
+            "boundary_sequence": 1
+          },
+          "interaction_id": "dismiss-interaction-fixture",
+          "packet_id": "packet_id-fixture",
+          "revision": 1
+        }
+      }
+    },
+    {
+      "name": "pet-provider.v1/claude/dismiss_interaction/invalid/false_receipt",
+      "contract": "pet-provider.v1",
+      "valid": false,
+      "value": {
+        "schema_version": "blabee.pet-provider.v1",
+        "kind": "response",
+        "request_id": "00000001-0000-4000-8000-000000000001",
+        "provider": "claude",
+        "role": "selector",
+        "operation": "dismiss_interaction",
+        "target": {
+          "scope_id": "00000002-0000-4000-8000-000000000002",
+          "service_incarnation": "00000005-0000-4000-8000-000000000005",
+          "session_incarnation": "00000004-0000-4000-8000-000000000004",
+          "ui_generation": "1",
+          "authority_epoch": "00000007-0000-4000-8000-000000000007"
+        },
+        "ok": true,
+        "result": {
+          "dismissal": {
+            "binding": {
+              "project_id": "project_id-fixture",
+              "session_id": "session_id-fixture",
+              "source_turn_id": "source_turn_id-fixture",
+              "source_prompt_id": "source_prompt_id-fixture",
+              "episode_id": "episode_id-fixture",
+              "episode_root_prompt_id": "episode_root_prompt_id-fixture",
+              "episode_baseline_checkpoint_id": "episode_baseline_checkpoint_id-fixture",
+              "decision_boundary_id": "decision_boundary_id-fixture",
+              "boundary_sequence": 1
+            },
+            "interaction_id": "dismiss-interaction-fixture",
+            "packet_id": "packet_id-fixture",
+            "revision": 1
+          },
+          "dismissed": false
+        }
+      }
+    },
+    {
+      "name": "pet-provider.v1/claude/dismiss_interaction/invalid/execution_receipt",
+      "contract": "pet-provider.v1",
+      "valid": false,
+      "value": {
+        "schema_version": "blabee.pet-provider.v1",
+        "kind": "response",
+        "request_id": "00000001-0000-4000-8000-000000000001",
+        "provider": "claude",
+        "role": "selector",
+        "operation": "dismiss_interaction",
+        "target": {
+          "scope_id": "00000002-0000-4000-8000-000000000002",
+          "service_incarnation": "00000005-0000-4000-8000-000000000005",
+          "session_incarnation": "00000004-0000-4000-8000-000000000004",
+          "ui_generation": "1",
+          "authority_epoch": "00000007-0000-4000-8000-000000000007"
+        },
+        "ok": true,
+        "result": {
+          "dismissal": {
+            "binding": {
+              "project_id": "project_id-fixture",
+              "session_id": "session_id-fixture",
+              "source_turn_id": "source_turn_id-fixture",
+              "source_prompt_id": "source_prompt_id-fixture",
+              "episode_id": "episode_id-fixture",
+              "episode_root_prompt_id": "episode_root_prompt_id-fixture",
+              "episode_baseline_checkpoint_id": "episode_baseline_checkpoint_id-fixture",
+              "decision_boundary_id": "decision_boundary_id-fixture",
+              "boundary_sequence": 1
+            },
+            "interaction_id": "dismiss-interaction-fixture",
+            "packet_id": "packet_id-fixture",
+            "revision": 1
+          },
+          "dismissed": true,
+          "selection_id": "do-not-execute"
+        }
+      }
+    },
+    {
+      "name": "hook.poll/request",
+      "contract": "claude-session.v3",
+      "valid": true,
+      "value": {
+        "schema_version": "blabee.claude-session.v3",
+        "kind": "request",
+        "request_id": "00000001-0000-4000-8000-000000000001",
+        "provider": "claude",
+        "role": "hook",
+        "operation": "hook.poll",
+        "authority": {
+          "scope_id": "00000002-0000-4000-8000-000000000002",
+          "native_session_id": "00000003-0000-4000-8000-000000000003",
+          "session_incarnation": "00000004-0000-4000-8000-000000000004",
+          "service_incarnation": "00000005-0000-4000-8000-000000000005",
+          "owner_connection_id": "00000006-0000-4000-8000-000000000006",
+          "authority_epoch": "00000007-0000-4000-8000-000000000007"
+        },
+        "payload": {
+          "native_session_id": "00000003-0000-4000-8000-000000000003",
+          "cwd": "/fixture/project",
+          "prompt_id": "00000012-0000-4000-8000-000000000012",
+          "waiter_generation": "00000015-0000-4000-8000-000000000015"
+        }
+      }
+    },
+    {
+      "name": "hook.poll/response/waiting",
+      "contract": "claude-session.v3",
+      "valid": true,
+      "value": {
+        "schema_version": "blabee.claude-session.v3",
+        "kind": "response",
+        "request_id": "00000001-0000-4000-8000-000000000001",
+        "provider": "claude",
+        "role": "hook",
+        "operation": "hook.poll",
+        "authority": {
+          "scope_id": "00000002-0000-4000-8000-000000000002",
+          "native_session_id": "00000003-0000-4000-8000-000000000003",
+          "session_incarnation": "00000004-0000-4000-8000-000000000004",
+          "service_incarnation": "00000005-0000-4000-8000-000000000005",
+          "owner_connection_id": "00000006-0000-4000-8000-000000000006",
+          "authority_epoch": "00000007-0000-4000-8000-000000000007"
+        },
+        "ok": true,
+        "result": {
+          "status": "waiting",
+          "event": null
+        }
+      }
+    },
+    {
+      "name": "hook.poll/response/closed",
+      "contract": "claude-session.v3",
+      "valid": true,
+      "value": {
+        "schema_version": "blabee.claude-session.v3",
+        "kind": "response",
+        "request_id": "00000001-0000-4000-8000-000000000001",
+        "provider": "claude",
+        "role": "hook",
+        "operation": "hook.poll",
+        "authority": {
+          "scope_id": "00000002-0000-4000-8000-000000000002",
+          "native_session_id": "00000003-0000-4000-8000-000000000003",
+          "session_incarnation": "00000004-0000-4000-8000-000000000004",
+          "service_incarnation": "00000005-0000-4000-8000-000000000005",
+          "owner_connection_id": "00000006-0000-4000-8000-000000000006",
+          "authority_epoch": "00000007-0000-4000-8000-000000000007"
+        },
+        "ok": true,
+        "result": {
+          "status": "closed",
+          "event": null
+        }
+      }
+    },
+    {
+      "name": "hook.poll/response/error",
+      "contract": "claude-session.v3",
+      "valid": true,
+      "value": {
+        "schema_version": "blabee.claude-session.v3",
+        "kind": "response",
+        "request_id": "00000001-0000-4000-8000-000000000001",
+        "provider": "claude",
+        "role": "hook",
+        "operation": "hook.poll",
+        "authority": {
+          "scope_id": "00000002-0000-4000-8000-000000000002",
+          "native_session_id": "00000003-0000-4000-8000-000000000003",
+          "session_incarnation": "00000004-0000-4000-8000-000000000004",
+          "service_incarnation": "00000005-0000-4000-8000-000000000005",
+          "owner_connection_id": "00000006-0000-4000-8000-000000000006",
+          "authority_epoch": "00000007-0000-4000-8000-000000000007"
+        },
+        "ok": false,
+        "error": {
+          "code": "binding_mismatch"
+        }
+      }
+    },
+    {
+      "name": "hook.poll/reject-prompt_id",
+      "contract": "claude-session.v3",
+      "valid": false,
+      "value": {
+        "schema_version": "blabee.claude-session.v3",
+        "kind": "request",
+        "request_id": "00000001-0000-4000-8000-000000000001",
+        "provider": "claude",
+        "role": "hook",
+        "operation": "hook.poll",
+        "authority": {
+          "scope_id": "00000002-0000-4000-8000-000000000002",
+          "native_session_id": "00000003-0000-4000-8000-000000000003",
+          "session_incarnation": "00000004-0000-4000-8000-000000000004",
+          "service_incarnation": "00000005-0000-4000-8000-000000000005",
+          "owner_connection_id": "00000006-0000-4000-8000-000000000006",
+          "authority_epoch": "00000007-0000-4000-8000-000000000007"
+        },
+        "payload": {
+          "native_session_id": "00000003-0000-4000-8000-000000000003",
+          "cwd": "/fixture/project",
+          "prompt_id": "not-a-uuid",
+          "waiter_generation": "00000015-0000-4000-8000-000000000015"
+        }
+      }
+    },
+    {
+      "name": "hook.poll/reject-waiter_generation",
+      "contract": "claude-session.v3",
+      "valid": false,
+      "value": {
+        "schema_version": "blabee.claude-session.v3",
+        "kind": "request",
+        "request_id": "00000001-0000-4000-8000-000000000001",
+        "provider": "claude",
+        "role": "hook",
+        "operation": "hook.poll",
+        "authority": {
+          "scope_id": "00000002-0000-4000-8000-000000000002",
+          "native_session_id": "00000003-0000-4000-8000-000000000003",
+          "session_incarnation": "00000004-0000-4000-8000-000000000004",
+          "service_incarnation": "00000005-0000-4000-8000-000000000005",
+          "owner_connection_id": "00000006-0000-4000-8000-000000000006",
+          "authority_epoch": "00000007-0000-4000-8000-000000000007"
+        },
+        "payload": {
+          "native_session_id": "00000003-0000-4000-8000-000000000003",
+          "cwd": "/fixture/project",
+          "prompt_id": "00000012-0000-4000-8000-000000000012",
+          "waiter_generation": "not-a-uuid"
+        }
+      }
+    },
+    {
+      "name": "hook.poll/reject-bridge-role",
+      "contract": "claude-session.v3",
+      "valid": false,
+      "value": {
+        "schema_version": "blabee.claude-session.v3",
+        "kind": "request",
+        "request_id": "00000001-0000-4000-8000-000000000001",
+        "provider": "claude",
+        "role": "bridge",
+        "operation": "hook.poll",
+        "authority": {
+          "scope_id": "00000002-0000-4000-8000-000000000002",
+          "native_session_id": "00000003-0000-4000-8000-000000000003",
+          "session_incarnation": "00000004-0000-4000-8000-000000000004",
+          "service_incarnation": "00000005-0000-4000-8000-000000000005",
+          "owner_connection_id": "00000006-0000-4000-8000-000000000006",
+          "authority_epoch": "00000007-0000-4000-8000-000000000007"
+        },
+        "payload": {
+          "native_session_id": "00000003-0000-4000-8000-000000000003",
+          "cwd": "/fixture/project",
+          "prompt_id": "00000012-0000-4000-8000-000000000012",
+          "waiter_generation": "00000015-0000-4000-8000-000000000015"
+        }
+      }
+    },
+    {
+      "name": "hook.cancel/request",
+      "contract": "claude-session.v3",
+      "valid": true,
+      "value": {
+        "schema_version": "blabee.claude-session.v3",
+        "kind": "request",
+        "request_id": "00000001-0000-4000-8000-000000000001",
+        "provider": "claude",
+        "role": "hook",
+        "operation": "hook.cancel",
+        "authority": {
+          "scope_id": "00000002-0000-4000-8000-000000000002",
+          "native_session_id": "00000003-0000-4000-8000-000000000003",
+          "session_incarnation": "00000004-0000-4000-8000-000000000004",
+          "service_incarnation": "00000005-0000-4000-8000-000000000005",
+          "owner_connection_id": "00000006-0000-4000-8000-000000000006",
+          "authority_epoch": "00000007-0000-4000-8000-000000000007"
+        },
+        "payload": {
+          "native_session_id": "00000003-0000-4000-8000-000000000003",
+          "cwd": "/fixture/project",
+          "prompt_id": "00000012-0000-4000-8000-000000000012",
+          "waiter_generation": "00000015-0000-4000-8000-000000000015"
+        }
+      }
+    },
+    {
+      "name": "hook.cancel/response/true",
+      "contract": "claude-session.v3",
+      "valid": true,
+      "value": {
+        "schema_version": "blabee.claude-session.v3",
+        "kind": "response",
+        "request_id": "00000001-0000-4000-8000-000000000001",
+        "provider": "claude",
+        "role": "hook",
+        "operation": "hook.cancel",
+        "authority": {
+          "scope_id": "00000002-0000-4000-8000-000000000002",
+          "native_session_id": "00000003-0000-4000-8000-000000000003",
+          "session_incarnation": "00000004-0000-4000-8000-000000000004",
+          "service_incarnation": "00000005-0000-4000-8000-000000000005",
+          "owner_connection_id": "00000006-0000-4000-8000-000000000006",
+          "authority_epoch": "00000007-0000-4000-8000-000000000007"
+        },
+        "ok": true,
+        "result": {
+          "cancelled": true
+        }
+      }
+    },
+    {
+      "name": "hook.cancel/response/false",
+      "contract": "claude-session.v3",
+      "valid": true,
+      "value": {
+        "schema_version": "blabee.claude-session.v3",
+        "kind": "response",
+        "request_id": "00000001-0000-4000-8000-000000000001",
+        "provider": "claude",
+        "role": "hook",
+        "operation": "hook.cancel",
+        "authority": {
+          "scope_id": "00000002-0000-4000-8000-000000000002",
+          "native_session_id": "00000003-0000-4000-8000-000000000003",
+          "session_incarnation": "00000004-0000-4000-8000-000000000004",
+          "service_incarnation": "00000005-0000-4000-8000-000000000005",
+          "owner_connection_id": "00000006-0000-4000-8000-000000000006",
+          "authority_epoch": "00000007-0000-4000-8000-000000000007"
+        },
+        "ok": true,
+        "result": {
+          "cancelled": false
+        }
+      }
+    },
+    {
+      "name": "hook.cancel/response/error",
+      "contract": "claude-session.v3",
+      "valid": true,
+      "value": {
+        "schema_version": "blabee.claude-session.v3",
+        "kind": "response",
+        "request_id": "00000001-0000-4000-8000-000000000001",
+        "provider": "claude",
+        "role": "hook",
+        "operation": "hook.cancel",
+        "authority": {
+          "scope_id": "00000002-0000-4000-8000-000000000002",
+          "native_session_id": "00000003-0000-4000-8000-000000000003",
+          "session_incarnation": "00000004-0000-4000-8000-000000000004",
+          "service_incarnation": "00000005-0000-4000-8000-000000000005",
+          "owner_connection_id": "00000006-0000-4000-8000-000000000006",
+          "authority_epoch": "00000007-0000-4000-8000-000000000007"
+        },
+        "ok": false,
+        "error": {
+          "code": "binding_mismatch"
+        }
+      }
+    },
+    {
+      "name": "hook.cancel/reject-prompt_id",
+      "contract": "claude-session.v3",
+      "valid": false,
+      "value": {
+        "schema_version": "blabee.claude-session.v3",
+        "kind": "request",
+        "request_id": "00000001-0000-4000-8000-000000000001",
+        "provider": "claude",
+        "role": "hook",
+        "operation": "hook.cancel",
+        "authority": {
+          "scope_id": "00000002-0000-4000-8000-000000000002",
+          "native_session_id": "00000003-0000-4000-8000-000000000003",
+          "session_incarnation": "00000004-0000-4000-8000-000000000004",
+          "service_incarnation": "00000005-0000-4000-8000-000000000005",
+          "owner_connection_id": "00000006-0000-4000-8000-000000000006",
+          "authority_epoch": "00000007-0000-4000-8000-000000000007"
+        },
+        "payload": {
+          "native_session_id": "00000003-0000-4000-8000-000000000003",
+          "cwd": "/fixture/project",
+          "prompt_id": "not-a-uuid",
+          "waiter_generation": "00000015-0000-4000-8000-000000000015"
+        }
+      }
+    },
+    {
+      "name": "hook.cancel/reject-waiter_generation",
+      "contract": "claude-session.v3",
+      "valid": false,
+      "value": {
+        "schema_version": "blabee.claude-session.v3",
+        "kind": "request",
+        "request_id": "00000001-0000-4000-8000-000000000001",
+        "provider": "claude",
+        "role": "hook",
+        "operation": "hook.cancel",
+        "authority": {
+          "scope_id": "00000002-0000-4000-8000-000000000002",
+          "native_session_id": "00000003-0000-4000-8000-000000000003",
+          "session_incarnation": "00000004-0000-4000-8000-000000000004",
+          "service_incarnation": "00000005-0000-4000-8000-000000000005",
+          "owner_connection_id": "00000006-0000-4000-8000-000000000006",
+          "authority_epoch": "00000007-0000-4000-8000-000000000007"
+        },
+        "payload": {
+          "native_session_id": "00000003-0000-4000-8000-000000000003",
+          "cwd": "/fixture/project",
+          "prompt_id": "00000012-0000-4000-8000-000000000012",
+          "waiter_generation": "not-a-uuid"
+        }
+      }
+    },
+    {
+      "name": "hook.cancel/reject-bridge-role",
+      "contract": "claude-session.v3",
+      "valid": false,
+      "value": {
+        "schema_version": "blabee.claude-session.v3",
+        "kind": "request",
+        "request_id": "00000001-0000-4000-8000-000000000001",
+        "provider": "claude",
+        "role": "bridge",
+        "operation": "hook.cancel",
+        "authority": {
+          "scope_id": "00000002-0000-4000-8000-000000000002",
+          "native_session_id": "00000003-0000-4000-8000-000000000003",
+          "session_incarnation": "00000004-0000-4000-8000-000000000004",
+          "service_incarnation": "00000005-0000-4000-8000-000000000005",
+          "owner_connection_id": "00000006-0000-4000-8000-000000000006",
+          "authority_epoch": "00000007-0000-4000-8000-000000000007"
+        },
+        "payload": {
+          "native_session_id": "00000003-0000-4000-8000-000000000003",
+          "cwd": "/fixture/project",
+          "prompt_id": "00000012-0000-4000-8000-000000000012",
+          "waiter_generation": "00000015-0000-4000-8000-000000000015"
+        }
+      }
+    },
+    {
+      "name": "hook/response/waiter",
+      "contract": "claude-session.v3",
+      "valid": true,
+      "value": {
+        "schema_version": "blabee.claude-session.v3",
+        "kind": "response",
+        "request_id": "00000001-0000-4000-8000-000000000001",
+        "provider": "claude",
+        "role": "hook",
+        "operation": "hook",
+        "authority": {
+          "scope_id": "00000002-0000-4000-8000-000000000002",
+          "native_session_id": "00000003-0000-4000-8000-000000000003",
+          "session_incarnation": "00000004-0000-4000-8000-000000000004",
+          "service_incarnation": "00000005-0000-4000-8000-000000000005",
+          "owner_connection_id": "00000006-0000-4000-8000-000000000006",
+          "authority_epoch": "00000007-0000-4000-8000-000000000007"
+        },
+        "ok": true,
+        "result": {
+          "observed": true,
+          "boundary_id": "00000011-0000-4000-8000-000000000011",
+          "observation_status": "accepted",
+          "waiter": {
+            "generation": "00000015-0000-4000-8000-000000000015",
+            "prompt_id": "00000012-0000-4000-8000-000000000012",
+            "boundary_id": "00000011-0000-4000-8000-000000000011",
+            "expires_at_nanoseconds": "600000000000"
+          }
+        }
+      }
+    },
+    {
+      "name": "hook/reject-numeric-waiter-deadline",
+      "contract": "claude-session.v3",
+      "valid": false,
+      "value": {
+        "schema_version": "blabee.claude-session.v3",
+        "kind": "response",
+        "request_id": "00000001-0000-4000-8000-000000000001",
+        "provider": "claude",
+        "role": "hook",
+        "operation": "hook",
+        "authority": {
+          "scope_id": "00000002-0000-4000-8000-000000000002",
+          "native_session_id": "00000003-0000-4000-8000-000000000003",
+          "session_incarnation": "00000004-0000-4000-8000-000000000004",
+          "service_incarnation": "00000005-0000-4000-8000-000000000005",
+          "owner_connection_id": "00000006-0000-4000-8000-000000000006",
+          "authority_epoch": "00000007-0000-4000-8000-000000000007"
+        },
+        "ok": true,
+        "result": {
+          "observed": true,
+          "boundary_id": "00000011-0000-4000-8000-000000000011",
+          "observation_status": "accepted",
+          "waiter": {
+            "generation": "00000015-0000-4000-8000-000000000015",
+            "prompt_id": "00000012-0000-4000-8000-000000000012",
+            "boundary_id": "00000011-0000-4000-8000-000000000011",
+            "expires_at_nanoseconds": 1
+          }
+        }
+      }
+    },
+    {
+      "name": "session/reject-previous-v2",
+      "contract": "claude-session.v3",
+      "valid": false,
+      "value": {
+        "schema_version": "blabee.claude-session.v2",
+        "kind": "request",
+        "request_id": "00000001-0000-4000-8000-000000000001",
+        "provider": "claude",
+        "role": "hook",
+        "operation": "hook",
+        "authority": {
+          "scope_id": "00000002-0000-4000-8000-000000000002",
+          "native_session_id": "00000003-0000-4000-8000-000000000003",
+          "session_incarnation": "00000004-0000-4000-8000-000000000004",
+          "service_incarnation": "00000005-0000-4000-8000-000000000005",
+          "owner_connection_id": "00000006-0000-4000-8000-000000000006",
+          "authority_epoch": "00000007-0000-4000-8000-000000000007"
+        },
+        "payload": {
+          "native_session_id": "00000003-0000-4000-8000-000000000003",
+          "cwd": "/fixture/project",
+          "event": "SessionStart",
+          "source": "startup"
+        }
+      }
+    },
+    {
+      "name": "hook.poll/reject-event-with-waiting",
+      "contract": "claude-session.v3",
+      "valid": false,
+      "value": {
+        "schema_version": "blabee.claude-session.v3",
+        "kind": "response",
+        "request_id": "00000001-0000-4000-8000-000000000001",
+        "provider": "claude",
+        "role": "hook",
+        "operation": "hook.poll",
+        "authority": {
+          "scope_id": "00000002-0000-4000-8000-000000000002",
+          "native_session_id": "00000003-0000-4000-8000-000000000003",
+          "session_incarnation": "00000004-0000-4000-8000-000000000004",
+          "service_incarnation": "00000005-0000-4000-8000-000000000005",
+          "owner_connection_id": "00000006-0000-4000-8000-000000000006",
+          "authority_epoch": "00000007-0000-4000-8000-000000000007"
+        },
+        "ok": true,
+        "result": {
+          "status": "waiting",
+          "event": {
+            "kind": "selection",
+            "selection_id": "00000013-0000-4000-8000-000000000013",
+            "delivery_token": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "expires_at_nanoseconds": "1",
+            "delivery_sequence": "1"
+          }
+        }
+      }
+    },
+    {
+      "name": "hook.poll/reject-event-with-closed",
+      "contract": "claude-session.v3",
+      "valid": false,
+      "value": {
+        "schema_version": "blabee.claude-session.v3",
+        "kind": "response",
+        "request_id": "00000001-0000-4000-8000-000000000001",
+        "provider": "claude",
+        "role": "hook",
+        "operation": "hook.poll",
+        "authority": {
+          "scope_id": "00000002-0000-4000-8000-000000000002",
+          "native_session_id": "00000003-0000-4000-8000-000000000003",
+          "session_incarnation": "00000004-0000-4000-8000-000000000004",
+          "service_incarnation": "00000005-0000-4000-8000-000000000005",
+          "owner_connection_id": "00000006-0000-4000-8000-000000000006",
+          "authority_epoch": "00000007-0000-4000-8000-000000000007"
+        },
+        "ok": true,
+        "result": {
+          "status": "closed",
+          "event": {
+            "kind": "selection",
+            "selection_id": "00000013-0000-4000-8000-000000000013",
+            "delivery_token": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "expires_at_nanoseconds": "1",
+            "delivery_sequence": "1"
+          }
+        }
+      }
+    },
+    {
+      "name": "hook.poll/reject-delivered-null",
+      "contract": "claude-session.v3",
+      "valid": false,
+      "value": {
+        "schema_version": "blabee.claude-session.v3",
+        "kind": "response",
+        "request_id": "00000001-0000-4000-8000-000000000001",
+        "provider": "claude",
+        "role": "hook",
+        "operation": "hook.poll",
+        "authority": {
+          "scope_id": "00000002-0000-4000-8000-000000000002",
+          "native_session_id": "00000003-0000-4000-8000-000000000003",
+          "session_incarnation": "00000004-0000-4000-8000-000000000004",
+          "service_incarnation": "00000005-0000-4000-8000-000000000005",
+          "owner_connection_id": "00000006-0000-4000-8000-000000000006",
+          "authority_epoch": "00000007-0000-4000-8000-000000000007"
+        },
+        "ok": true,
+        "result": {
+          "status": "delivered",
+          "event": null
+        }
+      }
+    },
+    {
+      "name": "bridge.poll/reject-selection-event",
+      "contract": "claude-session.v3",
+      "valid": false,
+      "value": {
+        "schema_version": "blabee.claude-session.v3",
+        "kind": "response",
+        "request_id": "00000001-0000-4000-8000-000000000001",
+        "provider": "claude",
+        "role": "bridge",
+        "operation": "bridge.poll",
+        "authority": {
+          "scope_id": "00000002-0000-4000-8000-000000000002",
+          "native_session_id": "00000003-0000-4000-8000-000000000003",
+          "session_incarnation": "00000004-0000-4000-8000-000000000004",
+          "service_incarnation": "00000005-0000-4000-8000-000000000005",
+          "owner_connection_id": "00000006-0000-4000-8000-000000000006",
+          "authority_epoch": "00000007-0000-4000-8000-000000000007"
+        },
+        "ok": true,
+        "result": {
+          "event": {
+            "kind": "selection",
+            "selection_id": "00000013-0000-4000-8000-000000000013",
+            "delivery_token": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "expires_at_nanoseconds": "1",
+            "delivery_sequence": "1"
+          }
         }
       }
     }

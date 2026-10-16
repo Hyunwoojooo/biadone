@@ -58,12 +58,14 @@ private final class ProviderServiceFixture {
     let credential = String(repeating: "f", count: 64)
     let runtime = "sha256:" + String(repeating: "a", count: 64)
     let codex = ProviderServiceCodex()
+    let arrivals = PetEventArrivalLedger()
     let registry: ClaudeSessionRegistry?
     let pet: PetProviderService
     let application: ClaudeProductServiceCoordinator
     let server: UnixDomainSocketServer
     let client: UnixDomainSocketClient
     let finished = DispatchSemaphore(value: 0)
+    private var waiters: [String: [String: Any]] = [:]
 
     init(claude: Bool = true) throws {
         root = URL(fileURLWithPath: "/private/tmp/bc6svc-" + UUID().uuidString.lowercased().prefix(10))
@@ -74,7 +76,8 @@ private final class ProviderServiceFixture {
             registry = try ClaudeSessionRegistry(rootURL: state, runtimeIdentity: runtime, secretCorpus: corpus,
                 freshnessFactory: { ProviderServiceAnchor($0) })
         } else { registry = nil }
-        pet = try PetProviderService(credential: credential, codex: codex, registry: registry, secretCorpus: corpus)
+        pet = try PetProviderService(credential: credential, codex: codex, registry: registry,
+            secretCorpus: corpus, arrivalLedger: arrivals)
         application = ClaudeProductServiceCoordinator(codex: codex, registry: registry, pet: pet)
         let socket = root.appendingPathComponent("service.sock").path
         server = try UnixDomainSocketServer(socketPath: socket, runtimeIdentity: runtime)
@@ -147,6 +150,77 @@ private final class ProviderServiceFixture {
         return try request("pet_provider_v1", envelope: snapshotEnvelope(target: target))
     }
 
+    func session(_ scope: ProviderServiceScope, _ operation: String, payload: [String: Any] = [:],
+                 role: String = "bridge") throws -> [String: Any] {
+        let envelope: [String: Any] = ["schema_version": "blabee.claude-session.v3", "kind": "request",
+            "provider": "claude", "request_id": UUID().uuidString.lowercased(), "role": role,
+            "operation": operation, "authority": scope.authority, "payload": payload]
+        let response = try request("claude_session_v2", envelope: envelope, credential: scope.capabilities[role]!)
+        guard response["ok"] as? Bool == true, let result = response["result"] as? [String: Any] else {
+            throw CoordinatorError((response["error"] as? [String: Any])?["code"] as? String ?? "fixture_session_failure")
+        }
+        return result
+    }
+
+    func prepareCard(_ scope: ProviderServiceScope) throws -> String {
+        let base: [String: Any] = ["native_session_id": scope.authority["native_session_id"]!, "cwd": root.path]
+        _ = try session(scope, "hook", payload: base.merging(["event": "SessionStart", "source": "startup"]) { _, next in next }, role: "hook")
+        let bridge = try #require(session(scope, "bridge.open")["bridge_id"] as? String)
+        let probe = try session(scope, "readiness.begin", payload: ["bridge_id": bridge])
+        _ = try session(scope, "readiness.ack", payload: ["bridge_id": bridge, "probe_id": probe["probe_id"]!, "nonce": probe["nonce"]!])
+        let promptID = UUID().uuidString.lowercased()
+        let prompt = try session(scope, "hook", payload: base.merging(["event": "UserPromptSubmit",
+            "prompt_id": promptID, "prompt_sha256": String(repeating: "c", count: 64)]) { _, next in next }, role: "hook")
+        let boundary = try #require(prompt["boundary_id"] as? String)
+        let proposal: [String: Any] = ["schema_version": "blabee.claude-proposal.v1", "value": [
+            "proposal_id": UUID().uuidString.lowercased(), "task_goal": "Test a user dismissal.",
+            "outcome": ["status": "completed", "summary": "Fixture choices are ready."], "reported_side_effects": [],
+            "options": [
+                ["id": "read", "title": "Read fixture", "description": "Read fixture only.", "task": "Read fixture.txt",
+                 "done_when": "Report the content.", "constraints": ["No writes."]],
+                ["id": "list", "title": "List fixtures", "description": "List fixture names.", "task": "List fixtures",
+                 "done_when": "Report the names.", "constraints": []],
+            ],
+        ]]
+        _ = try session(scope, "proposal.emit", payload: ["bridge_id": bridge, "boundary_id": boundary, "proposal": proposal])
+        let stopped = try session(scope, "hook", payload: base.merging(["event": "Stop", "prompt_id": promptID,
+            "background_task_ids": [String]()]) { _, next in next }, role: "hook")
+        waiters[scope.scopeID] = try #require(stopped["waiter"] as? [String: Any])
+        // The Stop descriptor becomes selectable only after its delivery
+        // process proves receipt with the first exact Hook poll.
+        let polled = try pollWaiter(scope)
+        #expect(polled["status"] as? String == "waiting")
+        #expect(polled["event"] is NSNull)
+        return bridge
+    }
+
+    func pollWaiter(_ scope: ProviderServiceScope) throws -> [String: Any] {
+        let waiter = try #require(waiters[scope.scopeID])
+        return try session(scope, "hook.poll", payload: [
+            "native_session_id": scope.authority["native_session_id"]!, "cwd": root.path,
+            "prompt_id": waiter["prompt_id"]!, "waiter_generation": waiter["generation"]!,
+        ], role: "hook")
+    }
+
+    func dismissalEnvelope(_ scope: ProviderServiceScope) throws -> [String: Any] {
+        let reply = try snapshot(scope)
+        guard reply["ok"] as? Bool == true else {
+            let code = (reply["error"] as? [String: Any])?["code"] as? String ?? "missing_status"
+            throw CoordinatorError("fixture_dismissal_snapshot_" + code)
+        }
+        let result = try #require(reply["result"] as? [String: Any])
+        let projection = try #require(result["projection"] as? [String: Any])
+        let value = try #require(projection["value"] as? [String: Any])
+        #expect(value["selection_enabled"] as? Bool == true)
+        let card = try #require((value["cards"] as? [[String: Any]])?.first)
+        let packet = try #require(card["packet"] as? [String: Any])
+        var envelope = snapshotEnvelope(target: try #require(reply["target"] as? [String: Any]))
+        envelope["operation"] = "dismiss_interaction"
+        envelope["payload"] = ["binding": card["binding"]!, "interaction_id": packet["interaction_id"]!,
+            "packet_id": packet["packet_id"]!, "revision": packet["revision"]!]
+        return envelope
+    }
+
     func expectDenied(_ type: String, envelope: [String: Any], credential supplied: String? = nil) {
         do {
             _ = try request(type, envelope: envelope, credential: supplied)
@@ -167,6 +241,102 @@ private final class ProviderServiceFixture {
 
 @Suite("Authenticated Pet provider service", .serialized)
 struct PetProviderServiceTests {
+    @Test("Authenticated Claude dismissal removes only its card and creates no Hook delivery or Codex request")
+    func claudeDismissalOverUDS() throws {
+        let f = try ProviderServiceFixture(), a = try f.enroll(), b = try f.enroll()
+        let bridgeA = try f.prepareCard(a), bridgeB = try f.prepareCard(b)
+        let envelope = try f.dismissalEnvelope(a)
+        f.expectDenied("pet_provider_v1", envelope: envelope, credential: a.capabilities["hook"]!)
+        f.expectDenied("pet_provider_v1", envelope: envelope, credential: a.capabilities["bridge"]!)
+        let response = try f.request("pet_provider_v1", envelope: envelope)
+        let codec = ClaudeProductWireCodec(credentialCorpus: f.corpus)
+        let request = try codec.decodeRequest(StrictJSONTransport.data(forJSONObject: envelope))
+        _ = try codec.decodeResponse(StrictJSONTransport.data(forJSONObject: response), matching: request,
+            connection: .init(serviceIncarnation: try #require(f.registry).serviceIncarnation))
+        #expect(response["ok"] as? Bool == true)
+        #expect((response["result"] as? [String: Any])?["dismissed"] as? Bool == true)
+        #expect(try f.session(a, "bridge.poll", payload: ["bridge_id": bridgeA])["event"] is NSNull)
+        #expect(try f.session(b, "bridge.poll", payload: ["bridge_id": bridgeB])["event"] is NSNull)
+        let dismissedWaiter = try f.pollWaiter(a), otherWaiter = try f.pollWaiter(b)
+        #expect(dismissedWaiter["status"] as? String == "closed")
+        #expect(dismissedWaiter["event"] is NSNull)
+        #expect(otherWaiter["status"] as? String == "waiting")
+        #expect(otherWaiter["event"] is NSNull)
+        #expect(try f.dismissalEnvelope(b)["operation"] as? String == "dismiss_interaction")
+        let stale = try f.request("pet_provider_v1", envelope: envelope)
+        #expect(stale["ok"] as? Bool == false)
+        #expect(f.codex.requestCount == 0)
+    }
+
+    @Test("Provider dismissal rejects stale revision and another scoped session without closing either card")
+    func claudeDismissalStaleCardAndScope() throws {
+        let f = try ProviderServiceFixture(), a = try f.enroll(), b = try f.enroll()
+        _ = try f.prepareCard(a); _ = try f.prepareCard(b)
+        for invalid in ["revision", "interaction_id", "scope"] {
+            var envelope = try f.dismissalEnvelope(a)
+            if invalid == "scope" { envelope["target"] = try f.dismissalEnvelope(b)["target"] }
+            else {
+                var payload = try #require(envelope["payload"] as? [String: Any])
+                payload[invalid] = invalid == "revision" ? 99 : "another-interaction"
+                envelope["payload"] = payload
+            }
+            let response = try f.request("pet_provider_v1", envelope: envelope)
+            #expect(response["ok"] as? Bool == false)
+            #expect(try f.dismissalEnvelope(a)["operation"] as? String == "dismiss_interaction")
+            #expect(try f.dismissalEnvelope(b)["operation"] as? String == "dismiss_interaction")
+        }
+        #expect(f.codex.requestCount == 0)
+    }
+
+    @Test("Private inbox order preserves service admission across providers and never records polling")
+    func inboxAdmissionMetadataOverUDS() throws {
+        let f = try ProviderServiceFixture(), claude = try f.enroll()
+        let target = try #require(f.row(claude)["target"] as? [String: Any])
+        let claudeContext = try PetProviderContext(provider: .claude, target: target)
+        let claudeReference = PetEventReference(kind: .decision, eventID: "claude-admitted-card")
+        let codexReference = PetEventReference(kind: .permission, eventID: "codex-admitted-approval")
+        #expect(f.arrivals.record(scopeID: claude.scopeID, kind: "decision", eventID: claudeReference.eventID) == 1)
+        #expect(f.arrivals.record(scopeID: "codex-primary", kind: "permission", eventID: codexReference.eventID) == 2)
+        let request = try PetProviderInboxCodec.request(queries: [
+            .init(context: f.pet.codexContext, reference: codexReference),
+            .init(context: claudeContext, reference: claudeReference),
+            .init(context: f.pet.codexContext, reference: .init(kind: .decision, eventID: "unknown-recovered-card")),
+        ], service: f.pet.codexContext.serviceIncarnation)
+        let data = try StrictJSONTransport.data(forJSONObject: f.request("pet_inbox_v1", envelope: request))
+        #expect(try PetProviderInboxCodec.decode(data, matching: request) == [2, 1, nil])
+        _ = try f.request("pet_inbox_v1", envelope: request)
+        #expect(f.arrivals.sequence(scopeID: "codex-primary", kind: "decision", eventID: "unknown-recovered-card") == nil)
+        #expect(f.arrivals.record(scopeID: "codex-primary", kind: "decision", eventID: "next-real-admission") == 3)
+        #expect(f.codex.requestCount == 0)
+    }
+
+    @Test("Inbox metadata requires app capability and exact current authority without expanding native roles")
+    func inboxMetadataAuthority() throws {
+        let f = try ProviderServiceFixture(), claude = try f.enroll()
+        let context = try PetProviderContext(provider: .claude, target: #require(f.row(claude)["target"] as? [String: Any]))
+        let query = PetProviderInboxCodec.Query(context: context, reference: .init(kind: .decision, eventID: "card"))
+        let request = try PetProviderInboxCodec.request(queries: [query], service: f.pet.codexContext.serviceIncarnation)
+        f.expectDenied("pet_inbox_v1", envelope: request, credential: claude.capabilities["hook"]!)
+        f.expectDenied("pet_inbox_v1", envelope: request, credential: claude.capabilities["bridge"]!)
+        let replaced = PetProviderContext(provider: .claude, scopeID: context.scopeID,
+            serviceIncarnation: context.serviceIncarnation, sessionIncarnation: UUID().uuidString.lowercased(),
+            authorityEpoch: context.authorityEpoch, uiGeneration: context.uiGeneration)
+        f.expectDenied("pet_inbox_v1", envelope: try PetProviderInboxCodec.request(queries: [
+            .init(context: replaced, reference: query.reference),
+        ], service: f.pet.codexContext.serviceIncarnation))
+        #expect(throws: (any Error).self) {
+            try PetProviderInboxCodec.request(queries: [
+                .init(context: context, reference: .init(kind: .permission, eventID: "native-approval")),
+            ], service: context.serviceIncarnation)
+        }
+        #expect(throws: (any Error).self) {
+            try PetProviderInboxCodec.request(queries: [query, query], service: context.serviceIncarnation)
+        }
+        f.pet.stop()
+        f.expectDenied("pet_inbox_v1", envelope: request)
+        try f.assertCodex()
+    }
+
     @Test("Real UDS accepts only the app capability and rejects role tokens, substrings and reflection")
     func authenticatedUDS() throws {
         let f = try ProviderServiceFixture(), scope = try f.enroll()
@@ -221,13 +391,16 @@ struct PetProviderServiceTests {
     func noRoleEscalation() throws {
         let f = try ProviderServiceFixture(), scope = try f.enroll()
         let target = try #require(f.row(scope)["target"] as? [String: Any])
-        let hook: [String: Any] = ["schema_version": "blabee.claude-session.v2", "kind": "request", "provider": "claude",
+        let hook: [String: Any] = ["schema_version": "blabee.claude-session.v3", "kind": "request", "provider": "claude",
             "request_id": UUID().uuidString.lowercased(), "role": "hook", "operation": "hook", "authority": scope.authority,
             "payload": ["event": "SessionStart", "source": "startup", "native_session_id": scope.authority["native_session_id"]!,
                 "cwd": f.root.path]]
         f.expectDenied("pet_provider_v1", envelope: hook)
         f.expectDenied("pet_provider_v1", envelope: hook, credential: scope.capabilities["hook"]!)
         f.expectDenied("claude_session_v2", envelope: hook)
+        var legacyHook = hook
+        legacyHook["schema_version"] = "blabee.claude-session.v2"
+        f.expectDenied("claude_session_v2", envelope: legacyHook, credential: scope.capabilities["hook"]!)
         let owner = f.ownerEnvelope(registry: try #require(f.registry))
         f.expectDenied("pet_provider_v1", envelope: owner)
         f.expectDenied("claude_owner_v1", envelope: owner)

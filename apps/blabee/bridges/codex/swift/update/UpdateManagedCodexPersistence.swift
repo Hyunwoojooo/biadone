@@ -33,6 +33,6 @@ enum UpdateManagedCodexPersistence {
 
     private static func unavailable() -> CoordinatorError {
         CoordinatorError("update_managed_root_not_persisted",
-            "아직 저장된 대화 기록을 확인하지 못했습니다. 이 세션은 종료하지 않았습니다. 대화를 진행하거나 직접 닫은 뒤 업데이트를 다시 확인하세요.")
+            PetL10n.text("Saved conversation history has not been verified yet. This session was not closed. Continue the conversation or close it yourself, then check for updates again.", korean: "아직 저장된 대화 기록을 확인하지 못했습니다. 이 세션은 종료하지 않았습니다. 대화를 진행하거나 직접 닫은 뒤 업데이트를 다시 확인하세요."))
     }
 }

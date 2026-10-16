@@ -24,10 +24,11 @@ def main():
 import json, os, signal, sys, time
 from pathlib import Path
 if sys.argv[1:] == ['--version']:
-    print('2.1.276 (Claude Code)')
+    print('2.1.282 (Claude Code)')
     sys.exit(0)
 prefix = 'BLABEE_CLAUDE_SESSION_V2_'
 args = sys.argv[1:]
+assert '--dangerously-load-development-channels' not in args
 assert '--strict-mcp-config' not in args
 assert '--dangerously-skip-permissions' not in args
 print('PTY_CHECK:tty', flush=True)

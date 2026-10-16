@@ -6,7 +6,8 @@ import { chmod, lstat, mkdir, open, readdir, realpath, rename, rm } from "node:f
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
 
-export const CLAUDE_RUNTIME_SCHEMA = "blabee.claude-runtime.v1";
+export const CLAUDE_RUNTIME_SCHEMA = "blabee.claude-runtime.v2";
+export const CLAUDE_RUNTIME_DELIVERY_MODE = "mcp-hook-v1";
 export const CLAUDE_RUNTIME_NODE_VERSION = "22.23.2";
 export const CLAUDE_RUNTIME_LIMITS = Object.freeze({ files: 900, fileBytes: 256 * 1024 * 1024,
   totalBytes: 384 * 1024 * 1024, depth: 64, manifestBytes: 1024 * 1024 });
@@ -15,6 +16,7 @@ export const CLAUDE_RUNTIME_SOURCE_FILES = Object.freeze([
   "native-session-client.mjs", "product-context.mjs", "product-core-client.mjs", "product-tools.mjs",
   "session-v2-channel-poller.mjs", "session-v2-client.mjs", "session-v2-context.mjs",
   "session-v2-hook.mjs", "session-v2-lifecycle.mjs", "session-v2-mcp.mjs", "session-v2-tools.mjs",
+  "session-v2-waiter.mjs",
 ]);
 // This is the pinned stdio/server runtime closure, not the SDK's unrelated HTTP
 // integrations. Keep package licenses and export/type metadata beside the code.
@@ -41,12 +43,19 @@ const requiredPackageEntries = Object.freeze({
 });
 const fixedManifest = Object.freeze({
   schema_version: CLAUDE_RUNTIME_SCHEMA, bridge_version: "0.1.0", node_version: CLAUDE_RUNTIME_NODE_VERSION,
+  mcp_sdk_version: "1.30.0", mcp_protocol_negotiation: "legacy", delivery_mode: CLAUDE_RUNTIME_DELIVERY_MODE,
+  contract_versions: { owner: "blabee.claude-owner.v1", session: "blabee.claude-session.v3", pet: "blabee.pet-provider.v1" },
+});
+// Read-only compatibility for historical internal artifacts. Preparation emits
+// only v2; neither signing nor resealing may promote a v1 Channels payload.
+const developmentManifest = Object.freeze({
+  schema_version: "blabee.claude-runtime.v1", bridge_version: "0.1.0", node_version: CLAUDE_RUNTIME_NODE_VERSION,
   mcp_sdk_version: "1.30.0", mcp_protocol_negotiation: "legacy", channel_mode: "development-preview",
   channel_source: "blabee-claude", channel_selector: "server:blabee-claude",
   contract_versions: { owner: "blabee.claude-owner.v1", session: "blabee.claude-session.v2", pet: "blabee.pet-provider.v1" },
 });
 const sourcePaths = new Set(CLAUDE_RUNTIME_SOURCE_FILES.map(name => `payload/src/${name}`));
-const manifestKeys = [...Object.keys(fixedManifest), "node_arch", "files", "payload_digest"].sort();
+const developmentSourcePaths = new Set([...sourcePaths].filter(path => path !== "payload/src/session-v2-waiter.mjs"));
 const decoder = new TextDecoder("utf-8", { fatal: true });
 const compare = (left, right) => left < right ? -1 : left > right ? 1 : 0;
 const fail = message => { throw new Error(`Claude runtime: ${message}`); };
@@ -74,12 +83,12 @@ function absolute(value, label) {
   return resolve(value);
 }
 
-function pathAllowed(path) {
+function pathAllowed(path, allowedSources = sourcePaths) {
   if (typeof path !== "string" || path.length > 1024 || !/^[A-Za-z0-9_@.+/-]+$/u.test(path)
       || path.split("/").some(part => !part || part === "." || part === "..")
       || path.split("/").length > CLAUDE_RUNTIME_LIMITS.depth) return false;
   if (["node/bin/node", "node/LICENSE", "node/Node.entitlements", "payload/package.json", "payload/package-lock.json"].includes(path)
-      || sourcePaths.has(path)) return true;
+      || allowedSources.has(path)) return true;
   for (const name of Object.keys(CLAUDE_RUNTIME_PACKAGES)) {
     const prefix = `payload/node_modules/${name}/`;
     if (path.startsWith(prefix)) return packageFileAllowed(name, path.slice(prefix.length));
@@ -180,8 +189,10 @@ function validateNodeHeader(header, size, arch) {
 }
 
 function validateManifest(manifest) {
-  exactKeys(manifest, manifestKeys, "manifest");
-  for (const [key, expected] of Object.entries(fixedManifest)) {
+  const fixed = manifest?.schema_version === "blabee.claude-runtime.v1" ? developmentManifest : fixedManifest;
+  const allowedSources = fixed === developmentManifest ? developmentSourcePaths : sourcePaths;
+  exactKeys(manifest, [...Object.keys(fixed), "node_arch", "files", "payload_digest"], "manifest");
+  for (const [key, expected] of Object.entries(fixed)) {
     if (canonicalClaudeRuntimeJSON(manifest[key]) !== canonicalClaudeRuntimeJSON(expected)) {
       fail(key === "channel_mode" ? "channel mode is not qualified; only explicit development-preview is supported" : `unsupported ${key}`);
     }
@@ -192,7 +203,7 @@ function validateManifest(manifest) {
   let total = 0;
   for (const entry of manifest.files) {
     exactKeys(entry, ["path", "sha256", "size", "executable"], "file entry");
-    if (!pathAllowed(entry.path) || compare(previous, entry.path) >= 0) fail("unknown, duplicate, or unsorted file path");
+    if (!pathAllowed(entry.path, allowedSources) || compare(previous, entry.path) >= 0) fail("unknown, duplicate, or unsorted file path");
     if (!/^[0-9a-f]{64}$/u.test(entry.sha256) || typeof entry.sha256 !== "string"
         || !Number.isSafeInteger(entry.size) || entry.size < 0 || entry.size > CLAUDE_RUNTIME_LIMITS.fileBytes
         || entry.executable !== (entry.path === "node/bin/node")) fail("invalid file descriptor");
@@ -201,7 +212,7 @@ function validateManifest(manifest) {
   }
   if (total > CLAUDE_RUNTIME_LIMITS.totalBytes) fail("payload exceeds total byte limit");
   const paths = new Set(manifest.files.map(entry => entry.path));
-  const required = ["node/bin/node", "node/LICENSE", "node/Node.entitlements", "payload/package.json", "payload/package-lock.json", ...sourcePaths];
+  const required = ["node/bin/node", "node/LICENSE", "node/Node.entitlements", "payload/package.json", "payload/package-lock.json", ...allowedSources];
   for (const name of Object.keys(CLAUDE_RUNTIME_PACKAGES)) {
     for (const child of ["package.json", licenseName(name), ...requiredPackageEntries[name]]) required.push(`payload/node_modules/${name}/${child}`);
   }
@@ -289,6 +300,18 @@ export async function verifyClaudeRuntimeDirectory(directory) {
   return (await inspectRuntime(directory)).manifest;
 }
 
+export function requirePublicClaudeRuntime(manifest) {
+  if (manifest?.schema_version !== CLAUDE_RUNTIME_SCHEMA || manifest.delivery_mode !== CLAUDE_RUNTIME_DELIVERY_MODE
+      || manifest.contract_versions?.session !== "blabee.claude-session.v3") {
+    fail("public distribution requires mcp-hook-v1; development Channels payloads are not permitted");
+  }
+  return manifest;
+}
+
+export async function verifyPublicClaudeRuntimeDirectory(directory) {
+  return requirePublicClaudeRuntime(await verifyClaudeRuntimeDirectory(directory));
+}
+
 async function writeExclusive(path, bytes, mode = 0o644) {
   const handle = await open(path, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600);
   try { await handle.writeFile(bytes); await handle.chmod(mode); } finally { await handle.close(); }
@@ -298,7 +321,8 @@ export async function refreshClaudeRuntimeManifest(directory) {
   // Post-signing reseal is deliberately limited to Node bytes. Changed source,
   // policy, licenses, permissions, or file membership must fail closed.
   const { root, manifest, files } = await inspectRuntime(directory, { permitResignedNode: true });
-  const next = seal(manifestBody(manifest.node_arch, files));
+  const { payload_digest: previousDigest, ...body } = manifest;
+  const next = seal({ ...body, files });
   const staged = join(root, `.manifest-${randomUUID()}`);
   await writeExclusive(staged, `${canonicalClaudeRuntimeJSON(next)}\n`);
   try { await rename(staged, join(root, "manifest.json")); } catch (error) { await rm(staged, { force: true }); throw error; }

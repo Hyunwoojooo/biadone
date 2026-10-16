@@ -7,6 +7,7 @@ import { validateProductToolInput } from './product-tools.mjs';
 
 export const SESSION_V2_AUTHORITY_KEYS = Object.freeze(['scope_id', 'native_session_id', 'session_incarnation',
   'service_incarnation', 'owner_connection_id', 'authority_epoch']);
+export const SESSION_V2_WIRE_VERSION = 'blabee.claude-session.v3';
 export const sessionV2UUID = value => typeof value === 'string' && value.length === 36
   && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(value);
 export const sessionV2Nonce = value => typeof value === 'string' && value.length === 64 && /^[0-9a-f]{64}$/.test(value);
@@ -22,6 +23,7 @@ const ERROR_CODES = new Set(['invalid_request', 'unsupported_version', 'unauthor
   'binding_mismatch', 'expired', 'revoked', 'capacity', 'unavailable', 'unknown_result']);
 const OPERATIONS = new Set(['bridge.open', 'bridge.poll', 'bridge.close', 'readiness.begin', 'readiness.ack',
   'proposal.emit', 'selection.claim', 'selection.complete']);
+const HOOK_OPERATIONS = new Set(['hook', 'hook.poll', 'hook.cancel']);
 const RESERVED = new Set(['authtoken', 'hooktoken', 'bridgetoken', 'selectortoken', 'selectiontoken', 'ownertoken',
   'controltoken', 'capability', 'capabilities', 'credential', 'credentials', 'ownerhandle', 'authorizationticket',
   'ticket', 'continuationtoken', 'correlationtoken', 'rawcontinuationtoken', 'privatekey']);
@@ -152,9 +154,18 @@ function validateHook(payload) {
   if (extra.includes('prompt_id')) requireValue(sessionV2UUID(payload.prompt_id));
 }
 
+function validateWaiterRequest(payload) {
+  fields(payload, ['native_session_id', 'cwd', 'prompt_id', 'waiter_generation']);
+  requireValue(sessionV2UUID(payload.native_session_id) && sessionV2UUID(payload.prompt_id)
+    && sessionV2UUID(payload.waiter_generation) && typeof payload.cwd === 'string'
+    && payload.cwd.isWellFormed() && isAbsolute(payload.cwd) && resolve(payload.cwd) === payload.cwd
+    && !/[\x00-\x1f\x7f]/.test(payload.cwd) && Buffer.byteLength(payload.cwd) <= 4096);
+}
+
 export function validateSessionV2Payload(operation, payload) {
   requireValue(isRecord(payload));
   if (operation === 'hook') return validateHook(payload);
+  if (operation === 'hook.poll' || operation === 'hook.cancel') return validateWaiterRequest(payload);
   if (operation === 'bridge.open') return fields(payload, []);
   requireValue(OPERATIONS.has(operation) && sessionV2UUID(payload.bridge_id));
   const { bridge_id: _, ...args } = payload;
@@ -175,15 +186,35 @@ export function validateSessionV2Payload(operation, payload) {
 export function validateSessionV2Result(operation, result, payload, channelSource) {
   switch (operation) {
     case 'hook':
-      fields(result, ['observed', 'boundary_id', 'observation_status']);
+      fields(result, ['observed', 'boundary_id', 'observation_status', 'waiter']);
       requireValue(result.observed === true && (result.boundary_id === null || sessionV2UUID(result.boundary_id))
         && ['accepted', 'new_prompt_required', 'invalidated'].includes(result.observation_status));
-      requireValue(result.observation_status === 'accepted' || result.boundary_id === null); break;
+      requireValue(result.observation_status === 'accepted' || result.boundary_id === null);
+      if (result.waiter !== null) {
+        fields(result.waiter, ['generation', 'prompt_id', 'boundary_id', 'expires_at_nanoseconds']);
+        requireValue(payload.event === 'Stop' && result.observation_status === 'accepted'
+          && Array.isArray(payload.background_task_ids) && payload.background_task_ids.length === 0
+          && sessionV2UUID(result.waiter.generation) && sessionV2UUID(result.waiter.prompt_id)
+          && result.waiter.prompt_id === payload.prompt_id && sessionV2UUID(result.waiter.boundary_id)
+          && result.waiter.boundary_id === result.boundary_id && sessionV2UInt64(result.waiter.expires_at_nanoseconds));
+      }
+      break;
+    case 'hook.poll':
+      fields(result, ['status', 'event']);
+      requireValue(['waiting', 'closed', 'delivered'].includes(result.status));
+      if (result.status !== 'delivered') { requireValue(result.event === null); break; }
+      fields(result.event, ['kind', 'selection_id', 'delivery_token', 'delivery_sequence', 'expires_at_nanoseconds']);
+      requireValue(result.event.kind === 'selection' && sessionV2UUID(result.event.selection_id)
+        && sessionV2Nonce(result.event.delivery_token) && sessionV2UInt64(result.event.delivery_sequence, true)
+        && sessionV2UInt64(result.event.expires_at_nanoseconds));
+      break;
+    case 'hook.cancel': fields(result, ['cancelled']); requireValue(typeof result.cancelled === 'boolean'); break;
     case 'bridge.open': fields(result, ['bridge_id']); requireValue(sessionV2UUID(result.bridge_id)); break;
     case 'bridge.close': fields(result, ['closed']); requireValue(result.closed === true); break;
     case 'readiness.begin':
-      fields(result, ['probe_id', 'expires_at_nanoseconds', 'status']);
-      requireValue(sessionV2UUID(result.probe_id) && sessionV2UInt64(result.expires_at_nanoseconds) && result.status === 'pending'); break;
+      fields(result, ['probe_id', 'nonce', 'expires_at_nanoseconds', 'status']);
+      requireValue(sessionV2UUID(result.probe_id) && sessionV2Nonce(result.nonce)
+        && sessionV2UInt64(result.expires_at_nanoseconds) && result.status === 'pending'); break;
     case 'readiness.ack': fields(result, ['acknowledged']); requireValue(result.acknowledged === true); break;
     case 'proposal.emit':
       fields(result, ['packet_id', 'revision']); boundedText(result.packet_id, 512);
@@ -206,14 +237,7 @@ export function validateSessionV2Result(operation, result, payload, channelSourc
       requireValue(result.selection_id === payload.selection_id && result.recorded === true && result.reported_by === 'claude'); break;
     case 'bridge.poll': {
       fields(result, ['event']);
-      const event = result.event;
-      if (event === null) break;
-      const probe = event?.kind === 'readiness_probe';
-      fields(event, ['kind', 'delivery_sequence', 'expires_at_nanoseconds', 'channel_source',
-        ...(probe ? ['probe_id', 'nonce'] : ['selection_id', 'delivery_token'])]);
-      requireValue((probe || event.kind === 'selection') && sessionV2UInt64(event.delivery_sequence, true)
-        && sessionV2UInt64(event.expires_at_nanoseconds) && event.channel_source === channelSource
-        && sessionV2UUID(event[probe ? 'probe_id' : 'selection_id']) && sessionV2Nonce(event[probe ? 'nonce' : 'delivery_token']));
+      requireValue(result.event === null);
       break;
     }
     default: invalid();
@@ -230,8 +254,10 @@ async function requirePrivateSocket(socketPath) {
   } catch { throw new SessionV2ClientError('session_v2_invalid_socket'); }
 }
 
-/** Explicit v2 only. One bounded socket per request, no retries and no fallback.
- * A timeout or malformed response permanently closes this logical client. */
+/** Explicit v3 wire only. One bounded socket per request, no retries and no fallback.
+ * A timeout or malformed response permanently closes this logical client.
+ * Only cancellation before the first write leaves this shared client reusable;
+ * after writing, the original exchange must finish its response/timeout checks. */
 export async function createSessionV2Client({ socketPath, runtimeIdentity, authority, role, authToken, channelSource,
   credentialCorpus = [], timeoutMs = 5000 } = {}) {
   if (typeof socketPath !== 'string' || !isAbsolute(socketPath) || resolve(socketPath) !== socketPath
@@ -251,10 +277,10 @@ export async function createSessionV2Client({ socketPath, runtimeIdentity, autho
 
   const validateEnvelope = request => {
     fields(request, ['schema_version', 'kind', 'provider', 'request_id', 'role', 'operation', 'authority', 'payload']);
-    requireValue(request.schema_version === 'blabee.claude-session.v2' && request.kind === 'request'
+    requireValue(request.schema_version === SESSION_V2_WIRE_VERSION && request.kind === 'request'
       && request.provider === 'claude' && request.role === role && sessionV2UUID(request.request_id)
       && sessionV2Authority(request.authority) && SESSION_V2_AUTHORITY_KEYS.every(key => request.authority[key] === identity[key])
-      && (role === 'hook' ? request.operation === 'hook' : OPERATIONS.has(request.operation)));
+      && (role === 'hook' ? HOOK_OPERATIONS.has(request.operation) : OPERATIONS.has(request.operation)));
     validateSessionV2Payload(request.operation, request.payload);
     inspectPublic(request, secrets);
   };
@@ -285,8 +311,9 @@ export async function createSessionV2Client({ socketPath, runtimeIdentity, autho
     }
     return response;
   };
-  const exchange = async request => {
+  const exchange = async (request, { signal } = {}) => {
     if (failure || closed) throw failure ?? new SessionV2ClientError('session_v2_client_closed');
+    if (signal?.aborted) throw new SessionV2ClientError('session_v2_request_cancelled');
     if (pending) throw new SessionV2ClientError('session_v2_client_busy');
     let frame;
     const outerID = `claude_${randomUUID()}`;
@@ -308,11 +335,14 @@ export async function createSessionV2Client({ socketPath, runtimeIdentity, autho
     try {
       await requirePrivateSocket(socketPath);
       if (closed) throw new SessionV2ClientError('session_v2_client_closed');
+      if (signal?.aborted) throw new SessionV2ClientError('session_v2_request_cancelled');
       return await new Promise((resolveRequest, rejectRequest) => {
         let bytes = Buffer.alloc(0);
         let answer;
         let sent = false;
+        let cancelled = false;
         const fail = code => {
+          if (cancelled) return;
           failure ??= new SessionV2ClientError(code);
           answer = { error: failure };
           active.socket?.destroy();
@@ -320,18 +350,29 @@ export async function createSessionV2Client({ socketPath, runtimeIdentity, autho
         const timer = setTimeout(() => fail('session_v2_response_unknown'), timeoutMs);
         const socket = createConnection({ path: socketPath });
         active.socket = socket;
+        const cancelBeforeSend = () => {
+          if (sent || answer) return;
+          cancelled = true;
+          answer = { error: new SessionV2ClientError('session_v2_request_cancelled') };
+          socket.destroy();
+        };
         socket.once('connect', () => {
+          if (signal?.aborted) return cancelBeforeSend();
           if (closed || failure) return fail('session_v2_client_closed');
+          // Once writing starts the service outcome may be unknown. Keep the
+          // FIFO slot until the same response or timeout is fully validated;
+          // request cancellation must neither close nor retry that operation.
           sent = true;
+          signal?.removeEventListener('abort', cancelBeforeSend);
           socket.write(frame, error => { if (error) fail('session_v2_response_unknown'); });
         });
         socket.on('data', chunk => {
-          if (failure) return;
+          if (failure || cancelled) return;
           if (bytes.length + chunk.length > LIMIT) return fail('session_v2_invalid_response');
           bytes = Buffer.concat([bytes, chunk]);
         });
         socket.once('end', () => {
-          if (failure) return;
+          if (failure || cancelled) return;
           try { answer = { value: parseResponse(bytes, outerID, request) }; }
           catch (error) { return fail(error?.code === 'session_v2_service_rejected' ? error.code : 'session_v2_invalid_response'); }
           socket.destroy();
@@ -339,19 +380,22 @@ export async function createSessionV2Client({ socketPath, runtimeIdentity, autho
         socket.once('error', () => fail(sent ? 'session_v2_response_unknown' : 'session_v2_unavailable'));
         socket.once('close', () => {
           clearTimeout(timer);
+          signal?.removeEventListener('abort', cancelBeforeSend);
           if (!answer) fail(closed ? 'session_v2_client_closed' : 'session_v2_response_unknown');
           if (answer.error) rejectRequest(answer.error); else resolveRequest(answer.value);
         });
+        signal?.addEventListener('abort', cancelBeforeSend, { once: true });
+        if (signal?.aborted) cancelBeforeSend();
       });
     } finally { pending = undefined; settled(); }
   };
   return {
     exchange,
-    async request(command) {
+    async request(command, options) {
       if (!isRecord(command) || !Object.hasOwn(command, 'operation')) throw new SessionV2ClientError('session_v2_invalid_request');
       const { operation, ...payload } = command;
-      const response = await exchange({ schema_version: 'blabee.claude-session.v2', kind: 'request', provider: 'claude',
-        request_id: randomUUID(), role, operation, authority: identity, payload });
+      const response = await exchange({ schema_version: SESSION_V2_WIRE_VERSION, kind: 'request', provider: 'claude',
+        request_id: randomUUID(), role, operation, authority: identity, payload }, options);
       if (!response.ok) throw new SessionV2ClientError(`session_v2_${response.error.code}`);
       return response.result;
     },

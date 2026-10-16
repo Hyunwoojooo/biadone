@@ -16,6 +16,7 @@ enum PetErrorCode: String, CaseIterable, Codable, Sendable {
     case appServiceFailed = "app_service_failed"
     case appServiceTimeout = "app_service_timeout"
     case appServiceExited = "app_service_exited"
+    case connectionFailed = "connection_failed"
 }
 
 struct PetErrorEnvironment: Codable, Equatable, Sendable {
@@ -45,7 +46,7 @@ struct PetErrorEnvironment: Codable, Equatable, Sendable {
                   osVersion: try values.decode(String.self, forKey: .osVersion))
     }
 
-    private static func normalizedVersion(_ value: String) -> String {
+    static func normalizedVersion(_ value: String) -> String {
         guard value != "unknown" else { return value }
         let groups = value.split(separator: ".", omittingEmptySubsequences: false)
         guard value.utf8.count <= 27, (1...4).contains(groups.count), groups.allSatisfy({ group in
@@ -61,6 +62,7 @@ struct PetErrorEvent: Codable, Equatable, Sendable {
     let code: PetErrorCode
     let occurredAt: Date
     let environment: PetErrorEnvironment
+    var connection: PetConnectionDiagnostic? = nil
 }
 
 struct PetErrorContext: Equatable, Sendable {
@@ -89,8 +91,8 @@ extension PetErrorEventStoring {
     func invalidate() throws { try clear() }
 }
 
-/// Optional sampled diagnostics, independent of usage analytics. The only error
-/// input is a fixed code: no error descriptions, requests, paths, or account data.
+/// Optional sampled diagnostics, independent of usage analytics. Error inputs
+/// use closed codes/context: no descriptions, requests, paths or account data.
 @MainActor
 final class PetErrorDiagnostics: ObservableObject {
     static let enabledPreferenceKey = "blabee.errorDiagnostics.enabled"
@@ -101,6 +103,9 @@ final class PetErrorDiagnostics: ObservableObject {
     static let maximumEventsPerHour = 50
 
     @Published private(set) var isEnabled: Bool
+    @Published private(set) var pendingEventCount = 0
+    @Published private(set) var lastAcceptedAt: Date?
+    @Published private(set) var lastRecordedEventID: UUID?
 
     private let authorization: @MainActor () -> PetUsageAuthorization?
     private let store: any PetErrorEventStoring
@@ -120,7 +125,11 @@ final class PetErrorDiagnostics: ObservableObject {
     private var nextRetryDelay: TimeInterval = 30
     // Intentionally in memory: limits reset on process restart or identity reset.
     // Persisted pending events keep their IDs; the server enforces its daily cap.
-    private var lastRecorded: [PetErrorCode: Date] = [:]
+    private struct SamplingKey: Hashable {
+        let code: PetErrorCode
+        let connection: PetConnectionDiagnostic?
+    }
+    private var lastRecorded: [SamplingKey: Date] = [:]
     private var recentRecords: [Date] = []
 
     static func live(authorization: @escaping @MainActor () -> PetUsageAuthorization?) -> PetErrorDiagnostics {
@@ -193,6 +202,15 @@ final class PetErrorDiagnostics: ObservableObject {
     /// Its captured owner remains valid until explicit logout, account replacement,
     /// opt-out, or stop invalidates the epoch. Delivery still requires fresh auth.
     func record(code: PetErrorCode, context: PetErrorContext) {
+        guard code != .connectionFailed else { return }
+        record(code: code, connection: nil, context: context)
+    }
+
+    func record(connection: PetConnectionDiagnostic, context: PetErrorContext) {
+        record(code: .connectionFailed, connection: connection, context: context)
+    }
+
+    private func record(code: PetErrorCode, connection: PetConnectionDiagnostic?, context: PetErrorContext) {
         guard isEnabled, !isStopped else { return }
         if let auth = currentAuthorization() { adoptOwner(auth.userID) }
         guard context.userID == owner, context.epoch == contextEpoch else { return }
@@ -200,12 +218,15 @@ final class PetErrorDiagnostics: ObservableObject {
         guard PetErrorValidation.isDate(instant) else { return }
         recentRecords.removeAll { $0 <= instant.addingTimeInterval(-3_600) }
         guard recentRecords.count < Self.maximumEventsPerHour else { return }
-        if let last = lastRecorded[code], instant.timeIntervalSince(last) < Self.duplicateWindow { return }
-        lastRecorded[code] = instant
+        let key = SamplingKey(code: code, connection: connection)
+        if let last = lastRecorded[key], instant.timeIntervalSince(last) < Self.duplicateWindow { return }
+        lastRecorded[key] = instant
         recentRecords.append(instant)
         prune()
-        events.append(PetErrorEvent(userID: context.userID, eventID: makeEventID(), code: code,
-                                    occurredAt: instant, environment: environment))
+        let eventID = makeEventID()
+        events.append(PetErrorEvent(userID: context.userID, eventID: eventID, code: code,
+                                    occurredAt: instant, environment: environment, connection: connection))
+        lastRecordedEventID = eventID
         if events.count > Self.maximumEventCount { events.removeFirst(events.count - Self.maximumEventCount) }
         persist()
         beginFlushing()
@@ -229,6 +250,9 @@ final class PetErrorDiagnostics: ObservableObject {
         contextEpoch &+= 1
         cancelFlush()
         owner = nil
+        pendingEventCount = 0
+        lastAcceptedAt = nil
+        lastRecordedEventID = nil
         authorizationBlocked = false
         events.removeAll()
         lastRecorded.removeAll()
@@ -261,6 +285,8 @@ final class PetErrorDiagnostics: ObservableObject {
         contextEpoch &+= 1
         cancelFlush()
         owner = userID
+        lastAcceptedAt = nil
+        lastRecordedEventID = nil
         authorizationBlocked = false
         lastRecorded.removeAll()
         recentRecords.removeAll()
@@ -284,6 +310,7 @@ final class PetErrorDiagnostics: ObservableObject {
     }
 
     private func persist() {
+        if pendingEventCount != events.count { pendingEventCount = events.count }
         if events.isEmpty { try? store.clear() }
         else { try? store.save(events) }
     }
@@ -328,6 +355,7 @@ final class PetErrorDiagnostics: ObservableObject {
             guard let current = currentAuthorization(), current.userID == auth.userID else { return }
             switch result {
             case .accepted, .discard:
+                if case .accepted = result { lastAcceptedAt = now() }
                 events.removeAll { $0.eventID == event.eventID }
                 persist()
                 nextRetryDelay = 30
@@ -376,13 +404,15 @@ final class PetSupabaseErrorService: PetErrorSending {
               parts.query == nil, parts.fragment == nil, parts.path.isEmpty || parts.path == "/",
               PetErrorValidation.isHeaderValue(configuration.publishableKey)
         else { return .discard }
-        parts.path = "/rest/v1/rpc/record_blabee_error"
+        guard (event.code == .connectionFailed) == (event.connection != nil) else { return .discard }
+        parts.path = event.connection == nil
+            ? "/rest/v1/rpc/record_blabee_error" : "/rest/v1/rpc/record_blabee_connection_error"
         guard let url = parts.url else { return .discard }
 
         let formatter = ISO8601DateFormatter()
         formatter.timeZone = TimeZone(secondsFromGMT: 0)
         formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        let payload = [
+        var payload = [
             "p_event_id": event.eventID.uuidString.lowercased(),
             "p_error_code": event.code.rawValue,
             "p_occurred_at": formatter.string(from: event.occurredAt),
@@ -390,6 +420,13 @@ final class PetSupabaseErrorService: PetErrorSending {
             "p_app_build": event.environment.appBuild,
             "p_os_version": event.environment.osVersion,
         ]
+        if let connection = event.connection {
+            payload.removeValue(forKey: "p_error_code")
+            payload["p_provider"] = connection.provider.rawValue
+            payload["p_stage"] = connection.stage.rawValue
+            payload["p_reason"] = connection.reason.rawValue
+            payload["p_tool_version"] = connection.toolVersion
+        }
         var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 20)
         request.httpMethod = "POST"
         request.httpShouldHandleCookies = false

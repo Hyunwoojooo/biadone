@@ -34,7 +34,7 @@ enum ClaudeInstalledLaunchConfiguration {
             !key.hasPrefix("BLABEE_") && !key.hasPrefix("DYLD_") && !key.hasPrefix("__XPC_DYLD_") && !key.hasPrefix("LD_")
                 && !["NODE_OPTIONS", "NODE_PATH", "BASH_ENV", "ENV", "CLAUDECODE"].contains(key)
         }
-        // Qualified preview candidate only; this affects other MCPs in this
+        // Pinned MCP SDK compatibility setting; this affects other MCPs in this
         // child too. It does not edit the user's environment or MCP settings.
         result["MCP_PROTOCOL_NEGOTIATION"] = "legacy"
         return result
@@ -48,8 +48,15 @@ enum ClaudeInstalledLaunchConfiguration {
         let binding = nativeSessionID.map { ["--expected-session-id", $0.uuidString.lowercased()] } ?? []
         var hooks: [String: Any] = [:]
         for event in ["SessionStart", "UserPromptSubmit", "Stop", "StopFailure", "SessionEnd"] {
-            hooks[event] = [["hooks": [["type": "command", "command": nodeExecutable.path,
-                "args": [hook.path] + binding, "timeout": observeSession ? 12 : 5]]]]
+            var command: [String: Any] = ["type": "command", "command": nodeExecutable.path,
+                "args": [hook.path] + binding, "timeout": observeSession ? 12 : 5]
+            if event == "Stop" {
+                // The server bounds polling by the original card/authority
+                // expiry (at most 600s). This process timeout grants no lease.
+                command["asyncRewake"] = true
+                command["timeout"] = 660
+            }
+            hooks[event] = [["hooks": [command]]]
         }
         // Stdio clients may inherit only a safe environment subset. Every
         // public binding is explicit; no reliance on ambient BLABEE variables.
@@ -78,16 +85,15 @@ enum ClaudeInstalledLaunchConfiguration {
     static func arguments(nativeSessionID: UUID? = nil, settings: URL, mcp: URL,
                           claudeArguments: [String] = []) -> [String] {
         if let nativeSessionID {
-            return ["--session-id", nativeSessionID.uuidString.lowercased(), "--settings", settings.path,
-                    "--mcp-config", mcp.path, "--dangerously-load-development-channels", "server:" + serverName]
+            return ["--session-id", nativeSessionID.uuidString.lowercased(), "--mcp-config", mcp.path,
+                    "--settings", settings.path]
                 + claudeArguments
         }
-        // Channel and MCP options are variadic. End the injected prefix with
+        // MCP configuration is variadic. End the injected prefix with
         // the single-value settings option so Claude cannot consume a user's
-        // positional prompt as a Channel or MCP configuration. Preserve the
+        // positional prompt as an MCP configuration. Preserve the
         // entire original argv, including its literal `--`, after that prefix.
-        return ["--dangerously-load-development-channels", "server:" + serverName,
-                "--mcp-config", mcp.path, "--settings", settings.path] + claudeArguments
+        return ["--mcp-config", mcp.path, "--settings", settings.path] + claudeArguments
     }
 
     static func supportsVersion(_ output: Data) -> Bool {
@@ -99,9 +105,10 @@ enum ClaudeInstalledLaunchConfiguration {
             guard let range = Range(match.range(at: index), in: value) else { return nil }
             return Int(value[range])
         }
-        // A minimum compatibility gate, not a claim that every later version
-        // has passed model/TTY qualification. Major changes require review.
-        return parts.count == 3 && parts[0] == 2 && parts[1] >= 1 && (parts[1] > 1 || parts[2] >= 248)
+        // 2.1.282 is the release candidate's minimum feature gate. Native
+        // asyncRewake qualification is separate; later versions are not
+        // implicitly proven by this version check. Major changes need review.
+        return parts.count == 3 && parts[0] == 2 && parts[1] >= 1 && (parts[1] > 1 || parts[2] >= 282)
     }
 
     static func supportsNodeVersion(_ output: Data) -> Bool {

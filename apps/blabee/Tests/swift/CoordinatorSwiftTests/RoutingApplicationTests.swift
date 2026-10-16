@@ -252,6 +252,12 @@ private final class RoutingFakeClock: CoordinatorContinuousClock, @unchecked Sen
         value += seconds * 1_000_000_000
         lock.unlock()
     }
+
+    func set(seconds: UInt64) {
+        lock.lock()
+        value = seconds * 1_000_000_000
+        lock.unlock()
+    }
 }
 
 private final class RoutingEventIDs: @unchecked Sendable {
@@ -276,11 +282,60 @@ private final class RoutingMemoryJournal: CoordinatorSemanticJournalPort, @unche
         journalSequence: 0
     )
     private var competingChange: CoordinatorSemanticChange?
+    private var loads = 0
+    private var afterLoad: (@Sendable () -> Void)?
+    private var afterAppend: (eventType: String, action: @Sendable () -> Void)?
+    private var beforeAdmission: (eventType: String, action: @Sendable () -> Void)?
+    private var loadFailure: String?
+    private var appendFailure: (
+        eventType: String, errorCode: String, commitFirst: Bool, followingLoadError: String?
+    )?
+    private var appendAttempts: [String: Int] = [:]
 
     func load() throws -> JournalSnapshot {
         lock.lock()
-        defer { lock.unlock() }
+        let action = afterLoad
+        afterLoad = nil
+        defer {
+            lock.unlock()
+            action?()
+        }
+        loads += 1
+        if let code = loadFailure {
+            loadFailure = nil
+            throw CoordinatorError(code)
+        }
         return stored
+    }
+
+    func loadCount() -> Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return loads
+    }
+
+    func append(
+        expectedSequence: Int64,
+        events: [Data],
+        documents: [Data],
+        verificationRecords: [Data],
+        validateAdmission: () throws -> Void
+    ) throws -> JournalAppendResult {
+        let types = try events.map { try routingObject($0)["event_type"] as? String ?? "" }
+        lock.lock()
+        let action = beforeAdmission.flatMap { types.contains($0.eventType) ? $0.action : nil }
+        if action != nil { beforeAdmission = nil }
+        lock.unlock()
+        action?()
+        try validateAdmission()
+        return try append(expectedSequence: expectedSequence, events: events,
+            documents: documents, verificationRecords: verificationRecords)
+    }
+
+    func beforeNextAdmission(eventType: String, _ action: @escaping @Sendable () -> Void) {
+        lock.lock()
+        beforeAdmission = (eventType, action)
+        lock.unlock()
     }
 
     func append(
@@ -289,8 +344,14 @@ private final class RoutingMemoryJournal: CoordinatorSemanticJournalPort, @unche
         documents: [Data],
         verificationRecords: [Data]
     ) throws -> JournalAppendResult {
+        let types = try events.map { try routingObject($0)["event_type"] as? String ?? "" }
+        var action: (@Sendable () -> Void)?
         lock.lock()
-        defer { lock.unlock() }
+        defer {
+            lock.unlock()
+            action?()
+        }
+        for type in types { appendAttempts[type, default: 0] += 1 }
         if let competingChange {
             self.competingChange = nil
             let competed = JournalSnapshot(
@@ -305,6 +366,18 @@ private final class RoutingMemoryJournal: CoordinatorSemanticJournalPort, @unche
         guard stored.journalSequence == expectedSequence else {
             throw CoordinatorError("journal_sequence_conflict")
         }
+        let failure = appendFailure.flatMap { types.contains($0.eventType) ? $0 : nil }
+        if let failure {
+            appendFailure = nil
+            loadFailure = failure.followingLoadError
+            if !failure.commitFirst {
+                if let callback = afterAppend, types.contains(callback.eventType) {
+                    afterAppend = nil
+                    action = callback.action
+                }
+                throw CoordinatorError(failure.errorCode)
+            }
+        }
         let candidate = JournalSnapshot(
             events: stored.events + events,
             documents: stored.documents + documents,
@@ -313,6 +386,11 @@ private final class RoutingMemoryJournal: CoordinatorSemanticJournalPort, @unche
         )
         _ = try CoordinatorSemanticReplay.replay(candidate)
         stored = candidate
+        if let callback = afterAppend, types.contains(callback.eventType) {
+            afterAppend = nil
+            action = callback.action
+        }
+        if let failure { throw CoordinatorError(failure.errorCode) }
         return JournalAppendResult(
             firstSequence: expectedSequence + 1,
             lastSequence: candidate.journalSequence,
@@ -324,6 +402,41 @@ private final class RoutingMemoryJournal: CoordinatorSemanticJournalPort, @unche
         lock.lock()
         competingChange = change
         lock.unlock()
+    }
+
+    func afterNextLoad(_ action: @escaping @Sendable () -> Void) {
+        lock.lock()
+        afterLoad = action
+        lock.unlock()
+    }
+
+    func afterNextAppend(eventType: String, _ action: @escaping @Sendable () -> Void) {
+        lock.lock()
+        afterAppend = (eventType, action)
+        lock.unlock()
+    }
+
+    func failNextLoad(_ code: String) {
+        lock.lock()
+        loadFailure = code
+        lock.unlock()
+    }
+
+    func failNextAppend(
+        eventType: String,
+        errorCode: String = "test_append_failed",
+        commitFirst: Bool = false,
+        followingLoadError: String? = nil
+    ) {
+        lock.lock()
+        appendFailure = (eventType, errorCode, commitFirst, followingLoadError)
+        lock.unlock()
+    }
+
+    func appendAttemptCount(_ eventType: String) -> Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return appendAttempts[eventType, default: 0]
     }
 }
 
@@ -350,6 +463,299 @@ private func routingSetup(
         routingOpen(binding: binding, suffix: suffix, occurredAt: openedAt)
     )
     _ = try app.executeCommand(routingSeal(packet: packet, suffix: suffix))
+}
+
+@Test("same foreground still reads durable authority and rejects another writer's reseal")
+func routingSameForegroundRevalidatesExactRevision() throws {
+    let journal = RoutingMemoryJournal()
+    let clock = RoutingFakeClock()
+    let app = try routingApplication(journal: journal, clock: clock)
+    let binding = routingBinding(suffix: "focus_reseal")
+    let packet = try routingPacket(
+        binding: binding, validAfter: 2, suffix: "focus_reseal",
+        sealedAt: "2026-08-21T02:00:00Z"
+    )
+    try routingSetup(
+        app, suffix: "focus_reseal", binding: binding, packet: packet,
+        openedAt: "2026-08-21T01:59:59Z"
+    )
+    let target = try routingTarget(packet: packet, binding: binding)
+    _ = try app.setForeground(target)
+    let beforeRepeat = journal.loadCount()
+    _ = try app.setForeground(target)
+    // One full read, including on a same-target request; the post-read clock
+    // check must not introduce another full journal load/replay.
+    #expect(journal.loadCount() == beforeRepeat + 1)
+
+    var revised = packet
+    revised["revision"] = 2
+    revised["valid_after_event_sequence"] = 3
+    revised["sealed_at"] = "2026-08-21T02:00:01Z"
+    let writer = CoordinatorSemanticApplication(journal: journal)
+    _ = try writer.execute(command: routingSeal(packet: revised, suffix: "focus_reseal_v2"))
+
+    let beforeStale = journal.loadCount()
+    routingExpectCode("foreground_target_not_pending") {
+        _ = try app.setForeground(target)
+    }
+    #expect(journal.loadCount() == beforeStale + 1)
+    let snapshot = try routingObject(app.snapshot().canonicalJSON)
+    #expect(snapshot["selection_enabled"] as? Bool == false)
+    #expect((snapshot["pending"] as? [Any])?.isEmpty == true)
+    let state = try CoordinatorSemanticReplay.replay(journal.load())
+    #expect(state.packet(for: try CoordinatorBinding(jsonObject: binding))?.revision == 2)
+    #expect(state.continuations.isEmpty)
+}
+
+private func routingFocusedFixture(suffix: String) throws -> (
+    journal: RoutingMemoryJournal, clock: RoutingFakeClock, app: CoordinatorRoutingApplication,
+    binding: [String: Any], packet: [String: Any]
+) {
+    let journal = RoutingMemoryJournal()
+    let clock = RoutingFakeClock()
+    let app = try routingApplication(journal: journal, clock: clock)
+    let binding = routingBinding(suffix: suffix)
+    let packet = try routingPacket(
+        binding: binding, validAfter: 2, suffix: suffix,
+        sealedAt: "2026-08-21T02:00:00Z"
+    )
+    try routingSetup(
+        app, suffix: suffix, binding: binding, packet: packet,
+        openedAt: "2026-08-21T01:59:59Z"
+    )
+    _ = try app.setForeground(routingTarget(packet: packet, binding: binding))
+    return (journal, clock, app, binding, packet)
+}
+
+@Test(
+    "due expiry retires only its cached revision before or during an external reseal",
+    arguments: [false, true], ["2026-08-21T02:09:59Z", "2026-08-21T02:10:00Z", "2026-08-21T02:10:01Z"]
+)
+func routingExpiryRevalidatesRevision(raceAppend: Bool, replacementExpiry: String) throws {
+    let (journal, clock, app, binding, packet) = try routingFocusedFixture(suffix: "expiry_reseal")
+    var revised = packet
+    revised["revision"] = 2
+    revised["valid_after_event_sequence"] = 3
+    revised["sealed_at"] = "2026-08-21T02:00:01Z"
+    revised["expires_at"] = replacementExpiry
+    let reseal = try routingSeal(packet: revised, suffix: "expiry_reseal_v2")
+    if raceAppend {
+        journal.installCompetingChange(try CoordinatorSemanticDecision.decide(
+            state: CoordinatorSemanticReplay.replay(journal.load()), command: reseal
+        ))
+    } else {
+        _ = try CoordinatorSemanticApplication(journal: journal).execute(command: reseal)
+    }
+    clock.set(seconds: 600)
+    let before = journal.loadCount()
+    #expect(try app.processTime().isEmpty)
+    #expect(journal.loadCount() == before + (raceAppend ? 2 : 1))
+    #expect(journal.appendAttemptCount("interaction_expired") == (raceAppend ? 1 : 0))
+    let snapshot = try routingObject(app.snapshotWithoutProcessingTime().canonicalJSON)
+    #expect(snapshot["selection_enabled"] as? Bool == false)
+    #expect(snapshot["foreground"] is NSNull)
+    #expect((snapshot["pending"] as? [Any])?.isEmpty == true)
+    #expect(app.millisecondsUntilNextDeadline() == nil)
+    clock.advance(seconds: 2)
+    let afterRetirement = journal.loadCount()
+    #expect(try app.processTime().isEmpty)
+    #expect(journal.loadCount() == afterRetirement)
+
+    let authority = try CoordinatorSemanticReplay.replay(journal.load())
+    let durable = try #require(authority.boundary(for: CoordinatorBinding(jsonObject: binding)))
+    #expect(durable.packet?.revision == 2)
+    #expect(durable.isPendingInteraction)
+    #expect(durable.selection == nil)
+    #expect(authority.continuations.isEmpty)
+    #expect(authority.eventSequence == 3) // no expiry for either revision
+}
+
+@Test("expiry retries an unrelated writer conflict against fresh exact authority once")
+func routingExpiryRetriesUnrelatedWriter() throws {
+    let (journal, clock, app, binding, _) = try routingFocusedFixture(suffix: "expiry_conflict")
+    journal.installCompetingChange(try CoordinatorSemanticDecision.decide(
+        state: CoordinatorSemanticReplay.replay(journal.load()),
+        command: routingOpen(
+            binding: routingBinding(suffix: "unrelated_writer"), suffix: "unrelated_writer",
+            occurredAt: "2026-08-21T02:00:01Z"
+        )
+    ))
+    clock.set(seconds: 600)
+    let before = journal.loadCount()
+    let notices = try app.processTime().map(routingObject)
+    #expect(journal.loadCount() == before + 2)
+    #expect(journal.appendAttemptCount("interaction_expired") == 2)
+    #expect(notices.count == 1)
+    #expect(notices.first?["kind"] as? String == "interaction_expired")
+    #expect(try app.processTime().isEmpty)
+    let authority = try CoordinatorSemanticReplay.replay(journal.load())
+    #expect(authority.boundary(for: try CoordinatorBinding(jsonObject: binding))?.expired == true)
+    #expect(authority.eventSequence == 4) // open, seal, competing open, one expiry
+    #expect(authority.continuations.isEmpty)
+}
+
+@Test(
+    "expiry verification failures revoke focus but retain the pending item for verified cleanup",
+    arguments: ["runtime_event_integrity_mismatch", "freshness_rollback_detected"]
+)
+func routingExpiryAuthorityFailureRetainsPending(code: String) throws {
+    let (journal, clock, app, _, _) = try routingFocusedFixture(suffix: "expiry_authority_failure")
+    clock.set(seconds: 600)
+    // Inject the port failure; this is not a SQLite MAC/Keychain test.
+    journal.failNextLoad(code)
+    routingExpectCode(code) { _ = try app.processTime() }
+    let snapshot = try routingObject(app.snapshotWithoutProcessingTime().canonicalJSON)
+    #expect(snapshot["selection_enabled"] as? Bool == false)
+    #expect(snapshot["foreground"] is NSNull)
+    #expect((snapshot["pending"] as? [Any])?.count == 1)
+    #expect(journal.appendAttemptCount("interaction_expired") == 0)
+    let notices = try app.processTime().map(routingObject)
+    #expect(notices.count == 1)
+    #expect(notices.first?["kind"] as? String == "interaction_expired")
+    #expect(journal.appendAttemptCount("interaction_expired") == 1)
+    #expect(try app.processTime().isEmpty)
+    #expect(try journal.load().journalSequence == 3)
+}
+
+@Test(
+    "expiry append recovery emits exactly one notice only after verified exact expiry",
+    arguments: ["before_commit", "lost_response", "recovery_failure"]
+)
+func routingExpiryAppendRecovery(mode: String) throws {
+    let (journal, clock, app, binding, _) = try routingFocusedFixture(suffix: "expiry_recovery")
+    clock.set(seconds: 600)
+    journal.failNextAppend(
+        eventType: "interaction_expired", commitFirst: mode != "before_commit",
+        followingLoadError: mode == "recovery_failure" ? "freshness_rollback_detected" : nil
+    )
+    let before = journal.loadCount()
+    var notices: [[String: Any]] = []
+    if mode == "lost_response" {
+        notices = try app.processTime().map(routingObject)
+    } else {
+        let expectedCode = mode == "recovery_failure" ? "freshness_rollback_detected" : "test_append_failed"
+        routingExpectCode(expectedCode) { _ = try app.processTime() }
+        let failed = try routingObject(app.snapshotWithoutProcessingTime().canonicalJSON)
+        #expect(failed["selection_enabled"] as? Bool == false)
+        #expect(failed["foreground"] is NSNull)
+        #expect((failed["pending"] as? [Any])?.count == 1)
+    }
+    #expect(journal.loadCount() == before + 2) // authority plus recovery, including failed load
+    notices += try app.processTime().map(routingObject)
+    #expect(notices.count == 1)
+    #expect(notices.first?["kind"] as? String == "interaction_expired")
+    #expect(notices.first?["revision"] as? Int == 1)
+    #expect(journal.appendAttemptCount("interaction_expired") == (mode == "before_commit" ? 2 : 1))
+    #expect(try app.processTime().isEmpty)
+    let authority = try CoordinatorSemanticReplay.replay(journal.load())
+    #expect(authority.eventSequence == 3)
+    #expect(authority.boundary(for: try CoordinatorBinding(jsonObject: binding))?.expired == true)
+    #expect(authority.continuations.isEmpty)
+}
+
+@Test(
+    "ambiguous expiry never synthesizes an old notice from replacement or other terminal state",
+    arguments: ["replacement_pending", "replacement_expired", "closed"]
+)
+func routingExpiryRecoveryRejectsOtherAuthority(mode: String) throws {
+    let (journal, clock, app, binding, packet) = try routingFocusedFixture(suffix: "expiry_other_authority")
+    var revised = packet
+    revised["revision"] = 2
+    revised["valid_after_event_sequence"] = 3
+    revised["sealed_at"] = "2026-08-21T02:00:01Z"
+    let reseal = try routingSeal(packet: revised, suffix: "expiry_other_authority_v2")
+    var terminalCommand: [String: Any] = [
+        "type": mode == "closed" ? "close_boundary" : "expire_interaction",
+        "event_id": "event_routing_other_authority_terminal",
+        "binding": binding,
+        "occurred_at": "2026-08-21T02:10:00Z",
+    ]
+    if mode == "closed" { terminalCommand["close_reason"] = "superseded_by_user_prompt" }
+    let terminal = try routingData(terminalCommand)
+    journal.failNextAppend(eventType: "interaction_expired")
+    // After the failed attempt releases the journal lock, another writer
+    // commits before routing's ambiguous-result recovery read.
+    journal.afterNextAppend(eventType: "interaction_expired") {
+        do {
+            let writer = CoordinatorSemanticApplication(journal: journal)
+            if mode != "closed" { _ = try writer.execute(command: reseal) }
+            if mode != "replacement_pending" { _ = try writer.execute(command: terminal) }
+        } catch {
+            Issue.record("competing writer failed: \(error)")
+        }
+    }
+    clock.set(seconds: 600)
+    #expect(try app.processTime().isEmpty)
+    let snapshot = try routingObject(app.snapshotWithoutProcessingTime().canonicalJSON)
+    #expect(snapshot["selection_enabled"] as? Bool == false)
+    #expect(snapshot["foreground"] is NSNull)
+    #expect((snapshot["pending"] as? [Any])?.isEmpty == true)
+    #expect(try app.processTime().isEmpty)
+    let authority = try CoordinatorSemanticReplay.replay(journal.load())
+    let boundary = try #require(authority.boundary(for: CoordinatorBinding(jsonObject: binding)))
+    #expect(boundary.packet?.revision == (mode == "closed" ? 1 : 2))
+    #expect(boundary.expired == (mode == "replacement_expired"))
+    #expect(boundary.closed == (mode == "closed"))
+    #expect(authority.eventSequence == (mode == "replacement_expired" ? 4 : 3))
+    #expect(boundary.selection == nil)
+    #expect(authority.continuations.isEmpty)
+}
+
+@Test(
+    "focus rechecks its target after another continuation's slow timeout append",
+    arguments: [false, true], [false, true]
+)
+func routingFocusChecksTimeAfterDueWrites(regressClock: Bool, failCleanup: Bool) throws {
+    let (journal, clock, app, bindingA, packetA) = try routingFocusedFixture(suffix: "slow_timeout")
+    _ = try app.routeSelection(routingSelection(packet: packetA, binding: bindingA, suffix: "slow_timeout"))
+    let bindingB = routingBinding(suffix: "focus_after_timeout")
+    let packetB = try routingPacket(
+        binding: bindingB, validAfter: 6, suffix: "focus_after_timeout",
+        sealedAt: "2026-08-21T02:00:00Z"
+    )
+    try routingSetup(
+        app, suffix: "focus_after_timeout", binding: bindingB, packet: packetB,
+        openedAt: "2026-08-21T01:59:59Z"
+    )
+    let target = try routingTarget(packet: packetB, binding: bindingB)
+    _ = try app.setForeground(target)
+    clock.set(seconds: 299)
+    // First due pass samples 299. Its authority read ends at 300. The second
+    // pass samples 300, checks B, then waits on A's timeout until 600 (or 299).
+    journal.afterNextLoad { clock.set(seconds: 300) }
+    journal.afterNextAppend(eventType: "continuation_transport_timed_out_unknown") {
+        clock.set(seconds: regressClock ? 299 : 600)
+    }
+    if failCleanup { journal.failNextAppend(eventType: "interaction_expired") }
+    let before = journal.loadCount()
+    routingExpectCode(failCleanup ? "test_append_failed" : "foreground_target_not_pending") {
+        _ = try app.setForeground(target)
+    }
+    // Focus authority, timeout authority, expiry authority, and only on a
+    // failed append, a recovery read. No extra full due/replay loop.
+    #expect(journal.loadCount() == before + (failCleanup ? 4 : 3))
+    let snapshot = try routingObject(app.snapshotWithoutProcessingTime().canonicalJSON)
+    #expect(snapshot["selection_enabled"] as? Bool == false)
+    #expect(snapshot["foreground"] is NSNull)
+    #expect((snapshot["pending"] as? [Any])?.count == (failCleanup ? 1 : 0))
+    #expect(journal.appendAttemptCount("interaction_expired") == 1)
+    #expect(journal.appendAttemptCount("continuation_transport_timed_out_unknown") == 1)
+    #expect(journal.appendAttemptCount("decision_selection_claimed") == 1)
+    #expect(journal.appendAttemptCount("continuation_dispatched") == 1)
+    let authority = try CoordinatorSemanticReplay.replay(journal.load())
+    let boundary = try #require(authority.boundary(for: CoordinatorBinding(jsonObject: bindingB)))
+    #expect(boundary.expired == !failCleanup)
+    #expect(boundary.selection == nil)
+    #expect(authority.continuations.count == 1)
+    #expect(authority.continuation(id: "continuation_routing_slow_timeout")?.transport?.status == .timedOutUnknown)
+
+    let notices = try app.processTime().map(routingObject)
+    #expect(notices.filter { $0["kind"] as? String == "interaction_expired" }.count == 1)
+    let timeout = try #require(notices.first { $0["kind"] as? String == "continuation_timed_out_unknown" })
+    #expect(timeout["automatic_retry"] as? Bool == false)
+    #expect(try app.processTime().isEmpty)
+    #expect(journal.appendAttemptCount("decision_selection_claimed") == 1)
+    #expect(journal.appendAttemptCount("continuation_dispatched") == 1)
 }
 
 @Test("two sessions queue without foreground stealing and switch only explicitly")
@@ -1274,6 +1680,169 @@ func routingInFlightTimeoutOnce() throws {
     #expect(transport.automaticRetry == false)
 }
 
+private func routingQueuedDeliveryFixture(
+    suffix: String,
+    wallTime: String
+) throws -> (
+    journal: RoutingMemoryJournal, clock: RoutingFakeClock,
+    app: CoordinatorRoutingApplication, continuationID: String,
+    completion: Data, close: Data, claim: Data
+) {
+    let journal = RoutingMemoryJournal()
+    let clock = RoutingFakeClock()
+    let app = try routingApplication(journal: journal, clock: clock)
+    let binding = routingBinding(suffix: suffix)
+    let packet = try routingPacket(
+        binding: binding, validAfter: 2, suffix: suffix,
+        sealedAt: "2026-08-21T12:00:00Z"
+    )
+    try routingSetup(
+        app, suffix: suffix, binding: binding, packet: packet,
+        openedAt: "2026-08-21T11:59:59Z"
+    )
+    _ = try app.setForeground(routingTarget(packet: packet, binding: binding))
+    clock.advance(seconds: 1)
+    let envelope = try routingEnvelope(app.routeSelection(
+        routingSelection(packet: packet, binding: binding, suffix: suffix)
+    ))
+    _ = try app.routeConsumePetAction(routingConsume(envelope: envelope, suffix: suffix))
+    let continuationID = "continuation_routing_\(suffix)"
+    let action = try app.authoritativeState().selectedActionJSON(for: continuationID)
+    return (
+        journal, clock, app, continuationID,
+        try routingData([
+            "type": "complete_transport", "event_id": "event_\(suffix)_complete",
+            "occurred_at": wallTime, "binding": binding, "continuation_id": continuationID,
+        ]),
+        try routingData([
+            "type": "close_boundary", "event_id": "event_\(suffix)_close",
+            "occurred_at": wallTime, "binding": binding,
+            "close_reason": "transport_terminal_observed",
+        ]),
+        try routingData([
+            "type": "claim_queued_action_context", "event_id": "event_\(suffix)_claim",
+            "occurred_at": wallTime, "binding": binding, "continuation_id": continuationID,
+            "delivery_turn_id": "delivery_\(suffix)",
+            "queued_prompt_sha256": "sha256:" + String(repeating: "a", count: 64),
+            "cwd_sha256": "sha256:" + String(repeating: "b", count: 64),
+            "action_sha256": CoordinatorSHA256.fingerprint(action),
+        ])
+    )
+}
+
+@Test(
+    "queued completion uses continuous time in both delivery orderings after a wall jump",
+    arguments: [false, true], ["2026-08-21T12:10:02Z", "2026-08-21T11:50:02Z"]
+)
+func routingQueuedCompletionUsesContinuousTime(receiptFirst: Bool, wallTime: String) throws {
+    let suffix = "queued_clock_\(receiptFirst ? "receipt" : "hook")"
+    let f = try routingQueuedDeliveryFixture(suffix: suffix, wallTime: wallTime)
+    f.clock.advance(seconds: 1)
+    if receiptFirst {
+        try f.app.completeTransportAndCloseBoundary(f.completion, close: f.close)
+    }
+    let loadsBefore = f.journal.loadCount()
+    let authority = try f.app.queuedActionAuthorityProjection()
+    let action = try authority.state.selectedActionJSON(for: f.continuationID)
+    let delivered: Data
+    if receiptFirst {
+        delivered = try f.app.routeQueuedActionContextClaim(
+            f.claim, using: authority, expectedActionJSON: action
+        )
+    } else {
+        delivered = try f.app.routeQueuedActionContextClaim(
+            f.claim, completingTransportWith: f.completion, closingBoundaryWith: f.close,
+            using: authority, expectedActionJSON: action
+        )
+    }
+    #expect(delivered == action)
+    // Clock normalization must not add another journal load/replay to the claim.
+    #expect(f.journal.loadCount() - loadsBefore == 1)
+    let state = try CoordinatorSemanticReplay.replay(f.journal.load())
+    let continuation = try #require(state.continuation(id: f.continuationID))
+    #expect(continuation.transport?.status == .completed)
+    #expect(continuation.transport?.occurredAt.rawValue == "2026-08-21T12:00:02Z")
+    #expect(continuation.queuedActionContextClaim?.deliveryTurnID == "delivery_\(suffix)")
+    #expect(state.eventSequence == 8)
+    #expect(f.journal.appendAttemptCount("continuation_transport_completed") == 1)
+    #expect(f.journal.appendAttemptCount("queued_action_context_claimed") == 1)
+
+    // Durable exact retries remain valid after restart, without a live anchor
+    // or a new deadline, and never create another claim or dispatch.
+    f.clock.advance(seconds: 600)
+    let restarted = try routingApplication(journal: f.journal, clock: f.clock)
+    #expect(try restarted.routeQueuedActionContextClaim(f.claim) == action)
+    #expect(try f.journal.load().journalSequence == 8)
+    #expect(f.journal.appendAttemptCount("queued_action_context_claimed") == 1)
+    #expect(f.journal.appendAttemptCount("continuation_dispatched") == 1)
+}
+
+@Test("queued Hook completion rechecks the real deadline after authority load")
+func routingQueuedCompletionChecksDeadlineAfterLoad() throws {
+    let f = try routingQueuedDeliveryFixture(
+        suffix: "queued_deadline", wallTime: "2026-08-21T12:00:02Z"
+    )
+    // The continuation was selected at clock=1; admission is still within
+    // its 300-second window, but verified replay crosses the deadline.
+    f.clock.set(seconds: 300)
+    _ = try f.app.processTime()
+    f.journal.afterNextLoad { f.clock.set(seconds: 301) }
+    let authority = try f.app.queuedActionAuthorityProjection()
+    let action = try authority.state.selectedActionJSON(for: f.continuationID)
+    let loadsBefore = f.journal.loadCount()
+    routingExpectCode("transport_completion_after_in_flight_deadline") {
+        _ = try f.app.routeQueuedActionContextClaim(
+            f.claim, completingTransportWith: f.completion, closingBoundaryWith: f.close,
+            using: authority, expectedActionJSON: action
+        )
+    }
+    #expect(f.journal.loadCount() == loadsBefore)
+    #expect(try f.journal.load().journalSequence == 5)
+    #expect(f.journal.appendAttemptCount("continuation_transport_completed") == 0)
+    #expect(f.journal.appendAttemptCount("queued_action_context_claimed") == 0)
+    let notices = try f.app.processTime().map(routingObject)
+    #expect(notices.count == 1)
+    #expect(notices.first?["automatic_retry"] as? Bool == false)
+    let state = try CoordinatorSemanticReplay.replay(f.journal.load())
+    #expect(state.continuation(id: f.continuationID)?.transport?.status == .timedOutUnknown)
+    #expect(state.continuation(id: f.continuationID)?.queuedActionContextClaim == nil)
+}
+
+@Test("queued Hook completion latches a continuous clock regression until scheduled cleanup")
+func routingQueuedCompletionRejectsClockRegression() throws {
+    let f = try routingQueuedDeliveryFixture(
+        suffix: "queued_regression", wallTime: "2026-08-21T12:00:02Z"
+    )
+    f.clock.set(seconds: 100)
+    _ = try f.app.processTime()
+    // Still above the dispatch anchor, but behind the last accepted sample.
+    f.journal.afterNextLoad { f.clock.set(seconds: 99) }
+    let authority = try f.app.queuedActionAuthorityProjection()
+    let action = try authority.state.selectedActionJSON(for: f.continuationID)
+    let loadsBefore = f.journal.loadCount()
+    for now in [UInt64(99), 100] {
+        f.clock.set(seconds: now)
+        routingExpectCode("routing_continuation_not_in_flight") {
+            _ = try f.app.routeQueuedActionContextClaim(
+                f.claim, completingTransportWith: f.completion, closingBoundaryWith: f.close,
+                using: authority, expectedActionJSON: action
+            )
+        }
+    }
+    #expect(f.journal.loadCount() == loadsBefore)
+    #expect(try f.journal.load().journalSequence == 5)
+    #expect(f.journal.appendAttemptCount("continuation_transport_completed") == 0)
+    #expect(f.journal.appendAttemptCount("queued_action_context_claimed") == 0)
+    #expect(f.app.millisecondsUntilNextDeadline() == 0)
+    let notices = try f.app.processTime().map(routingObject)
+    #expect(notices.count == 1)
+    #expect(notices.first?["automatic_retry"] as? Bool == false)
+    let state = try CoordinatorSemanticReplay.replay(f.journal.load())
+    #expect(state.continuation(id: f.continuationID)?.transport?.status == .timedOutUnknown)
+    #expect(state.continuation(id: f.continuationID)?.queuedActionContextClaim == nil)
+    #expect(try f.app.processTime().isEmpty)
+}
+
 @Test("restart marks unterminated dispatch unknown without issuing a second action")
 func routingRestartInFlightFailsClosed() throws {
     let journal = RoutingMemoryJournal()
@@ -1309,4 +1878,276 @@ func routingRestartInFlightFailsClosed() throws {
         )
     }
     #expect(try journal.load().journalSequence == afterRecovery)
+}
+
+@Test("receipt-first completion rejects a deadline crossed by authority replay")
+func routingReceiptCompletionChecksDeadlineAfterLoad() throws {
+    let f = try routingQueuedDeliveryFixture(
+        suffix: "receipt_deadline_probe", wallTime: "2026-08-21T12:00:02Z"
+    )
+    // Selection is anchored at clock=1. Admission at 300 is valid, but the
+    // authenticated projection returns at the exact 300-second deadline.
+    f.clock.set(seconds: 300)
+    f.journal.afterNextLoad { f.clock.set(seconds: 301) }
+    routingExpectCode("transport_completion_after_in_flight_deadline") {
+        try f.app.completeTransportAndCloseBoundary(f.completion, close: f.close)
+    }
+    let snapshot = try f.journal.load()
+    let state = try CoordinatorSemanticReplay.replay(snapshot)
+    #expect(snapshot.journalSequence == 5)
+    #expect(state.continuation(id: f.continuationID)?.transport == nil)
+    #expect(f.journal.appendAttemptCount("continuation_transport_completed") == 0)
+    #expect(f.journal.appendAttemptCount("queued_action_context_claimed") == 0)
+    // Only scheduler cleanup may now make it terminal, without dispatching again.
+    let notices = try f.app.processTime().map(routingObject)
+    #expect(notices.count == 1)
+    #expect(notices.first?["automatic_retry"] as? Bool == false)
+    #expect(try CoordinatorSemanticReplay.replay(f.journal.load())
+        .continuation(id: f.continuationID)?.transport?.status == .timedOutUnknown)
+}
+
+@Test("format-repair claim rejects authority replay crossing its 120-second window")
+func routingRepairClaimChecksDeadlineAfterLoad() throws {
+    let journal = RoutingMemoryJournal()
+    let clock = RoutingFakeClock()
+    let app = try routingApplication(journal: journal, clock: clock)
+    let binding = routingBinding(suffix: "repair_load_probe")
+    _ = try app.executeCommand(routingOpen(
+        binding: binding, suffix: "repair_load_probe", occurredAt: "2026-08-21T05:59:59Z"
+    ))
+    let reserved = try app.executeCommand(routingReserveRepair(
+        binding: binding, suffix: "repair_load_probe", occurredAt: "2026-08-21T06:00:00Z"
+    ))
+    let envelope = try routingEnvelope(reserved)
+    clock.set(seconds: 119)
+    journal.afterNextLoad { clock.set(seconds: 120) }
+    routingExpectCode("routing_format_repair_not_active") {
+        _ = try app.executeCommand(routingClaimRepair(envelope: envelope, suffix: "repair_load_probe"))
+    }
+    let snapshot = try journal.load()
+    #expect(snapshot.journalSequence == 2)
+    #expect(try CoordinatorSemanticReplay.replay(snapshot)
+        .boundary(for: CoordinatorBinding(jsonObject: binding))?.repair?.claimedAt == nil)
+    #expect(journal.appendAttemptCount("internal_format_repair_claimed") == 0)
+}
+
+@Test("selection rejects a deadline crossed by its packet authority lookup")
+func routingSelectionChecksDeadlineAfterLoad() throws {
+    let (journal, clock, app, binding, packet) = try routingFocusedFixture(suffix: "selection_load_probe")
+    clock.set(seconds: 599)
+    // First load belongs to processDueLocked. Advance during the second load,
+    // before routeSelection may establish current time authority.
+    journal.afterNextLoad { journal.afterNextLoad { clock.set(seconds: 600) } }
+    routingExpectCode("routing_interaction_expired") {
+        _ = try app.routeSelection(routingSelection(
+            packet: packet, binding: binding, suffix: "selection_load_probe"
+        ))
+    }
+    let state = try CoordinatorSemanticReplay.replay(journal.load())
+    #expect(state.boundary(for: try CoordinatorBinding(jsonObject: binding))?.selection == nil)
+    #expect(state.continuations.isEmpty)
+    #expect(journal.appendAttemptCount("decision_selection_claimed") == 0)
+    #expect(journal.appendAttemptCount("continuation_dispatched") == 0)
+}
+
+@Test("seal registration must not adopt another writer's replacement revision")
+func routingSealRegistrationRejectsReplacedRevision() throws {
+    let journal = RoutingMemoryJournal()
+    let clock = RoutingFakeClock()
+    let app = try routingApplication(journal: journal, clock: clock)
+    let binding = routingBinding(suffix: "registration_race_probe")
+    let packet = try routingPacket(
+        binding: binding, validAfter: 2, suffix: "registration_race_probe",
+        sealedAt: "2026-08-21T02:00:00Z"
+    )
+    _ = try app.executeCommand(routingOpen(
+        binding: binding, suffix: "registration_race_probe", occurredAt: "2026-08-21T01:59:59Z"
+    ))
+    var replacement = packet
+    replacement["revision"] = 2
+    replacement["valid_after_event_sequence"] = 3
+    replacement["sealed_at"] = "2026-08-21T02:00:01Z"
+    replacement["expires_at"] = "2026-08-21T02:10:01Z"
+    let reseal = try routingSeal(packet: replacement, suffix: "registration_race_probe_v2")
+    let writer = CoordinatorSemanticApplication(journal: journal)
+    journal.afterNextAppend(eventType: "decision_packet_sealed") {
+        do { _ = try writer.execute(command: reseal) }
+        catch { Issue.record("replacement fixture failed: \(error)") }
+    }
+    // The initial durable seal may be acknowledged or explicitly rejected, but
+    // neither result may install local monotonic authority for writer's rev2.
+    do { _ = try app.executeCommand(routingSeal(packet: packet, suffix: "registration_race_probe")) }
+    catch let error as CoordinatorError {
+        #expect(error.code == "routing_interaction_not_pending" || error.code == "decision_packet_revision_stale")
+    }
+    let snapshot = try routingObject(app.snapshotWithoutProcessingTime().canonicalJSON)
+    #expect((snapshot["pending"] as? [Any])?.isEmpty == true)
+    routingExpectCode("foreground_target_not_pending") {
+        _ = try app.setForeground(routingTarget(packet: replacement, binding: binding))
+    }
+    let state = try CoordinatorSemanticReplay.replay(journal.load())
+    #expect(state.packet(for: try CoordinatorBinding(jsonObject: binding))?.revision == 2)
+    #expect(state.eventSequence == 3)
+}
+
+private func routingInstallUnrelatedConflict(_ journal: RoutingMemoryJournal, suffix: String) throws {
+    journal.installCompetingChange(try CoordinatorSemanticDecision.decide(
+        state: CoordinatorSemanticReplay.replay(journal.load()),
+        command: routingOpen(binding: routingBinding(suffix: suffix), suffix: suffix,
+            occurredAt: "2026-08-21T12:00:03Z")
+    ))
+}
+
+@Test("selection revalidates final storage admission and conflict reload", arguments: [false, true])
+func routingSelectionChecksFinalAdmission(conflict: Bool) throws {
+    let suffix = "selection_admission_\(conflict)"
+    let (journal, clock, app, binding, packet) = try routingFocusedFixture(suffix: suffix)
+    clock.set(seconds: 599)
+    if conflict { try routingInstallUnrelatedConflict(journal, suffix: suffix + "_writer") }
+    journal.beforeNextAdmission(eventType: "decision_selection_claimed") {
+        if conflict { journal.afterNextLoad { clock.set(seconds: 600) } }
+        else { clock.set(seconds: 600) }
+    }
+    routingExpectCode("routing_interaction_expired") {
+        _ = try app.routeSelection(routingSelection(packet: packet, binding: binding, suffix: suffix))
+    }
+    let state = try CoordinatorSemanticReplay.replay(journal.load())
+    #expect(state.boundary(for: try CoordinatorBinding(jsonObject: binding))?.selection == nil)
+    #expect(state.continuations.isEmpty)
+    #expect(journal.appendAttemptCount("decision_selection_claimed") == (conflict ? 1 : 0))
+    #expect(try routingObject(app.snapshotWithoutProcessingTime().canonicalJSON)["selection_enabled"] as? Bool == false)
+}
+
+@Test("receipt and generic completion revalidate storage admission and conflict reload",
+      arguments: ["receipt", "generic"], [false, true])
+func routingCompletionChecksFinalAdmission(path: String, conflict: Bool) throws {
+    let suffix = "completion_admission_\(path)_\(conflict)"
+    let f = try routingQueuedDeliveryFixture(suffix: suffix, wallTime: "2026-08-21T12:00:02Z")
+    f.clock.set(seconds: 300)
+    if conflict { try routingInstallUnrelatedConflict(f.journal, suffix: suffix + "_writer") }
+    f.journal.beforeNextAdmission(eventType: "continuation_transport_completed") {
+        if conflict { f.journal.afterNextLoad { f.clock.set(seconds: 301) } }
+        else { f.clock.set(seconds: 301) }
+    }
+    routingExpectCode("transport_completion_after_in_flight_deadline") {
+        if path == "receipt" { try f.app.completeTransportAndCloseBoundary(f.completion, close: f.close) }
+        else { _ = try f.app.executeCommand(f.completion) }
+    }
+    let state = try CoordinatorSemanticReplay.replay(f.journal.load())
+    #expect(state.continuation(id: f.continuationID)?.transport == nil)
+    #expect(state.continuation(id: f.continuationID)?.queuedActionContextClaim == nil)
+    #expect(f.journal.appendAttemptCount("continuation_transport_completed") == (conflict ? 1 : 0))
+    let notices = try f.app.processTime().map(routingObject)
+    #expect(notices.count == 1)
+    #expect(notices.first?["automatic_retry"] as? Bool == false)
+    #expect(f.journal.appendAttemptCount("continuation_dispatched") == 1)
+}
+
+@Test("Hook-first atomic batch rejects a deadline crossed during storage validation")
+func routingQueuedCompletionChecksFinalAdmission() throws {
+    let f = try routingQueuedDeliveryFixture(suffix: "hook_admission", wallTime: "2026-08-21T12:00:02Z")
+    f.clock.set(seconds: 300)
+    let authority = try f.app.queuedActionAuthorityProjection()
+    let action = try authority.state.selectedActionJSON(for: f.continuationID)
+    f.journal.beforeNextAdmission(eventType: "continuation_transport_completed") { f.clock.set(seconds: 301) }
+    routingExpectCode("transport_completion_after_in_flight_deadline") {
+        _ = try f.app.routeQueuedActionContextClaim(f.claim, completingTransportWith: f.completion,
+            closingBoundaryWith: f.close, using: authority, expectedActionJSON: action)
+    }
+    #expect(try f.journal.load().journalSequence == 5)
+    #expect(f.journal.appendAttemptCount("queued_action_context_claimed") == 0)
+    #expect(f.journal.appendAttemptCount("continuation_transport_completed") == 0)
+}
+
+@Test("repair claim revalidates semantic load, storage admission, and conflict reload",
+      arguments: ["semantic_load", "append", "conflict"])
+func routingRepairChecksFinalAdmission(phase: String) throws {
+    let suffix = "repair_admission_\(phase)"
+    let journal = RoutingMemoryJournal()
+    let clock = RoutingFakeClock()
+    let app = try routingApplication(journal: journal, clock: clock)
+    let binding = routingBinding(suffix: suffix)
+    _ = try app.executeCommand(routingOpen(binding: binding, suffix: suffix, occurredAt: "2026-08-21T05:59:59Z"))
+    let envelope = try routingEnvelope(app.executeCommand(routingReserveRepair(
+        binding: binding, suffix: suffix, occurredAt: "2026-08-21T06:00:00Z")))
+    clock.set(seconds: 119)
+    if phase == "semantic_load" {
+        journal.afterNextLoad { journal.afterNextLoad { clock.set(seconds: 120) } }
+    } else {
+        if phase == "conflict" { try routingInstallUnrelatedConflict(journal, suffix: suffix + "_writer") }
+        journal.beforeNextAdmission(eventType: "internal_format_repair_claimed") {
+            if phase == "conflict" { journal.afterNextLoad { clock.set(seconds: 120) } }
+            else { clock.set(seconds: 120) }
+        }
+    }
+    routingExpectCode("routing_format_repair_not_active") {
+        _ = try app.executeCommand(routingClaimRepair(envelope: envelope, suffix: suffix))
+    }
+    #expect(try CoordinatorSemanticReplay.replay(journal.load())
+        .boundary(for: CoordinatorBinding(jsonObject: binding))?.repair?.claimedAt == nil)
+    #expect(journal.appendAttemptCount("internal_format_repair_claimed") == (phase == "conflict" ? 1 : 0))
+}
+
+@Test("token consumption revalidates storage admission and conflict reload", arguments: [false, true])
+func routingConsumeChecksFinalAdmission(conflict: Bool) throws {
+    let suffix = "consume_admission_\(conflict)"
+    let (journal, clock, app, binding, packet) = try routingFocusedFixture(suffix: suffix)
+    let envelope = try routingEnvelope(app.routeSelection(routingSelection(packet: packet, binding: binding, suffix: suffix)))
+    clock.set(seconds: 119)
+    if conflict { try routingInstallUnrelatedConflict(journal, suffix: suffix + "_writer") }
+    journal.beforeNextAdmission(eventType: "continuation_consumed") {
+        if conflict { journal.afterNextLoad { clock.set(seconds: 120) } }
+        else { clock.set(seconds: 120) }
+    }
+    routingExpectCode("continuation_expired") {
+        _ = try app.routeConsumePetAction(routingConsume(envelope: envelope, suffix: suffix))
+    }
+    let continuation = try #require(CoordinatorSemanticReplay.replay(journal.load()).continuations.values.first)
+    #expect(continuation.consumedAt == nil)
+    #expect(journal.appendAttemptCount("continuation_consumed") == (conflict ? 1 : 0))
+}
+
+@Test("regression cleanup failure cannot revive authority when the clock catches up")
+func routingClockRegressionRemainsLatchedAfterCleanupFailure() throws {
+    let (journal, clock, app, binding, packet) = try routingFocusedFixture(suffix: "regression_latch")
+    clock.set(seconds: 100)
+    _ = try app.processTime()
+    clock.set(seconds: 99)
+    journal.failNextAppend(eventType: "interaction_expired")
+    routingExpectCode("test_append_failed") { _ = try app.processTime() }
+    clock.set(seconds: 101)
+    routingExpectCode("routing_interaction_not_pending") {
+        _ = try app.routeSelection(routingSelection(packet: packet, binding: binding, suffix: "regression_latch"))
+    }
+    let state = try CoordinatorSemanticReplay.replay(journal.load())
+    #expect(state.boundary(for: try CoordinatorBinding(jsonObject: binding))?.expired == true)
+    #expect(state.continuations.isEmpty)
+}
+
+@Test("dismissal rejects expiry during final storage admission without closing the card")
+func routingDismissChecksFinalAdmission() throws {
+    let suffix = "dismiss_admission"
+    let journal = RoutingMemoryJournal()
+    let clock = RoutingFakeClock()
+    let app = try routingApplication(journal: journal, clock: clock)
+    let binding = routingBinding(suffix: suffix)
+    var packet = try routingPacket(binding: binding, validAfter: 2, suffix: suffix,
+        sealedAt: "2026-08-21T02:00:00Z")
+    packet["decision_layout"] = "ranked_next_actions"
+    packet["choices"] = Array(try #require(packet["choices"] as? [[String: Any]]).prefix(2))
+    try routingSetup(app, suffix: suffix, binding: binding, packet: packet,
+        openedAt: "2026-08-21T01:59:59Z")
+    let target = try routingTarget(packet: packet, binding: binding)
+    _ = try app.setForeground(target)
+    let before = try journal.load()
+    clock.set(seconds: 599)
+    journal.beforeNextAdmission(eventType: "decision_boundary_closed") { clock.set(seconds: 600) }
+    let close = try routingData([
+        "type": "close_boundary", "event_id": "event_dismiss_admission",
+        "occurred_at": "2026-08-21T02:09:59Z", "binding": binding, "close_reason": "user_dismissed",
+    ])
+    routingExpectCode("interaction_not_waiting") { try app.dismissInteraction(target, closingWith: close) }
+    #expect(try journal.load() == before)
+    #expect(journal.appendAttemptCount("decision_boundary_closed") == 0)
+    #expect(try routingObject(app.snapshotWithoutProcessingTime().canonicalJSON)["selection_enabled"] as? Bool == false)
 }

@@ -8,6 +8,19 @@ import Foundation
 /// calls complete(). No role capabilities or user content are serialized.
 final class ClaudeRuntimePayloadUse: @unchecked Sendable {
     enum Status: Equatable, Sendable { case clear, inUse, unavailable }
+    /// Counts durable evidence, not running Claude sessions. Neither PID
+    /// disappearance nor a detached native executable proves these children
+    /// stopped using their pinned capabilities or payload generation.
+    struct UpdateInspection: Equatable, Sendable {
+        let status: Status
+        let outstandingUseCount: Int?
+        let referencedRuntimeIdentities: Set<String>
+    }
+    private struct UseRecord {
+        let id: String
+        let data: Data
+        let runtimeIdentity: String
+    }
     static let maximumUseRecords = 4096
     private let lock = NSLock()
     private let storeRootURL: URL
@@ -55,7 +68,7 @@ final class ClaudeRuntimePayloadUse: @unchecked Sendable {
             let admission = try Self.completionAdmission(rootURL: storeRootURL)
             defer { admission.release() }
             let records = try Self.readRecords(root: admission.root)
-            guard records[useID.uuidString.lowercased()] == record else { throw ClaudePayloadFS.unavailable() }
+            guard records[useID.uuidString.lowercased()]?.data == record else { throw ClaudePayloadFS.unavailable() }
             let uses = try ClaudePayloadFS.privateDirectory(parent: admission.root, name: "uses", create: false)
             defer { close(uses) }
             // Re-read the exact file immediately before unlinking; another
@@ -85,15 +98,28 @@ final class ClaudeRuntimePayloadUse: @unchecked Sendable {
     /// Advisory read only. A missing store is clear; uncertainty, a concurrent
     /// admission or a malformed record is unavailable. Never looks up a PID.
     static func inspect(storeRootURL: URL = ClaudeRuntimePayload.defaultStoreRootURL) -> Status {
+        inspectForUpdate(storeRootURL: storeRootURL).status
+    }
+
+    /// A valid record still blocks service replacement: current Claude role
+    /// grants bind to one service incarnation and cannot be renewed in-place
+    /// across that boundary. A runtime copy alone must never waive this rule.
+    /// An unavailable result provides no complete count or retention set.
+    static func inspectForUpdate(storeRootURL: URL = ClaudeRuntimePayload.defaultStoreRootURL) -> UpdateInspection {
         do {
-            guard let existing = try ClaudePayloadFS.openAbsoluteDirectory(storeRootURL, create: false) else { return .clear }
+            guard let existing = try ClaudePayloadFS.openAbsoluteDirectory(storeRootURL, create: false) else {
+                return .init(status: .clear, outstandingUseCount: 0, referencedRuntimeIdentities: [])
+            }
             close(existing)
             let admission = try ClaudePayloadAdmission.acquire(rootURL: storeRootURL, create: false)
             defer { admission.release() }
             let records = try readRecords(root: admission.root)
             try admission.verify()
-            return records.isEmpty ? .clear : .inUse
-        } catch { return .unavailable }
+            return .init(status: records.isEmpty ? .clear : .inUse, outstandingUseCount: records.count,
+                         referencedRuntimeIdentities: Set(records.values.map(\.runtimeIdentity)))
+        } catch {
+            return .init(status: .unavailable, outstandingUseCount: nil, referencedRuntimeIdentities: [])
+        }
     }
 
     final class InstallationGuard: @unchecked Sendable {
@@ -115,7 +141,7 @@ final class ClaudeRuntimePayloadUse: @unchecked Sendable {
         } catch { admission.release(); throw error }
     }
 
-    private static func readRecords(root: Int32) throws -> [String: Data] {
+    private static func readRecords(root: Int32) throws -> [String: UseRecord] {
         var metadata = stat()
         if fstatat(root, "uses", &metadata, AT_SYMLINK_NOFOLLOW) != 0 {
             guard errno == ENOENT else { throw ClaudePayloadFS.unavailable() }
@@ -125,15 +151,15 @@ final class ClaudeRuntimePayloadUse: @unchecked Sendable {
         defer { close(uses) }
         let names = try ClaudePayloadFS.names(uses)
         guard names.count <= maximumUseRecords else { throw ClaudePayloadFS.unavailable() }
-        var records: [String: Data] = [:]
+        var records: [String: UseRecord] = [:]
         for name in names {
             let record = try readRecord(parent: uses, name: name)
-            guard records.updateValue(record.data, forKey: record.id) == nil else { throw ClaudePayloadFS.unavailable() }
+            guard records.updateValue(record, forKey: record.id) == nil else { throw ClaudePayloadFS.unavailable() }
         }
         return records
     }
 
-    private static func readRecord(parent: Int32, name: String) throws -> (id: String, data: Data) {
+    private static func readRecord(parent: Int32, name: String) throws -> UseRecord {
         guard name.hasSuffix(".json") else { throw ClaudePayloadFS.unavailable() }
         let id = String(name.dropLast(5))
         guard UUID(uuidString: id)?.uuidString.lowercased() == id else { throw ClaudePayloadFS.unavailable() }
@@ -149,7 +175,7 @@ final class ClaudeRuntimePayloadUse: @unchecked Sendable {
               let runtime = value["runtime_identity"] as? String, OperationalRuntimeIdentity.isValid(runtime) else {
             throw ClaudePayloadFS.unavailable()
         }
-        return (id, data)
+        return .init(id: id, data: data, runtimeIdentity: runtime)
     }
 }
 

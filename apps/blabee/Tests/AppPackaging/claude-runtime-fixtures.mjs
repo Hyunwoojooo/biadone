@@ -1,7 +1,8 @@
+import { createHash } from "node:crypto";
 import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { CLAUDE_RUNTIME_PACKAGES, CLAUDE_RUNTIME_SOURCE_FILES, prepareClaudeRuntime } from "../../scripts/prepare-claude-runtime.mjs";
+import { canonicalClaudeRuntimeJSON, CLAUDE_RUNTIME_PACKAGES, CLAUDE_RUNTIME_SOURCE_FILES, prepareClaudeRuntime } from "../../scripts/prepare-claude-runtime.mjs";
 
 const packageEntries = {
   "@modelcontextprotocol/sdk": ["dist/esm/server/index.js", "dist/esm/server/stdio.js", "dist/esm/types.js"],
@@ -17,7 +18,7 @@ export async function fixtureFile(path, contents, mode = 0o644) {
   await chmod(path, mode);
 }
 
-export async function makeClaudeRuntimeFixture(t, { prepared = true } = {}) {
+export async function makeClaudeRuntimeFixture(t, { prepared = true, legacy = false } = {}) {
   const root = await mkdtemp(join(tmpdir(), "blabee-claude-package-"));
   t.after(() => rm(root, { recursive: true, force: true }));
   const bridgeRoot = join(root, "bridge");
@@ -58,5 +59,21 @@ export async function makeClaudeRuntimeFixture(t, { prepared = true } = {}) {
   await fixtureFile(join(bridgeRoot, "node_modules", "unrelated", "index.js"), "unrelated excluded\n");
   const options = { bridgeRoot, nodeBinaryPath, nodeLicensePath, nodeVersion: "22.23.2", nodeArch: "arm64", outputDirectory };
   const result = prepared ? await prepareClaudeRuntime(options) : undefined;
+  if (legacy && result) {
+    // Historical shape fixtures are test-only. Production preparation must
+    // never label freshly prepared v3 bridge code as a v1 Channels artifact.
+    const manifest = result.manifest;
+    manifest.schema_version = "blabee.claude-runtime.v1";
+    delete manifest.delivery_mode;
+    manifest.channel_mode = "development-preview";
+    manifest.channel_source = "blabee-claude";
+    manifest.channel_selector = "server:blabee-claude";
+    manifest.contract_versions.session = "blabee.claude-session.v2";
+    manifest.files = manifest.files.filter(file => file.path !== "payload/src/session-v2-waiter.mjs");
+    await rm(join(outputDirectory, "payload/src/session-v2-waiter.mjs"));
+    const { payload_digest, ...body } = manifest;
+    manifest.payload_digest = `sha256:${createHash("sha256").update(canonicalClaudeRuntimeJSON(body)).digest("hex")}`;
+    await writeFile(join(outputDirectory, "manifest.json"), `${canonicalClaudeRuntimeJSON(manifest)}\n`);
+  }
   return { root, ...options, manifest: result?.manifest, options };
 }

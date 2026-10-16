@@ -1,23 +1,73 @@
 # Claude command auto connection
 
-Status: implementation and isolated regression tests complete, 2026-09-21.
-Build 63 is the signed candidate for this feature; installed build 62 does not include it.
+Current product contract: [ordinary MCP and Stop Hook](PUBLIC_MCP_HOOK.md), reviewed 2026-10-03.
+Connection update, 2026-10-11: see [Claude Code compatibility](COMPATIBILITY.md) for the latest
+release review, admission regressions and the separate native/installed qualification limits.
+The installed-product path uses `blabee.claude-session.v3`: connection checks return a probe
+and nonce through MCP, and selected actions arrive through the same session's Stop Hook.
+Use the current prompts at the top of [ACCEPTANCE](ACCEPTANCE.md). Source review and Node tests
+do not establish that the installed app contains these changes.
+
+Historical status, 2026-09-21: one-click connection source updated. The new UI/terminal flow had
+regression test sources and syntax checks; it had **not been built or run** at the user's request.
+The r63 results below describe the earlier automatic CLI implementation, not this new flow.
 Installation and real Claude model acceptance remain separate checks in [ACCEPTANCE](ACCEPTANCE.md).
 
 ## Enable once
 
-1. Install the candidate as `/Applications/Blabee.app` when existing Blabee-connected sessions
-   have finished. Use the common installer; automatic connection does not bypass update guards.
-2. In **설정 → 연결**, connect the app-owned service, then select **Claude 터미널 자동 연결 →
-   자동 연결 켜기**.
-3. Open a new zsh terminal in the intended project and run `claude` or `claude --resume`.
-   Keep Claude's project trust, MCP and development Channels approval prompts intact.
-4. Use the same setting's **자동 연결 끄기** to disable future automatic connections.
+The following flow requires a later app containing these source changes. This task did not
+create, install or publish a candidate.
+
+1. In **설정 → 연결 → Claude 연결**, select **Claude 연결** and choose a project folder.
+   Blabee inspects the environment, saves supported automatic connection settings and starts
+   its service if disabled. A blocked or failed active service is not automatically restarted.
+2. A connected new conversation opens in the recommended terminal. A running supported Ghostty
+   is preferred; Terminal is also available in the picker. Ghostty requires version 1.3 or newer.
+3. Confirm any native macOS Automation, Claude login, project trust and MCP requests.
+   **설정 저장됨** and **Claude 연결 확인 완료** are separate states. The latter requires an
+   explicit successful `ack_readiness_probe_v1` using the same server's `check_connection_v1`
+   response. Current product launches do not request development Channels approval.
+4. After saving automatic zsh setup, future new zsh terminals can use ordinary `claude` or
+   `claude --resume`. Existing shells and conversations remain unchanged. Opening the first
+   connected conversation from the app does not require sourcing a profile or changing PATH by hand.
+5. **터미널 자동 연결 설정 → 터미널 자동 연결 끄기** removes only owned setup for future shells.
 
 The setup preserves the original CLI and adds a managed block to `.zshrc` (or a supported
 home-local `ZDOTDIR`). It uses `~/Library/Application Support/Blabee/shell/claude-v1/bin`.
-Existing conflicting aliases/functions or changed managed files require manual review.
+Changed managed files are left intact; a conflicting alias/function takes precedence and the
+managed block skips itself. Unsupported/custom shell setups can still open a connected
+conversation directly from the app, with automatic CLI setup shown separately as unavailable.
 This implementation does not activate itself or modify the current user's shell during tests.
+
+## One-click connection evidence
+
+The new settings action uses observed-session launch with a fresh explicit `--session-id` for
+this new conversation only. The ordinary terminal/resume route below still lets Claude select
+its own native conversation. Neither route resumes old Blabee authority.
+
+The launcher returns the requested native UUID, canonical project and selected terminal. An
+unconfirmed terminal request preserves that receipt for observation and is never automatically
+retried or rerouted. Ghostty uses its official AppleScript surface configuration/new window API;
+both terminals quote each argument as data. Existing windows receive no input or close command.
+
+Pet retains the directory's existing native-session UUID and fresh authenticated service evidence
+in its in-process model; no wire schema or core contract changes. The controller matches UUID,
+project, service generation/incarnation, scope, session incarnation and authority epoch. It
+selects that session at most once, then requires its current projection generation, connected
+bridge and readiness ACK. Another selected session's failure cannot block finding the new row.
+Directory failure invalidates fresh evidence even if cached rows remain visible.
+
+Readiness expiry, service replacement, closed sessions and read failures remove success. A bounded
+wait exposes recovery, including after a previously successful connection. Probe retry is an
+explicit action for the same selected session; it does not run alongside the initial pending probe.
+Settings inspection re-discovers available original CLI paths on each refresh, preserves updater
+symlinks in the managed shim and never executes startup scripts merely to inspect the environment.
+
+New regression sources cover these branches plus chooser cancellation, changed shell and terminal
+argument/version handling. They have not been executed: Swift testing requires a build, which the
+user excluded. Syntax-only checks do not prove type correctness or actual terminal/model behavior.
+The initial Channel-turn check belonged to that earlier development candidate. Current product
+acceptance uses the MCP probe/ACK and Stop Hook selection path in [PUBLIC_MCP_HOOK](PUBLIC_MCP_HOOK.md).
 
 ## User behavior
 
@@ -32,9 +82,10 @@ flags and unrecognized option forms bypass automatic connection with their argum
 Existing shells and running conversations
 are not changed. A failed Blabee bootstrap does not replay work or restart Claude.
 
-Custom Channels still require Claude's per-session development opt-in flag and native approval.
-Automatic configuration does not mean an automatic ACK: readiness requires an actual Channel
-probe and the model's acknowledgement. This remains an internal test distribution.
+Automatic configuration does not acknowledge readiness on the model's behalf. The model calls
+`check_connection_v1` and passes that successful response's `probe_id` and `nonce` to
+`ack_readiness_probe_v1` once. No Channel notification is expected in the current product path.
+The historical r63 development-Channel qualification below does not qualify this new path.
 
 ## Implementation boundary
 
@@ -51,6 +102,14 @@ endpoint's new `enroll_observed` operation. It uses the existing challenge, one-
 grant pipe, signed peer verification and owner EOF/lease lifetime. Waiting in the resume picker
 creates no Blabee authority. MCP initialization must not depend on the Hook having run first.
 
+After valid SDK initialization, a tool arriving before the actual SessionStart grant waits for
+the same admission and single bridge open. Initialize and tools/list remain immediately available;
+calls before initialization remain rejected. At most 32 tools can wait for admission. Cancelling
+one releases its slot without cancelling shared bootstrap or starting a service request. Cancellation
+while bridge.open is pending also releases the tool slot, while that original open RPC retains its
+own slot until its outcome is known. EOF, output failure and rejected admission retire waiting tools.
+This creates no probe retry, automatic ACK, claim or restored authority.
+
 `enroll_observed` adds an exact operation shape to `blabee.claude-owner.v1`; existing
 enroll/renew/end semantics and common `Contracts/v1` are unchanged. Its extra fields are
 `native_session_id` (UUID) and `source` (`startup`, `resume`, `fork`). Its response must bind
@@ -58,7 +117,7 @@ that same native ID. The registry creates a fresh scope, incarnation, epoch, cor
 role capabilities; no historical scope or credentials are restored. The actual initial source
 is consumed through a typed native initialization method, not rewritten to `startup`.
 
-Subsequent Hook calls use the existing session-v2 contract. In-process `/resume`, `/clear`,
+Subsequent Hook calls use `blabee.claude-session.v3` (the internal source filenames retain `session-v2`). In-process `/resume`, `/clear`,
 source/ID/cwd changes terminate the current Blabee authority; they do not silently rebind it.
 The new process may resume Claude history, but requires a new prompt boundary and fresh
 readiness. An old proposal, selection or completion cannot acquire the new authority.
@@ -111,6 +170,7 @@ behaviors. An explicit MCP `CLAUDE_CODE_SESSION_ID` override is intentionally ab
 
 ## References
 
+- [Ghostty AppleScript API](https://ghostty.org/docs/features/applescript)
 - [Claude Channels](https://code.claude.com/docs/en/channels)
 - [Channel development](https://code.claude.com/docs/en/channels-reference)
 - [SessionStart Hook](https://code.claude.com/docs/en/hooks#sessionstart)

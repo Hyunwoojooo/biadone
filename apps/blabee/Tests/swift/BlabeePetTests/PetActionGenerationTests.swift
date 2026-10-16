@@ -265,9 +265,9 @@ private func petActionGenerationLateApprovalSuccess(_ kind: ActionGenerationAppr
     await h.viewModel.shutdownAppOwnedService()
 }
 
-@Test("Late selection success cannot reopen the old app or change the replacement UI")
+@Test("Late selection responses cannot reopen the old app or change the replacement UI", arguments: [false, true])
 @MainActor
-func petActionGenerationLateSelectionSuccess() async throws {
+func petActionGenerationLateSelectionSuccess(_ fails: Bool) async throws {
     let h = ActionGenerationHarness()
     let card = PetTestCard(suffix: "generation_selection")
     try h.viewModel.receiveSnapshotDataForTesting(petTestSnapshotData(cards: [card]))
@@ -280,6 +280,7 @@ func petActionGenerationLateSelectionSuccess() async throws {
     #expect(h.viewModel.focusedInteraction?.identity == identity)
     await h.transport.setSelectionBlocked(true)
     await h.transport.enqueue(type: "select", response: try petTestSelectionResponse(kind: "pause"))
+    if fails { await h.transport.enqueueFailure(type: "select", code: "old_selection_delivery_failed") }
     let action = Task { await h.viewModel.requestLegacyPause() }
     #expect(await actionGenerationWaitForRequest("select", transport: h.transport))
 
@@ -297,8 +298,30 @@ func petActionGenerationLateSelectionSuccess() async throws {
     #expect(acceptedActions == 0)
     #expect(h.viewModel.lastTerminalPresentation == nil)
     #expect(h.viewModel.lastError == nil)
+    #expect(h.viewModel.selectionDeliveryNotice == nil)
     #expect(h.viewModel.presentationState == .ready)
     #expect(await h.transport.requestCount(type: "get_state") == snapshotsBeforeCompletion)
+    await h.viewModel.shutdownAppOwnedService()
+}
+
+@Test("A replacement service generation retires the prior selection delivery notice")
+@MainActor
+func petActionGenerationRetiresSelectionDeliveryNotice() async throws {
+    let h = ActionGenerationHarness()
+    let card = PetTestCard(suffix: "generation_delivery_notice")
+    try h.viewModel.receiveSnapshotDataForTesting(petTestSnapshotData(cards: [card]))
+    let identity = try #require(h.viewModel.displayInteraction?.identity)
+    await h.transport.enqueue(type: "focus_interaction", response: try petTestFocusResponse())
+    await h.transport.enqueue(type: "get_state",
+        response: try petTestSnapshotData(cards: [card], foregroundSuffix: card.suffix))
+    await h.viewModel.focus(identity)
+    await h.transport.enqueueFailure(type: "select", code: "operational_transport_timeout")
+    await h.transport.enqueue(type: "get_state", response: try petTestSnapshotData(cards: []))
+    await h.viewModel.requestPanelSelection(1)
+    #expect(h.viewModel.selectionDeliveryNotice != nil)
+    await h.restartAndPresent(try petTestSnapshotData(cards: []))
+    #expect(h.viewModel.selectionDeliveryNotice == nil)
+    #expect(await h.transport.requestCount(type: "select") == 1)
     await h.viewModel.shutdownAppOwnedService()
 }
 
@@ -389,7 +412,7 @@ func petActionGenerationLateFocusPreservesSelection(_ fails: Bool) async throws 
     await currentSelection.value
 }
 
-@Test("Focus invalidation separates same-card waiters without changing the service generation",
+@Test("Focus invalidation releases waiters but preserves the same-card I/O reservation until the old reply",
       arguments: [false, true])
 @MainActor
 func petActionGenerationSameGenerationFocusOwnership(_ fails: Bool) async throws {
@@ -424,10 +447,34 @@ func petActionGenerationSameGenerationFocusOwnership(_ fails: Bool) async throws
     #expect(oldWaiterCompleted)
 
     await fallback.enqueue(type: "get_state", response: snapshot)
-    let recovery = Task { await h.viewModel.refresh() }
-    #expect(await actionGenerationWaitForFocus(identity, transport: transport, count: 2))
-    #expect(h.viewModel.pendingFocusIdentity == identity)
+    await h.viewModel.refresh()
+    #expect(await transport.pendingCount(identity) == 1)
+    #expect(h.viewModel.pendingFocusIdentity == nil)
     #expect(h.viewModel.lastError == nil)
+    // A successful snapshot and an explicit acquisition cannot start another
+    // physical request while the invalidated request is still suspended.
+    await h.viewModel.focus(identity)
+    #expect(await transport.pendingCount(identity) == 1)
+    #expect(h.viewModel.localForegroundIdentity == nil)
+    let snapshotsBeforeCompletion = await transport.snapshotCalls
+    await transport.setRejectSnapshots(true)
+    try await transport.completeFirst(identity, fails: fails)
+    await oldFocus.value
+
+    #expect(h.service.generation == generation)
+    #expect(h.viewModel.pendingFocusIdentity == nil)
+    #expect(h.viewModel.localForegroundIdentity == nil)
+    #expect(h.viewModel.snapshotInteractions.first?.identity == identity)
+    #expect(h.viewModel.lastError == nil)
+    #expect(await transport.pendingCount(identity) == 0)
+    #expect(await transport.snapshotCalls == snapshotsBeforeCompletion)
+
+    // Once A has actually returned, B may acquire its own acknowledgement.
+    // B's joined caller remains pending until that new request completes.
+    await transport.setRejectSnapshots(false)
+    let newFocus = Task { await h.viewModel.focus(identity) }
+    #expect(await actionGenerationWaitForFocus(identity, transport: transport))
+    #expect(h.viewModel.pendingFocusIdentity == identity)
     var newWaiterStarted = false
     var newWaiterCompleted = false
     let newWaiter = Task {
@@ -436,21 +483,18 @@ func petActionGenerationSameGenerationFocusOwnership(_ fails: Bool) async throws
         newWaiterCompleted = true
     }
     while !newWaiterStarted { await Task.yield() }
-    let snapshotsBeforeCompletion = await transport.snapshotCalls
-    await transport.setRejectSnapshots(true)
-    try await transport.completeFirst(identity, fails: fails)
-    await oldFocus.value
-
-    #expect(h.service.generation == generation)
-    #expect(h.viewModel.pendingFocusIdentity == identity)
-    #expect(h.viewModel.snapshotInteractions.first?.identity == identity)
-    #expect(h.viewModel.lastError == nil)
     #expect(!newWaiterCompleted)
-    #expect(await transport.snapshotCalls == snapshotsBeforeCompletion)
-
-    await h.viewModel.shutdownAppOwnedService()
+    #expect(await transport.pendingCount(identity) == 1)
+    await fallback.enqueue(type: "get_state", response: try petTestSnapshotData(
+        cards: [card], foregroundSuffix: card.suffix
+    ))
     try await transport.complete(identity)
-    await recovery.value
+    await newFocus.value
     await oldWaiter.value
     await newWaiter.value
+    #expect(newWaiterCompleted)
+    #expect(h.viewModel.localForegroundIdentity == identity)
+    #expect(h.viewModel.pendingFocusIdentity == nil)
+    #expect(h.service.generation == generation)
+    await h.viewModel.shutdownAppOwnedService()
 }

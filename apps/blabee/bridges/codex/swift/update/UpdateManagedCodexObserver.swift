@@ -16,7 +16,7 @@ struct UpdateManagedSession: Codable, Equatable, Sendable, Identifiable {
 
 /// A deliberately separate lifecycle qualification. It grants no approval-broker capability.
 enum UpdateManagedCodexProfile {
-    static let supportedVersions: Set<String> = ["0.154.0", "0.155.0", "0.155.1"]
+    static let supportedVersions: Set<String> = ["0.154.0", "0.155.0", "0.155.1", "0.156.0", "0.156.1", "0.157.0", "0.157.1", "0.158.0", "0.159.0", "0.159.1", "0.159.2", "0.159.3", "0.160.0", "0.160.1", "0.161.0", "0.162.0", "0.162.1", "0.163.0"]
     static func requireSupported(_ version: String) throws {
         guard supportedVersions.contains(version) else {
             throw CoordinatorError("update_managed_codex_version_unsupported")
@@ -276,6 +276,17 @@ struct UpdateManagedCodexObserver {
               let fields = object["fields"] as? [String: Any],
               let message = fields["message"] as? String else {
             throw CoordinatorError("update_managed_diagnostics_invalid")
+        }
+        // Codex 0.162 keeps awaiting the same shutdown after this progress warning.
+        // Stderr may lag stdout's thread/closed; do not require a still-open thread.
+        // This grants no completion, changes no deadline, and preserves prior failures.
+        if level == "WARN",
+           object["target"] as? String == "codex_app_server::request_processors::thread_lifecycle",
+           fields["event.name"] as? String == "codex.app_server.thread_shutdown_slow",
+           message.hasPrefix("thread "),
+           let threadID = UUID(uuidString: String(message.dropFirst("thread ".count).prefix(36))),
+           message == "thread \(threadID.uuidString.lowercased()) shutdown is taking longer than expected; continuing to wait" {
+            return
         }
         let lower = message.lowercased()
         let target = (object["target"] as? String ?? "").lowercased()

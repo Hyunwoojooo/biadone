@@ -4,9 +4,59 @@ import Testing
 import Vision
 @testable import BlabeeCoordinator
 
-@Suite("Pet native Air views")
+@Suite("Pet native Air views", .petLanguage(.korean))
 @MainActor
 struct PetAirViewTests {
+    init() throws { try PetTypographyTestResources.register() }
+
+    @Test("English settings and choice controls fit normal and narrow panels while card text stays exact")
+    func englishPresentation() async throws {
+        try await PetL10n.$languageOverride.withValue(.english) {
+            let transport = PetFakeTransport()
+            let title = "원문 카드 / Original card"
+            let model = try viewModel(transport: transport, count: 2, title: title)
+            defer { model.stopPolling() }
+            let identity = model.displayInteraction?.identity
+            for width in [460.0, 340.0] {
+                let size = CGSize(width: width, height: decisionSize(count: 2).height)
+                let (host, window) = hosting(model, size: size, dark: false, forceOpaque: true)
+                defer { window.contentView = nil; window.close() }
+                await settleLayout(host)
+                let bitmap = try render(host, name: "language-en-choices-\(Int(width))")
+                let words = try recognizedText(in: bitmap)
+                let copy = normalized(words.map(\.text).joined(separator: " "))
+                #expect(words.contains { normalized($0.text) == "blabee" }, "\(copy)")
+                #expect(copy.contains("recommended"), "\(copy)")
+                #expect(copy.contains("skipchoices"), "\(copy)")
+                #expect(model.displayInteraction?.identity == identity)
+                #expect(model.displayInteraction?.actionChoices.allSatisfy { $0.displayTitle == title } == true)
+            }
+            model.beginShortcutSettings()
+            model.selectSettingsTab(.general)
+            for width in [460.0, 340.0] {
+                let (host, window) = hosting(model, size: CGSize(width: width, height: 700), dark: false, forceOpaque: true)
+                defer { window.contentView = nil; window.close() }
+                await settleLayout(host)
+                let bitmap = try render(host, name: "language-en-settings-\(Int(width))")
+                let words = try recognizedText(in: bitmap)
+                let copy = normalized(words.map(\.text).joined(separator: " "))
+                #expect(copy.contains("blabeesettings"), "\(copy)")
+                #expect(copy.contains("language"), "\(copy)")
+                #expect(copy.contains("english"), "\(copy)")
+                let tabs = try ["general", "shortcuts", "projects", "connection"].map { title in
+                    // Vision can attach the adjacent SF Symbol to a label.
+                    // Require the complete word on the tab row, not a joined
+                    // pair of wrapped lines or a matching row farther below.
+                    try #require(words.first {
+                        normalized($0.text).contains(title) && $0.frame.minY > 0.75 && $0.frame.maxY < 0.9
+                    }, "\(copy)").frame
+                }
+                #expect(tabs.allSatisfy { abs($0.midY - tabs[0].midY) < 0.01 })
+            }
+            await expectNoSelectionRequests(transport)
+        }
+    }
+
     @Test("Ready renders Waiting without the former empty-state copy")
     func readyArtworkAndCopy() async throws {
         let transport = PetFakeTransport()
@@ -30,6 +80,50 @@ struct PetAirViewTests {
                     #expect(copy.contains("Waiting"))
                     #expect(!copy.contains("유효한 결정 카드가 생기면 여기에 표시됩니다."))
                 }
+            }
+        }
+        await expectNoSelectionRequests(transport)
+    }
+
+    @Test(
+        "Suggestion kind headers render with details without restoring project or provider banners",
+        arguments: [nil, "current_task", "new_suggestion"] as [String?]
+    )
+    func suggestionKindHeader(kind: String?) async throws {
+        let transport = PetFakeTransport()
+        let model = try viewModel(transport: transport, count: 2, suggestionKind: kind)
+        defer { model.stopPolling() }
+        let expectedLabel: String
+        switch kind {
+        case "current_task": expectedLabel = "현재 작업의 다음 선택"
+        case "new_suggestion": expectedLabel = "새로운 제안"
+        default: expectedLabel = "다음 선택"
+        }
+
+        for width in [460.0, 340.0] {
+            for dark in [false, true] {
+                let name = artifactName("suggestion-\(kind ?? "legacy")", width, dark, true)
+                let (host, window) = hosting(
+                    model,
+                    size: CGSize(width: width, height: decisionSize(count: 2).height),
+                    dark: dark,
+                    forceOpaque: true
+                )
+                defer { window.contentView = nil; window.close() }
+                await settleLayout(host)
+                let bitmap = try render(host, name: name)
+                let words = try recognizedText(in: bitmap)
+                let copy = words.map(\.text).joined(separator: "\n")
+                var hasKindLabel = normalized(copy).contains(normalized(expectedLabel))
+                if !hasKindLabel {
+                    hasKindLabel = try recognizedText(in: bitmap, scale: 1)
+                        .contains { normalized($0.text).contains(normalized(expectedLabel)) }
+                }
+                #expect(hasKindLabel, "\(name): \(copy)")
+                #expect(normalized(copy).contains("상세보기"), "\(name): \(copy)")
+                #expect(!normalized(copy).contains("codex"))
+                #expect(!normalized(copy).contains("blabeepetair"))
+                #expect(!normalized(copy).contains("projectair"))
             }
         }
         await expectNoSelectionRequests(transport)
@@ -169,11 +263,16 @@ struct PetAirViewTests {
     private func viewModel(
         transport: PetFakeTransport,
         count: Int? = nil,
-        title: String? = nil
+        title: String? = nil,
+        suggestionKind: String? = nil
     ) throws -> PetViewModel {
         let model = PetViewModel(
             transport: transport,
-            externalApplicationOpener: PetFakeApplicationOpener()
+            externalApplicationOpener: PetFakeApplicationOpener(),
+            automaticAppUpdate: AppUpdateTransactionController(store: .init(
+                rootURL: FileManager.default.temporaryDirectory
+                    .appendingPathComponent("blabee-air-update-test-\(UUID().uuidString)")
+            ))
         )
         // Render configured shortcut labels through a fake backend; never
         // register global keys or change the user's shortcut preferences.
@@ -187,6 +286,7 @@ struct PetAirViewTests {
         var snapshot = petTestSnapshotObject(cards: cards, foregroundSuffix: count == nil ? nil : "air")
         if count != nil {
             var interactions = try #require(snapshot["interactions"] as? [[String: Any]])
+            if let suggestionKind { interactions[0]["suggestion_kind"] = suggestionKind }
             var choices = try #require(interactions[0]["choices"] as? [[String: Any]])
             for index in choices.indices {
                 var action = try #require(choices[index]["action"] as? [String: Any])
@@ -283,7 +383,10 @@ struct PetAirViewTests {
             request.recognitionLanguages = [language]
             request.minimumTextHeight = 0
             request.usesLanguageCorrection = region == nil
-            request.customWords = ["권장", "선택 건너뛰기", "AIR TITLE END"]
+            request.customWords = [
+                "권장", "선택 건너뛰기", "AIR TITLE END", "상세 보기",
+                "현재 작업의 다음 선택", "새로운 제안", "다음 선택",
+            ]
             try VNImageRequestHandler(cgImage: image).perform([request])
             // Small Korean badges can rank a near-homograph first (for
             // example, 권창). A cropped fallback may use Vision's alternatives,

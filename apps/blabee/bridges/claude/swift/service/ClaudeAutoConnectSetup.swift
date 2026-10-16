@@ -4,11 +4,38 @@ import Foundation
 /// Owns only a separate PATH shim and an exact, reversible .zshrc block.
 /// The upstream Claude executable (including its updater symlink) is never changed.
 actor ClaudeAutoConnectSetup {
+    enum Issue: Equatable, Sendable {
+        case executableUnavailable, installedRuntimeUnavailable, unsupportedShell
+        case savedExecutableUnavailable, manualReview
+    }
+
     struct Inspection: Equatable, Sendable {
+        /// Exact managed configuration is saved. This is not a session readiness result.
         let isEnabled: Bool
         let canEnable: Bool
         let canDisable: Bool
         let detail: String
+        /// The installed launcher can open a new session independently of shell setup.
+        let canLaunch: Bool
+        let shellName: String
+        /// An existing shim must still point at a qualified executable even
+        /// when a different newly discovered CLI can launch from the app.
+        let savedExecutableAvailable: Bool
+        let issue: Issue?
+
+        /// Configuration is usable in a new supported shell. This never proves
+        /// that a running Claude conversation has acknowledged its connection.
+        var automaticConnectionReady: Bool {
+            isEnabled && canLaunch && shellName == "zsh" && savedExecutableAvailable
+        }
+
+        init(isEnabled: Bool, canEnable: Bool, canDisable: Bool, detail: String,
+             canLaunch: Bool = false, shellName: String = "zsh",
+             savedExecutableAvailable: Bool = true, issue: Issue? = nil) {
+            self.isEnabled = isEnabled; self.canEnable = canEnable; self.canDisable = canDisable
+            self.detail = detail; self.canLaunch = canLaunch; self.shellName = shellName
+            self.savedExecutableAvailable = savedExecutableAvailable; self.issue = issue
+        }
     }
 
     private enum Failure: Error { case manualReview, executableUnavailable, installedRuntimeUnavailable }
@@ -16,50 +43,70 @@ actor ClaudeAutoConnectSetup {
     private let environment: [String: String]
     private let coordinator: URL
     private let claude: URL
+    private let claudeCandidates: (@Sendable () -> [URL])?
+    private let shellPath: String?
     private let requiresInstalledRuntime: Bool
     private let beforeStartupReplace: (@Sendable () throws -> Void)?
     private static let opening = "# >>> Blabee Claude Auto Connect v1 >>>"
     private static let closing = "# <<< Blabee Claude Auto Connect v1 <<<"
     private static let maximumStartupBytes = 256 * 1_024
-    static let manualReviewDetail = "Claude 자동 연결 설정이 변경되었거나 경로를 안전하게 확인할 수 없습니다. 셸 설정과 Blabee 관리 파일을 직접 확인해 주세요."
+    static var manualReviewDetail: String { PetL10n.text("Terminal settings could not be safely verified, so auto-connect settings were not changed.", korean: "터미널 설정을 안전하게 확인할 수 없어 자동 연결 설정을 변경하지 않았습니다.") }
 
     init(homeURL: URL, environment: [String: String] = [:], coordinatorExecutable: URL,
          claudeExecutable: URL, requiresInstalledRuntime: Bool = false,
+         loginShell: String? = "/bin/zsh",
+         claudeCandidates: (@Sendable () -> [URL])? = nil,
          beforeStartupReplace: (@Sendable () throws -> Void)? = nil) {
         home = homeURL
         self.environment = environment
         coordinator = coordinatorExecutable
         claude = claudeExecutable
+        self.claudeCandidates = claudeCandidates
+        shellPath = environment["SHELL"] ?? loginShell
         self.requiresInstalledRuntime = requiresInstalledRuntime
         self.beforeStartupReplace = beforeStartupReplace
     }
 
     static func live(environment: [String: String] = ProcessInfo.processInfo.environment) -> ClaudeAutoConnectSetup {
         let home = FileManager.default.homeDirectoryForCurrentUser
-        let candidates = PetClaudeLauncher.claudeCandidates(homeDirectory: home)
-        // Keep the public symlink path so Claude's own updater can replace its target.
-        let claude = candidates.first { FileManager.default.isExecutableFile(atPath: $0.path) } ?? candidates[0]
         return ClaudeAutoConnectSetup(homeURL: home, environment: environment,
             coordinatorExecutable: URL(fileURLWithPath: "/Applications/Blabee.app/Contents/MacOS/blabee-coordinator"),
-            claudeExecutable: claude, requiresInstalledRuntime: true)
+            claudeExecutable: home.appendingPathComponent(".local/bin/claude"), requiresInstalledRuntime: true,
+            loginShell: accountLoginShell(),
+            claudeCandidates: { PetClaudeLauncher.claudeCandidates(homeDirectory: home, environment: environment) })
     }
 
     func inspect() async -> Inspection {
+        inspectSavedSetup(launchFailure: qualifiedLaunch().failure)
+    }
+
+    private func inspectSavedSetup(launchFailure: Failure?) -> Inspection {
         do {
             let snapshot = try snapshot()
-            if snapshot.shim != nil { return enabled() }
-            try validateExecutables()
-            return disabled()
-        } catch { return rejected(error) }
+            if let owned = snapshot.owned {
+                // A saved shim can outlive its executable, runtime or updater
+                // target. Keep cleanup available while reporting launch separately.
+                let savedExecutableAvailable = (try? validateExecutables(claudeExecutable: URL(fileURLWithPath: owned.claude))) != nil
+                return enabled(launchFailure: launchFailure, savedExecutableAvailable: savedExecutableAvailable)
+            }
+            return disabled(launchFailure: launchFailure)
+        } catch { return rejected(error, launchFailure: launchFailure) }
     }
 
     func enable() async -> Inspection {
+        let launch = qualifiedLaunch(), launchFailure = launch.failure
+        // Cancellation before this actor begins the write must not create a
+        // setup simply because the caller was queued behind another operation.
+        guard !Task.isCancelled else { return inspectSavedSetup(launchFailure: launchFailure) }
+        // An account-shell change must not hide an existing exact-owned zsh
+        // configuration, but enabling for another shell never creates it.
+        guard supportsShellSetup else { return inspectSavedSetup(launchFailure: launchFailure) }
         do {
             // Read the user's startup first, but inspect managed ownership only
             // under the lock: another manager can be between shim and rc writes.
             let initial = try startupSnapshot()
-            try validateExecutables()
-            if requiresInstalledRuntime { try validateInstalledRuntime() }
+            if let launchFailure { throw launchFailure }
+            guard let claude = launch.claude else { throw Failure.executableUnavailable }
             let root = try openDirectory(directory, create: true, privateLeaf: true)
             defer { close(root) }
             let bin = try openDirectory(binDirectory, create: true, privateLeaf: true)
@@ -67,7 +114,10 @@ actor ClaudeAutoConnectSetup {
             let lock = try acquireLock(root)
             defer { flock(lock, LOCK_UN); close(lock) }
             let current = try snapshot()
-            if current.shim != nil { return enabled() }
+            if let owned = current.owned {
+                let savedExecutableAvailable = (try? validateExecutables(claudeExecutable: URL(fileURLWithPath: owned.claude))) != nil
+                return enabled(launchFailure: nil, savedExecutableAvailable: savedExecutableAvailable)
+            }
             guard current.startupURL == initial.url, current.startup == initial.file else { throw Failure.manualReview }
             let bytes = Self.shimBytes(coordinator: coordinator.path, claude: claude.path,
                 startup: current.startupURL.path, originallyMissing: current.startup == nil)
@@ -81,7 +131,7 @@ actor ClaudeAutoConnectSetup {
                 try verifyDirectory(bin, at: binDirectory)
                 guard let actual = try readFile(parent: bin, name: "claude", limit: 32 * 1_024),
                       actual.matchesMoved(created), (try snapshot()).shim != nil else { throw Failure.manualReview }
-                return enabled()
+                return enabled(launchFailure: nil)
             } catch {
                 // Roll back only our exact shim, when startup has no managed
                 // reference. Never restore an old whole-file backup.
@@ -91,13 +141,14 @@ actor ClaudeAutoConnectSetup {
                 }
                 throw error
             }
-        } catch { return rejected(error) }
+        } catch { return rejected(error, launchFailure: launchFailure) }
     }
 
     func disable() async -> Inspection {
+        let launchFailure = qualifiedLaunch().failure
         do {
             let initial = try snapshot()
-            guard initial.shim != nil else { return disabled() }
+            guard initial.shim != nil else { return disabled(launchFailure: launchFailure) }
             let root = try openDirectory(directory, privateLeaf: true)
             defer { close(root) }
             let bin = try openDirectory(binDirectory, privateLeaf: true)
@@ -106,7 +157,7 @@ actor ClaudeAutoConnectSetup {
             defer { flock(lock, LOCK_UN); close(lock) }
             let current = try snapshot()
             guard let shim = current.shim, let startup = current.startup,
-                  let owned = current.owned else { return disabled() }
+                  let owned = current.owned else { return disabled(launchFailure: launchFailure) }
             let remaining = try removingBlock(from: startup.bytes)
             try backup(startup, root: root)
             if owned.originallyMissing && remaining.isEmpty {
@@ -120,8 +171,8 @@ actor ClaudeAutoConnectSetup {
             }
             try verifyDirectory(bin, at: binDirectory)
             try removeExact(parent: bin, name: "claude", expected: shim, recovery: root)
-            return disabled()
-        } catch { return rejected(error) }
+            return disabled(launchFailure: launchFailure)
+        } catch { return rejected(error, launchFailure: launchFailure) }
     }
 
     private var directory: URL { home.appendingPathComponent("Library/Application Support/Blabee/shell/claude-v1") }
@@ -238,8 +289,8 @@ actor ClaudeAutoConnectSetup {
         else { throw Failure.manualReview }
     }
 
-    private func validateExecutables() throws {
-        for executable in [coordinator, claude] {
+    private func validateExecutables(claudeExecutable: URL) throws {
+        for executable in [coordinator, claudeExecutable] {
             guard Self.safeAbsolutePath(executable.path), executable.path != shimURL.path else { throw Failure.executableUnavailable }
             let canonical = executable.resolvingSymlinksInPath()
             var s = stat()
@@ -475,22 +526,94 @@ actor ClaudeAutoConnectSetup {
         } catch { close(descriptor); throw error }
     }
 
-    private func enabled() -> Inspection {
-        Inspection(isEnabled: true, canEnable: false, canDisable: true,
-            detail: "새 zsh 터미널에서 claude와 claude --resume이 Blabee에 자동 연결됩니다. 이미 열린 터미널과 대화는 그대로 유지됩니다.")
+    private var shellName: String {
+        guard let shellPath, Self.safeAbsolutePath(shellPath) else { return PetL10n.text("Unknown shell", korean: "알 수 없는 셸") }
+        return URL(fileURLWithPath: shellPath).lastPathComponent
     }
-    private func disabled() -> Inspection {
-        Inspection(isEnabled: false, canEnable: true, canDisable: false,
-            detail: "켜면 .zshrc에 Blabee 관리 PATH 구간을 추가합니다. Claude 실행 파일과 이미 열린 터미널은 변경하지 않습니다.")
+    private var supportsShellSetup: Bool { shellName == "zsh" }
+
+    private func qualifiedLaunch() -> (claude: URL?, failure: Failure?) {
+        // Re-resolve on each user refresh/enable so installing Claude while
+        // the app is open can recover without recreating this actor. Keep the
+        // public symlink path for the shim; qualification follows its target.
+        let candidates = claudeCandidates?() ?? [claude]
+        guard let selected = candidates.first(where: { (try? validateExecutables(claudeExecutable: $0)) != nil })
+        else { return (nil, .executableUnavailable) }
+        do {
+            if requiresInstalledRuntime { try validateInstalledRuntime() }
+            return (selected, nil)
+        } catch { return (selected, (error as? Failure) ?? .installedRuntimeUnavailable) }
     }
-    private func rejected(_ error: Error) -> Inspection {
-        let detail: String
-        switch error as? Failure {
-        case .executableUnavailable: detail = "설치된 Blabee와 Claude Code 실행 파일을 확인한 뒤 자동 연결을 켜 주세요."
-        case .installedRuntimeUnavailable: detail = "Claude 연결을 지원하는 서명된 /Applications/Blabee.app에서 자동 연결을 켜 주세요."
-        default: detail = Self.manualReviewDetail
+
+    private static func accountLoginShell() -> String? {
+        // GUI launches often do not inherit SHELL. Read the account record
+        // without evaluating a shell profile or sourcing user configuration.
+        var entry = passwd(), result: UnsafeMutablePointer<passwd>?
+        var bytes = [CChar](repeating: 0, count: 16 * 1_024)
+        return bytes.withUnsafeMutableBufferPointer { buffer in
+            guard getpwuid_r(getuid(), &entry, buffer.baseAddress, buffer.count, &result) == 0,
+                  result != nil, let shell = entry.pw_shell else { return nil }
+            return String(cString: shell)
         }
-        return Inspection(isEnabled: false, canEnable: false, canDisable: false, detail: detail)
+    }
+
+    private static var directLaunchDetail: String { PetL10n.text("You can open a new connected Claude session from the app.", korean: "앱에서 연결된 새 Claude 세션을 열 수 있습니다.") }
+
+    private func unavailableDetail(_ failure: Failure) -> String {
+        switch failure {
+        case .executableUnavailable:
+            return PetL10n.text("Unable to find or verify Blabee or Claude Code. Check that both apps are installed, then check again.", korean: "Blabee 또는 Claude Code 실행 파일을 찾거나 확인할 수 없습니다. 두 앱이 설치되어 있는지 확인한 뒤 다시 확인해 주세요.")
+        case .installedRuntimeUnavailable:
+            return PetL10n.text("Unable to verify the installed Blabee app's Claude components. Check Blabee in Applications and try again.", korean: "설치된 Blabee의 Claude 연결 구성 요소를 확인할 수 없습니다. 응용 프로그램 폴더의 Blabee를 확인한 뒤 다시 시도해 주세요.")
+        case .manualReview: return Self.manualReviewDetail
+        }
+    }
+
+    private func issue(for failure: Failure) -> Issue {
+        switch failure {
+        case .executableUnavailable: .executableUnavailable
+        case .installedRuntimeUnavailable: .installedRuntimeUnavailable
+        case .manualReview: .manualReview
+        }
+    }
+
+    private func enabled(launchFailure: Failure?, savedExecutableAvailable: Bool = true) -> Inspection {
+        var detail = PetL10n.text("Terminal auto-connect settings were saved. The current Claude session's connection is checked separately.", korean: "터미널 자동 연결 설정이 저장되었습니다. 현재 Claude 세션의 연결 여부는 별도로 확인합니다.")
+        if !supportsShellSetup {
+            detail += PetL10n.text(" The saved settings are for zsh and do not apply to the current \(shellName) environment.", korean: " 저장된 설정은 zsh용이며 현재 \(shellName) 환경에는 적용되지 않습니다.")
+        }
+        if let launchFailure {
+            detail += " " + unavailableDetail(launchFailure)
+        } else if !savedExecutableAvailable {
+            detail += PetL10n.text(" The previously configured Claude executable could not be verified. ", korean: " 이전에 설정한 Claude 실행 파일을 확인할 수 없습니다. ") + Self.directLaunchDetail
+        }
+        return Inspection(isEnabled: true, canEnable: false, canDisable: true, detail: detail,
+            canLaunch: launchFailure == nil, shellName: shellName,
+            savedExecutableAvailable: savedExecutableAvailable,
+            issue: launchFailure.map(issue(for:))
+                ?? (!supportsShellSetup ? .unsupportedShell : (!savedExecutableAvailable ? .savedExecutableUnavailable : nil)))
+    }
+
+    private func disabled(launchFailure: Failure?) -> Inspection {
+        guard supportsShellSetup else { return unsupportedShell(launchFailure: launchFailure) }
+        let detail = launchFailure.map(unavailableDetail)
+            ?? PetL10n.text("Choose Connect Claude to set up terminal auto-connect and open a new connected Claude session.", korean: "Claude 연결을 누르면 터미널 자동 연결을 설정하고 연결된 새 Claude 세션을 엽니다.")
+        return Inspection(isEnabled: false, canEnable: launchFailure == nil, canDisable: false, detail: detail,
+            canLaunch: launchFailure == nil, shellName: shellName, issue: launchFailure.map(issue(for:)))
+    }
+
+    private func unsupportedShell(launchFailure: Failure?) -> Inspection {
+        let detail = PetL10n.text("Terminal auto-connect settings do not apply to the current \(shellName) environment. ", korean: "현재 \(shellName) 환경에는 터미널 자동 연결 설정을 적용하지 않습니다. ")
+            + (launchFailure.map(unavailableDetail) ?? Self.directLaunchDetail)
+        return Inspection(isEnabled: false, canEnable: false, canDisable: false, detail: detail,
+            canLaunch: launchFailure == nil, shellName: shellName, issue: launchFailure.map(issue(for:)) ?? .unsupportedShell)
+    }
+
+    private func rejected(_ error: Error, launchFailure: Failure?) -> Inspection {
+        let detail = unavailableDetail((error as? Failure) ?? .manualReview)
+            + (launchFailure == nil ? " " + Self.directLaunchDetail : "")
+        return Inspection(isEnabled: false, canEnable: false, canDisable: false, detail: detail,
+            canLaunch: launchFailure == nil, shellName: shellName, issue: issue(for: (error as? Failure) ?? .manualReview))
     }
 
     private static func safeAbsolutePath(_ path: String) -> Bool {

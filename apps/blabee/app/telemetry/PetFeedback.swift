@@ -3,7 +3,7 @@ import Foundation
 
 enum PetFeedbackRating: String, CaseIterable, Codable, Sendable {
     case none, helpful, unhelpful
-    var title: String { switch self { case .none: "선택하지 않음"; case .helpful: "도움이 됐어요"; case .unhelpful: "아쉬웠어요" } }
+    var title: String { switch self { case .none: PetL10n.text("Not selected", korean: "선택하지 않음"); case .helpful: PetL10n.text("Helpful", korean: "도움이 됐어요"); case .unhelpful: PetL10n.text("Needs improvement", korean: "아쉬웠어요") } }
 }
 
 enum PetFeedbackReason: String, CaseIterable, Codable, Sendable {
@@ -12,13 +12,13 @@ enum PetFeedbackReason: String, CaseIterable, Codable, Sendable {
     case irrelevant, alreadyDone = "already_done", repetitive, didNotWork = "did_not_work"
     var title: String {
         switch self {
-        case .none: "선택하지 않음"
-        case .nextStepClear: "다음 할 일이 명확해졌어요"
-        case .easierAction: "작업을 실행하기 편했어요"
-        case .irrelevant: "현재 작업과 관련이 없었어요"
-        case .alreadyDone: "이미 끝낸 작업이었어요"
-        case .repetitive: "비슷한 제안이 반복됐어요"
-        case .didNotWork: "기능이 제대로 작동하지 않았어요"
+        case .none: PetL10n.text("Not selected", korean: "선택하지 않음")
+        case .nextStepClear: PetL10n.text("My next task became clearer", korean: "다음 할 일이 명확해졌어요")
+        case .easierAction: PetL10n.text("It was easier to start a task", korean: "작업을 실행하기 편했어요")
+        case .irrelevant: PetL10n.text("It was unrelated to my current task", korean: "현재 작업과 관련이 없었어요")
+        case .alreadyDone: PetL10n.text("I had already completed the task", korean: "이미 끝낸 작업이었어요")
+        case .repetitive: PetL10n.text("Similar suggestions repeated", korean: "비슷한 제안이 반복됐어요")
+        case .didNotWork: PetL10n.text("A feature did not work correctly", korean: "기능이 제대로 작동하지 않았어요")
         }
     }
     static func allowed(for rating: PetFeedbackRating) -> [Self] {
@@ -34,8 +34,8 @@ enum PetFeedbackPurpose: String, CaseIterable, Codable, Sendable {
     case none, development, debugging, writing, learning, other
     var title: String {
         switch self {
-        case .none: "선택하지 않음"; case .development: "개발"; case .debugging: "문제 해결"
-        case .writing: "글쓰기"; case .learning: "학습"; case .other: "기타"
+        case .none: PetL10n.text("Not selected", korean: "선택하지 않음"); case .development: PetL10n.text("Development", korean: "개발"); case .debugging: PetL10n.text("Troubleshooting", korean: "문제 해결")
+        case .writing: PetL10n.text("Writing", korean: "글쓰기"); case .learning: PetL10n.text("Learning", korean: "학습"); case .other: PetL10n.text("Other", korean: "기타")
         }
     }
 }
@@ -53,15 +53,15 @@ struct PetFeedbackDraft: Equatable, Sendable {
 
     var hasContent: Bool { [question, answer, suggestion, note].contains { !$0.isEmpty } }
     var validationMessage: String? {
-        guard PetFeedbackReason.allowed(for: rating).contains(reason) else { return "평가에 맞는 이유를 선택해 주세요." }
-        for (label, value, limit) in [("질문", question, 8_000), ("답변", answer, 8_000),
-                                       ("Blabee 제안", suggestion, 8_000), ("의견", note, 2_000)] {
-            if value.utf8.count > limit { return "\(label) 내용이 너무 깁니다. 공유할 부분만 짧게 남겨 주세요." }
+        guard PetFeedbackReason.allowed(for: rating).contains(reason) else { return PetL10n.text("Choose a reason that matches your rating.", korean: "평가에 맞는 이유를 선택해 주세요.") }
+        for (label, value, limit) in [(PetL10n.text("Question", korean: "질문"), question, 8_000), (PetL10n.text("Answer", korean: "답변"), answer, 8_000),
+                                       (PetL10n.text("Blabee suggestion", korean: "Blabee 제안"), suggestion, 8_000), (PetL10n.text("Feedback", korean: "의견"), note, 2_000)] {
+            if value.utf8.count > limit { return PetL10n.text("\(label) is too long. Keep only the excerpt you want to share.", korean: "\(label) 내용이 너무 깁니다. 공유할 부분만 짧게 남겨 주세요.") }
             if value.unicodeScalars.contains(where: { $0.value < 32 && ![9, 10, 13].contains($0.value) }) {
-                return "\(label)에 보낼 수 없는 제어 문자가 있습니다. 해당 내용을 지워 주세요."
+                return PetL10n.text("\(label) contains unsupported control characters. Remove them before sending.", korean: "\(label)에 보낼 수 없는 제어 문자가 있습니다. 해당 내용을 지워 주세요.")
             }
         }
-        if rating == .none && usePurpose == .none && !hasContent { return "평가, 사용 목적, 의견 중 하나 이상을 입력해 주세요." }
+        if rating == .none && usePurpose == .none && !hasContent { return PetL10n.text("Provide at least a rating, use case, or comment.", korean: "평가, 사용 목적, 의견 중 하나 이상을 입력해 주세요.") }
         return nil
     }
 }
@@ -172,12 +172,12 @@ enum PetFeedbackError: Error, LocalizedError, Equatable {
     case unauthenticated, invalidInput, rateLimited, unavailable, uncertain, invalidResponse
     var errorDescription: String? {
         switch self {
-        case .unauthenticated: "로그인 상태를 확인한 뒤 다시 시도해 주세요."
-        case .invalidInput: "전송할 내용을 다시 확인해 주세요."
-        case .rateLimited: "하루에 피드백 10개까지 보낼 수 있습니다. 나중에 다시 보내 주세요."
-        case .unavailable: "이 제출을 처리할 수 없습니다. 제출 내역을 확인하거나 새 피드백을 작성해 주세요."
-        case .uncertain: "전송 결과를 확인하지 못했습니다. 같은 내용으로 다시 시도하거나 제출 내역을 확인해 주세요."
-        case .invalidResponse: "서버 응답을 확인하지 못했습니다. 잠시 후 다시 시도해 주세요."
+        case .unauthenticated: PetL10n.text("Check your sign-in status and try again.", korean: "로그인 상태를 확인한 뒤 다시 시도해 주세요.")
+        case .invalidInput: PetL10n.text("Review the content you want to send.", korean: "전송할 내용을 다시 확인해 주세요.")
+        case .rateLimited: PetL10n.text("You can send up to 10 feedback submissions per day. Please try later.", korean: "하루에 피드백 10개까지 보낼 수 있습니다. 나중에 다시 보내 주세요.")
+        case .unavailable: PetL10n.text("This submission cannot be processed. Check your history or write new feedback.", korean: "이 제출을 처리할 수 없습니다. 제출 내역을 확인하거나 새 피드백을 작성해 주세요.")
+        case .uncertain: PetL10n.text("Unable to confirm delivery. Retry with the same content or check your submission history.", korean: "전송 결과를 확인하지 못했습니다. 같은 내용으로 다시 시도하거나 제출 내역을 확인해 주세요.")
+        case .invalidResponse: PetL10n.text("Unable to verify the server response. Try again shortly.", korean: "서버 응답을 확인하지 못했습니다. 잠시 후 다시 시도해 주세요.")
         }
     }
 }
@@ -352,7 +352,7 @@ final class PetFeedbackController: ObservableObject {
         guard !isSubmitting, let suggestedContent else { return }
         let combined = draft.suggestion.isEmpty ? suggestedContent : draft.suggestion + "\n\n" + suggestedContent
         guard combined.utf8.count <= 8_000 else {
-            status = "기존 제안에서 공유할 부분만 남긴 뒤 현재 제안을 추가해 주세요."
+            status = PetL10n.text("Keep only the excerpt you want to share from the previous suggestion before adding the current one.", korean: "기존 제안에서 공유할 부분만 남긴 뒤 현재 제안을 추가해 주세요.")
             return
         }
         draft.suggestion = combined
@@ -402,10 +402,10 @@ final class PetFeedbackController: ObservableObject {
                 guard current(auth, epoch: epoch), draftRevision == revision, !Task.isCancelled else { return }
                 pending = nil; draft = PetFeedbackDraft(); self.preview = nil; contentConsent = false
                 editingSessionID = UUID()
-                status = "피드백을 보냈습니다. 의견을 공유해 주셔서 감사합니다."
+                status = PetL10n.text("Feedback sent. Thank you for sharing your thoughts.", korean: "피드백을 보냈습니다. 의견을 공유해 주셔서 감사합니다.")
             } catch {
                 guard current(auth, epoch: epoch), draftRevision == revision, !Task.isCancelled else { return }
-                if error is CancellationError { status = "전송을 중단했습니다. 제출 내역에서 결과를 확인할 수 있습니다." }
+                if error is CancellationError { status = PetL10n.text("Sending stopped. Check the result in your submission history.", korean: "전송을 중단했습니다. 제출 내역에서 결과를 확인할 수 있습니다.") }
                 else { status = (error as? PetFeedbackError ?? .uncertain).localizedDescription }
             }
             guard current(auth, epoch: epoch) else { return }
@@ -437,7 +437,7 @@ final class PetFeedbackController: ObservableObject {
                 summaries = rows.filter { $0.expiresAt > now() }
             } catch {
                 guard current(auth, epoch: epoch), !Task.isCancelled else { return }
-                historyStatus = "제출 내역을 불러오지 못했습니다. 잠시 후 다시 확인해 주세요."
+                historyStatus = PetL10n.text("Unable to load submission history. Check again shortly.", korean: "제출 내역을 불러오지 못했습니다. 잠시 후 다시 확인해 주세요.")
             }
             guard current(auth, epoch: epoch) else { return }
             isLoading = false; listTask = nil
@@ -463,7 +463,7 @@ final class PetFeedbackController: ObservableObject {
                     deletingID = nil; deleteTask = nil; deleteAttemptID = nil
                     if currentAuthorization() == nil {
                         isSignedIn = false
-                        historyStatus = "삭제 결과를 확인하지 못했습니다. 로그인 확인 후 내역을 새로 고쳐 주세요."
+                        historyStatus = PetL10n.text("Unable to confirm deletion. Check your sign-in status and refresh the history.", korean: "삭제 결과를 확인하지 못했습니다. 로그인 확인 후 내역을 새로 고쳐 주세요.")
                     }
                 }
             }
@@ -472,10 +472,10 @@ final class PetFeedbackController: ObservableObject {
                 guard current(auth, epoch: epoch), !Task.isCancelled else { return }
                 summaries.removeAll { $0.id == id }
                 if pending?.submissionID == id { pending = nil; preview = nil; contentConsent = false }
-                historyStatus = "제출한 피드백을 삭제했습니다."
+                historyStatus = PetL10n.text("Your feedback was deleted.", korean: "제출한 피드백을 삭제했습니다.")
             } catch {
                 guard current(auth, epoch: epoch), !Task.isCancelled else { return }
-                historyStatus = "삭제 결과를 확인하지 못했습니다. 내역을 새로 고친 뒤 다시 시도해 주세요."
+                historyStatus = PetL10n.text("Unable to confirm deletion. Refresh the history and try again.", korean: "삭제 결과를 확인하지 못했습니다. 내역을 새로 고친 뒤 다시 시도해 주세요.")
             }
             guard current(auth, epoch: epoch) else { return }
             deletingID = nil; deleteTask = nil

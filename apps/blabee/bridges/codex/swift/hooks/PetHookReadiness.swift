@@ -13,41 +13,41 @@ enum PetHookReadinessState: Equatable, Sendable {
 
     var title: String {
         switch self {
-        case .unchecked: "Hook 상태 미확인"
-        case .checking: "Hook 상태 확인 중"
-        case .trusted: "Hook 신뢰 확인됨"
-        case .reviewRequired: "Codex에서 Hook 검토 필요"
-        case .unavailable: "Hook 상태 확인 필요"
+        case .unchecked: PetL10n.text("Hook status not checked", korean: "Hook 상태 미확인")
+        case .checking: PetL10n.text("Checking Hook status", korean: "Hook 상태 확인 중")
+        case .trusted: PetL10n.text("Hook trust verified", korean: "Hook 신뢰 확인됨")
+        case .reviewRequired: PetL10n.text("Review Hooks in Codex", korean: "Codex에서 Hook 검토 필요")
+        case .unavailable: PetL10n.text("Check Hook status", korean: "Hook 상태 확인 필요")
         }
     }
 
     var detail: String {
         switch self {
         case .unchecked:
-            return "Plugin 설치와 Hook 신뢰는 별개입니다. 사용할 프로젝트를 선택하고 Hook 상태를 확인하세요."
+            return PetL10n.text("Plugin installation and Hook trust are separate. Choose a project and check Hook status.", korean: "Plugin 설치와 Hook 신뢰는 별개입니다. 사용할 프로젝트를 선택하고 Hook 상태를 확인하세요.")
         case .checking:
-            return "선택한 프로젝트의 Blabee Hook 4개를 읽기 전용으로 확인합니다."
+            return PetL10n.text("Checking the selected project's four Blabee Hooks without changing settings.", korean: "선택한 프로젝트의 Blabee Hook 4개를 읽기 전용으로 확인합니다.")
         case .trusted:
-            return "선택한 프로젝트의 Hook 4개가 활성화되고 신뢰된 상태입니다. 실제 카드 수신과 원래 대화로의 선택 전달은 새 요청으로 확인하세요."
+            return PetL10n.text("The selected project's four Hooks are enabled and trusted. Verify actual card receipt and delivery to the original conversation with a new request.", korean: "선택한 프로젝트의 Hook 4개가 활성화되고 신뢰된 상태입니다. 실제 카드 수신과 원래 대화로의 선택 전달은 새 요청으로 확인하세요.")
         case .reviewRequired:
-            return "Codex에서 /hooks를 열고 Blabee Hook의 출처와 명령을 검토한 뒤 신뢰·활성화하세요. 이 화면에서 다시 확인할 수 있습니다."
+            return PetL10n.text("Open /hooks in Codex, review the source and commands of Blabee Hooks, then trust and enable them. You can check again here.", korean: "Codex에서 /hooks를 열고 Blabee Hook의 출처와 명령을 검토한 뒤 신뢰·활성화하세요. 이 화면에서 다시 확인할 수 있습니다.")
         case let .unavailable(code):
             if let diagnostic = CodexNativeDiagnostic(rawValue: code) {
                 return diagnostic.detail
             }
             switch code {
             case "hook_project_unavailable":
-                return "검사할 프로젝트 폴더를 찾지 못했습니다. 사용할 프로젝트를 선택한 뒤 다시 확인하세요."
+                return PetL10n.text("The project folder could not be found. Choose a project and check again.", korean: "검사할 프로젝트 폴더를 찾지 못했습니다. 사용할 프로젝트를 선택한 뒤 다시 확인하세요.")
             case "plugin_not_installed", "plugin_disabled":
-                return "Blabee Plugin을 먼저 연결·활성화한 뒤 Hook 상태를 확인하세요."
+                return PetL10n.text("Connect and enable the Blabee Plugin before checking Hook status.", korean: "Blabee Plugin을 먼저 연결·활성화한 뒤 Hook 상태를 확인하세요.")
             case "plugin_version_mismatch", "plugin_layout_invalid",
                  "plugin_source_invalid", "plugin_installation_ambiguous",
                  "hook_plugin_identity_mismatch":
-                return "현재 앱의 Blabee Plugin을 확인하지 못했습니다. Codex 연결 설정에서 설치 상태를 확인한 뒤 다시 검사하세요."
+                return PetL10n.text("Unable to verify this app's Blabee Plugin. Check installation in Codex connection settings, then retry.", korean: "현재 앱의 Blabee Plugin을 확인하지 못했습니다. Codex 연결 설정에서 설치 상태를 확인한 뒤 다시 검사하세요.")
             case "hook_plugin_changed_during_check":
-                return "검사 중 Plugin이 변경되었습니다. 연결 작업이 끝난 뒤 다시 확인하세요."
+                return PetL10n.text("The Plugin changed during the check. Check again after connection setup finishes.", korean: "검사 중 Plugin이 변경되었습니다. 연결 작업이 끝난 뒤 다시 확인하세요.")
             default:
-                return "Codex에서 Hook 상태를 확인하지 못했습니다. /hooks에서 확인하거나 잠시 후 다시 검사하세요. 신뢰 설정은 변경하지 않았습니다."
+                return PetL10n.text("Unable to check Hook status in Codex. Check /hooks or retry shortly. Trust settings were not changed.", korean: "Codex에서 Hook 상태를 확인하지 못했습니다. /hooks에서 확인하거나 잠시 후 다시 검사하세요. 신뢰 설정은 변경하지 않았습니다.")
             }
         }
     }
@@ -111,7 +111,10 @@ struct PetHookReadinessDependencies: Sendable {
                         projectURL: project,
                         timeoutMilliseconds: try remaining(
                             deadline: deadline, maximum: 5_000
-                        )
+                        ),
+                        // Inspect the same Codex home/configuration as the
+                        // surrounding Plugin queries, including injected HOME.
+                        environment: CodexPluginSetupProcessRunner.sanitizedEnvironment(environment)
                     )
                 }
             }

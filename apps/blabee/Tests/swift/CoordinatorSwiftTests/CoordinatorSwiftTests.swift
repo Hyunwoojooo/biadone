@@ -47,6 +47,8 @@ private final class TestFreshnessAnchorStore: FreshnessAnchorStore, @unchecked S
     private var stored: FreshnessStoredRecord?
     private var nextLoadFailureCode: String?
     private var throwAfterPendingWriteCode: String?
+    private var afterPendingWriteFailure: (@Sendable () -> Void)?
+    private var pendingWrites = 0
     private var nextCommittedCASFailureCode: String?
 
     init(storageSlot: String = "test-\(UUID().uuidString)") {
@@ -79,8 +81,12 @@ private final class TestFreshnessAnchorStore: FreshnessAnchorStore, @unchecked S
         expectedRevision: Data,
         replacement: FreshnessRecord
     ) throws -> FreshnessStoredRecord {
+        var onFailure: (@Sendable () -> Void)?
         lock.lock()
-        defer { lock.unlock() }
+        defer {
+            lock.unlock()
+            onFailure?()
+        }
         guard let current = stored, current.revision == expectedRevision else {
             throw CoordinatorError("freshness_anchor_conflict")
         }
@@ -96,8 +102,11 @@ private final class TestFreshnessAnchorStore: FreshnessAnchorStore, @unchecked S
             revision: replacement.revision
         )
         stored = updated
+        if replacement.state == .pending { pendingWrites += 1 }
         if replacement.state == .pending, let code = throwAfterPendingWriteCode {
             throwAfterPendingWriteCode = nil
+            onFailure = afterPendingWriteFailure
+            afterPendingWriteFailure = nil
             throw CoordinatorError(code)
         }
         return updated
@@ -109,10 +118,20 @@ private final class TestFreshnessAnchorStore: FreshnessAnchorStore, @unchecked S
         lock.unlock()
     }
 
-    func failAfterNextPendingWrite(with code: String) {
+    func failAfterNextPendingWrite(
+        with code: String,
+        onFailure: (@Sendable () -> Void)? = nil
+    ) {
         lock.lock()
         throwAfterPendingWriteCode = code
+        afterPendingWriteFailure = onFailure
         lock.unlock()
+    }
+
+    var pendingWriteCount: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return pendingWrites
     }
 
     func failNextCommittedCAS(with code: String) {
@@ -155,14 +174,91 @@ private func testJournal(
     databaseURL: URL,
     keyURL: URL,
     secretCorpus: RuntimeSecretCorpus = RuntimeSecretCorpus(),
-    freshnessStore: TestFreshnessAnchorStore? = nil
+    freshnessStore: TestFreshnessAnchorStore? = nil,
+    appendCommitGate: SQLiteJournal.AppendCommitGate? = nil
 ) throws -> SQLiteJournal {
     try SQLiteJournal(
         databaseURL: databaseURL,
         keyURL: keyURL,
         freshnessStore: freshnessStore ?? TestFreshnessStoreRegistry.shared.store(for: databaseURL),
-        secretCorpus: secretCorpus
+        secretCorpus: secretCorpus,
+        appendCommitGate: appendCommitGate
     )
+}
+
+private final class SemanticPendingRecoveryProbe: @unchecked Sendable {
+    enum GateBehavior: Sendable {
+        case commit
+        case refuse(String)
+        case omitCommit
+        case throwAfterCommit
+        case swallowDuplicateCommit
+    }
+
+    private let lock = NSLock()
+    private let tokenMaterial: ContinuationTokenMaterial?
+    private var behavior: GateBehavior = .commit
+    private var tokenCalls = 0
+    private var gateCalls = 0
+
+    init(tokenMaterial: ContinuationTokenMaterial? = nil) {
+        self.tokenMaterial = tokenMaterial
+    }
+
+    func generateToken() throws -> ContinuationTokenMaterial {
+        lock.lock()
+        tokenCalls += 1
+        lock.unlock()
+        if let tokenMaterial { return tokenMaterial }
+        return try ContinuationTokenMaterial.generate()
+    }
+
+    func setGateBehavior(_ behavior: GateBehavior) {
+        lock.lock()
+        self.behavior = behavior
+        lock.unlock()
+    }
+
+    func gate(_ commit: () throws -> Void) throws {
+        lock.lock()
+        gateCalls += 1
+        let currentBehavior = behavior
+        lock.unlock()
+        switch currentBehavior {
+        case .commit:
+            try commit()
+        case let .refuse(code):
+            throw CoordinatorError(code)
+        case .omitCommit:
+            return
+        case .throwAfterCommit:
+            try commit()
+            throw CoordinatorError("test_gate_response_lost")
+        case .swallowDuplicateCommit:
+            try commit()
+            try? commit()
+        }
+    }
+
+    var counts: (tokens: Int, gates: Int) {
+        lock.lock()
+        defer { lock.unlock() }
+        return (tokenCalls, gateCalls)
+    }
+}
+
+private func semanticPendingRecoveryRepairCommand() throws -> Data {
+    try JSONData([
+        "type": "reserve_format_repair",
+        "event_id": "event_pending_recovery_repair",
+        "occurred_at": "2026-08-21T01:00:01Z",
+        "binding": binding(),
+        "continuation_id": "continuation_pending_recovery",
+        "repair_request_id": "repair_request_pending_recovery",
+        "parent_prompt_id": binding()["source_prompt_id"]!,
+        "issued_at": "2026-08-21T01:00:01Z",
+        "expires_at": "2026-08-21T01:02:01Z",
+    ])
 }
 
 private func binding() -> [String: Any] {
@@ -297,6 +393,23 @@ private func executeSQLite(_ databaseURL: URL, _ SQL: String) throws {
     }
 }
 
+private func semanticPendingRecoveryStoredEventCount(_ databaseURL: URL) throws -> Int64 {
+    var database: OpaquePointer?
+    guard sqlite3_open_v2(databaseURL.path, &database, SQLITE_OPEN_READONLY, nil) == SQLITE_OK,
+          let database
+    else { throw CoordinatorError("test_sqlite_open_failed") }
+    defer { sqlite3_close_v2(database) }
+    var statement: OpaquePointer?
+    guard sqlite3_prepare_v2(database, "SELECT count(*) FROM runtime_events", -1, &statement, nil) == SQLITE_OK,
+          let statement
+    else { throw CoordinatorError("test_sqlite_prepare_failed") }
+    defer { sqlite3_finalize(statement) }
+    guard sqlite3_step(statement) == SQLITE_ROW else {
+        throw CoordinatorError("test_sqlite_query_failed")
+    }
+    return sqlite3_column_int64(statement, 0)
+}
+
 @Test("supported v1 fixtures match the fixed Swift ingress validator")
 func fixtureParity() throws {
     let fixtureRoot = appRoot.appendingPathComponent("Fixtures/v1")
@@ -314,8 +427,15 @@ func fixtureParity() throws {
         let data = try Data(contentsOf: fixtureRoot.appendingPathComponent(relativePath))
         if expected {
             _ = try validator.validate(data, as: contract)
+            let parsed = try StrictJSON.object(from: data, limits: validator.limits)
+            let reused = try validator.validatedObject(parsed, as: contract)
+            #expect(reused.canonicalData == parsed.canonicalData)
         } else {
             expectCode("contract_validation_failed") { _ = try validator.validate(data, as: contract) }
+            expectCode("contract_validation_failed") {
+                let parsed = try StrictJSON.object(from: data, limits: validator.limits)
+                _ = try validator.validatedObject(parsed, as: contract)
+            }
         }
         checked += 1
     }
@@ -847,6 +967,389 @@ func freshnessPendingTargetRecovery() throws {
     #expect(try store.load()?.record.state == .committed)
 }
 
+@Test("semantic pending recovery preserves one prepared token, exact event bytes, and one effect")
+func semanticPendingRecoveryReusesPreparedChange() throws {
+    let directory = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let database = directory.appendingPathComponent("journal.sqlite3")
+    let store = TestFreshnessAnchorStore()
+    let material = try ContinuationTokenMaterial.generate()
+    let probe = SemanticPendingRecoveryProbe(tokenMaterial: material)
+    let journal = try testJournal(
+        databaseURL: database,
+        keyURL: directory.appendingPathComponent("journal.key"),
+        freshnessStore: store,
+        appendCommitGate: { commit in
+            #expect(try store.load()?.record.state == .pending)
+            try probe.gate(commit)
+        }
+    )
+    let opening = try JSONData(event(sequence: 1, id: "event_pending_recovery_open"))
+    _ = try journal.append(expectedSequence: 0, events: [opening])
+    let before = try journal.load()
+    let command = try semanticPendingRecoveryRepairCommand()
+    let change = try CoordinatorSemanticDecision.decide(
+        state: CoordinatorSemanticReplay.replay(before),
+        command: command,
+        tokenMaterial: material
+    )
+    let gateCallsBefore = probe.counts.gates
+    let pendingWritesBefore = store.pendingWriteCount
+    store.failAfterNextPendingWrite(with: "test_pending_write_interruption")
+
+    let application = CoordinatorSemanticApplication(journal: journal, tokenGenerator: probe.generateToken)
+    let result = try application.execute(command: command)
+
+    #expect(result.commit == JournalAppendResult(firstSequence: 2, lastSequence: 2, eventCount: 1))
+    #expect(result.effects == change.effects)
+    #expect(result.effects.count == 1)
+    #expect(probe.counts.tokens == 1)
+    #expect(probe.counts.gates == gateCallsBefore + 1)
+    #expect(store.pendingWriteCount == pendingWritesBefore + 1)
+    let loaded = try journal.load()
+    #expect(loaded.events == before.events + change.events)
+    #expect(loaded.documents == change.documents)
+    #expect(loaded.verificationRecords == change.verificationRecords)
+    #expect(try semanticPendingRecoveryStoredEventCount(database) == 2)
+    #expect(try store.load()?.record.state == .committed)
+    #expect(!loaded.events.contains { $0.range(of: Data(material.token.utf8)) != nil })
+}
+
+@Test("semantic pending recovery preserves the complete event, packet, and verification batch")
+func semanticPendingRecoveryReusesAllBatchComponents() throws {
+    let directory = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let store = TestFreshnessAnchorStore()
+    let probe = SemanticPendingRecoveryProbe()
+    let journal = try testJournal(
+        databaseURL: directory.appendingPathComponent("journal.sqlite3"),
+        keyURL: directory.appendingPathComponent("journal.key"),
+        freshnessStore: store,
+        appendCommitGate: probe.gate
+    )
+    let prepared = try sealedPacket()
+    let continuation = actionContinuation(
+        packet: prepared.packet, actionID: "action_fixture_recommended_001"
+    )
+    let events = try ([prepared.seal] + continuation.events).map(JSONData)
+    let documents = [prepared.data]
+    let verifications = [try JSONData(continuation.verification)]
+    store.failAfterNextPendingWrite(with: "test_pending_write_interruption")
+    let semanticJournal: any CoordinatorSemanticJournalPort = journal
+    let result = try semanticJournal.append(
+        expectedSequence: 0, events: events, documents: documents,
+        verificationRecords: verifications
+    )
+    #expect(result == JournalAppendResult(firstSequence: 1, lastSequence: 3, eventCount: 3))
+    let loaded = try journal.load()
+    #expect(loaded.events == events)
+    #expect(loaded.documents == documents)
+    #expect(loaded.verificationRecords == verifications)
+    #expect(probe.counts.gates == 1)
+    #expect(store.pendingWriteCount == 1)
+    #expect(try store.load()?.record.state == .committed)
+}
+
+@Test(
+    "semantic pending recovery rechecks revoked or expired admission and never replays on reads or reopen",
+    arguments: ["test_authority_revoked", "test_gate_expired"]
+)
+func semanticPendingRecoveryRejectsChangedGate(code: String) throws {
+    let directory = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let database = directory.appendingPathComponent("journal.sqlite3")
+    let key = directory.appendingPathComponent("journal.key")
+    let store = TestFreshnessAnchorStore()
+    let material = try ContinuationTokenMaterial.generate()
+    let probe = SemanticPendingRecoveryProbe(tokenMaterial: material)
+    var journal: SQLiteJournal? = try testJournal(
+        databaseURL: database, keyURL: key, freshnessStore: store,
+        appendCommitGate: probe.gate
+    )
+    _ = try journal?.append(
+        expectedSequence: 0,
+        events: [try JSONData(event(sequence: 1, id: "event_pending_recovery_open"))]
+    )
+    let before = try #require(try journal?.load())
+    let command = try semanticPendingRecoveryRepairCommand()
+    let change = try CoordinatorSemanticDecision.decide(
+        state: CoordinatorSemanticReplay.replay(before), command: command, tokenMaterial: material
+    )
+    let gateCallsBefore = probe.counts.gates
+    store.failAfterNextPendingWrite(with: "test_pending_write_interruption") {
+        probe.setGateBehavior(.refuse(code))
+    }
+    var application: CoordinatorSemanticApplication? = CoordinatorSemanticApplication(
+        journal: try #require(journal), tokenGenerator: probe.generateToken
+    )
+    var result: CoordinatorSemanticExecutionResult?
+    expectCode("freshness_commit_ambiguous") {
+        result = try application?.execute(command: command)
+    }
+    #expect(result == nil)
+    #expect(probe.counts.tokens == 1)
+    #expect(probe.counts.gates == gateCallsBefore + 1)
+    let pending = try #require(try store.load())
+    #expect(pending.record.state == .pending)
+    #expect(pending.record.pendingTransition?.batchDigest == FreshnessBatchDigest.compute(
+        expectedSequence: 1,
+        events: change.events,
+        documents: change.documents,
+        verificationRecords: change.verificationRecords
+    ))
+    expectCode("freshness_transition_pending") { _ = try journal?.load() }
+    expectCode("freshness_transition_pending") { _ = try journal?.health() }
+    expectCode("freshness_transition_pending") { _ = try journal?.integrity() }
+    #expect(try semanticPendingRecoveryStoredEventCount(database) == 1)
+
+    application = nil
+    journal = nil
+    let reopened = try testJournal(
+        databaseURL: database, keyURL: key, freshnessStore: store,
+        appendCommitGate: probe.gate
+    )
+    expectCode("freshness_transition_pending") { _ = try reopened.load() }
+    #expect(try store.load() == pending)
+    #expect(try semanticPendingRecoveryStoredEventCount(database) == 1)
+    #expect(probe.counts.gates == gateCallsBefore + 1)
+
+    // Explicit raw recovery still requires the identical bytes and current admission.
+    probe.setGateBehavior(.commit)
+    _ = try reopened.append(expectedSequence: 1, events: change.events, crashPoint: nil)
+    #expect(try reopened.load().events == before.events + change.events)
+    #expect(try semanticPendingRecoveryStoredEventCount(database) == 2)
+    #expect(probe.counts.gates == gateCallsBefore + 2)
+    #expect(probe.counts.tokens == 1)
+    #expect(result == nil)
+}
+
+@Test("semantic pending recovery rejects changes to sequence, events, documents, or verification records")
+func semanticPendingRecoveryRejectsDifferentBatch() throws {
+    let directory = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let database = directory.appendingPathComponent("journal.sqlite3")
+    let store = TestFreshnessAnchorStore()
+    let probe = SemanticPendingRecoveryProbe()
+    let journal = try testJournal(
+        databaseURL: database,
+        keyURL: directory.appendingPathComponent("journal.key"),
+        freshnessStore: store,
+        appendCommitGate: probe.gate
+    )
+    let prepared = try sealedPacket()
+    let continuation = actionContinuation(
+        packet: prepared.packet, actionID: "action_fixture_recommended_001"
+    )
+    let events = try ([prepared.seal] + continuation.events).map(JSONData)
+    let documents = [prepared.data]
+    let verifications = [try JSONData(continuation.verification)]
+    store.failAfterNextPendingWrite(with: "test_pending_write_interruption")
+    expectCode("test_pending_write_interruption") {
+        _ = try journal.append(
+            expectedSequence: 0, events: events, documents: documents,
+            verificationRecords: verifications, crashPoint: nil
+        )
+    }
+    let pending = try #require(try store.load())
+    var changedSeal = prepared.seal
+    changedSeal["event_id"] = "event_pending_recovery_different_seal"
+    var changedPacket = prepared.packet
+    changedPacket["packet_id"] = "packet_pending_recovery_different"
+    var changedVerification = continuation.verification
+    changedVerification["continuation_id"] = "continuation_pending_recovery_different"
+    let batches: [(Int64, [Data], [Data], [Data])] = [
+        (1, events, documents, verifications),
+        (0, [try JSONData(changedSeal)] + Array(events.dropFirst()), documents, verifications),
+        (0, events, [try JSONData(changedPacket)], verifications),
+        (0, events, documents, [try JSONData(changedVerification)]),
+    ]
+    let semanticJournal: any CoordinatorSemanticJournalPort = journal
+    for (sequence, candidateEvents, candidateDocuments, candidateVerifications) in batches {
+        expectCode("freshness_transition_pending") {
+            _ = try semanticJournal.append(
+                expectedSequence: sequence, events: candidateEvents,
+                documents: candidateDocuments, verificationRecords: candidateVerifications
+            )
+        }
+        #expect(try store.load() == pending)
+        #expect(try semanticPendingRecoveryStoredEventCount(database) == 0)
+        #expect(probe.counts.gates == 0)
+    }
+    _ = try journal.append(
+        expectedSequence: 0, events: events, documents: documents,
+        verificationRecords: verifications, crashPoint: nil
+    )
+    let loaded = try journal.load()
+    #expect(loaded.events == events)
+    #expect(loaded.documents == documents)
+    #expect(loaded.verificationRecords == verifications)
+    #expect(probe.counts.gates == 1)
+}
+
+@Test(
+    "semantic pending recovery keeps freshness rollback, event MAC, and pending-target checks fail closed",
+    arguments: ["rollback", "event_mac", "pending_target"]
+)
+func semanticPendingRecoveryRejectsTampering(mode: String) throws {
+    let directory = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let database = directory.appendingPathComponent("journal.sqlite3")
+    let store = TestFreshnessAnchorStore()
+    let probe = SemanticPendingRecoveryProbe()
+    let journal = try testJournal(
+        databaseURL: database,
+        keyURL: directory.appendingPathComponent("journal.key"),
+        freshnessStore: store,
+        appendCommitGate: probe.gate
+    )
+    _ = try journal.append(
+        expectedSequence: 0,
+        events: [try JSONData(event(sequence: 1, id: "event_pending_recovery_existing"))]
+    )
+    let next = try JSONData(event(sequence: 2, id: "event_pending_recovery_next"))
+    store.failAfterNextPendingWrite(with: "test_pending_write_interruption")
+    expectCode("test_pending_write_interruption") {
+        _ = try journal.append(expectedSequence: 1, events: [next])
+    }
+    let pending = try #require(try store.load())
+    let transition = try #require(pending.record.pendingTransition)
+    let expectedCode: String
+    switch mode {
+    case "rollback":
+        try store.replaceRecord(try FreshnessRecord.committed(
+            storageSlot: store.storageSlot, checkpoint: transition.to
+        ))
+        expectedCode = "freshness_rollback_detected"
+    case "event_mac":
+        try executeSQLite(
+            database,
+            "UPDATE runtime_events SET json=replace(CAST(json AS TEXT),'proposal_swift_test','proposal_swift_tesx') WHERE event_sequence=1"
+        )
+        expectedCode = "runtime_event_integrity_mismatch"
+    default:
+        let differentTarget = try FreshnessCheckpoint(
+            databaseID: transition.to.databaseID,
+            generation: transition.to.generation,
+            sequence: transition.to.sequence,
+            headMAC: Data(repeating: 0xA5, count: 32)
+        )
+        try store.replaceRecord(try FreshnessRecord.pending(
+            storageSlot: store.storageSlot,
+            transition: FreshnessPendingTransition(
+                from: transition.from, to: differentTarget, batchDigest: transition.batchDigest
+            )
+        ))
+        expectedCode = "freshness_transition_mismatch"
+    }
+    let before = try store.load()
+    let gateCallsBefore = probe.counts.gates
+    let semanticJournal: any CoordinatorSemanticJournalPort = journal
+    expectCode(expectedCode) {
+        _ = try semanticJournal.append(
+            expectedSequence: 1, events: [next], documents: [], verificationRecords: []
+        )
+    }
+    #expect(try store.load() == before)
+    #expect(try semanticPendingRecoveryStoredEventCount(database) == 1)
+    #expect(probe.counts.gates == gateCallsBefore)
+}
+
+@Test(
+    "semantic commit gates diagnose zero, failed-response, and swallowed duplicate callbacks without duplicate events",
+    arguments: ["no_commit", "throw_after_commit", "swallow_duplicate"]
+)
+func semanticPendingRecoveryCommitGateContract(mode: String) throws {
+    let directory = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let database = directory.appendingPathComponent("journal.sqlite3")
+    let store = TestFreshnessAnchorStore()
+    let probe = SemanticPendingRecoveryProbe()
+    switch mode {
+    case "no_commit": probe.setGateBehavior(.omitCommit)
+    case "throw_after_commit": probe.setGateBehavior(.throwAfterCommit)
+    default: probe.setGateBehavior(.swallowDuplicateCommit)
+    }
+    let journal = try testJournal(
+        databaseURL: database,
+        keyURL: directory.appendingPathComponent("journal.key"),
+        freshnessStore: store,
+        appendCommitGate: probe.gate
+    )
+    let first = try JSONData(event(sequence: 1, id: "event_pending_recovery_gate"))
+    let semanticJournal: any CoordinatorSemanticJournalPort = journal
+    expectCode("freshness_commit_ambiguous") {
+        _ = try semanticJournal.append(
+            expectedSequence: 0, events: [first], documents: [], verificationRecords: []
+        )
+    }
+    #expect(probe.counts.gates == 1)
+    #expect(store.pendingWriteCount == 1)
+    #expect(try store.load()?.record.state == .pending)
+    if mode == "no_commit" {
+        #expect(try semanticPendingRecoveryStoredEventCount(database) == 0)
+        expectCode("freshness_transition_pending") { _ = try journal.load() }
+        probe.setGateBehavior(.commit)
+        _ = try journal.append(expectedSequence: 0, events: [first], crashPoint: nil)
+        #expect(probe.counts.gates == 2)
+    } else {
+        #expect(try semanticPendingRecoveryStoredEventCount(database) == 1)
+        #expect(try journal.load().events == [first])
+        expectCode("journal_sequence_conflict") {
+            _ = try semanticJournal.append(
+                expectedSequence: 0, events: [first], documents: [], verificationRecords: []
+            )
+        }
+        #expect(probe.counts.gates == 1)
+    }
+    #expect(try journal.load().events == [first])
+    #expect(try semanticPendingRecoveryStoredEventCount(database) == 1)
+    #expect(try store.load()?.record.state == .committed)
+}
+
+@Test("a blocked commit gate bounds same-journal mutex contention with freshness_lock_busy")
+func journalInstanceLockIsBoundedWhileCommitGateWaits() throws {
+    let directory = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let entered = DispatchSemaphore(value: 0)
+    let release = DispatchSemaphore(value: 0)
+    let finished = DispatchSemaphore(value: 0)
+    let journal = try testJournal(
+        databaseURL: directory.appendingPathComponent("journal.sqlite3"),
+        keyURL: directory.appendingPathComponent("journal.key"),
+        freshnessStore: TestFreshnessAnchorStore(),
+        appendCommitGate: { commit in
+            entered.signal()
+            guard release.wait(timeout: .now() + 5) == .success else {
+                throw CoordinatorError("test_commit_gate_wait_timed_out")
+            }
+            try commit()
+        }
+    )
+    let first = try JSONData(event(sequence: 1, id: "event_instance_lock_writer"))
+    do {
+        defer {
+            release.signal()
+            #expect(finished.wait(timeout: .now() + 5) == .success)
+        }
+        DispatchQueue.global().async {
+            defer { finished.signal() }
+            do {
+                _ = try journal.append(expectedSequence: 0, events: [first])
+            } catch {
+                Issue.record("blocked-gate writer failed: \(error)")
+            }
+        }
+        try #require(entered.wait(timeout: .now() + 5) == .success)
+        let clock = ContinuousClock()
+        let started = clock.now
+        expectCode("freshness_lock_busy") { _ = try journal.load() }
+        let elapsed = started.duration(to: clock.now)
+        #expect(elapsed >= .milliseconds(150))
+        #expect(elapsed < .seconds(2))
+    }
+    #expect(try journal.load().events == [first])
+}
+
 @Test("SQLite journal enforces WAL FULL FK, CAS, contiguous sequence, and durable replay")
 func journalBasics() throws {
     let directory = try temporaryDirectory()
@@ -923,6 +1426,77 @@ func packetSidecarMAC() throws {
     expectCode("packet_document_integrity_mismatch") {
         _ = try testJournal(databaseURL: database, keyURL: key)
     }
+}
+
+@Test(
+    "authenticated packet rows sharing an index key still require the complete seal binding",
+    arguments: ["session_id", "interaction_id", "sealed_at", "expires_at", "valid_after_event_sequence"]
+)
+func persistedPacketIndexKeepsExactBinding(field: String) throws {
+    let directory = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let database = directory.appendingPathComponent("journal.sqlite3")
+    let key = directory.appendingPathComponent("journal.key")
+    let prepared = try sealedPacket()
+    let journal = try testJournal(databaseURL: database, keyURL: key)
+    _ = try journal.append(expectedSequence: 0, events: [try JSONData(prepared.seal)], documents: [prepared.data])
+    // Correct MAC and unchanged packet/revision key: rejection must come from
+    // the full seal predicate, not an unrelated identity/authentication failure.
+    var substituted = prepared.packet
+    switch field {
+    case "sealed_at": substituted[field] = "2026-08-21T01:00:02Z"
+    case "expires_at": substituted[field] = "2026-08-21T01:09:00Z"
+    case "valid_after_event_sequence": substituted[field] = 2
+    default: substituted[field] = "fixture_authenticated_substitution"
+    }
+    let canonical = try JSONData(substituted)
+    _ = try V1IngressValidator().validate(canonical, as: .decisionPacket)
+    let packetID = try #require(substituted["packet_id"] as? String)
+    let revision = try #require(ExactJSONInteger.int64(substituted["revision"], minimum: 1))
+    let authenticator = SidecarAuthenticator(storageKey: try StorageKey(bytes: Data(contentsOf: key)))
+    let mac = authenticator.authenticationCode(
+        domain: SidecarAuthenticator.packetDomain,
+        identity: "\(packetID.utf8.count):\(packetID):\(revision)",
+        canonicalJSON: canonical
+    )
+    try executeSQLite(database, "UPDATE packet_documents SET json=X'\(hexadecimal(canonical))',mac=X'\(hexadecimal(mac))'")
+    expectCode("packet_document_integrity_mismatch") { _ = try journal.load() }
+}
+
+@Test("selection index keeps complete bindings distinct within the same boundary bucket")
+func selectionIndexKeepsDistinctBindings() throws {
+    let directory = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let journal = try testJournal(
+        databaseURL: directory.appendingPathComponent("journal.sqlite3"),
+        keyURL: directory.appendingPathComponent("journal.key")
+    )
+    let prepared = try sealedPacket()
+    for index in 0..<2 {
+        let sequence = Int64(index * 3 + 1)
+        var packet = prepared.packet
+        packet["packet_id"] = "packet:fixture|\(index)"
+        packet["session_id"] = "session:fixture|\(index)"
+        packet["valid_after_event_sequence"] = sequence
+        var seal = prepared.seal
+        seal["event_id"] = "seal_fixture_\(index)"
+        seal["event_sequence"] = sequence
+        seal["session_id"] = packet["session_id"]
+        var payload = try #require(seal["payload"] as? [String: Any])
+        payload["packet_id"] = packet["packet_id"]
+        seal["payload"] = payload
+        let continuation = actionContinuation(
+            packet: packet, actionID: "action_fixture_recommended_001",
+            firstSequence: Int(sequence) + 1, identifierSuffix: "index_binding_\(index)",
+            fingerprintCharacter: index == 0 ? "a" : "b"
+        )
+        _ = try journal.append(
+            expectedSequence: sequence - 1,
+            events: try ([seal] + continuation.events).map(JSONData),
+            documents: [try JSONData(packet)], verificationRecords: [try JSONData(continuation.verification)]
+        )
+    }
+    #expect(try journal.load().journalSequence == 6)
 }
 
 @Test("packet seal and selection require the full decision-boundary binding")
@@ -1359,4 +1933,107 @@ func schemaVersionMismatch() throws {
     expectCode("schema_version_mismatch") {
         _ = try testJournal(databaseURL: database, keyURL: key)
     }
+}
+
+private func packetWithSecretRegressionConstraint(
+    _ original: [String: Any], constraint: String
+) throws -> [String: Any] {
+    var packet = original
+    var choices = try #require(packet["choices"] as? [[String: Any]])
+    var action = try #require(choices[0]["action"] as? [String: Any])
+    action["constraints"] = [constraint]
+    choices[0]["action"] = action
+    packet["choices"] = choices
+    return packet
+}
+
+@Test("plain and JSON-escaped known secrets in action arrays never reach durable storage", arguments: [false, true])
+func knownSecretArraySealLeavesJournalUnchanged(escaped: Bool) throws {
+    let directory = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let corpus = RuntimeSecretCorpus()
+    let secret = escaped ? "FictionalToken_\"escaped\"\\tail\n012345" : "FictionalToken_Plain_012345"
+    corpus.register(secret)
+    let store = TestFreshnessAnchorStore()
+    let journal = try testJournal(
+        databaseURL: directory.appendingPathComponent("journal.sqlite3"),
+        keyURL: directory.appendingPathComponent("journal.key"),
+        secretCorpus: corpus, freshnessStore: store
+    )
+    var packet = try sealedPacket(sequence: 2).packet
+    packet["expires_at"] = "2026-08-21T01:02:00.123456789Z"
+    var bound: [String: Any] = [:]
+    for key in binding().keys { bound[key] = packet[key] }
+    let app = CoordinatorSemanticApplication(journal: journal)
+    _ = try app.execute(command: JSONData([
+        "type": "open_boundary", "event_id": "event_secret_array_open",
+        "occurred_at": "2026-08-21T01:00:00Z", "binding": bound,
+        "proposal_id": "proposal_secret_array",
+    ]))
+    let before = try journal.load()
+    let freshnessBefore = try #require(try store.load())
+    let pendingWritesBefore = store.pendingWriteCount
+    let unsafePacket = try packetWithSecretRegressionConstraint(packet, constraint: secret)
+
+    expectCode("raw_continuation_token_forbidden") {
+        _ = try app.execute(command: JSONData([
+            "type": "seal_packet", "event_id": "event_secret_array_seal", "packet": unsafePacket,
+        ]))
+    }
+    #expect(try journal.load() == before)
+    #expect(try store.load() == freshnessBefore)
+    #expect(store.pendingWriteCount == pendingWritesBefore)
+    #expect(before.journalSequence == 1)
+
+    let safePacket = try packetWithSecretRegressionConstraint(packet, constraint: "Ordinary constraint")
+    _ = try app.execute(command: JSONData([
+        "type": "seal_packet", "event_id": "event_secret_array_seal", "packet": safePacket,
+    ]))
+    let after = try journal.load()
+    #expect(after.journalSequence == 2)
+    #expect(after.documents.count == 1)
+    let document = try #require(after.documents.first)
+    let decoded = try JSONSerialization.jsonObject(with: document)
+    #expect(!corpus.containsKnownSecret(in: document))
+    #expect(!corpus.containsKnownSecret(inJSONObject: decoded))
+    #expect(try store.load()?.record.state == .committed)
+}
+
+@Test("secret rejection preserves the exact original pending batch and its safe retry", arguments: [false, true])
+func knownSecretArrayRejectionPreservesPendingBatch(escaped: Bool) throws {
+    let directory = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let corpus = RuntimeSecretCorpus()
+    let secret = escaped ? "FictionalToken_\"escaped\"\\tail\n012345" : "FictionalToken_Plain_012345"
+    corpus.register(secret)
+    let store = TestFreshnessAnchorStore()
+    let journal = try testJournal(
+        databaseURL: directory.appendingPathComponent("journal.sqlite3"),
+        keyURL: directory.appendingPathComponent("journal.key"),
+        secretCorpus: corpus, freshnessStore: store
+    )
+    let original = try sealedPacket()
+    let events = [try JSONData(original.seal)]
+    store.failAfterNextPendingWrite(with: "test_pending_write_interruption")
+    expectCode("test_pending_write_interruption") {
+        _ = try journal.append(expectedSequence: 0, events: events, documents: [original.data])
+    }
+    let pending = try #require(try store.load())
+    #expect(pending.record.state == .pending)
+    #expect(store.pendingWriteCount == 1)
+
+    let unsafePacket = try packetWithSecretRegressionConstraint(original.packet, constraint: secret)
+    expectCode("raw_continuation_token_forbidden") {
+        _ = try journal.append(expectedSequence: 0, events: events, documents: [try JSONData(unsafePacket)])
+    }
+    #expect(try store.load() == pending)
+    #expect(store.pendingWriteCount == 1)
+    expectCode("freshness_transition_pending") { _ = try journal.load() }
+
+    _ = try journal.append(expectedSequence: 0, events: events, documents: [original.data])
+    let loaded = try journal.load()
+    #expect(loaded.journalSequence == 1)
+    #expect(loaded.events == events)
+    #expect(loaded.documents == [original.data])
+    #expect(try store.load()?.record.state == .committed)
 }

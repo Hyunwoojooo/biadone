@@ -7,6 +7,13 @@ enum PetTestError: Error, Sendable {
     case injected(String)
 }
 
+/// Test-controlled monotonic time. Advancing it never sleeps or runs a timer.
+@MainActor
+final class PetTestFocusClock {
+    var now: UInt64 = 0
+    func advance(nanoseconds: UInt64) { now += nanoseconds }
+}
+
 final class PetTestSelectionIDSequence: @unchecked Sendable {
     private let lock = NSLock()
     private var value = 0
@@ -458,6 +465,31 @@ actor PetFakeTransport: PetCoordinatorTransport {
 
     func requestPayloads(type: String) -> [Data] {
         requests.filter { $0.0 == type }.map(\.1)
+    }
+}
+
+/// Captures one snapshot response before suspension, so later snapshots can
+/// change the view model while the old reconciliation read is still in flight.
+actor PetTestSnapshotGateTransport: PetCoordinatorTransport {
+    let backend: PetFakeTransport
+    private var gateNextSnapshot = true
+    private var continuation: CheckedContinuation<Void, Never>?
+    var isWaiting: Bool { continuation != nil }
+
+    init(_ backend: PetFakeTransport) { self.backend = backend }
+
+    func request(type: String, payload: Data) async throws -> Data {
+        let data = try await backend.request(type: type, payload: payload)
+        if type == "get_state", gateNextSnapshot {
+            gateNextSnapshot = false
+            await withCheckedContinuation { continuation = $0 }
+        }
+        return data
+    }
+
+    func release() {
+        continuation?.resume()
+        continuation = nil
     }
 }
 

@@ -3,10 +3,13 @@ import Foundation
 public struct CoordinatorError: Error, CustomStringConvertible, Sendable, Equatable {
     public let code: String
     public let message: String
+    public let dispatchFailure: CoordinatorNextTurnDispatchFailure?
 
-    public init(_ code: String, _ message: String? = nil) {
+    public init(_ code: String, _ message: String? = nil,
+                dispatchFailure: CoordinatorNextTurnDispatchFailure? = nil) {
         self.code = code
         self.message = message ?? code
+        self.dispatchFailure = dispatchFailure
     }
 
     public var description: String { "\(code): \(message)" }

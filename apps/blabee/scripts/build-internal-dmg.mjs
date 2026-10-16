@@ -37,11 +37,13 @@ import {
   normalizeReleaseSigning,
   signReleaseDMG,
   validateInternalClaudeAppCodeLayout,
+  validatePublicClaudeAppCodeLayout,
   verifyEmbeddedSigningEntitlements,
   claudeNodeIdentifier,
   claudeNodeRelativePath,
   verifyDeveloperIDSignature,
 } from "./release-signing.mjs";
+import { verifyClaudeRuntimeDirectory, requirePublicClaudeRuntime } from "./prepare-claude-runtime.mjs";
 import {
   requireInternalBuildNumber,
   requireInternalDMGOutputBuildSuffix,
@@ -117,10 +119,11 @@ const releaseNotice = [
   "",
 ].join("\n");
 
-const internalClaudeNotice = [
+export const internalClaudeNotice = [
   "BLABEE — INTERNAL DEVELOPMENT CHANNELS BUILD", "",
   "Blabee.app contains the common engine with Codex and Claude bridges.",
-  "The app and disk image are Developer ID signed. This image is not notarized.",
+  "The app and disk image are Developer ID signed. Check the accompanying notarization record for Apple notarization status.",
+  "Apple notarization, when completed, does not qualify this internal build for public distribution.",
   "Claude uses explicitly enabled development Channels; no approved-plugin or public-release qualification is claimed.", "",
 ].join("\n");
 
@@ -525,12 +528,17 @@ export async function verifyInternalAppBundle(appPath, {
   const expectedValues = { ...requiredPlistValues };
   if (plist.BlabeeDistributionProfile !== undefined && plist.BlabeeDistributionProfile !== BLABEE_PROFILE.id) fail("app distribution profile mismatch");
   const hasClaude = await pathExistsWithoutFollowing(join(canonicalApp, "Contents", "Resources", "claude"));
-  if (hasClaude && internal === null) fail("development Channels payload requires explicit internal Claude qualification");
+  if (hasClaude && normalizedReleaseSigning === null) fail("Claude DMG requires explicit Developer ID qualification");
   if (internal !== null) {
     await validateInternalClaudeAppCodeLayout(canonicalApp);
+  } else if (hasClaude) {
+    await validatePublicClaudeAppCodeLayout(canonicalApp);
+  }
+  if (hasClaude) {
     const node = join(canonicalApp, claudeNodeRelativePath);
-    await verifyDeveloperIDSignature(node, { teamID: internal.teamID, kind: "executable", identifier: claudeNodeIdentifier });
+    await verifyDeveloperIDSignature(node, { teamID: normalizedReleaseSigning.teamID, kind: "executable", identifier: claudeNodeIdentifier });
     await verifyEmbeddedSigningEntitlements(node, "com.apple.security.cs.allow-jit");
+    await verifyEmbeddedSigningEntitlements(canonicalApp, "com.apple.security.automation.apple-events");
   }
   for (const [key, defaultExpected] of Object.entries(expectedValues)) {
     const expected = key === "CFBundleVersion"
@@ -556,7 +564,7 @@ export async function verifyInternalAppBundle(appPath, {
   }
   const architectures = await inspectArchitectures(executable);
   requireExactInternalArchitecture(architectures, "main executable");
-  await verifyCompiledDistributionProfile(executable, { requireExplicit: internal !== null });
+  await verifyCompiledDistributionProfile(executable, { requireExplicit: hasClaude });
   if (normalizedReleaseSigning === null) {
     await verifyAdHocSignature(canonicalApp);
   } else {
@@ -1510,12 +1518,18 @@ export async function buildInternalDMG({
   internalClaudeSigning = null,
   claudeRuntimeDirectory,
 } = {}) {
-  if (releaseSigning !== null && (internalClaudeSigning !== null || claudeRuntimeDirectory !== undefined)) fail("public release cannot include development Channels");
-  if ((internalClaudeSigning !== null) !== (claudeRuntimeDirectory !== undefined)) fail("internal Claude DMG requires both its signing capability and runtime directory");
+  if (releaseSigning !== null && internalClaudeSigning !== null) fail("public release cannot include internal Claude signing");
+  if (internalClaudeSigning !== null && claudeRuntimeDirectory === undefined) fail("internal Claude DMG requires both its signing capability and runtime directory");
+  if (claudeRuntimeDirectory !== undefined && releaseSigning === null && internalClaudeSigning === null) fail("Claude DMG requires explicit Developer ID signing");
   requireDarwin(platform);
   const normalizedReleaseSigning = normalizeReleaseSigning(releaseSigning);
   const normalizedInternalSigning = normalizeReleaseSigning(internalClaudeSigning);
   const effectiveSigning = normalizedInternalSigning ?? normalizedReleaseSigning;
+  if (claudeRuntimeDirectory !== undefined) {
+    const manifest = await verifyClaudeRuntimeDirectory(claudeRuntimeDirectory);
+    if (normalizedReleaseSigning !== null) requirePublicClaudeRuntime(manifest);
+    if (normalizedInternalSigning !== null && manifest.channel_mode !== "development-preview") fail("internal Claude signing requires a development preview runtime");
+  }
   const selectedNotice = distributionNotice(normalizedReleaseSigning, normalizedInternalSigning);
   const selectedVolumeName = normalizedReleaseSigning === null ? volumeName : releaseVolumeName;
   const normalizedBuildNumber = requireInternalBuildNumber(
@@ -1577,7 +1591,8 @@ export async function buildInternalDMG({
       sourceRoot: canonicalSourceRoot,
       adhocSign: effectiveSigning === null,
       releaseSigning: normalizedReleaseSigning,
-      ...(normalizedInternalSigning === null ? {} : { internalClaudeSigning: normalizedInternalSigning, claudeRuntimeDirectory }),
+      ...(normalizedInternalSigning === null ? {} : { internalClaudeSigning: normalizedInternalSigning }),
+      ...(claudeRuntimeDirectory === undefined ? {} : { claudeRuntimeDirectory }),
       bundleVersion: normalizedBuildNumber,
       compatiblePreviousApps: previousApps,
     });
@@ -1690,6 +1705,7 @@ export async function buildInternalDMG({
       dmg_signing: effectiveSigning === null ? "unsigned" : "developer-id",
       ...(effectiveSigning === null ? {} : { signing_team_id: effectiveSigning.teamID }),
       ...(normalizedInternalSigning === null ? {} : { claude_channel_mode: "development-preview" }),
+      ...(normalizedReleaseSigning !== null && claudeRuntimeDirectory !== undefined ? { claude_delivery_mode: "mcp-hook-v1" } : {}),
       notarized: false,
       public_distribution_ready: false,
     };

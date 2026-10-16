@@ -6,36 +6,121 @@ import { expectedSessionArgument } from './product-context.mjs';
 import { createSessionV2Client, SessionV2ClientError, validateSessionV2Result } from './session-v2-client.mjs';
 import { createSessionV2ChannelPoller } from './session-v2-channel-poller.mjs';
 import { SESSION_V2_WORKFLOW_INSTRUCTIONS, safeSessionV2ErrorCode, sessionV2Context } from './session-v2-context.mjs';
-import { SESSION_V2_TOOL_DEFINITIONS, createSessionV2ToolHandler, sessionV2ChannelNotification, sessionV2ToolError } from './session-v2-tools.mjs';
+import { SESSION_V2_TOOL_DEFINITIONS, createSessionV2ToolHandler, sessionV2ToolError } from './session-v2-tools.mjs';
 
-/** One bounded FIFO serializes polling and tools on the authenticated client. */
-export function createSessionV2RequestQueue(client) {
-  let tail = Promise.resolve();
-  let accepting = true;
-  let count = 0;
-  const enqueue = (method, value) => {
-    if (!accepting) return Promise.reject(new SessionV2ClientError('session_v2_bridge_closed'));
-    if (count >= 32) return Promise.reject(new SessionV2ClientError('session_v2_queue_full'));
-    count++;
-    const result = tail.then(() => {
-      if (!accepting) throw new SessionV2ClientError('session_v2_bridge_closed');
-      return client[method](value);
-    });
-    tail = result.then(() => { count--; }, () => { count--; });
-    return result;
+/** Callers share one admission/open result. A cancelled caller removes its
+ * listener and capacity immediately without cancelling or retaining another
+ * continuation on the shared operation. */
+function createSessionV2Waiters() {
+  const waiters = new Set();
+  let settled = false;
+  let failure;
+  return {
+    wait(signal) {
+      if (signal?.aborted) return Promise.reject(new SessionV2ClientError('session_v2_request_cancelled'));
+      if (settled) return failure ? Promise.reject(failure) : Promise.resolve();
+      if (waiters.size >= 32) return Promise.reject(new SessionV2ClientError('session_v2_queue_full'));
+      return new Promise((resolve, reject) => {
+        const finish = error => {
+          if (!waiters.delete(finish)) return;
+          signal?.removeEventListener('abort', cancelled);
+          if (error) reject(error); else resolve();
+        };
+        const cancelled = () => finish(new SessionV2ClientError('session_v2_request_cancelled'));
+        waiters.add(finish);
+        signal?.addEventListener('abort', cancelled, { once: true });
+        if (signal?.aborted) cancelled();
+      });
+    },
+    settle(error) {
+      if (settled) return;
+      settled = true;
+      failure = error;
+      for (const finish of waiters) finish(error);
+    },
   };
-  return { request: value => enqueue('request', value), exchange: value => enqueue('exchange', value),
-    stop() { accepting = false; }, async drain() { await tail; }, snapshot: () => ({ pending: count, accepting }) };
 }
 
-/** Testable single logical bridge. Notification failure is terminal for tools
+/** One authenticated RPC at a time: a waiting poll owns the next free slot;
+ * ordinary requests retain FIFO order. Capacity includes active work: 32
+ * ordinary requests plus one poll, without coalescing or creating requests.
+ * Per-call cancellation skips unsent work; it never releases an in-flight slot. */
+export function createSessionV2RequestQueue(client) {
+  let accepting = true;
+  let active = false;
+  let scheduled = false;
+  let ordinaryCount = 0;
+  let pollOutstanding = false;
+  let waitingPoll;
+  const ordinary = [];
+  const drainers = [];
+  const count = () => ordinaryCount + Number(pollOutstanding);
+  const schedule = () => {
+    if (active || scheduled || count() === 0) return;
+    scheduled = true;
+    // Let the completed result's consumers finish their microtasks, including
+    // terminal poll validation and cancellation, before sending another RPC.
+    setImmediate(dispatch);
+  };
+  const release = entry => {
+    if (entry.poll) pollOutstanding = false; else ordinaryCount--;
+    if (count() === 0) for (const resolve of drainers.splice(0)) resolve();
+    schedule();
+  };
+  const dispatch = () => {
+    scheduled = false;
+    const entry = waitingPoll ?? ordinary.shift();
+    if (!entry) return;
+    if (entry.poll) waitingPoll = undefined;
+    entry.queued = false;
+    entry.signal?.removeEventListener('abort', entry.cancelled);
+    active = true;
+    Promise.resolve().then(() => {
+      if (entry.signal?.aborted) throw new SessionV2ClientError('session_v2_request_cancelled');
+      if (!accepting) throw new SessionV2ClientError('session_v2_bridge_closed');
+      return client[entry.method](entry.value, { signal: entry.signal });
+    }).then(entry.resolve, entry.reject).then(() => {
+      active = false;
+      release(entry);
+    });
+  };
+  const enqueue = (method, value, { signal } = {}) => {
+    if (signal?.aborted) return Promise.reject(new SessionV2ClientError('session_v2_request_cancelled'));
+    if (!accepting) return Promise.reject(new SessionV2ClientError('session_v2_bridge_closed'));
+    const poll = method === 'exchange' && value?.operation === 'bridge.poll';
+    if (poll ? pollOutstanding : ordinaryCount >= 32) {
+      return Promise.reject(new SessionV2ClientError('session_v2_queue_full'));
+    }
+    const result = new Promise((resolve, reject) => {
+      const entry = { method, value, signal, poll, resolve, reject, queued: true };
+      entry.cancelled = () => {
+        if (!entry.queued) return;
+        entry.queued = false;
+        if (poll) waitingPoll = undefined;
+        else ordinary.splice(ordinary.indexOf(entry), 1);
+        signal?.removeEventListener('abort', entry.cancelled);
+        reject(new SessionV2ClientError('session_v2_request_cancelled'));
+        release(entry);
+      };
+      if (poll) { pollOutstanding = true; waitingPoll = entry; }
+      else { ordinaryCount++; ordinary.push(entry); }
+      signal?.addEventListener('abort', entry.cancelled, { once: true });
+      if (signal?.aborted) entry.cancelled();
+    });
+    schedule();
+    return result;
+  };
+  return { request: (value, options) => enqueue('request', value, options),
+    exchange: (value, options) => enqueue('exchange', value, options),
+    stop() { accepting = false; },
+    async drain() { if (count() !== 0) await new Promise(resolve => drainers.push(resolve)); },
+    snapshot: () => ({ pending: count(), accepting }) };
+}
+
+/** Testable single logical bridge. Heartbeat failure is terminal for tools
  * as well as polls, with no reopen, probe retry, automatic ACK or claim. */
-export function createSessionV2BridgeSession({ client, authority, channelSource, notify,
-  onError = () => {}, closeRegistration = async () => {}, pollIntervalMs = 500, notificationTimeoutMs = 2500 } = {}) {
-  if (typeof notify !== 'function' || !Number.isSafeInteger(notificationTimeoutMs)
-      || notificationTimeoutMs < 10 || notificationTimeoutMs > 5000) {
-    throw new SessionV2ClientError('session_v2_invalid_configuration');
-  }
+export function createSessionV2BridgeSession({ client, authority, channelSource,
+  onError = () => {}, closeRegistration = async () => {}, pollIntervalMs = 500 } = {}) {
   const queue = createSessionV2RequestQueue(client);
   let started = false;
   let closed = false;
@@ -45,35 +130,13 @@ export function createSessionV2BridgeSession({ client, authority, channelSource,
   let closing;
   let poller;
   let pendingTools = 0;
-  let pendingNotification;
-  const notifyBounded = message => new Promise((resolveNotification, rejectNotification) => {
-    if (closed) {
-      rejectNotification(new SessionV2ClientError('session_v2_channel_notification_unknown'));
-      return;
-    }
-    let settled = false;
-    const finish = error => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      pendingNotification = undefined;
-      if (error) rejectNotification(error); else resolveNotification();
-    };
-    const cancel = () => finish(new SessionV2ClientError('session_v2_channel_notification_unknown'));
-    const timer = setTimeout(cancel, notificationTimeoutMs);
-    pendingNotification = { cancel };
-    // SDK stdio writes may wait for drain indefinitely without rejecting on
-    // EOF/error. A bounded wait and shutdown cancellation end delivery locally;
-    // a late write is never replayed, interpreted as ACK, or allowed to reopen.
-    Promise.resolve().then(() => { if (!settled) return notify(message); })
-      .then(() => finish(), cancel);
-  });
+  const openingWaiters = createSessionV2Waiters();
   const close = () => {
     if (closing) return closing;
     closed = true;
     bridgeID = undefined;
+    openingWaiters.settle(new SessionV2ClientError('session_v2_bridge_closed'));
     queue.stop();
-    pendingNotification?.cancel();
     closing = Promise.resolve().then(async () => {
       await poller?.stop();
       await queue.drain();
@@ -92,16 +155,19 @@ export function createSessionV2BridgeSession({ client, authority, channelSource,
     // Do not await the currently active poll/open from its own failure handler.
     void close().catch(() => {});
   };
-  const toolHandler = createSessionV2ToolHandler({ request: command => queue.request(command),
+  const toolHandler = createSessionV2ToolHandler({ request: (command, options) => queue.request(command, options),
     getBridgeID: () => closed ? undefined : bridgeID, channelSource });
-  const handler = async (name, args) => {
+  const handler = async (name, args, { signal } = {}) => {
     // The initialized notification may precede tools/call by only one frame.
     // Wait for that same admission, never create or retry another bridge.open.
+    if (signal?.aborted) return sessionV2ToolError(new SessionV2ClientError('session_v2_request_cancelled'));
     if (pendingTools >= 32) return sessionV2ToolError(new SessionV2ClientError('session_v2_queue_full'));
     pendingTools++;
     try {
-      if (started && opening && !closed) await opening;
-      return await toolHandler(name, args);
+      if (started && opening && !closed) await openingWaiters.wait(signal);
+      return await toolHandler(name, args, { signal });
+    } catch (error) {
+      return sessionV2ToolError(error);
     } finally { pendingTools--; }
   };
   return {
@@ -117,24 +183,23 @@ export function createSessionV2BridgeSession({ client, authority, channelSource,
         bridgeID = result.bridge_id;
         poller = createSessionV2ChannelPoller({ authority, bridgeID, channelSource,
           exchange: request => queue.exchange(request),
-          notifyEvent: event => notifyBounded(sessionV2ChannelNotification(event, { channelSource })),
           onError: code => terminal(new SessionV2ClientError(code)), intervalMs: pollIntervalMs });
         poller.start();
-      })().catch(error => { terminal(error); });
+      })().catch(error => { terminal(error); }).finally(() => openingWaiters.settle());
       return opening;
     },
     snapshot: () => ({ started, closed, registered: bridgeID !== undefined, pendingTools,
-      queue: queue.snapshot(), channel: poller?.snapshot() }),
+      queue: queue.snapshot(), heartbeat: poller?.snapshot() }),
   };
 }
 
 export function createSessionV2BridgeServer({ handler } = {}) {
   const server = new Server({ name: 'blabee-claude', version: '0.3.0' }, {
-    capabilities: { tools: {}, experimental: { 'claude/channel': {} } }, instructions: SESSION_V2_WORKFLOW_INSTRUCTIONS,
+    capabilities: { tools: {} }, instructions: SESSION_V2_WORKFLOW_INSTRUCTIONS,
   });
   server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: SESSION_V2_TOOL_DEFINITIONS }));
-  server.setRequestHandler(CallToolRequestSchema, async ({ params }) => handler(params.name,
-    params.name === 'check_connection_v1' && params.arguments === undefined ? {} : params.arguments));
+  server.setRequestHandler(CallToolRequestSchema, async ({ params }, { signal }) => handler(params.name,
+    params.name === 'check_connection_v1' && params.arguments === undefined ? {} : params.arguments, { signal }));
   return server;
 }
 
@@ -151,11 +216,12 @@ export async function runSessionV2MCP({ env = process.env, args = process.argv.s
   let session;
   let closing;
   let initialized = false;
+  const admissionWaiters = createSessionV2Waiters();
   let finishClosed;
   const closed = new Promise(resolveClosed => { finishClosed = resolveClosed; });
-  const diagnostic = code => errorOutput.write(`[blabee-claude] 제품 Channel 연결을 확인하지 못했습니다 (${code}).\n`);
+  const diagnostic = code => errorOutput.write(`[blabee-claude] 제품 MCP 연결을 확인하지 못했습니다 (${code}).\n`);
   const makeSession = (context, client) => createSessionV2BridgeSession({ client, authority: context.configuration.authority,
-      channelSource: context.channelSource, notify: message => server.notification(message), pollIntervalMs,
+      channelSource: context.channelSource, pollIntervalMs,
       onError: code => { diagnostic(code); void cleanup(); },
       closeRegistration: async bridgeID => {
         let closer;
@@ -169,16 +235,28 @@ export async function runSessionV2MCP({ env = process.env, args = process.argv.s
         finally { await closer?.close(); }
       } });
   if (context) session = makeSession(context, client);
-  server = createSessionV2BridgeServer({ handler: (name, args) => session ? session.handler(name, args)
-    : sessionV2ToolError(new SessionV2ClientError('session_v2_bridge_not_registered')) });
+  // Automatic sessions expose their SDK handshake before the actual native
+  // SessionStart grant. Wait only after initialized, with the same bounded
+  // admission; cancelling one tool must not cancel bootstrap for other tools.
+  server = createSessionV2BridgeServer({ handler: async (name, args, options) => {
+    if (!session && initialized && resolveContext) {
+      try {
+        if (closing || admission.signal.aborted) throw new SessionV2ClientError('session_v2_bridge_closed');
+        await admissionWaiters.wait(options?.signal);
+      }
+      catch (error) { return sessionV2ToolError(error); }
+    }
+    return session ? session.handler(name, args, options)
+      : sessionV2ToolError(new SessionV2ClientError('session_v2_bridge_not_registered'));
+  } });
   const transport = new StdioServerTransport(input, output, { maxBufferSize: 128 * 1024 });
   const cleanup = () => {
     if (closing) return closing;
     // Abort pending bootstrap sockets/timers synchronously. SDK EOF must not
     // wait for a SessionStart that will never arrive after the picker closes.
     admission.abort();
+    admissionWaiters.settle(new SessionV2ClientError('session_v2_bridge_closed'));
     input.off('end', cleanup); input.off('close', cleanup); input.off('error', cleanup);
-    output.off('error', outputFailed); output.off('close', cleanup);
     process.off('SIGINT', cleanup); process.off('SIGTERM', cleanup);
     closing = Promise.resolve().then(async () => {
       try { await session?.close(); }
@@ -196,7 +274,14 @@ export async function runSessionV2MCP({ env = process.env, args = process.argv.s
       .then(code => { finishClosed(code); return code; });
     return closing;
   };
-  const outputFailed = () => { diagnostic('session_v2_channel_notification_unknown'); void cleanup(); };
+  // SDK writes can fail while RPCs drain or asynchronous destruction finishes.
+  // Keep handling errors until the owned stream closes, without restarting
+  // cleanup or reporting every later failure of the same terminal output.
+  const outputFailed = () => {
+    if (closing) return;
+    diagnostic('session_v2_channel_notification_unknown'); void cleanup();
+  };
+  const outputClosed = () => { output.off('error', outputFailed); void cleanup(); };
   server.onclose = () => { void cleanup(); };
   server.onerror = () => { diagnostic('session_v2_unavailable'); void cleanup(); };
   server.oninitialized = () => {
@@ -205,7 +290,7 @@ export async function runSessionV2MCP({ env = process.env, args = process.argv.s
     if (session) void session.start();
   };
   input.once('end', cleanup); input.once('close', cleanup); input.once('error', cleanup);
-  output.once('error', outputFailed); output.once('close', cleanup);
+  output.on('error', outputFailed); output.once('close', outputClosed);
   process.once('SIGINT', cleanup); process.once('SIGTERM', cleanup);
   try { await server.connect(transport); }
   catch (error) { await cleanup(); throw error; }
@@ -216,6 +301,7 @@ export async function runSessionV2MCP({ env = process.env, args = process.argv.s
       if (closing) { await client.close(); return; }
       session = makeSession(context, client);
       if (initialized) void session.start();
+      admissionWaiters.settle();
     }).catch(error => {
       if (!closing) { diagnostic(contextErrorCode(error)); void cleanup(); }
     });

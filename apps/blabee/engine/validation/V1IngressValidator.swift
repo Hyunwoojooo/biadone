@@ -77,8 +77,14 @@ public struct V1IngressValidator: Sendable {
     }
 
     func validatedObject(_ data: Data, as contract: V1Contract) throws -> StrictJSONObject {
+        let parsed = try StrictJSON.object(from: data, limits: limits)
+        return try validatedObject(parsed, as: contract)
+    }
+
+    /// Reuse only the strict parse performed by this operation. This overload
+    /// validates the schema; it is not a persisted or cross-request authority.
+    func validatedObject(_ parsed: StrictJSONObject, as contract: V1Contract) throws -> StrictJSONObject {
         do {
-            let parsed = try StrictJSON.object(from: data, limits: limits)
             switch contract {
             case .runtimeEvent: try V.runtimeEvent(parsed.value)
             case .decisionPacket: try V.decisionPacket(parsed.value)
@@ -193,15 +199,8 @@ private enum V {
 
     static func timestamp(_ object: [String: Any], _ key: String) throws {
         let value = try string(object, key, maximum: 64)
-        let pattern = "^[0-9]{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12][0-9]|3[01])T(?:[01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9](?:\\.[0-9]{1,9})?(?:Z|[+-](?:[01][0-9]|2[0-3]):[0-5][0-9])$"
-        try require(matches(value, pattern), "contract_validation_failed", "\(key) is not strict RFC3339")
-        let bytes = Array(value.utf8)
-        let year = decimal(bytes, 0, 4)
-        let month = decimal(bytes, 5, 2)
-        let day = decimal(bytes, 8, 2)
-        let leap = year % 4 == 0 && (year % 100 != 0 || year % 400 == 0)
-        let days = [31, leap ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
-        try require(month >= 1 && month <= 12 && day >= 1 && day <= days[month - 1], "contract_validation_failed", "\(key) calendar date is invalid")
+        // Keep journal admission and semantic replay on the same strict parser.
+        _ = try RFC3339Instant(value, code: "contract_validation_failed")
     }
 
     static func action(_ object: [String: Any]) throws {
@@ -576,10 +575,9 @@ private enum V {
     }
 
     static func matches(_ value: String, _ pattern: String) -> Bool {
-        value.range(of: pattern, options: .regularExpression) != nil
-    }
-
-    static func decimal(_ bytes: [UInt8], _ start: Int, _ length: Int) -> Int {
-        bytes[start..<(start + length)].reduce(0) { $0 * 10 + Int($1 - 0x30) }
+        guard let range = value.range(of: pattern, options: .regularExpression) else { return false }
+        // `$` can match before a final line terminator; every byte must belong
+        // to the match for contract fields constrained by a pattern.
+        return range == value.startIndex..<value.endIndex
     }
 }

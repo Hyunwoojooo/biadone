@@ -3,7 +3,7 @@ import { constants as fileSystemConstants } from "node:fs";
 import { lstat, open, readdir } from "node:fs/promises";
 import { isAbsolute, join, relative, sep } from "node:path";
 import { promisify } from "node:util";
-import { verifyClaudeRuntimeDirectory } from "./prepare-claude-runtime.mjs";
+import { verifyClaudeRuntimeDirectory, verifyPublicClaudeRuntimeDirectory } from "./prepare-claude-runtime.mjs";
 import { BLABEE_PROFILE } from "./distribution-profiles.mjs";
 
 const execFile = promisify(execFileCallback);
@@ -194,7 +194,7 @@ export async function verifyEmbeddedSigningEntitlements(path, key, { runner = ex
   }
 }
 
-async function validateReleaseAppCodeLayout(appPath, { internalClaude = false } = {}) {
+async function validateReleaseAppCodeLayout(appPath, { includesClaude = false } = {}) {
   let entries = 0;
   let foundMain = false;
   let foundClaudeNode = false;
@@ -237,9 +237,9 @@ async function validateReleaseAppCodeLayout(appPath, { internalClaude = false } 
           throw new Error("release app main executable must be executable Mach-O code");
         }
         foundMain = true;
-      } else if (internalClaude && pathInApp === claudeNodeRelativePath) {
+      } else if (includesClaude && pathInApp === claudeNodeRelativePath) {
         if (!isMachO || (child.mode & 0o111) === 0) {
-          throw new Error("internal Claude Node must be executable Mach-O code");
+          throw new Error("Claude Node must be executable Mach-O code");
         }
         foundClaudeNode = true;
       } else if (isMachO || ((child.mode & 0o111) !== 0 && pathInApp !== resourceLauncher)) {
@@ -251,14 +251,21 @@ async function validateReleaseAppCodeLayout(appPath, { internalClaude = false } 
   };
   await inspect(appPath, 0);
   if (!foundMain) throw new Error("release app main executable is missing");
-  if (internalClaude && !foundClaudeNode) throw new Error("internal Claude Node is missing");
+  if (includesClaude && !foundClaudeNode) throw new Error("Claude Node is missing");
 }
 
 export async function validateInternalClaudeAppCodeLayout(path) {
   requirePath(path);
   const manifest = await verifyClaudeRuntimeDirectory(join(path, "Contents", "Resources", "claude"));
   if (manifest.channel_mode !== "development-preview") throw new Error("internal Claude signing requires a development preview runtime");
-  await validateReleaseAppCodeLayout(path, { internalClaude: true });
+  await validateReleaseAppCodeLayout(path, { includesClaude: true });
+  return manifest;
+}
+
+export async function validatePublicClaudeAppCodeLayout(path) {
+  requirePath(path);
+  const manifest = await verifyPublicClaudeRuntimeDirectory(join(path, "Contents", "Resources", "claude"));
+  await validateReleaseAppCodeLayout(path, { includesClaude: true });
   return manifest;
 }
 
@@ -293,17 +300,26 @@ export async function signReleaseApp(path, signing, { runner = execFile } = {}) 
     if (error.code === "ENOENT") return false;
     throw error;
   });
-  if (hasClaude) throw new Error("public release signing rejects development Channels payloads");
-  // There is currently one Mach-O target, the main executable signed with its
-  // enclosing bundle. New nested code must gain an explicit inside-out signing
-  // plan; --deep signing would conceal omissions in that plan.
-  await validateReleaseAppCodeLayout(path);
+  const manifest = hasClaude ? await validatePublicClaudeAppCodeLayout(path) : null;
+  if (hasClaude) {
+    // Assembly signs and reseals Node before its manifest is indexed. Refuse
+    // an unsigned, ad-hoc, wrong-Team or over-entitled nested executable.
+    const node = join(path, claudeNodeRelativePath);
+    await verifyDeveloperIDSignature(node, { teamID: normalized.teamID, kind: "executable", identifier: claudeNodeIdentifier, runner });
+    await verifyEmbeddedSigningEntitlements(node, "com.apple.security.cs.allow-jit", { runner });
+  } else await validateReleaseAppCodeLayout(path);
   const entitlements = await validateAppSigningEntitlements(join(path, "Contents", "Resources", appSigningEntitlementsFileName));
   await runner("/usr/bin/codesign", [
     "--force", "--sign", normalized.identity, "--options", "runtime", "--timestamp",
     "--entitlements", entitlements, path,
   ], commandOptions());
-  return verifyDeveloperIDSignature(path, { teamID: normalized.teamID, kind: "app", runner });
+  const signature = await verifyDeveloperIDSignature(path, { teamID: normalized.teamID, kind: "app", runner });
+  if (hasClaude) {
+    await verifyEmbeddedSigningEntitlements(path, "com.apple.security.automation.apple-events", { runner });
+    const after = await validatePublicClaudeAppCodeLayout(path);
+    if (after.payload_digest !== manifest.payload_digest) throw new Error("Claude runtime changed during enclosing app signing");
+  }
+  return signature;
 }
 
 export async function signReleaseDMG(path, signing, { runner = execFile } = {}) {

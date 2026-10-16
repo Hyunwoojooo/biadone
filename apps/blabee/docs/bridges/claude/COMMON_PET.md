@@ -1,5 +1,8 @@
 # Claude 세션과 공통 Pet 연결
 
+> 아래는 세션별 검증 host의 기록이다. 2026-09-23 제품 소스의 Codex·Claude 도착순 통합 목록과
+> 공통 설정 동작은 [통합 카드 목록](../../features/UNIFIED_PROVIDER_INBOX.md)을 참고한다.
+
 공통 `blabee-coordinator`의 `claude-session-host --pet` 실행은 기존 `PetRootView`, `PetViewModel`, `PetPanelController`를 그대로 사용한다. 새 Claude 전용 화면이나 엔진 복사본을 만들지 않는다. 현재는 설치본을 보존하는 세션별 검증 실행이며, 설치된 한 Pet에 Codex와 여러 Claude 세션을 함께 모으는 등록·패키징 단계와 구분한다.
 
 ## 실행
@@ -33,7 +36,11 @@ Claude Hook/MCP ── native UDS ── ClaudeNativeSession ── 공통 core/
 - claim 뒤 transport 대기가 끝나도 별도의 `pending_report_count`가 남아 있으면 UI는 `선택 결과 대기`를 유지한다. count는 현재 세션의 보고 권한 수이며 작업 성공 수가 아니다.
 - 완료는 `complete_selection_v1`의 **Claude 보고**로 표시한다. 최근 결과에는 원래 selection 식별자를 표시하며, 과거 A의 보고가 현재 C/D 카드를 완료시키지 않는다.
 - 제안의 부수 효과 `kind`는 공통 Pet와 같은 `^[a-z][a-z0-9_]{0,63}$` 코드만 받는다. 잘못된 값은 저장 전에 거부하며, 표시 단계에서 유효한 카드 전체가 사라지지 않도록 한다.
-- 설정, 선택 건너뛰기, rollback, 전역 단축키는 이 Claude 검증 연결의 지원 기능에 포함하지 않는다. UI 선택은 Claude의 네이티브 도구 권한 승인을 대신하지 않는다.
+- 초기 검증에는 설정, 선택 건너뛰기, rollback, 전역 단축키가 포함되지 않았다.
+  2026-09-24 소스부터 `선택 건너뛰기`는 공통 제품과 세션별 host 양쪽에 연결했다.
+  현재의 유효한 카드만 `user_dismissed`로 종료하며 선택·Channel 전달·작업 실행은
+  만들지 않는다. 설정·rollback·전역 단축키의 세션별 host 범위는 유지한다.
+  UI 선택이나 건너뛰기는 Claude의 네이티브 도구 권한 승인을 대신하지 않는다.
 - launcher 수명 FD와 권한 회수 규칙은 [NATIVE_SESSION.md](NATIVE_SESSION.md)를 유지한다. UI 서버가 종료되면 사용할 수 없는 카드가 남지 않도록 창도 닫는다.
 
 ## 실제 Claude에서 버튼 테스트

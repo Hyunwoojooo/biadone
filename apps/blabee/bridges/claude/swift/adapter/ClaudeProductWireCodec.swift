@@ -11,7 +11,7 @@ import Foundation
 public final class ClaudeProductWireCodec: Sendable {
     public enum Contract: String, Sendable, CaseIterable {
         case owner = "blabee.claude-owner.v1"
-        case session = "blabee.claude-session.v2"
+        case session = "blabee.claude-session.v3"
         case pet = "blabee.pet-provider.v1"
     }
     public enum Kind: String, Sendable { case request, response }
@@ -33,7 +33,7 @@ public final class ClaudeProductWireCodec: Sendable {
     }
 
     /// Immutable transport data, not an authorization proof. The canonical JSON
-    /// may contain short-lived Channel references and must not be logged/stored.
+    /// may contain short-lived delivery references and must not be logged/stored.
     public struct Envelope: Sendable {
         public let contract: Contract
         public let kind: Kind
@@ -65,7 +65,7 @@ public final class ClaudeProductWireCodec: Sendable {
     /// Supply the process's known long-lived private capabilities, including
     /// owner/Hook/bridge/UI credentials. Values never observed by this corpus
     /// cannot be discovered by syntax checking. Do not populate it by trusting
-    /// arbitrary input, or confuse permitted one-use Channel refs with grants.
+    /// arbitrary input, or confuse permitted transient references with grants.
     /// This codec does not register or change the supplied corpus.
     public init(credentialCorpus: RuntimeSecretCorpus) {
         self.credentialCorpus = credentialCorpus
@@ -86,12 +86,12 @@ public final class ClaudeProductWireCodec: Sendable {
                                          role: role, operation: operation, value: value)
         try Self.check(rule, value)
         try inspectSecrets(value)
-        if contract == .pet && operation == "select" {
+        if contract == .pet && ["select", "dismiss_interaction"].contains(operation) {
             let payload: [String: Any]
             if kind == .request {
                 payload = try Self.object(value["payload"])
             } else if Self.boolean(value["ok"]) == true {
-                payload = try Self.object(try Self.object(value["result"])["selection"])
+                payload = try Self.object(try Self.object(value["result"])[operation == "select" ? "selection" : "dismissal"])
             } else {
                 payload = [:]
             }
@@ -170,8 +170,19 @@ public final class ClaudeProductWireCodec: Sendable {
             if request.contract == .session && ["selection.claim", "selection.complete"].contains(request.operation) {
                 try Self.requireEqual(payload["selection_id"], result["selection_id"])
             }
+            if request.contract == .session, request.operation == "hook", let waiter = result["waiter"] as? [String: Any] {
+                guard payload["event"] as? String == "Stop", result["observation_status"] as? String == "accepted",
+                      let background = payload["background_task_ids"] as? [String], background.isEmpty else {
+                    throw WireError.correlationMismatch
+                }
+                try Self.requireEqual(payload["prompt_id"], waiter["prompt_id"])
+                try Self.requireEqual(result["boundary_id"], waiter["boundary_id"])
+            }
             if request.contract == .pet && request.operation == "select" {
                 try Self.requireEqual(payload, result["selection"])
+            }
+            if request.contract == .pet && request.operation == "dismiss_interaction" {
+                try Self.requireEqual(payload, result["dismissal"])
             }
         }
         return response
@@ -260,6 +271,14 @@ public final class ClaudeProductWireCodec: Sendable {
     private static let probeResult = closed([
         "probe_id": .uuid, "expires_at_nanoseconds": .uint64(positive: false), "status": .literal("pending"),
     ])
+    private static let waiter = closed([
+        "generation": .uuid, "prompt_id": .uuid, "boundary_id": .uuid,
+        "expires_at_nanoseconds": .uint64(positive: false),
+    ])
+    private static let selectionEvent = closed([
+        "kind": .literal("selection"), "selection_id": .uuid, "delivery_token": nonce,
+        "delivery_sequence": .uint64(positive: true), "expires_at_nanoseconds": .uint64(positive: false),
+    ])
 
     private static func closed(_ fields: [String: Rule], optional: [String: Rule] = [:]) -> Rule {
         .object(fields, optional: optional)
@@ -317,7 +336,18 @@ public final class ClaudeProductWireCodec: Sendable {
             if operation == "hook" {
                 guard role == "hook" else { throw WireError.invalidEnvelope }
                 body = (hookRule, closed(["observed": .flag(true), "boundary_id": .oneOf([.uuid, .null]),
-                                         "observation_status": .choices(["accepted", "new_prompt_required", "invalidated"])]))
+                                         "observation_status": .choices(["accepted", "new_prompt_required", "invalidated"]),
+                                         "waiter": .oneOf([.null, waiter])]))
+            } else if ["hook.poll", "hook.cancel"].contains(operation) {
+                guard role == "hook" else { throw WireError.invalidEnvelope }
+                let request = closed(["native_session_id": .uuid, "cwd": cwd,
+                    "prompt_id": .uuid, "waiter_generation": .uuid])
+                body = (request, operation == "hook.cancel"
+                    ? .oneOf([closed(["cancelled": .flag(true)]), closed(["cancelled": .flag(false)])])
+                    : .oneOf([
+                        closed(["status": .choices(["waiting", "closed"]), "event": .null]),
+                        closed(["status": .literal("delivered"), "event": selectionEvent]),
+                    ]))
             } else {
                 guard role == "bridge" else { throw WireError.invalidEnvelope }
                 body = try bridgeRule(operation)
@@ -339,6 +369,11 @@ public final class ClaudeProductWireCodec: Sendable {
                 body = (selection, provider == .claude
                     ? closed(["selection": selection, "status": .literal("awaiting_claude_claim")])
                     : closed(["selection": selection, "receipt": dto("blabee.pet.codex-receipt.v1")]))
+            case "dismiss_interaction":
+                guard provider == .claude else { throw WireError.invalidEnvelope }
+                let dismissal = closed(["binding": binding, "interaction_id": identifier,
+                    "packet_id": identifier, "revision": .revision])
+                body = (dismissal, closed(["dismissal": dismissal, "dismissed": .flag(true)]))
             case "readiness.begin":
                 guard provider == .claude else { throw WireError.invalidEnvelope }
                 body = (closed([:]), probeResult)
@@ -372,16 +407,12 @@ public final class ClaudeProductWireCodec: Sendable {
         func request(_ extra: [String: Rule] = [:]) -> Rule { closed(bridge.merging(extra) { _, last in last }) }
         switch operation {
         case "bridge.open": return (closed([:]), closed(bridge))
-        case "bridge.poll":
-            let common: [String: Rule] = ["expires_at_nanoseconds": .uint64(positive: false),
-                "channel_source": channel, "delivery_sequence": .uint64(positive: true)]
-            return (request(), closed(["event": .oneOf([
-                .null,
-                closed(common.merging(["kind": .literal("readiness_probe"), "probe_id": .uuid, "nonce": nonce]) { _, last in last }),
-                closed(common.merging(["kind": .literal("selection"), "selection_id": .uuid, "delivery_token": nonce]) { _, last in last }),
-            ])]))
+        case "bridge.poll": return (request(), closed(["event": .null]))
         case "bridge.close": return (request(), closed(["closed": .flag(true)]))
-        case "readiness.begin": return (request(), probeResult)
+        case "readiness.begin": return (request(), closed([
+            "probe_id": .uuid, "nonce": nonce, "expires_at_nanoseconds": .uint64(positive: false),
+            "status": .literal("pending"),
+        ]))
         case "readiness.ack":
             return (request(["probe_id": .uuid, "nonce": nonce]), closed(["acknowledged": .flag(true)]))
         case "proposal.emit":

@@ -5,7 +5,7 @@ import Foundation
 /// Lives in the original terminal in a separately signed app copy. A paused
 /// supervisor owns no Codex child, but keeps its tty so resume needs no tab input.
 final class UpdateManagedCodexHost: @unchecked Sendable {
-    private let registry = UpdateManagedCodexRegistry()
+    private let registry: UpdateManagedCodexRegistry
     private let recordLock = NSLock()
     private let operationLock = NSLock()
     private var record: UpdateManagedCodexRecord
@@ -16,6 +16,7 @@ final class UpdateManagedCodexHost: @unchecked Sendable {
     private let isRestoration: Bool
 
     init(sessionID: String, claim: String?) throws {
+        registry = UpdateManagedCodexRegistry()
         let sessions = UpdateManagedCodexSessions.live()
         guard let stored = try sessions.registry.records().first(where: { $0.session.id == sessionID }),
               let executable = Bundle.main.executableURL,
@@ -48,6 +49,16 @@ final class UpdateManagedCodexHost: @unchecked Sendable {
         // Incarnation CAS also prevents two Terminal windows executing the same
         // .command from creating two writable hosts.
         try registry.save(record, expectedIncarnation: stored.incarnation)
+    }
+
+    /// Isolated state-machine construction; production uses the verified initializer above.
+    init(testingRecord: UpdateManagedCodexRecord, registry: UpdateManagedCodexRegistry,
+         runtime: UpdateManagedCodexRuntime) {
+        self.registry = registry
+        record = testingRecord
+        self.runtime = runtime
+        isRestoration = false
+        transitioning = false
     }
 
     func run() throws -> Int32 {
@@ -85,8 +96,8 @@ final class UpdateManagedCodexHost: @unchecked Sendable {
         return 0
     }
 
-    private func handle(_ action: UpdateManagedCodexControlAction,
-                        transactionID: String?, expectedSession: UpdateManagedSession) throws -> UpdateManagedCodexRecord {
+    func handle(_ action: UpdateManagedCodexControlAction,
+                transactionID: String?, expectedSession: UpdateManagedSession) throws -> UpdateManagedCodexRecord {
         if action == .status { return try status() }
         guard let transactionID, UUID(uuidString: transactionID) != nil else {
             throw CoordinatorError("update_managed_transaction_invalid")
@@ -118,6 +129,14 @@ final class UpdateManagedCodexHost: @unchecked Sendable {
                 recordLock.unlock()
                 try registry.save(saved, expectedIncarnation: saved.incarnation)
                 return saved
+            } catch is UpdateManagedCodexRuntime.PauseAdmissionBusy {
+                do {
+                    try cancelPauseAdmission(previous: current, transactionID: transactionID, runtime: runtime)
+                } catch {
+                    try? recordFailure("update_managed_pause_unconfirmed")
+                    throw error
+                }
+                throw CoordinatorError("update_managed_session_busy_or_unconfirmed")
             } catch {
                 try? recordFailure("update_managed_pause_unconfirmed")
                 throw error
@@ -209,6 +228,28 @@ final class UpdateManagedCodexHost: @unchecked Sendable {
         try registry.save(updated, expectedIncarnation: record.incarnation)
         record = updated
         transitioning = true
+    }
+
+    /// A typed pre-freeze rejection grants no pause receipt or new ownership.
+    /// Keep callbacks blocked until the prior transaction is durably restored.
+    private func cancelPauseAdmission(previous: UpdateManagedCodexRecord, transactionID: String,
+                                      runtime: UpdateManagedCodexRuntime) throws {
+        recordLock.lock(); defer { recordLock.unlock() }
+        let snapshot = runtime.snapshot
+        guard transitioning, !hostFailure, record.session.state == .pausing,
+              record.transactionID == transactionID, record.incarnation == previous.incarnation,
+              snapshot.threadID == previous.session.threadID, snapshot.cwd == previous.session.cwd,
+              [.running, .busy].contains(snapshot.state) else {
+            throw CoordinatorError("update_managed_pause_unconfirmed")
+        }
+        var updated = record
+        updated.session.state = snapshot.state
+        updated.session.detail = snapshot.detail
+        updated.transactionID = previous.transactionID
+        updated.restorationClaim = previous.restorationClaim
+        try registry.save(updated, expectedIncarnation: record.incarnation)
+        record = updated
+        transitioning = false
     }
 
     private func recordFailure(_ code: String) throws {

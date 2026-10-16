@@ -3,7 +3,7 @@ import Foundation
 import Testing
 @testable import BlabeeCoordinator
 
-@Test("BlabeePet strictly parses operational state and packet detail")
+@Test("BlabeePet strictly parses operational state and packet detail", .petLanguage(.korean))
 func blabeePetStrictModelParsing() throws {
     let snapshot = try PetSnapshot.parse(petTestSnapshotData(
         cards: [PetTestCard(suffix: "strict", rollbackEnabled: true)],
@@ -50,6 +50,60 @@ func blabeePetStrictModelParsing() throws {
     #expect(rejectedRisk)
 }
 
+@Test("BlabeePet displays typed suggestion kinds and keeps legacy cards neutral", .petLanguage(.korean))
+func blabeePetSuggestionKindParsing() throws {
+    let cases: [(BlabeeSuggestionKind?, String)] = [
+        (.currentTask, "현재 작업의 다음 선택"),
+        (.newSuggestion, "새로운 제안"),
+        (nil, "다음 선택"),
+    ]
+    for (kind, expectedLabel) in cases {
+        for includesCWD in [false, true] {
+            for includesOutcome in [false, true] {
+                var object = petTestSnapshotObject(cards: [PetTestCard(suffix: "suggestion_kind")])
+                var interactions = try #require(object["interactions"] as? [[String: Any]])
+                if let kind { interactions[0]["suggestion_kind"] = kind.rawValue }
+                if !includesCWD { interactions[0].removeValue(forKey: "cwd") }
+                if !includesOutcome {
+                    interactions[0].removeValue(forKey: "outcome")
+                    interactions[0].removeValue(forKey: "reported_side_effects")
+                }
+                object["interactions"] = interactions
+
+                let snapshot = try PetSnapshot.parse(petTestData(object))
+                let interaction = try #require(snapshot.interactions.first)
+                #expect(interaction.suggestionKind == kind)
+                #expect(interaction.suggestionKindLabel == expectedLabel)
+                #expect(interaction.isSelectionReady)
+                #expect(interaction.choices.count == 4)
+            }
+        }
+    }
+}
+
+@Test("BlabeePet rejects null, unknown and non-string suggestion kinds", .petLanguage(.korean))
+func blabeePetSuggestionKindRejectsInvalid() throws {
+    let invalidKinds: [Any] = [NSNull(), "", "background", "CURRENT_TASK", 1, true, [], [:]]
+    for invalidKind in invalidKinds {
+        var object = petTestSnapshotObject(cards: [PetTestCard(suffix: "invalid_suggestion_kind")])
+        var interactions = try #require(object["interactions"] as? [[String: Any]])
+        interactions[0]["suggestion_kind"] = invalidKind
+        object["interactions"] = interactions
+        #expect(throws: PetModelError.invalid("interaction.suggestion_kind")) {
+            _ = try PetSnapshot.parse(petTestData(object))
+        }
+    }
+
+    var object = petTestSnapshotObject(cards: [PetTestCard(suffix: "unknown_suggestion_field")])
+    var interactions = try #require(object["interactions"] as? [[String: Any]])
+    interactions[0]["suggestion_kind"] = "current_task"
+    interactions[0]["unexpected"] = true
+    object["interactions"] = interactions
+    #expect(throws: PetModelError.invalid("interaction")) {
+        _ = try PetSnapshot.parse(petTestData(object))
+    }
+}
+
 @Test(
     "BlabeePet always displays three fixed permission choices regardless of response availability",
     arguments: [false, true], [false, true]
@@ -79,7 +133,7 @@ func blabeePetPermissionChoiceNumbersAreStable(
     }
 }
 
-@Test("BlabeePet strictly joins and orders permission requests")
+@Test("BlabeePet strictly joins and orders permission requests", .petLanguage(.korean))
 func blabeePetPermissionRequestParsing() throws {
     let first = PetTestPermissionRequest(suffix: "permission_a")
     let second = PetTestPermissionRequest(
@@ -217,7 +271,7 @@ func blabeePetPermissionRequestParsing() throws {
     }
 }
 
-@Test("BlabeePet preserves a Hook caller's path while joining its normalized project",
+@Test("BlabeePet preserves a Hook caller's path while joining its normalized project", .petLanguage(.korean),
       arguments: ["", "/.", "//"])
 func blabeePetPermissionPreservesCallerCWD(pathSuffix: String) throws {
     let suffix = "cwd_\(UUID().uuidString.lowercased())"
@@ -240,7 +294,7 @@ func blabeePetPermissionPreservesCallerCWD(pathSuffix: String) throws {
     #expect(throws: (any Error).self) { try PetSnapshot.parse(petTestData(object)) }
 }
 
-@Test("BlabeePet parses managed approvals independently from Hook sessions")
+@Test("BlabeePet parses managed approvals independently from Hook sessions", .petLanguage(.korean))
 func blabeePetManagedCommandApprovalParsing() throws {
     let first = PetTestManagedCommandApproval(
         suffix: "managed_first",
@@ -320,7 +374,7 @@ func blabeePetManagedCommandApprovalParsing() throws {
     }
 }
 
-@Test("BlabeePet chooses one global approval head by arrival sequence")
+@Test("BlabeePet chooses one global approval head by arrival sequence", .petLanguage(.korean))
 func blabeePetGlobalApprovalHeadOrdering() throws {
     let hookFirst = try PetSnapshot.parse(petTestSnapshotData(
         cards: [],
@@ -370,7 +424,7 @@ func blabeePetGlobalApprovalHeadOrdering() throws {
     }
 }
 
-@Test("BlabeePet preserves private tmp cwd through managed approval resolution")
+@Test("BlabeePet preserves private tmp cwd through managed approval resolution", .petLanguage(.korean))
 func blabeePetManagedCommandApprovalPreservesPrivateTmpCWD() throws {
     let request = PetTestManagedCommandApproval(suffix: "private_tmp")
     let directoryName = "blabee-pet-private-tmp-\(UUID().uuidString.lowercased())"
@@ -415,7 +469,7 @@ func blabeePetManagedCommandApprovalPreservesPrivateTmpCWD() throws {
     )
 }
 
-@Test("BlabeePet rejects unsafe managed approval cwd values")
+@Test("BlabeePet rejects unsafe managed approval cwd values", .petLanguage(.korean))
 func blabeePetManagedCommandApprovalRejectsUnsafeCWD() throws {
     let request = PetTestManagedCommandApproval(suffix: "unsafe_cwd")
     let unsafePaths = [
@@ -445,7 +499,7 @@ func blabeePetManagedCommandApprovalRejectsUnsafeCWD() throws {
     }
 }
 
-@Test("BlabeePet distinguishes ranked actions from the legacy fixed choices")
+@Test("BlabeePet distinguishes ranked actions from the legacy fixed choices", .petLanguage(.korean))
 func blabeePetRankedAndLegacyChoiceShapes() throws {
     for count in 2...4 {
         let snapshot = try PetSnapshot.parse(petTestSnapshotData(cards: [PetTestCard(
@@ -502,7 +556,7 @@ func blabeePetRankedAndLegacyChoiceShapes() throws {
     #expect(rejectedDisabledRanked)
 }
 
-@Test("BlabeePet rejects routing joins that differ by any immutable identity field")
+@Test("BlabeePet rejects routing joins that differ by any immutable identity field", .petLanguage(.korean))
 func blabeePetExactRoutingJoin() throws {
     var object = petTestSnapshotObject(
         cards: [PetTestCard(suffix: "join")],
@@ -523,7 +577,7 @@ func blabeePetExactRoutingJoin() throws {
     #expect(rejected)
 }
 
-@Test("BlabeePet uses routing order and requires a bijective pending join")
+@Test("BlabeePet uses routing order and requires a bijective pending join", .petLanguage(.korean))
 func blabeePetRoutingOrderAndReverseJoin() throws {
     let cardA = PetTestCard(suffix: "order_a")
     let cardB = PetTestCard(suffix: "order_b")
@@ -547,7 +601,7 @@ func blabeePetRoutingOrderAndReverseJoin() throws {
     #expect(rejectedMissingInteraction)
 }
 
-@Test("BlabeePet rejects numeric booleans at snapshot and response boundaries")
+@Test("BlabeePet rejects numeric booleans at snapshot and response boundaries", .petLanguage(.korean))
 func blabeePetRejectsNumericBooleans() throws {
     let numericBooleans: [NSNumber] = [
         NSNumber(value: 0), NSNumber(value: 1),
@@ -605,7 +659,7 @@ func blabeePetRejectsNumericBooleans() throws {
     }
 }
 
-@Test("BlabeePet accepts only pause or an acknowledged next-turn queue receipt")
+@Test("BlabeePet accepts only pause or an acknowledged next-turn queue receipt", .petLanguage(.korean))
 func blabeePetSelectionResponseContract() throws {
     let nextTurn = try PetTransportResponse.requireAcceptedSelection(petTestData([
         "accepted": true,
@@ -651,7 +705,7 @@ func blabeePetSelectionResponseContract() throws {
     }
 }
 
-@Test("BlabeePet rejects ambiguous option ids and inconsistent rollback checkpoints")
+@Test("BlabeePet rejects ambiguous option ids and inconsistent rollback checkpoints", .petLanguage(.korean))
 func blabeePetChoiceIdentityAndCheckpointConsistency() throws {
     var duplicateOptions = petTestSnapshotObject(cards: [PetTestCard(suffix: "duplicate")])
     var duplicateInteractions = try #require(
@@ -690,7 +744,7 @@ func blabeePetChoiceIdentityAndCheckpointConsistency() throws {
     #expect(rejectedRollback)
 }
 
-@Test("BlabeePet serializes the exact sixteen-field selection and fourteen-field focus")
+@Test("BlabeePet serializes the exact sixteen-field selection and fourteen-field focus", .petLanguage(.korean))
 func blabeePetExactSelectionSerialization() throws {
     let snapshot = try PetSnapshot.parse(petTestSnapshotData(
         cards: [PetTestCard(suffix: "serialize")],
@@ -721,7 +775,7 @@ func blabeePetExactSelectionSerialization() throws {
     #expect(focus["interaction_id"] as? String == interaction.identity.interactionID)
 }
 
-@Test("BlabeePet labels dynamic, fixed, and disabled slots without remapping")
+@Test("BlabeePet labels dynamic, fixed, and disabled slots without remapping", .petLanguage(.korean))
 func blabeePetSlotLabels() throws {
     let snapshot = try PetSnapshot.parse(petTestSnapshotData(cards: [
         PetTestCard(suffix: "labels", alternativeEnabled: false),

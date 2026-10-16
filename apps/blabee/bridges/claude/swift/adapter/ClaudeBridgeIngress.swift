@@ -1,6 +1,25 @@
 import CoordinatorSwift
 import Foundation
 
+private final class ClaudeLegacyAccessBindings: @unchecked Sendable {
+    private struct Key: Hashable { let scope: String; let binding: CoordinatorBindingKey }
+    private let lock = NSLock()
+    private var generations: [Key: UInt64] = [:]
+    func check(scope: String, binding: CoordinatorBindingKey, operation: String, generation: UInt64) throws {
+        try lock.withLock {
+            let key = Key(scope: scope, binding: binding)
+            if operation == "activate", generations[key] == nil {
+                guard generations.count < 4_096 else { throw CoordinatorError("claude_bridge_capacity") }
+                generations[key] = generation
+            }
+            guard generations[key] == generation else { throw CoordinatorError("product_access_changed") }
+        }
+    }
+    func retire(scope: String, binding: CoordinatorBindingKey) {
+        _ = lock.withLock { generations.removeValue(forKey: Key(scope: scope, binding: binding)) }
+    }
+}
+
 /// Trusted configuration, loaded before creating a scope's isolated journal.
 /// Credentials are role-specific and are never inferred from request content.
 public struct ClaudeBridgeScope: Sendable {
@@ -55,6 +74,8 @@ public final class ClaudeBridgeIngress: Sendable {
     private let now: @Sendable () -> Date
     private let productAuthority: ClaudeSessionAuthority?
     private let productMutation: ProductCoreMutation?
+    private let productAccessCheck: @Sendable () throws -> UInt64
+    private let legacyAccessBindings = ClaudeLegacyAccessBindings()
 
     /// Run this before opening/creating any scope storage. A malformed or
     /// duplicate configuration must not issue credentials or create databases.
@@ -83,7 +104,8 @@ public final class ClaudeBridgeIngress: Sendable {
 
     public init(scopes: [ClaudeBridgeScope], adapters: [String: ClaudeCoreAdapter],
                 secretCorpus: RuntimeSecretCorpus,
-                now: @escaping @Sendable () -> Date = { Date() }) throws {
+                now: @escaping @Sendable () -> Date = { Date() },
+                productAccessCheck: @escaping @Sendable () throws -> UInt64 = { 0 }) throws {
         try Self.validateScopes(scopes, now: now())
         guard Set(adapters.keys) == Set(scopes.map(\.scopeID)),
               Set(adapters.values.map(ObjectIdentifier.init)).count == adapters.count else {
@@ -95,6 +117,7 @@ public final class ClaudeBridgeIngress: Sendable {
         self.now = now
         self.productAuthority = nil
         self.productMutation = nil
+        self.productAccessCheck = productAccessCheck
         // No caller-supplied guess is ever registered into this global corpus.
         for scope in scopes {
             secretCorpus.register(scope.bridgeToken)
@@ -127,6 +150,7 @@ public final class ClaudeBridgeIngress: Sendable {
         self.now = wallNow
         self.productAuthority = authority
         self.productMutation = withCoreMutation
+        self.productAccessCheck = { 0 } // Product native gates before metadata mutation and action release.
         secretCorpus.register(scope.bridgeToken)
         secretCorpus.register(scope.selectionToken)
     }
@@ -167,7 +191,7 @@ public final class ClaudeBridgeIngress: Sendable {
               requestID.utf8.count == 36, UUID(uuidString: requestID) != nil,
               let operation = request["operation"] as? String else { throw Self.invalidRequest() }
         let allowed: Set<String> = role == "bridge"
-            ? ["activate", "claim", "complete", "invalidate", "snapshot"] : ["select", "snapshot", "pet.snapshot"]
+            ? ["activate", "claim", "complete", "invalidate", "snapshot"] : ["select", "dismiss_interaction", "snapshot", "pet.snapshot"]
         guard allowed.contains(operation) else { throw CoordinatorError("claude_bridge_forbidden") }
         if operation != "snapshot" && operation != "pet.snapshot" {
             guard let binding = request["binding"] as? [String: Any],
@@ -180,9 +204,19 @@ public final class ClaudeBridgeIngress: Sendable {
         // Existing CoordinatorBinding has exactly nine fields, with no
         // correlation token. No secret-bearing binding exception is invented.
         try assertPublicBody(request)
+        let accessGeneration = ["activate", "select", "claim"].contains(operation)
+            ? try productAccessCheck() : nil
+        if let accessGeneration, let value = request["binding"] as? [String: Any] {
+            let binding = try CoordinatorBinding(jsonObject: value)
+            try legacyAccessBindings.check(scope: scopeID, binding: binding.fullKey,
+                                           operation: operation, generation: accessGeneration)
+        }
         let adapterResponse = try StrictJSONTransport.object(from: adapter.respond(
             to: StrictJSONTransport.data(forJSONObject: request)
         ))
+        if operation == "claim", let accessGeneration, try productAccessCheck() != accessGeneration {
+            throw CoordinatorError("product_access_changed")
+        }
         guard adapterResponse["schema_version"] as? String == ClaudeCoreAdapter.schemaVersion,
               adapterResponse["request_id"] as? String == requestID,
               let ok = adapterResponse["ok"] as? Bool else { throw Self.invalidResponse() }
@@ -193,6 +227,10 @@ public final class ClaudeBridgeIngress: Sendable {
         if ok {
             guard let body = adapterResponse["result"] as? [String: Any] else { throw Self.invalidResponse() }
             result["result"] = try projectResult(body, operation: operation, scope: scope)
+            if ["complete", "invalidate", "dismiss_interaction"].contains(operation),
+               let value = request["binding"] as? [String: Any] {
+                legacyAccessBindings.retire(scope: scopeID, binding: try CoordinatorBinding(jsonObject: value).fullKey)
+            }
         } else {
             guard let error = adapterResponse["error"] as? [String: Any],
                   Set(error.keys) == ["code"], let code = error["code"] as? String,
@@ -238,7 +276,7 @@ public final class ClaudeBridgeIngress: Sendable {
             throw Self.invalidRequest()
         }
         let allowed: Set<String> = role == "bridge"
-            ? ["activate", "claim", "complete", "invalidate", "snapshot"] : ["select", "snapshot", "pet.snapshot"]
+            ? ["activate", "claim", "complete", "invalidate", "snapshot"] : ["select", "dismiss_interaction", "snapshot", "pet.snapshot"]
         guard allowed.contains(operation) else { throw CoordinatorError("claude_bridge_forbidden") }
         let binding: CoordinatorBinding?
         if operation == "snapshot" || operation == "pet.snapshot" { binding = nil }
@@ -325,6 +363,9 @@ public final class ClaudeBridgeIngress: Sendable {
             var value = try Self.pick(result, ["selection_id", "continuation_id", "packet_id", "revision", "option_id"])
             value["delivery"] = "awaiting_claude_claim"
             return value
+        case "dismiss_interaction":
+            guard Self.strictBoolean(result["dismissed"]) == true else { throw Self.invalidResponse() }
+            return try Self.pick(result, ["dismissed", "interaction_id", "packet_id", "revision"])
         case "claim":
             var value = try Self.pick(result, ["selection_id", "continuation_id", "packet_id", "revision", "option_id", "action_id"])
             guard let option = result["option"] as? [String: Any] else { throw Self.invalidResponse() }

@@ -265,7 +265,7 @@ private final class MetadataRaceResult: @unchecked Sendable {
     }
 }
 
-@Suite("Claude session metadata")
+@Suite("Claude session metadata", .petLanguage(.korean))
 struct ClaudeSessionMetadataStoreTests {
     @Test("Enrollment brackets actual core initialization; restart is pure authenticated history")
     func enrollmentAndReadOnlyRestart() throws {

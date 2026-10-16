@@ -15,12 +15,12 @@ struct LegacyCodexShellCleanupInspection: Sendable, Equatable {
     var canPrepare: Bool { status == .available }
     var title: String {
         switch status {
-        case .notFound: "구형 셸 연결 없음"
-        case .available: "구형 셸 연결 발견"
-        case .manualReview: "구형 셸 연결 수동 확인 필요"
-        case .cleaned: "구형 셸 연결 비활성화 완료"
-        case .recoveryRequired: "백업과 현재 설정 확인 필요"
-        case .unavailable: "구형 셸 연결 검사 불가"
+        case .notFound: PetL10n.text("No legacy shell connection", korean: "구형 셸 연결 없음")
+        case .available: PetL10n.text("Legacy shell connection found", korean: "구형 셸 연결 발견")
+        case .manualReview: PetL10n.text("Review legacy shell connection manually", korean: "구형 셸 연결 수동 확인 필요")
+        case .cleaned: PetL10n.text("Legacy shell connection disabled", korean: "구형 셸 연결 비활성화 완료")
+        case .recoveryRequired: PetL10n.text("Check backup and current settings", korean: "백업과 현재 설정 확인 필요")
+        case .unavailable: PetL10n.text("Unable to check legacy shell connection", korean: "구형 셸 연결 검사 불가")
         }
     }
 }
@@ -40,7 +40,7 @@ protocol LegacyCodexShellCleanupManaging: Sendable {
 
 struct LegacyUnavailableCodexShellCleanupManager: LegacyCodexShellCleanupManaging {
     func inspect() async -> LegacyCodexShellCleanupInspection {
-        LegacyCodexShellCleanupInspection(status: .unavailable, detail: "구형 셸 연결 검사가 구성되지 않았습니다.")
+        LegacyCodexShellCleanupInspection(status: .unavailable, detail: PetL10n.text("Legacy shell connection checking is not configured.", korean: "구형 셸 연결 검사가 구성되지 않았습니다."))
     }
     func prepare() async -> LegacyCodexShellCleanupConfirmation? { nil }
     func cleanup(confirmation _: LegacyCodexShellCleanupConfirmation) async -> LegacyCodexShellCleanupInspection {
@@ -91,7 +91,7 @@ actor LegacyCodexShellCleanupManager: LegacyCodexShellCleanupManaging {
     func inspect() async -> LegacyCodexShellCleanupInspection {
         do {
             guard let snapshot = try inspectSnapshot() else { return absent() }
-            return result(.available, "확인된 v4 래퍼만 백업 이름으로 이동합니다. .zshrc와 Codex는 변경하지 않습니다.", snapshot: snapshot)
+            return result(.available, PetL10n.text("Only the verified v4 wrapper will be moved to a backup filename. .zshrc and Codex will remain unchanged.", korean: "확인된 v4 래퍼만 백업 이름으로 이동합니다. .zshrc와 Codex는 변경하지 않습니다."), snapshot: snapshot)
         } catch { return rejected(error) }
     }
 
@@ -100,7 +100,7 @@ actor LegacyCodexShellCleanupManager: LegacyCodexShellCleanupManaging {
         guard let snapshot = try? inspectSnapshot() else { return nil }
         let confirmation = LegacyCodexShellCleanupConfirmation(
             id: UUID(), wrapperPath: wrapper.path, startupPath: snapshot.startupPath,
-            detail: "이 래퍼를 고유한 백업 이름으로 이동합니다. .zshrc의 조건부 source 구간은 그대로 남지만 더 이상 실행되지 않습니다. 열린 터미널은 바뀌지 않으므로 새 터미널에서 확인하세요."
+            detail: PetL10n.text("This wrapper will be moved to a unique backup filename. The conditional source block in .zshrc remains but will no longer run. Existing terminals do not change; check in a new terminal.", korean: "이 래퍼를 고유한 백업 이름으로 이동합니다. .zshrc의 조건부 source 구간은 그대로 남지만 더 이상 실행되지 않습니다. 열린 터미널은 바뀌지 않으므로 새 터미널에서 확인하세요.")
         )
         pending = (confirmation, snapshot)
         return confirmation
@@ -108,7 +108,7 @@ actor LegacyCodexShellCleanupManager: LegacyCodexShellCleanupManaging {
 
     func cleanup(confirmation: LegacyCodexShellCleanupConfirmation) async -> LegacyCodexShellCleanupInspection {
         guard let prepared = pending, prepared.0 == confirmation else {
-            return rejected(Failure("확인 요청이 만료되었습니다. 다시 검사하고 확인해 주세요."))
+            return rejected(Failure(PetL10n.text("Confirmation expired. Check and confirm again.", korean: "확인 요청이 만료되었습니다. 다시 검사하고 확인해 주세요.")))
         }
         pending = nil // Single use, including failures; no implicit replay.
         do {
@@ -119,12 +119,12 @@ actor LegacyCodexShellCleanupManager: LegacyCodexShellCleanupManaging {
             defer { flock(lock, LOCK_UN); close(lock) }
             // Even the absent/no-op judgment is made under the common file lock.
             guard let current = try inspectSnapshot() else { return absent() }
-            guard current == prepared.1 else { throw Failure("확인 후 설정이 변경되었습니다. 다시 검사해 주세요.") }
+            guard current == prepared.1 else { throw Failure(PetL10n.text("Settings changed after verification. Check again.", korean: "확인 후 설정이 변경되었습니다. 다시 검사해 주세요.")) }
             try verifyDirectory(parent)
             try beforeMove?()
             let backupName = Self.wrapperName + ".blabee-backup-" + UUID().uuidString.lowercased()
             guard renameatx_np(parent, Self.wrapperName, parent, backupName, UInt32(RENAME_EXCL)) == 0 else {
-                throw Failure("래퍼를 안전하게 백업하지 못했습니다. 기존 파일은 덮어쓰지 않았습니다.")
+                throw Failure(PetL10n.text("Unable to safely back up the wrapper. Existing files were not overwritten.", korean: "래퍼를 안전하게 백업하지 못했습니다. 기존 파일은 덮어쓰지 않았습니다."))
             }
             let backupPath = directory.appendingPathComponent(backupName).path
             do {
@@ -134,20 +134,20 @@ actor LegacyCodexShellCleanupManager: LegacyCodexShellCleanupManaging {
                       moved.matchesMoved(current.wrapper),
                       try inspectStartup() == current.startup,
                       try readFile(parent: parent, name: Self.wrapperName, limit: 64 * 1_024) == nil
-                else { throw Failure("백업 중 파일이나 시작 설정이 변경되었습니다.") }
-                guard fsync(parent) == 0 else { throw Failure("백업 디렉터리 동기화를 확인하지 못했습니다.") }
+                else { throw Failure(PetL10n.text("Files or startup settings changed during backup.", korean: "백업 중 파일이나 시작 설정이 변경되었습니다.")) }
+                guard fsync(parent) == 0 else { throw Failure(PetL10n.text("Unable to verify backup directory synchronization.", korean: "백업 디렉터리 동기화를 확인하지 못했습니다.")) }
                 return result(.cleaned, confirmation.detail, snapshot: current, backup: backupPath)
             } catch {
                 // A rotated directory must not be reported as restored at the old path.
                 guard (try? verifyDirectory(parent)) != nil else {
-                    return result(.recoveryRequired, "정리 중 디렉터리가 교체되었습니다. 열린 디렉터리 안의 백업을 보존했으며 자동 복원하지 않습니다.", snapshot: current, backup: actualDirectoryPath(parent).map { $0 + "/" + backupName } ?? backupPath)
+                    return result(.recoveryRequired, PetL10n.text("The directory was replaced during cleanup. The backup in the opened directory was preserved and will not be restored automatically.", korean: "정리 중 디렉터리가 교체되었습니다. 열린 디렉터리 안의 백업을 보존했으며 자동 복원하지 않습니다."), snapshot: current, backup: actualDirectoryPath(parent).map { $0 + "/" + backupName } ?? backupPath)
                 }
                 // Never replace an editor's new file. A recovery move is exclusive too.
                 if renameatx_np(parent, backupName, parent, Self.wrapperName, UInt32(RENAME_EXCL)) == 0 {
                     _ = fsync(parent)
-                    return result(.manualReview, "정리 중 변경을 감지해 이동한 파일을 원래 이름으로 되돌렸습니다. 설정은 다시 확인해야 합니다.", snapshot: current)
+                    return result(.manualReview, PetL10n.text("A change was detected during cleanup. The moved file was restored to its original name. Recheck the settings.", korean: "정리 중 변경을 감지해 이동한 파일을 원래 이름으로 되돌렸습니다. 설정은 다시 확인해야 합니다."), snapshot: current)
                 }
-                return result(.recoveryRequired, "정리 중 변경을 감지했습니다. 현재 파일을 덮어쓰지 않고 백업을 보존했습니다. 두 경로를 직접 확인해 주세요.", snapshot: current, backup: backupPath)
+                return result(.recoveryRequired, PetL10n.text("A change was detected during cleanup. The backup was preserved without overwriting current files. Check both paths manually.", korean: "정리 중 변경을 감지했습니다. 현재 파일을 덮어쓰지 않고 백업을 보존했습니다. 두 경로를 직접 확인해 주세요."), snapshot: current, backup: backupPath)
             }
         } catch { return rejected(error) }
     }
@@ -199,7 +199,7 @@ actor LegacyCodexShellCleanupManager: LegacyCodexShellCleanupManaging {
         let startup = try inspectStartup()
         guard let source = String(data: file.bytes, encoding: .utf8),
               source.hasPrefix("# Blabee Codex Auto Connect v4\n") else {
-            throw Failure("자동 정리는 변경되지 않은 구형 v4 래퍼만 지원합니다. 이전 버전이나 수정된 파일은 수동 확인이 필요합니다.")
+            throw Failure(PetL10n.text("Automatic cleanup supports only unchanged legacy v4 wrappers. Older or modified files require manual review.", korean: "자동 정리는 변경되지 않은 구형 v4 래퍼만 지원합니다. 이전 버전이나 수정된 파일은 수동 확인이 필요합니다."))
         }
         let lines = source.components(separatedBy: "\n")
         guard lines.count > 6,
@@ -213,15 +213,15 @@ actor LegacyCodexShellCleanupManager: LegacyCodexShellCleanupManaging {
                 official: official, coordinator: coordinator, startup: startup.path,
                 originallyMissing: lines[2] == "# zshrc-origin: missing"
               )
-        else { throw Failure("래퍼 본문과 생성 메타데이터가 일치하지 않습니다. 수동 수정본은 자동 정리하지 않습니다.") }
+        else { throw Failure(PetL10n.text("The wrapper contents do not match generation metadata. Manually modified files are not cleaned up automatically.", korean: "래퍼 본문과 생성 메타데이터가 일치하지 않습니다. 수동 수정본은 자동 정리하지 않습니다.")) }
         let block = Self.managedBlock(wrapperPath: wrapper.path)
         guard let zshrc = startup.files[startup.path], let text = String(data: zshrc.bytes, encoding: .utf8),
               let range = text.range(of: block),
               range.lowerBound == text.startIndex || text[text.index(before: range.lowerBound)] == "\n"
-        else { throw Failure("실제 .zshrc에서 정확한 조건부 Blabee 연결 구간을 확인하지 못했습니다.") }
+        else { throw Failure(PetL10n.text("Unable to verify the exact conditional Blabee connection block in the actual .zshrc.", korean: "실제 .zshrc에서 정확한 조건부 Blabee 연결 구간을 확인하지 못했습니다.")) }
         let remainder = String(text[..<range.lowerBound]) + String(text[range.upperBound...])
         guard !Self.hasLegacyReference(remainder), !remainder.contains("ZDOTDIR") else {
-            throw Failure("관리 구간 밖에 추가 Blabee 연결 또는 ZDOTDIR 설정이 있습니다. 자동 정리를 중단합니다.")
+            throw Failure(PetL10n.text("Additional Blabee connections or ZDOTDIR settings exist outside the managed block. Automatic cleanup stopped.", korean: "관리 구간 밖에 추가 Blabee 연결 또는 ZDOTDIR 설정이 있습니다. 자동 정리를 중단합니다."))
         }
         return Snapshot(parent: try identity(parent), wrapper: file, startup: startup)
     }
@@ -230,7 +230,7 @@ actor LegacyCodexShellCleanupManager: LegacyCodexShellCleanupManaging {
         let dotDirectory: URL
         if let value = environment["ZDOTDIR"] {
             guard Self.isSafeAbsolutePath(value), value == home.path || value.hasPrefix(home.path + "/") else {
-                throw Failure("ZDOTDIR가 홈 내부의 명확한 절대 경로가 아닙니다. 수동 확인이 필요합니다.")
+                throw Failure(PetL10n.text("ZDOTDIR is not an unambiguous absolute path inside the home directory. Manual review is required.", korean: "ZDOTDIR가 홈 내부의 명확한 절대 경로가 아닙니다. 수동 확인이 필요합니다."))
             }
             dotDirectory = URL(fileURLWithPath: value, isDirectory: true)
         } else { dotDirectory = home }
@@ -246,7 +246,7 @@ actor LegacyCodexShellCleanupManager: LegacyCodexShellCleanupManaging {
                     if path != dotDirectory.appendingPathComponent(".zshrc").path {
                         guard let source = String(data: file.bytes, encoding: .utf8),
                               !source.contains("ZDOTDIR"), !Self.hasLegacyReference(source) else {
-                            throw Failure("시작 파일에 추가 연결 또는 동적인 ZDOTDIR 설정이 있습니다. 셸을 실행하지 않고는 확정할 수 없어 자동 정리하지 않습니다.")
+                            throw Failure(PetL10n.text("Startup files contain additional connections or dynamic ZDOTDIR settings. These cannot be verified without running the shell, so automatic cleanup is disabled.", korean: "시작 파일에 추가 연결 또는 동적인 ZDOTDIR 설정이 있습니다. 셸을 실행하지 않고는 확정할 수 없어 자동 정리하지 않습니다."))
                         }
                     }
                 }
@@ -273,9 +273,9 @@ actor LegacyCodexShellCleanupManager: LegacyCodexShellCleanupManaging {
     /// Traverse with directory descriptors: no symlink component can be followed.
     private func openDirectory(_ url: URL, allowMissing: Bool = false) throws -> Int32 {
         guard Self.isSafeAbsolutePath(home.path), home.path != "/", Self.isSafeAbsolutePath(url.path),
-              url.path == home.path || url.path.hasPrefix(home.path + "/") else { throw Failure("안전한 홈 경로를 확인하지 못했습니다.") }
+              url.path == home.path || url.path.hasPrefix(home.path + "/") else { throw Failure(PetL10n.text("Unable to verify a safe home path.", korean: "안전한 홈 경로를 확인하지 못했습니다.")) }
         var descriptor = open("/", O_RDONLY | O_DIRECTORY | O_CLOEXEC)
-        guard descriptor >= 0 else { throw Failure("디렉터리를 열 수 없습니다.") }
+        guard descriptor >= 0 else { throw Failure(PetL10n.text("Unable to open the directory.", korean: "디렉터리를 열 수 없습니다.")) }
         var path = ""
         do {
             for component in url.path.split(separator: "/") {
@@ -283,7 +283,7 @@ actor LegacyCodexShellCleanupManager: LegacyCodexShellCleanupManaging {
                 let next = openat(descriptor, String(component), O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
                 if next < 0 {
                     if allowMissing && errno == ENOENT { close(descriptor); return -1 }
-                    throw Failure("경로에 심볼릭 링크가 있거나 디렉터리를 읽을 수 없습니다: \(path) (errno \(errno))")
+                    throw Failure(PetL10n.text("The path contains a symbolic link or the directory cannot be read: \(path) (errno \(errno))", korean: "경로에 심볼릭 링크가 있거나 디렉터리를 읽을 수 없습니다: \(path) (errno \(errno))"))
                 }
                 close(descriptor); descriptor = next
                 let s = try metadata(descriptor)
@@ -291,7 +291,7 @@ actor LegacyCodexShellCleanupManager: LegacyCodexShellCleanupManaging {
                 let safeTemporaryAncestor = !inside && s.st_uid == 0 && s.st_mode & mode_t(S_ISVTX) != 0
                 guard s.st_uid == getuid() || (!inside && s.st_uid == 0),
                       s.st_mode & 0o022 == 0 || safeTemporaryAncestor,
-                      !(try hasACLGrant(descriptor)) else { throw Failure("경로 소유권·쓰기 권한·ACL이 안전하지 않습니다.") }
+                      !(try hasACLGrant(descriptor)) else { throw Failure(PetL10n.text("Path ownership, write permissions, or ACL are unsafe.", korean: "경로 소유권·쓰기 권한·ACL이 안전하지 않습니다.")) }
             }
             return descriptor
         } catch { close(descriptor); throw error }
@@ -299,7 +299,7 @@ actor LegacyCodexShellCleanupManager: LegacyCodexShellCleanupManaging {
 
     private func metadata(_ descriptor: Int32) throws -> stat {
         var s = stat()
-        guard fstat(descriptor, &s) == 0 else { throw Failure("파일 상태를 확인할 수 없습니다.") }
+        guard fstat(descriptor, &s) == 0 else { throw Failure(PetL10n.text("Unable to check file status.", korean: "파일 상태를 확인할 수 없습니다.")) }
         return s
     }
     private func identity(_ descriptor: Int32) throws -> Identity { Identity(try metadata(descriptor)) }
@@ -307,7 +307,7 @@ actor LegacyCodexShellCleanupManager: LegacyCodexShellCleanupManaging {
         errno = 0
         guard let acl = acl_get_fd_np(descriptor, ACL_TYPE_EXTENDED) else {
             if errno == ENOENT { return false }
-            throw Failure("ACL을 확인할 수 없습니다.")
+            throw Failure(PetL10n.text("Unable to check the ACL.", korean: "ACL을 확인할 수 없습니다."))
         }
         defer { acl_free(UnsafeMutableRawPointer(acl)) }
         var entry: acl_entry_t?
@@ -315,11 +315,11 @@ actor LegacyCodexShellCleanupManager: LegacyCodexShellCleanupManaging {
         while true {
             let next = acl_get_entry(acl, flag, &entry)
             if next == -1 && errno == EINVAL { return false }
-            guard next == 0, let entry else { throw Failure("ACL 항목을 확인할 수 없습니다.") }
+            guard next == 0, let entry else { throw Failure(PetL10n.text("Unable to check ACL entries.", korean: "ACL 항목을 확인할 수 없습니다.")) }
             var tag = acl_tag_t(0)
-            guard acl_get_tag_type(entry, &tag) == 0 else { throw Failure("ACL 종류를 확인할 수 없습니다.") }
+            guard acl_get_tag_type(entry, &tag) == 0 else { throw Failure(PetL10n.text("Unable to check ACL type.", korean: "ACL 종류를 확인할 수 없습니다.")) }
             if tag == ACL_EXTENDED_ALLOW { return true }
-            guard tag == ACL_EXTENDED_DENY else { throw Failure("ACL 종류를 확인할 수 없습니다.") }
+            guard tag == ACL_EXTENDED_DENY else { throw Failure(PetL10n.text("Unable to check ACL type.", korean: "ACL 종류를 확인할 수 없습니다.")) }
             flag = -1
         }
     }
@@ -327,41 +327,41 @@ actor LegacyCodexShellCleanupManager: LegacyCodexShellCleanupManaging {
         let descriptor = openat(parent, name, O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC)
         guard descriptor >= 0 else {
             if errno == ENOENT { return nil }
-            throw Failure("파일을 안전하게 읽을 수 없습니다.")
+            throw Failure(PetL10n.text("Unable to safely read the file.", korean: "파일을 안전하게 읽을 수 없습니다."))
         }
         defer { close(descriptor) }
         let before = try metadata(descriptor)
         guard before.st_mode & mode_t(S_IFMT) == mode_t(S_IFREG), before.st_uid == getuid(), before.st_nlink == 1,
               before.st_mode & 0o022 == 0, before.st_size >= 0, before.st_size <= limit,
-              !(try hasACLGrant(descriptor)) else { throw Failure("파일 형식·소유권·권한·크기 또는 하드 링크가 안전하지 않습니다.") }
+              !(try hasACLGrant(descriptor)) else { throw Failure(PetL10n.text("File type, ownership, permissions, size, or hard links are unsafe.", korean: "파일 형식·소유권·권한·크기 또는 하드 링크가 안전하지 않습니다.")) }
         var data = Data()
         var buffer = [UInt8](repeating: 0, count: 8_192)
         while true {
             let count = read(descriptor, &buffer, buffer.count)
             if count == -1 && errno == EINTR { continue }
-            guard count >= 0 else { throw Failure("파일 읽기에 실패했습니다.") }
+            guard count >= 0 else { throw Failure(PetL10n.text("File read failed.", korean: "파일 읽기에 실패했습니다.")) }
             if count == 0 { break }
             data.append(contentsOf: buffer.prefix(count))
-            guard data.count <= limit else { throw Failure("파일 크기 제한을 초과했습니다.") }
+            guard data.count <= limit else { throw Failure(PetL10n.text("File size limit exceeded.", korean: "파일 크기 제한을 초과했습니다.")) }
         }
         let after = try metadata(descriptor)
         var named = stat()
         guard fstatat(parent, name, &named, AT_SYMLINK_NOFOLLOW) == 0,
               FileSnapshot(before, data) == FileSnapshot(after, data),
               FileSnapshot(after, data) == FileSnapshot(named, data), data.count == before.st_size else {
-            throw Failure("읽는 동안 파일이 변경되었습니다.")
+            throw Failure(PetL10n.text("The file changed while being read.", korean: "읽는 동안 파일이 변경되었습니다."))
         }
         return FileSnapshot(after, data)
     }
     private func verifyDirectory(_ expected: Int32) throws {
         let actual = try openDirectory(directory)
         defer { close(actual) }
-        guard try identity(actual) == identity(expected) else { throw Failure("디렉터리가 교체되었습니다.") }
+        guard try identity(actual) == identity(expected) else { throw Failure(PetL10n.text("The directory was replaced.", korean: "디렉터리가 교체되었습니다.")) }
     }
     private func verifyPrivateDirectory(_ descriptor: Int32) throws {
         let state = try metadata(descriptor)
         guard state.st_uid == getuid(), state.st_mode & 0o077 == 0 else {
-            throw Failure("백업을 보관할 구형 shell/v1 디렉터리가 사용자 전용(0700)이 아닙니다. 자동 정리하지 않습니다.")
+            throw Failure(PetL10n.text("The legacy shell/v1 backup directory is not user-only (0700). Automatic cleanup is disabled.", korean: "백업을 보관할 구형 shell/v1 디렉터리가 사용자 전용(0700)이 아닙니다. 자동 정리하지 않습니다."))
         }
     }
     private func actualDirectoryPath(_ descriptor: Int32) -> String? {
@@ -381,29 +381,29 @@ actor LegacyCodexShellCleanupManager: LegacyCodexShellCleanupManaging {
             descriptor = openat(parent, Self.lockName, flags)
         }
         let openError = errno
-        guard descriptor >= 0 else { throw Failure("정리 잠금 파일을 열 수 없습니다. (errno \(openError))") }
+        guard descriptor >= 0 else { throw Failure(PetL10n.text("Unable to open the cleanup lock file. (errno \(openError))", korean: "정리 잠금 파일을 열 수 없습니다. (errno \(openError))")) }
         do {
             let s = try metadata(descriptor)
             guard s.st_mode & mode_t(S_IFMT) == mode_t(S_IFREG), s.st_uid == getuid(), s.st_nlink == 1,
-                  s.st_mode & 0o077 == 0, s.st_size == 0, !(try hasACLGrant(descriptor)) else { throw Failure("정리 잠금 파일이 안전하지 않습니다.") }
+                  s.st_mode & 0o077 == 0, s.st_size == 0, !(try hasACLGrant(descriptor)) else { throw Failure(PetL10n.text("The cleanup lock file is unsafe.", korean: "정리 잠금 파일이 안전하지 않습니다.")) }
             for _ in 0..<lockAttempts {
                 if flock(descriptor, LOCK_EX | LOCK_NB) == 0 {
                     var named = stat()
                     guard fstatat(parent, Self.lockName, &named, AT_SYMLINK_NOFOLLOW) == 0,
-                          Identity(named) == Identity(s) else { throw Failure("정리 잠금 파일이 교체되었습니다.") }
+                          Identity(named) == Identity(s) else { throw Failure(PetL10n.text("The cleanup lock file was replaced.", korean: "정리 잠금 파일이 교체되었습니다.")) }
                     return descriptor
                 }
-                guard errno == EWOULDBLOCK || errno == EINTR else { throw Failure("정리 잠금을 얻지 못했습니다.") }
+                guard errno == EWOULDBLOCK || errno == EINTR else { throw Failure(PetL10n.text("Unable to acquire the cleanup lock.", korean: "정리 잠금을 얻지 못했습니다.")) }
                 usleep(10_000)
             }
-            throw Failure("다른 정리가 진행 중입니다. 잠시 후 다시 검사해 주세요.")
+            throw Failure(PetL10n.text("Another cleanup is in progress. Check again shortly.", korean: "다른 정리가 진행 중입니다. 잠시 후 다시 검사해 주세요."))
         } catch { close(descriptor); throw error }
     }
     private func absent() -> LegacyCodexShellCleanupInspection {
-        LegacyCodexShellCleanupInspection(status: .notFound, detail: "검사 대상 경로에 구형 래퍼가 없습니다. 이미 열린 터미널에 남은 함수까지 확인한 결과는 아닙니다.", wrapperPath: wrapper.path)
+        LegacyCodexShellCleanupInspection(status: .notFound, detail: PetL10n.text("No legacy wrapper exists at the inspected path. This does not verify functions remaining in already-open terminals.", korean: "검사 대상 경로에 구형 래퍼가 없습니다. 이미 열린 터미널에 남은 함수까지 확인한 결과는 아닙니다."), wrapperPath: wrapper.path)
     }
     private func rejected(_ error: Error) -> LegacyCodexShellCleanupInspection {
-        LegacyCodexShellCleanupInspection(status: .manualReview, detail: (error as? Failure)?.message ?? "안전 검증에 실패했습니다. 파일을 변경하지 않고 수동 확인을 요청합니다.", wrapperPath: wrapper.path)
+        LegacyCodexShellCleanupInspection(status: .manualReview, detail: (error as? Failure)?.message ?? PetL10n.text("Safety verification failed. No files were changed; manual review is required.", korean: "안전 검증에 실패했습니다. 파일을 변경하지 않고 수동 확인을 요청합니다."), wrapperPath: wrapper.path)
     }
     private func result(_ status: LegacyCodexShellCleanupStatus, _ detail: String, snapshot: Snapshot, backup: String? = nil) -> LegacyCodexShellCleanupInspection {
         LegacyCodexShellCleanupInspection(status: status, detail: detail, wrapperPath: wrapper.path, startupPath: snapshot.startupPath, backupPath: backup)

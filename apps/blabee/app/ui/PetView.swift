@@ -2,6 +2,7 @@ import CoordinatorSwift
 import SwiftUI
 
 struct PetRootView: View {
+    @ObservedObject private var localization = PetLocalization.shared
     @ObservedObject var viewModel: PetViewModel
     // Offscreen view tests omit compositor-only glass; the installed panel uses
     // the default surface. Content and controls follow the same view hierarchy.
@@ -16,21 +17,28 @@ struct PetRootView: View {
                 panelBody
             }
         }
+            .font(.blabee(.body))
             .foregroundStyle(PetAirPalette.ink(for: colorScheme))
             .padding(1)
+            .environment(\.locale, localization.language.locale)
     }
 
     private var panelBody: some View {
         VStack(spacing: 14) {
             header
-            if viewModel.supportsProviderSessions {
-                providerControls
-            }
-            if viewModel.eventQueueCount > 1, viewModel.choicePreview == nil,
+            if !viewModel.isProductAccessBlocked, viewModel.eventQueueCount > 1, viewModel.choicePreview == nil,
                viewModel.hasNewPermissionNotice || (!viewModel.isEditingShortcuts && !viewModel.isShowingOnboarding) {
                 eventNavigationControls
             }
-            if let managedApproval = viewModel.pendingManagedCommandApproval {
+            if viewModel.isProductAccessBlocked, let productAccess = viewModel.productAccess {
+                if viewModel.isShowingSettings {
+                    PetSettingsView(viewModel: viewModel)
+                } else {
+                    PetAccessView(controller: productAccess, account: viewModel.account,
+                        settings: { viewModel.showAccessSettings() },
+                        diagnostics: { viewModel.showAccessSettings(diagnostics: true) })
+                }
+            } else if let managedApproval = viewModel.pendingManagedCommandApproval {
                 contentViewport(for: .permission) {
                     managedCommandApprovalCard(managedApproval)
                 }
@@ -73,6 +81,9 @@ struct PetRootView: View {
         let hasTwoMessages = viewModel.lastError != nil
             && viewModel.visibleShortcutDiagnostic != nil
         return VStack(alignment: .leading, spacing: 2) {
+            if let notice = viewModel.selectionDeliveryNotice {
+                selectionDeliveryMessage(notice)
+            }
             if let error = viewModel.lastError {
                 Text(error)
                     .foregroundStyle(.red)
@@ -95,11 +106,43 @@ struct PetRootView: View {
                     .accessibilityIdentifier("provider-diagnostic")
             }
         }
-        .font(.caption)
+        .font(.blabee(.caption))
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
+    private func selectionDeliveryMessage(_ notice: PetSelectionDeliveryNotice) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(PetL10n.text("Previous selection delivery", korean: "이전 선택 전달"))
+                .foregroundStyle(PetAirPalette.secondary(for: colorScheme))
+            Text(notice.title)
+                .font(.blabee(.caption, weight: .semibold))
+            Text(notice.detail)
+                .foregroundStyle(PetAirPalette.secondary(for: colorScheme))
+                .lineLimit(3)
+                .help(notice.detail)
+            HStack(spacing: 8) {
+                if notice.requiresCodexRecheck && !notice.nativeRecheckSucceeded {
+                    Button(viewModel.isCodexPluginOperationInFlight ? PetL10n.text("Checking…", korean: "검사 중…") : PetL10n.text("Check Codex Again", korean: "Codex 다시 검사")) {
+                        Task { await viewModel.recheckSelectionDeliveryCodex(noticeID: notice.id) }
+                    }
+                    .disabled(viewModel.isCodexPluginOperationInFlight || viewModel.isCodexHookCheckInFlight)
+                    .accessibilityIdentifier("selection-delivery-recheck")
+                }
+                Button(PetL10n.text("Close", korean: "닫기")) { viewModel.dismissSelectionDeliveryNotice(noticeID: notice.id) }
+                    .accessibilityIdentifier("selection-delivery-dismiss")
+            }
+            .buttonStyle(PetAirButtonStyle())
+            .controlSize(.small)
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.orange.opacity(0.08), in: RoundedRectangle(cornerRadius: 14))
+        .fixedSize(horizontal: false, vertical: true)
+        .accessibilityIdentifier("selection-delivery-notice")
+    }
+
     private var screenMode: PetPanelScreenMode {
+        if viewModel.isProductAccessBlocked { return .projectSettings }
         if viewModel.isShowingOnboarding {
             return .projectSettings
         }
@@ -139,18 +182,11 @@ struct PetRootView: View {
 
     private var decisionContent: some View {
         VStack(alignment: .leading, spacing: 12) {
-            if let status = viewModel.snapshot?.providerStatus {
-                Text("\(URL(fileURLWithPath: status.cwd).lastPathComponent) · \(shortSessionID(status.sessionID))")
-                    .font(.caption)
+            if let status = viewModel.snapshot?.providerStatus,
+               viewModel.displayInteraction != nil, !status.selectionEnabled {
+                Text(viewModel.presentationTitle)
+                    .font(.blabee(.caption))
                     .foregroundStyle(PetAirPalette.secondary(for: colorScheme))
-                    .lineLimit(1)
-                    .help("\(status.cwd)\n\(status.sessionID)")
-                    .accessibilityIdentifier("provider-session-context")
-                if viewModel.displayInteraction != nil, !status.selectionEnabled {
-                    Text(viewModel.presentationTitle)
-                        .font(.caption)
-                        .foregroundStyle(PetAirPalette.secondary(for: colorScheme))
-                }
             }
             if let interaction = viewModel.displayInteraction {
                 decisionCard(interaction)
@@ -162,16 +198,16 @@ struct PetRootView: View {
             }
             if let resultPhase = viewModel.providerPendingResultDescription {
                 Text(resultPhase)
-                    .font(.caption)
+                    .font(.blabee(.caption))
                     .foregroundStyle(PetAirPalette.secondary(for: colorScheme))
                     .accessibilityIdentifier("provider-pending-result")
             }
             if let outcome = viewModel.snapshot?.providerStatus?.latestOutcome {
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("최근 선택 결과 · Claude 보고 · \(outcome.selectionID.prefix(8))")
-                        .font(.caption.bold())
-                    Text("\(outcome.status == "succeeded" ? "완료 보고" : "실패 보고"): \(outcome.summary)")
-                        .font(.caption)
+                    Text(PetL10n.text("Latest selection result · Reported by Claude · \(outcome.selectionID.prefix(8))", korean: "최근 선택 결과 · Claude 보고 · \(outcome.selectionID.prefix(8))"))
+                        .font(.blabee(.caption, weight: .bold))
+                    Text("\(outcome.status == "succeeded" ? PetL10n.text("Completion report", korean: "완료 보고") : PetL10n.text("Failure report", korean: "실패 보고")): \(outcome.summary)")
+                        .font(.blabee(.caption))
                         .lineLimit(4)
                         .help(outcome.summary)
                         .textSelection(.enabled)
@@ -189,28 +225,28 @@ struct PetRootView: View {
                 .frame(width: 20, height: 26)
                 .accessibilityHidden(true)
             Text("blabee")
-                .font(.system(size: 18, weight: .semibold))
-            if viewModel.provider == .claude {
-                Text(viewModel.provider.displayName)
-                    .font(.caption.weight(.semibold))
+                .font(.blabee(size: 18, weight: .semibold))
+                .lineLimit(1)
+                .fixedSize(horizontal: true, vertical: false)
+            if !viewModel.isProductAccessBlocked, let source = displayedProvider {
+                PetProviderMark(provider: source)
                     .foregroundStyle(PetAirPalette.secondary(for: colorScheme))
-                    .accessibilityIdentifier("provider-label")
             }
             Spacer(minLength: 8)
             HStack(spacing: 8) {
                 Circle()
-                    .fill(viewModel.isShowingOnboarding && !viewModel.hasNewPermissionNotice
-                          ? PetSettingsStatusTone.connection(viewModel.connectionReadiness).color : statusColor)
+                    .fill(viewModel.isProductAccessBlocked ? Color.secondary : viewModel.isShowingOnboarding && !viewModel.hasNewPermissionNotice
+                          ? PetSettingsStatusTone.commonService(viewModel.connectionReadiness).color : statusColor)
                     .frame(width: 5, height: 5)
                 Text((viewModel.isShowingOnboarding || viewModel.isEditingShortcuts) && !viewModel.hasNewPermissionNotice
-                     ? "설정" : viewModel.presentationTitle)
-                    .font(.system(size: 11, weight: .medium))
+                     ? PetL10n.text("Settings", korean: "설정") : viewModel.presentationTitle)
+                    .font(.blabee(size: 11, weight: .medium))
                     .foregroundStyle(PetAirPalette.secondary(for: colorScheme))
                     .lineLimit(1)
                     .help(viewModel.presentationTitle)
                 if viewModel.isRecoveryCapable {
                     Text(PetPresentationState.recoveryCapable.displayTitle)
-                        .font(.caption2.bold())
+                        .font(.blabee(.caption2, weight: .bold))
                         .padding(.horizontal, 6)
                         .padding(.vertical, 2)
                         .background(Color.green.opacity(0.16), in: Capsule())
@@ -224,8 +260,8 @@ struct PetRootView: View {
                 }
                 .buttonStyle(PetAirButtonStyle())
                 .controlSize(.small)
-                .help("제안 평가 · 사용 사례 공유")
-                .accessibilityLabel("Blabee 의견 보내기")
+                .help(PetL10n.text("Rate suggestions · Share use cases", korean: "제안 평가 · 사용 사례 공유"))
+                .accessibilityLabel(PetL10n.text("Send Blabee Feedback", korean: "Blabee 의견 보내기"))
                 .accessibilityIdentifier("feedback-open")
             }
             if viewModel.supportsProductSettings {
@@ -243,7 +279,7 @@ struct PetRootView: View {
                 .controlSize(.small)
                 .accessibilityLabel(
                     viewModel.isShowingOnboarding || viewModel.isEditingShortcuts
-                        ? "Blabee 설정 닫기" : "Blabee 설정 열기"
+                        ? PetL10n.text("Close Blabee Settings", korean: "Blabee 설정 닫기") : PetL10n.text("Open Blabee Settings", korean: "Blabee 설정 열기")
                 )
             }
             Button(action: viewModel.requestPanelToggle) {
@@ -252,70 +288,18 @@ struct PetRootView: View {
             }
             .buttonStyle(PetAirButtonStyle())
             .controlSize(.small)
-            .accessibilityLabel("Blabee 패널 닫기")
+            .accessibilityLabel(PetL10n.text("Close Blabee Panel", korean: "Blabee 패널 닫기"))
         }
     }
 
-    private var providerControls: some View {
-        let context = viewModel.captureProviderActionContext()
-        return HStack(spacing: 8) {
-            Menu {
-                ForEach(viewModel.providerSessions) { session in
-                    Button {
-                        performProviderAction(context) { await viewModel.selectProviderSession(session) }
-                    } label: {
-                        Label(session.title, systemImage: session.context == viewModel.selectedProviderContext
-                              ? "checkmark.circle.fill" : "circle")
-                    }
-                    .help("\(session.cwd)\n\(session.sessionID)")
-                }
-            } label: {
-                Text(viewModel.providerSessionTitle)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-            }
-            .disabled(viewModel.isSwitchingProvider || viewModel.providerSessions.isEmpty)
-            .accessibilityLabel("모델과 세션 선택")
-            .accessibilityIdentifier("provider-session-picker")
-            Spacer(minLength: 0)
-            Menu {
-                Button("Claude 시작") {
-                    Task { await viewModel.startClaudeSession() }
-                }
-                .disabled(!viewModel.canStartClaude)
-                if let guidance = viewModel.claudeStartGuidance {
-                    Text(guidance)
-                    Button("연결 설정 열기") {
-                        Task {
-                            await viewModel.beginOnboarding()
-                            viewModel.selectSettingsTab(.connection)
-                        }
-                    }
-                }
-                if viewModel.provider == .claude {
-                    Button("연결 확인") {
-                        performProviderAction(context) { await viewModel.checkClaudeConnection(context: context) }
-                    }
-                    .disabled(!viewModel.canControlClaudeConnection)
-                    Button("이 Claude 세션 연결 해제") {
-                        performProviderAction(context) { await viewModel.disconnectClaudeSession(context: context) }
-                    }
-                    .disabled(!viewModel.canControlClaudeConnection)
-                }
-            } label: {
-                if viewModel.isStartingClaude || viewModel.isProviderConnectionOperationInFlight {
-                    ProgressView().controlSize(.small)
-                } else {
-                    Image(systemName: "ellipsis.circle")
-                }
-            }
-            .menuStyle(.borderlessButton)
-            .fixedSize()
-            .accessibilityLabel("Claude 연결 관리")
-            .accessibilityIdentifier("provider-session-actions")
-        }
-        .controlSize(.small)
-        .font(.caption)
+    /// The glyph describes the currently displayed card, never a destination
+    /// selected independently from it. Settings and the empty inbox have no
+    /// provider selection affordance.
+    private var displayedProvider: PetProvider? {
+        if viewModel.hasNewPermissionNotice { return .codex }
+        guard !viewModel.isShowingOnboarding, !viewModel.isEditingShortcuts,
+              viewModel.displayInteraction != nil || viewModel.choicePreview != nil else { return nil }
+        return viewModel.provider
     }
 
     private func performProviderAction(
@@ -342,8 +326,8 @@ struct PetRootView: View {
                     .background(Color.orange.opacity(0.14), in: Circle())
                 VStack(alignment: .leading, spacing: 4) {
                     HStack(spacing: 7) {
-                        Text("Codex 권한 요청")
-                            .font(.title2.weight(.semibold))
+                        Text(PetL10n.text("Codex permission request", korean: "Codex 권한 요청"))
+                            .font(.blabee(.title2, weight: .semibold))
                     }
                     Text(projectName(for: request))
                         .font(.caption.monospaced())
@@ -356,10 +340,10 @@ struct PetRootView: View {
             }
 
             VStack(alignment: .leading, spacing: 7) {
-                Text("일반 Codex Hook")
+                Text(PetL10n.text("Standard Codex Hook", korean: "일반 Codex Hook"))
                     .font(.callout.monospaced().bold())
                 Label(
-                    "세션: \(shortSessionID(request.sessionID))",
+                    PetL10n.text("Session: \(shortSessionID(request.sessionID))", korean: "세션: \(shortSessionID(request.sessionID))"),
                     systemImage: "link"
                 )
                     .font(.caption.monospaced())
@@ -369,27 +353,27 @@ struct PetRootView: View {
                     .font(.caption.monospaced().bold())
                     .foregroundStyle(PetAirPalette.secondary(for: colorScheme))
                 Text(request.displaySummary)
-                    .font(.callout)
+                    .font(.blabee(.callout))
                     .foregroundStyle(PetAirPalette.secondary(for: colorScheme))
                     .lineLimit(3)
                     .truncationMode(.tail)
                     .help(request.displaySummary)
-                Label("세션 위치: \(request.cwd)", systemImage: "folder")
+                Label(PetL10n.text("Session location: \(request.cwd)", korean: "세션 위치: \(request.cwd)"), systemImage: "folder")
                     .font(.caption.monospaced())
                     .foregroundStyle(PetAirPalette.secondary(for: colorScheme))
                     .fixedSize(horizontal: false, vertical: true)
                     .textSelection(.enabled)
-                    .help("Hook이 제공한 세션 위치입니다. 명령의 실제 실행 폴더·환경은 제공되지 않습니다.")
+                    .help(PetL10n.text("The Hook provided this session location. The command's actual working directory and environment are unavailable.", korean: "Hook이 제공한 세션 위치입니다. 명령의 실제 실행 폴더·환경은 제공되지 않습니다."))
                 PetApprovalCommandPreview(command: request.commandPreview)
             }
 
             if request.deliveryPending {
-                Label("Codex에 전달 확인 중", systemImage: "hourglass")
-                    .font(.callout.weight(.semibold))
+                Label(PetL10n.text("Confirming delivery to Codex", korean: "Codex에 전달 확인 중"), systemImage: "hourglass")
+                    .font(.blabee(.callout, weight: .semibold))
                     .foregroundStyle(.orange)
             } else if let waitMessage = request.approvalWaitMessage {
                 Text(waitMessage)
-                    .font(.caption)
+                    .font(.blabee(.caption))
                     .monospacedDigit()
                     .foregroundStyle(PetAirPalette.secondary(for: colorScheme))
                     .fixedSize(horizontal: false, vertical: true)
@@ -402,7 +386,7 @@ struct PetRootView: View {
                         shortcutLabel: viewModel.approvalShortcutLabel(number: decision.choiceNumber, for: .permission(request)),
                         title: decision.displayTitle,
                         detail: decision == .allowOnce && !request.allowOnceAvailable
-                            ? "이 연결의 일회성 승인이 아직 검증되지 않았습니다. 3번에서 Codex 승인 화면으로 이동하세요."
+                            ? PetL10n.text("One-time approval has not been verified for this connection. Choose option 3 to open the Codex approval screen.", korean: "이 연결의 일회성 승인이 아직 검증되지 않았습니다. 3번에서 Codex 승인 화면으로 이동하세요.")
                             : nil,
                         icon: decision == .allowOnce ? "checkmark"
                             : decision == .deny ? "xmark" : "arrow.up.forward.app",
@@ -417,8 +401,8 @@ struct PetRootView: View {
 
             approvalShortcutDiagnostic
 
-            Text("이번 요청에만 응답합니다. 이후 명령에 대한 허용 정책은 저장하지 않습니다.")
-                .font(.caption2)
+            Text(PetL10n.text("This response applies only to this request. It does not save an approval policy for future commands.", korean: "이번 요청에만 응답합니다. 이후 명령에 대한 허용 정책은 저장하지 않습니다."))
+                .font(.blabee(.caption2))
                 .foregroundStyle(PetAirPalette.secondary(for: colorScheme))
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -440,8 +424,8 @@ struct PetRootView: View {
                     .background(Color.blue.opacity(0.14), in: Circle())
                 VStack(alignment: .leading, spacing: 4) {
                     HStack(spacing: 7) {
-                        Text("Blabee 관리형 권한 요청")
-                            .font(.title2.weight(.semibold))
+                        Text(PetL10n.text("Blabee managed permission request", korean: "Blabee 관리형 권한 요청"))
+                            .font(.blabee(.title2, weight: .semibold))
                     }
                     Text(projectName(forManagedCWD: request.cwd))
                         .font(.caption.monospaced())
@@ -454,7 +438,7 @@ struct PetRootView: View {
             }
 
             VStack(alignment: .leading, spacing: 7) {
-                Text("관리형 Codex App Server")
+                Text(PetL10n.text("Managed Codex App Server", korean: "관리형 Codex App Server"))
                     .font(.callout.monospaced().bold())
                 Label(request.cwd, systemImage: "folder")
                     .font(.caption.monospaced())
@@ -463,16 +447,16 @@ struct PetRootView: View {
                     .textSelection(.enabled)
                     .help(request.cwd)
                 Label(
-                    "환경: \(request.environmentID ?? "기본 환경")",
+                    PetL10n.text("Environment: \(request.environmentID ?? "Default environment")", korean: "환경: \(request.environmentID ?? "기본 환경")"),
                     systemImage: "desktopcomputer"
                 )
                     .font(.caption.monospaced())
                     .foregroundStyle(PetAirPalette.secondary(for: colorScheme))
                     .lineLimit(1)
                     .truncationMode(.middle)
-                    .help(request.environmentID ?? "기본 환경")
+                    .help(request.environmentID ?? PetL10n.text("Default environment", korean: "기본 환경"))
                 Label(
-                    "세션: \(shortSessionID(request.threadID))",
+                    PetL10n.text("Session: \(shortSessionID(request.threadID))", korean: "세션: \(shortSessionID(request.threadID))"),
                     systemImage: "link"
                 )
                     .font(.caption.monospaced())
@@ -484,8 +468,8 @@ struct PetRootView: View {
             }
 
             if request.deliveryPending {
-                Label("Codex에 전달 확인 중", systemImage: "hourglass")
-                    .font(.callout.weight(.semibold))
+                Label(PetL10n.text("Confirming delivery to Codex", korean: "Codex에 전달 확인 중"), systemImage: "hourglass")
+                    .font(.blabee(.callout, weight: .semibold))
                     .foregroundStyle(.orange)
             }
 
@@ -495,7 +479,7 @@ struct PetRootView: View {
                     shortcutLabel: viewModel.approvalShortcutLabel(number: 1, for: .managed(request)),
                     title: PetManagedCommandApprovalDecision.acceptOnce.displayTitle,
                     detail: request.allowOnceAvailable ? nil
-                        : "이 요청은 Pet에서 일회성 승인할 수 없습니다. 3번에서 Codex 승인 화면으로 이동하세요.",
+                        : PetL10n.text("This request cannot be approved in the Pet. Choose option 3 to open the Codex approval screen.", korean: "이 요청은 Pet에서 일회성 승인할 수 없습니다. 3번에서 Codex 승인 화면으로 이동하세요."),
                     icon: "checkmark",
                     tint: .blue,
                     emphasized: request.allowOnceAvailable,
@@ -538,8 +522,8 @@ struct PetRootView: View {
 
             approvalShortcutDiagnostic
 
-            Text("세션 동안 허용은 제공하지 않습니다. 응답하지 않으면 Codex의 기존 승인 화면으로 돌아갑니다.")
-                .font(.caption2)
+            Text(PetL10n.text("Session-wide approval is unavailable. Without a response, approval returns to Codex.", korean: "세션 동안 허용은 제공하지 않습니다. 응답하지 않으면 Codex의 기존 승인 화면으로 돌아갑니다."))
+                .font(.blabee(.caption2))
                 .foregroundStyle(PetAirPalette.secondary(for: colorScheme))
         }
         .id(request.managedRequestID)
@@ -558,6 +542,11 @@ struct PetRootView: View {
         action: @escaping @MainActor () async -> Void
     ) -> some View {
         let context = viewModel.captureProviderActionContext()
+        let displayedShortcut = shortcutLabel
+            ?? PetApprovalShortcutIntent(rawValue: number)?.label
+            ?? "\(number)"
+        let shortcutHint = PetL10n.text("Shortcut \(displayedShortcut)", korean: "단축키 \(displayedShortcut)")
+            + (shortcutLabel == nil ? PetL10n.text(", currently unavailable", korean: ", 현재 사용 불가") : "")
         return Button {
             performProviderAction(context, operation: action)
         } label: {
@@ -569,23 +558,25 @@ struct PetRootView: View {
                     .background(tint.opacity(0.13), in: Circle())
                 VStack(alignment: .leading, spacing: 4) {
                     Text(title)
-                        .font(.body.weight(.semibold))
+                        .font(.blabee(.body, weight: .semibold))
                     if let detail {
                         Text(detail)
-                            .font(.caption2)
+                            .font(.blabee(.caption2))
                             .foregroundStyle(PetAirPalette.secondary(for: colorScheme))
                             .fixedSize(horizontal: false, vertical: true)
                     }
                 }
                 Spacer(minLength: 8)
-                Text(shortcutLabel ?? "\(number)")
+                Text(displayedShortcut)
                     .font(.caption.monospaced().bold())
+                    .opacity(shortcutLabel == nil ? 0.55 : 1)
                     .padding(.horizontal, 8)
                     .padding(.vertical, 5)
                     .background(
                         Color.primary.opacity(0.08),
                         in: RoundedRectangle(cornerRadius: 8)
                     )
+                    .help(shortcutHint)
             }
             .padding(.horizontal, 14)
             .padding(.vertical, 10)
@@ -600,7 +591,7 @@ struct PetRootView: View {
         .opacity(disabled ? 0.55 : 1)
         .accessibilityIdentifier("permission-choice-\(number)")
         .accessibilityLabel("\(number) \(title)")
-        .accessibilityHint([detail, shortcutLabel.map { "단축키 \($0)" }].compactMap { $0 }.joined(separator: " "))
+        .accessibilityHint([detail, shortcutHint].compactMap { $0 }.joined(separator: " "))
     }
 
     @ViewBuilder
@@ -608,7 +599,7 @@ struct PetRootView: View {
         if let diagnostic = [viewModel.approvalShortcutDiagnostic, viewModel.eventNavigationShortcutDiagnostic]
             .compactMap({ $0 }).first {
             Text(diagnostic)
-                .font(.caption2)
+                .font(.blabee(.caption2))
                 .foregroundStyle(.orange)
                 .fixedSize(horizontal: false, vertical: true)
         }
@@ -617,15 +608,15 @@ struct PetRootView: View {
     private var eventNavigationControls: some View {
         let context = viewModel.captureProviderActionContext()
         return HStack(spacing: 8) {
-            Text("대기 작업")
-                .font(.caption.weight(.semibold))
+            Text(PetL10n.text("Pending tasks", korean: "대기 작업"))
+                .font(.blabee(.caption, weight: .semibold))
             Text("\(viewModel.displayedEventQueuePosition ?? 0) / \(viewModel.eventQueueCount)")
-                .font(.caption.monospacedDigit().bold())
-                .accessibilityLabel("전체 \(viewModel.eventQueueCount)개 중 \(viewModel.displayedEventQueuePosition ?? 0)번째 작업")
+                .font(.blabee(.caption, weight: .bold).monospacedDigit())
+                .accessibilityLabel(PetL10n.text("Task \(viewModel.displayedEventQueuePosition ?? 0) of \(viewModel.eventQueueCount)", korean: "전체 \(viewModel.eventQueueCount)개 중 \(viewModel.displayedEventQueuePosition ?? 0)번째 작업"))
             Spacer(minLength: 0)
             if viewModel.pendingEventFocus != nil {
                 ProgressView().controlSize(.small)
-                    .accessibilityLabel("작업 전환 확인 중")
+                    .accessibilityLabel(PetL10n.text("Confirming task switch", korean: "작업 전환 확인 중"))
             }
             Text("⌥ ← / →")
                 .font(.caption.monospaced())
@@ -635,14 +626,14 @@ struct PetRootView: View {
                 performProviderAction(context) { await viewModel.navigateToPreviousEvent() }
             } label: { Image(systemName: "chevron.left") }
                 .accessibilityIdentifier("previous-event")
-                .accessibilityLabel("이전 작업")
-                .help("이전 작업 · Option + 왼쪽 방향키")
+                .accessibilityLabel(PetL10n.text("Previous task", korean: "이전 작업"))
+                .help(PetL10n.text("Previous task · Option + Left Arrow", korean: "이전 작업 · Option + 왼쪽 방향키"))
             Button {
                 performProviderAction(context) { await viewModel.navigateToNextEvent() }
             } label: { Image(systemName: "chevron.right") }
                 .accessibilityIdentifier("next-event")
-                .accessibilityLabel("다음 작업")
-                .help("다음 작업 · Option + 오른쪽 방향키")
+                .accessibilityLabel(PetL10n.text("Next task", korean: "다음 작업"))
+                .help(PetL10n.text("Next task · Option + Right Arrow", korean: "다음 작업 · Option + 오른쪽 방향키"))
         }
         .buttonStyle(.bordered)
         .controlSize(.small)
@@ -656,16 +647,21 @@ struct PetRootView: View {
     private func decisionCard(_ interaction: PetInteraction) -> some View {
         VStack(alignment: .leading, spacing: 16) {
             HStack(alignment: .top, spacing: 10) {
+                Text(interaction.suggestionKindLabel)
+                    .font(.blabee(size: 12, weight: .medium))
+                    .foregroundStyle(PetAirPalette.secondary(for: colorScheme))
+                    .lineLimit(1)
+                    .accessibilityIdentifier("suggestion-kind")
                 Spacer(minLength: 8)
                 Button(action: viewModel.toggleExpanded) {
-                    Label(viewModel.isExpanded ? "상세 닫기" : "상세 보기",
+                    Label(viewModel.isExpanded ? PetL10n.text("Hide Details", korean: "상세 닫기") : PetL10n.text("Show Details", korean: "상세 보기"),
                           systemImage: viewModel.isExpanded ? "chevron.up" : "arrow.up.right")
                 }
-                .font(.system(size: 12, weight: .medium))
+                .font(.blabee(size: 12, weight: .medium))
                 .buttonStyle(PetAirButtonStyle())
             }
             Text(interaction.summary)
-                .font(.system(size: 17, weight: .semibold))
+                .font(.blabee(size: 17, weight: .semibold))
                 .fixedSize(horizontal: false, vertical: true)
                 .textSelection(.enabled)
             Grid(alignment: .topLeading, horizontalSpacing: 12, verticalSpacing: 12) {
@@ -702,13 +698,13 @@ struct PetRootView: View {
         } label: {
             VStack(alignment: .leading, spacing: 16) {
                 Text(choice.displayTitle)
-                    .font(.system(size: 16, weight: .semibold))
+                    .font(.blabee(size: 16, weight: .semibold))
                     .lineLimit(PetPanelContentPolicy.actionTitleLineLimit)
                     .fixedSize(horizontal: false, vertical: true)
                     .multilineTextAlignment(.leading)
                 if choice.slot == 1 {
-                    Text("권장")
-                        .font(.system(size: 12, weight: .medium))
+                    Text(PetL10n.text("Recommended", korean: "권장"))
+                        .font(.blabee(size: 12, weight: .medium))
                         .foregroundStyle(PetAirPalette.accent(for: colorScheme))
                         .padding(.horizontal, 8)
                         .padding(.vertical, 4)
@@ -716,7 +712,7 @@ struct PetRootView: View {
                 }
                 if let reason = choice.disabledReason {
                     Text(reason)
-                        .font(.system(size: 12))
+                        .font(.blabee(size: 12))
                         .foregroundStyle(PetAirPalette.secondary(for: colorScheme))
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -732,7 +728,7 @@ struct PetRootView: View {
                             .background(Color.primary.opacity(0.055), in: Capsule())
                     case .progress:
                         ProgressView().controlSize(.small)
-                            .accessibilityLabel("진행 중")
+                            .accessibilityLabel(PetL10n.text("In progress", korean: "진행 중"))
                     case .suppressed:
                         EmptyView()
                     }
@@ -750,7 +746,7 @@ struct PetRootView: View {
         .help(previewHint.isEmpty ? choice.displayTitle : "\(choice.displayTitle)\n\(previewHint)")
         .accessibilityIdentifier("air-choice-\(choice.slot)")
         .accessibilityLabel(choice.displayTitle)
-        .accessibilityValue(ownsProgress ? "진행 중" : "")
+        .accessibilityValue(ownsProgress ? PetL10n.text("In progress", korean: "진행 중") : "")
         .accessibilityHint(previewHint)
     }
 
@@ -761,7 +757,7 @@ struct PetRootView: View {
             VStack(alignment: .leading, spacing: 8) { secondaryButtons(interaction: interaction) }
         }
         .buttonStyle(PetAirButtonStyle())
-        .font(.system(size: 11))
+        .font(.blabee(size: 11))
         .frame(maxWidth: .infinity, alignment: .leading)
         .accessibilityElement(children: .contain)
     }
@@ -771,35 +767,35 @@ struct PetRootView: View {
             let context = viewModel.captureProviderActionContext()
             if interaction.usesRankedNextActions {
                 Button(action: viewModel.requestPanelToggle) {
-                    Label("나중에", systemImage: "clock")
+                    Label(PetL10n.text("Later", korean: "나중에"), systemImage: "clock")
                 }
 
                 if viewModel.supportsDecisionDismissal {
                     Button {
                         performProviderAction(context) { await viewModel.skipDecision(for: interaction.identity) }
                     } label: {
-                        Label("선택 건너뛰기", systemImage: "forward.end")
+                        Label(PetL10n.text("Skip Choices", korean: "선택 건너뛰기"), systemImage: "forward.end")
                     }
                     .disabled(!viewModel.canSkipDecision(interaction.identity))
-                    .help("이 선택지를 닫습니다. 작업을 실행하거나 Codex에 프롬프트를 보내지 않습니다.")
+                    .help(PetL10n.text("Dismiss these choices without running a task or sending a prompt to the conversation.", korean: "이 선택지를 닫습니다. 작업을 실행하거나 대화에 프롬프트를 보내지 않습니다."))
                     .accessibilityIdentifier("skip-current-decision")
                 }
             } else if interaction.legacyPauseChoice?.enabled == true {
                 Button {
                     performProviderAction(context) { await viewModel.requestLegacyPause() }
                 } label: {
-                    Label("보류", systemImage: "pause.circle")
+                    Label(PetL10n.text("Defer", korean: "보류"), systemImage: "pause.circle")
                 }
             }
 
-            if viewModel.supportsDecisionDismissal {
+            if viewModel.provider == .codex {
                 Button(action: {}) {
-                    Label("이전 프롬프트", systemImage: "arrow.uturn.backward")
+                    Label(PetL10n.text("Previous Prompt", korean: "이전 프롬프트"), systemImage: "arrow.uturn.backward")
                 }
                 .disabled(true)
                 .help(
                     interaction.legacyRollbackChoice?.disabledReason
-                        ?? "안전한 롤백 확인 절차가 준비된 뒤 사용할 수 있습니다."
+                        ?? PetL10n.text("Available once a safe rollback verification process is ready.", korean: "안전한 롤백 확인 절차가 준비된 뒤 사용할 수 있습니다.")
                 )
             }
     }
@@ -810,57 +806,57 @@ struct PetRootView: View {
         VStack(alignment: .leading, spacing: 14) {
             VStack(alignment: .leading, spacing: 5) {
                 Text(interaction.summary)
-                    .font(.title3.bold())
+                    .font(.blabee(.title3, weight: .bold))
                 if let outcome = interaction.outcome {
                     Text("\(outcome.status) · \(outcome.summary)")
-                        .font(.caption)
+                        .font(.blabee(.caption))
                         .foregroundStyle(PetAirPalette.secondary(for: colorScheme))
                 }
-                Text("프로젝트  \(interaction.identity.binding.projectID)")
+                Text(PetL10n.text("Project  \(interaction.identity.binding.projectID)", korean: "프로젝트  \(interaction.identity.binding.projectID)"))
                     .font(.caption.monospaced())
                     .foregroundStyle(PetAirPalette.secondary(for: colorScheme))
-                Text("세션  \(interaction.identity.binding.sessionID)")
+                Text(PetL10n.text("Session  \(interaction.identity.binding.sessionID)", korean: "세션  \(interaction.identity.binding.sessionID)"))
                     .font(.caption.monospaced())
                     .foregroundStyle(PetAirPalette.secondary(for: colorScheme))
-                Text("경로  \(interaction.cwd)")
+                Text(PetL10n.text("Path  \(interaction.cwd)", korean: "경로  \(interaction.cwd)"))
                     .font(.caption.monospaced())
                     .foregroundStyle(PetAirPalette.secondary(for: colorScheme))
             }
 
-            detailSection(title: "위험") {
+            detailSection(title: PetL10n.text("Risk", korean: "위험")) {
                 Text(interaction.risk.level.rawValue)
-                    .font(.callout.bold())
+                    .font(.blabee(.callout, weight: .bold))
                 if interaction.risk.reasons.isEmpty {
-                    Text("보고된 위험 사유 없음")
-                        .font(.caption)
+                    Text(PetL10n.text("No risk reason reported", korean: "보고된 위험 사유 없음"))
+                        .font(.blabee(.caption))
                         .foregroundStyle(PetAirPalette.secondary(for: colorScheme))
                 } else {
                     ForEach(interaction.risk.reasons, id: \.self) { reason in
-                        Text("• \(reason)").font(.caption)
+                        Text("• \(reason)").font(.blabee(.caption))
                     }
                 }
             }
 
-            detailSection(title: "증거 · 체크포인트") {
+            detailSection(title: PetL10n.text("Evidence · Checkpoints", korean: "증거 · 체크포인트")) {
                 Text("\(interaction.checkpoint.coverage) · \(interaction.checkpoint.id)")
                     .font(.caption.monospaced())
                 if interaction.evidence.isEmpty {
-                    Text("표시할 증거가 없습니다.")
-                        .font(.caption)
+                    Text(PetL10n.text("No evidence to display.", korean: "표시할 증거가 없습니다."))
+                        .font(.blabee(.caption))
                         .foregroundStyle(PetAirPalette.secondary(for: colorScheme))
                 } else {
                     ForEach(interaction.evidence) { evidence in
                         Text("\(evidence.status) · \(evidence.summary)")
-                            .font(.caption)
+                            .font(.blabee(.caption))
                     }
                 }
             }
 
             if !interaction.reportedSideEffects.isEmpty {
-                detailSection(title: "보고된 부수 효과") {
+                detailSection(title: PetL10n.text("Reported side effects", korean: "보고된 부수 효과")) {
                     ForEach(interaction.reportedSideEffects) { effect in
                         Text("\(effect.reversibility) · \(effect.summary)")
-                            .font(.caption)
+                            .font(.blabee(.caption))
                     }
                 }
             }
@@ -869,14 +865,14 @@ struct PetRootView: View {
                confirmation.identity == interaction.identity
             {
                 VStack(alignment: .leading, spacing: 9) {
-                    Text("위험 확인 필요")
-                        .font(.callout.bold())
-                    Text("이 확인은 다음 작업 지시만 보냅니다. \(viewModel.provider.displayName)의 네이티브 권한 승인을 대신하지 않습니다.")
-                        .font(.caption)
+                    Text(PetL10n.text("Review the risk", korean: "위험 확인 필요"))
+                        .font(.blabee(.callout, weight: .bold))
+                    Text(PetL10n.text("This confirmation only sends the next task instruction. It does not replace native permission approval in \(viewModel.provider.displayName).", korean: "이 확인은 다음 작업 지시만 보냅니다. \(viewModel.provider.displayName)의 네이티브 권한 승인을 대신하지 않습니다."))
+                        .font(.blabee(.caption))
                         .foregroundStyle(PetAirPalette.secondary(for: colorScheme))
                     HStack {
-                        Button("취소", action: viewModel.cancelRiskConfirmation)
-                        Button("위험을 확인하고 실행") {
+                        Button(PetL10n.text("Cancel", korean: "취소"), action: viewModel.cancelRiskConfirmation)
+                        Button(PetL10n.text("Acknowledge Risk and Run", korean: "위험을 확인하고 실행")) {
                             performProviderAction(context) { await viewModel.confirmRiskSelection() }
                         }
                         .buttonStyle(.borderedProminent)
@@ -910,10 +906,10 @@ struct PetRootView: View {
 
     private var emptyState: some View {
         VStack(spacing: 24) {
-            if viewModel.presentationState == .ready, viewModel.provider == .codex {
+            if viewModel.presentationState == .ready {
                 PetAirWaitingArtwork()
                 Text("Waiting")
-                    .font(.system(size: 22, weight: .medium))
+                    .font(.blabee(size: 22, weight: .medium))
                     .foregroundStyle(PetAirPalette.secondary(for: colorScheme))
                     .accessibilityIdentifier("air-waiting-label")
             } else {
@@ -930,9 +926,9 @@ struct PetRootView: View {
                         .accessibilityHidden(true)
                 }
                 Text(viewModel.presentationTitle)
-                    .font(.system(size: 22, weight: .semibold))
+                    .font(.blabee(size: 22, weight: .semibold))
                 Text(viewModel.emptyStateDescription)
-                    .font(.system(size: 14))
+                    .font(.blabee(size: 14))
                     .foregroundStyle(PetAirPalette.secondary(for: colorScheme))
                     .multilineTextAlignment(.center)
                     .fixedSize(horizontal: false, vertical: true)
@@ -948,7 +944,7 @@ struct PetRootView: View {
     ) -> some View {
         VStack(alignment: .leading, spacing: 5) {
             Text(title)
-                .font(.caption.bold())
+                .font(.blabee(.caption, weight: .bold))
                 .foregroundStyle(PetAirPalette.secondary(for: colorScheme))
             content()
         }
@@ -972,6 +968,7 @@ struct PetRootView: View {
 /// Keep the complete Hook command selectable while bounding its viewport so
 /// long or multiline commands cannot push the approval actions arbitrarily far.
 struct PetApprovalCommandPreview: View {
+    @ObservedObject private var localization = PetLocalization.shared
     let command: String
 
     var body: some View {

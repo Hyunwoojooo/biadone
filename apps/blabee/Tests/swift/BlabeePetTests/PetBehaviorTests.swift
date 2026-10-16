@@ -1,3 +1,4 @@
+import Dispatch
 import Foundation
 import Testing
 @testable import BlabeeCoordinator
@@ -6,7 +7,8 @@ import Testing
 private func blabeePetViewModel(
     transport: PetFakeTransport,
     opener: PetFakeApplicationOpener,
-    selectionIDGenerator: @escaping @Sendable () -> String = { "selection_test" }
+    selectionIDGenerator: @escaping @Sendable () -> String = { "selection_test" },
+    focusRetryNow: @escaping @MainActor () -> UInt64 = { DispatchTime.now().uptimeNanoseconds }
 ) -> PetViewModel {
     PetViewModel(
         transport: transport,
@@ -14,7 +16,8 @@ private func blabeePetViewModel(
         processIdentifier: 999,
         selectionIDGenerator: selectionIDGenerator,
         permissionResponseIDGenerator: { "permission_response_test" },
-        managedApprovalResponseIDGenerator: { "managed_approval_response_test" }
+        managedApprovalResponseIDGenerator: { "managed_approval_response_test" },
+        focusRetryNow: focusRetryNow
     )
 }
 
@@ -54,7 +57,7 @@ private func blabeePetWaitForRequestCount(
     return await transport.requestCount(type: type) >= expectedCount
 }
 
-@Test("BlabeePet snapshot polling carries a bounded consumer heartbeat")
+@Test("BlabeePet snapshot polling carries a bounded consumer heartbeat", .petLanguage(.korean))
 @MainActor
 func blabeePetSnapshotPollingCarriesConsumerHeartbeat() async throws {
     let transport = PetFakeTransport()
@@ -72,7 +75,7 @@ func blabeePetSnapshotPollingCarriesConsumerHeartbeat() async throws {
     #expect(object["consumer_heartbeat"] as? Bool == true)
 }
 
-@Test("BlabeePet distinguishes ready from an actual in-flight continuation")
+@Test("BlabeePet distinguishes ready from an actual in-flight continuation", .petLanguage(.korean))
 @MainActor
 func blabeePetReadyAndWorkingPresentation() throws {
     let transport = PetFakeTransport()
@@ -94,7 +97,7 @@ func blabeePetReadyAndWorkingPresentation() throws {
     #expect(viewModel.presentationState == .ready)
 }
 
-@Test("BlabeePet does nothing without exact local foreground authority")
+@Test("BlabeePet does nothing without exact local foreground authority", .petLanguage(.korean))
 @MainActor
 func blabeePetNoForegroundNoOp() async throws {
     let transport = PetFakeTransport()
@@ -110,7 +113,7 @@ func blabeePetNoForegroundNoOp() async throws {
     #expect(viewModel.localForegroundIdentity == nil)
 }
 
-@Test("BlabeePet auto-focuses one unambiguous waiting decision")
+@Test("BlabeePet auto-focuses one unambiguous waiting decision", .petLanguage(.korean))
 @MainActor
 func blabeePetAutoFocusesSingleWaitingDecision() async throws {
     let transport = PetFakeTransport()
@@ -145,12 +148,13 @@ func blabeePetAutoFocusesSingleWaitingDecision() async throws {
     }
 }
 
-@Test("BlabeePet retries the same FIFO head on the next poll after transient focus failure")
+@Test("BlabeePet retains the FIFO focus cooldown across successful snapshot polls", .petLanguage(.korean))
 @MainActor
 func blabeePetRetriesAutoFocusAfterTransientFailure() async throws {
     let transport = PetFakeTransport()
     let opener = PetFakeApplicationOpener()
-    let viewModel = blabeePetViewModel(transport: transport, opener: opener)
+    let clock = PetTestFocusClock()
+    let viewModel = blabeePetViewModel(transport: transport, opener: opener, focusRetryNow: { clock.now })
     let head = PetTestCard(suffix: "retry_head")
     let follower = PetTestCard(suffix: "retry_follower")
 
@@ -169,6 +173,19 @@ func blabeePetRetriesAutoFocusAfterTransientFailure() async throws {
     #expect(await transport.requestCount(type: "focus_interaction") == 1)
     #expect(viewModel.localForegroundIdentity == nil)
     #expect(viewModel.displayInteraction?.identity.interactionID == "interaction_retry_head")
+
+    // Healthy snapshots do not acknowledge the failed focus or reset its
+    // retry budget. The boundary is deterministic, not a wall-clock assertion.
+    for _ in 0..<5 {
+        await transport.enqueue(type: "get_state", response: try petTestSnapshotData(cards: [head, follower]))
+        await viewModel.refresh()
+    }
+    clock.advance(nanoseconds: 1_999_999_999)
+    await transport.enqueue(type: "get_state", response: try petTestSnapshotData(cards: [head, follower]))
+    await viewModel.refresh()
+    #expect(await transport.requestCount(type: "focus_interaction") == 1)
+    #expect(viewModel.localForegroundIdentity == nil)
+    clock.advance(nanoseconds: 1)
 
     await transport.enqueue(
         type: "get_state",
@@ -194,12 +211,13 @@ func blabeePetRetriesAutoFocusAfterTransientFailure() async throws {
     #expect(focusedInteractionIDs == ["interaction_retry_head", "interaction_retry_head"])
 }
 
-@Test("BlabeePet refocuses the exact authoritative FIFO head after a lost focus response")
+@Test("BlabeePet refocuses the exact authoritative FIFO head after a lost focus response", .petLanguage(.korean))
 @MainActor
 func blabeePetRetriesExactAuthoritativeHeadAfterLostFocusResponse() async throws {
     let transport = PetFakeTransport()
     let opener = PetFakeApplicationOpener()
-    let viewModel = blabeePetViewModel(transport: transport, opener: opener)
+    let clock = PetTestFocusClock()
+    let viewModel = blabeePetViewModel(transport: transport, opener: opener, focusRetryNow: { clock.now })
     let head = PetTestCard(suffix: "retry_authoritative_head")
 
     await transport.enqueue(
@@ -221,6 +239,8 @@ func blabeePetRetriesExactAuthoritativeHeadAfterLostFocusResponse() async throws
     #expect(viewModel.snapshot?.routing.foreground?.interactionID
         == "interaction_retry_authoritative_head")
     #expect(viewModel.localForegroundIdentity == nil)
+
+    clock.advance(nanoseconds: 2_000_000_000)
 
     await transport.enqueue(
         type: "get_state",
@@ -253,7 +273,182 @@ func blabeePetRetriesExactAuthoritativeHeadAfterLostFocusResponse() async throws
     ])
 }
 
-@Test("BlabeePet never auto-focuses over a different authoritative foreground")
+@Test("BlabeePet bounds repeated focus failures at two four and eight seconds without replaying a selection", .petLanguage(.korean))
+@MainActor
+func blabeePetFocusRetryBackoffAndNewRevision() async throws {
+    let transport = PetFakeTransport()
+    let clock = PetTestFocusClock()
+    let viewModel = blabeePetViewModel(transport: transport, opener: PetFakeApplicationOpener(),
+                                     focusRetryNow: { clock.now })
+    var card = PetTestCard(suffix: "retry_budget")
+    let waiting = try petTestSnapshotData(cards: [card])
+    await transport.enqueue(type: "get_state", response: waiting)
+    await transport.enqueueFailure(type: "focus_interaction", code: "response_timeout")
+    await transport.enqueue(type: "get_state", response: waiting)
+    await viewModel.refresh()
+
+    for (index, delay) in [UInt64(2), 4, 8, 8].enumerated() {
+        clock.advance(nanoseconds: delay * 1_000_000_000 - 1)
+        await transport.enqueue(type: "get_state", response: waiting)
+        await viewModel.refresh()
+        #expect(await transport.requestCount(type: "focus_interaction") == index + 1)
+        #expect(viewModel.localForegroundIdentity == nil)
+        clock.advance(nanoseconds: 1)
+        await transport.enqueue(type: "get_state", response: waiting)
+        await transport.enqueueFailure(type: "focus_interaction", code: "response_timeout")
+        await transport.enqueue(type: "get_state", response: waiting)
+        await viewModel.refresh()
+        #expect(await transport.requestCount(type: "focus_interaction") == index + 2)
+    }
+    // A revision is a different immutable target and must acquire its own
+    // acknowledgment. The prior revision's failure never grants authority.
+    card.revision += 1
+    await transport.enqueue(type: "get_state", response: try petTestSnapshotData(cards: [card]))
+    await transport.enqueue(type: "focus_interaction", response: try petTestFocusResponse())
+    await transport.enqueue(type: "get_state", response: try petTestSnapshotData(
+        cards: [card], foregroundSuffix: card.suffix))
+    await viewModel.refresh()
+    #expect(await transport.requestCount(type: "focus_interaction") == 6)
+    #expect(viewModel.localForegroundIdentity?.revision == 2)
+    #expect(await transport.requestCount(type: "select") == 0)
+}
+
+@Test("Healthy snapshots during a slow focus neither grant authority nor accumulate requests", .petLanguage(.korean))
+@MainActor
+func blabeePetPendingFocusRequiresAcknowledgment() async throws {
+    let transport = PetFakeTransport()
+    let clock = PetTestFocusClock()
+    let viewModel = blabeePetViewModel(transport: transport, opener: PetFakeApplicationOpener(),
+                                     focusRetryNow: { clock.now })
+    let card = PetTestCard(suffix: "slow_focus")
+    try viewModel.receiveSnapshotDataForTesting(petTestSnapshotData(cards: [card]))
+    let identity = try #require(viewModel.displayInteraction?.identity)
+    let authoritativeSnapshot = try petTestSnapshotData(cards: [card], foregroundSuffix: card.suffix)
+    await transport.setFocusBlocked(true)
+    await transport.enqueue(type: "focus_interaction", response: try petTestFocusResponse())
+    let focus = Task { @MainActor in await viewModel.focus(identity) }
+    let started = await blabeePetWaitForRequestCount(1, type: "focus_interaction", transport: transport)
+    #expect(started)
+    guard started else { await transport.setFocusBlocked(false); await focus.value; return }
+
+    clock.advance(nanoseconds: 30_000_000_000)
+    for _ in 0..<5 {
+        await transport.enqueue(type: "get_state", response: authoritativeSnapshot)
+        await viewModel.refresh()
+        #expect(viewModel.pendingFocusIdentity == identity)
+        #expect(viewModel.localForegroundIdentity == nil)
+        await viewModel.handleGlobalSlot(1)
+    }
+    let coalesced = Task { @MainActor in await viewModel.focus(identity) }
+    await Task.yield()
+    #expect(await transport.requestCount(type: "get_state") == 5)
+    #expect(await transport.requestCount(type: "focus_interaction") == 1)
+    #expect(await transport.requestCount(type: "select") == 0)
+
+    await transport.enqueue(type: "get_state", response: authoritativeSnapshot)
+    await transport.setFocusBlocked(false)
+    await focus.value
+    await coalesced.value
+    #expect(viewModel.localForegroundIdentity == identity)
+    #expect(viewModel.pendingFocusIdentity == nil)
+    await transport.enqueue(type: "get_state", response: authoritativeSnapshot)
+    await viewModel.refresh()
+    #expect(await transport.requestCount(type: "focus_interaction") == 1)
+}
+
+@Test("A focus response cannot regain authority after the same context changes away and back", .petLanguage(.korean), arguments: [false, true])
+@MainActor
+func blabeePetFocusTargetRoundTripRejectsOldResponse(_ fails: Bool) async throws {
+    let transport = PetFakeTransport()
+    let clock = PetTestFocusClock()
+    let viewModel = blabeePetViewModel(transport: transport, opener: PetFakeApplicationOpener(),
+                                     focusRetryNow: { clock.now })
+    let card = PetTestCard(suffix: "round_trip")
+    let other = PetTestCard(suffix: "other_target")
+    try viewModel.receiveSnapshotDataForTesting(petTestSnapshotData(cards: [card]))
+    let identity = try #require(viewModel.displayInteraction?.identity)
+    await transport.setFocusBlocked(true)
+    if fails { await transport.enqueueFailure(type: "focus_interaction", code: "old_failure") }
+    else { await transport.enqueue(type: "focus_interaction", response: try petTestFocusResponse()) }
+    let old = Task { @MainActor in await viewModel.focus(identity) }
+    let started = await blabeePetWaitForRequestCount(1, type: "focus_interaction", transport: transport)
+    #expect(started)
+    guard started else { await transport.setFocusBlocked(false); await old.value; return }
+    try viewModel.receiveSnapshotDataForTesting(petTestSnapshotData(cards: [other]))
+    try viewModel.receiveSnapshotDataForTesting(petTestSnapshotData(cards: [card], foregroundSuffix: card.suffix))
+    clock.advance(nanoseconds: 30_000_000_000)
+    // Even invalidated UI ownership cannot free a still-suspended I/O slot.
+    await transport.enqueue(type: "get_state", response: try petTestSnapshotData(cards: [card], foregroundSuffix: card.suffix))
+    await viewModel.refresh()
+    #expect(await transport.requestCount(type: "focus_interaction") == 1)
+    await transport.setFocusBlocked(false)
+    await old.value
+    #expect(viewModel.pendingFocusIdentity == nil)
+    #expect(viewModel.localForegroundIdentity == nil)
+    #expect(viewModel.lastError == nil)
+    #expect(await transport.requestCount(type: "get_state") == 1)
+    #expect(await transport.requestCount(type: "select") == 0)
+}
+
+@Test("A focus reconciliation snapshot cannot overwrite a newer card after acknowledgment", .petLanguage(.korean), arguments: [false, true])
+@MainActor
+func blabeePetStaleFocusSnapshotPreservesNewerCard(_ acquireNewFocus: Bool) async throws {
+    let backend = PetFakeTransport()
+    let transport = PetTestSnapshotGateTransport(backend)
+    let viewModel = PetViewModel(transport: transport, externalApplicationOpener: PetFakeApplicationOpener())
+    let oldCard = PetTestCard(suffix: "old_reconciliation")
+    let newCard = PetTestCard(suffix: "new_reconciliation")
+    try viewModel.receiveSnapshotDataForTesting(petTestSnapshotData(cards: [oldCard]))
+    let oldIdentity = try #require(viewModel.displayInteraction?.identity)
+    await backend.enqueue(type: "focus_interaction", response: try petTestFocusResponse())
+    await backend.enqueue(type: "get_state", response: try petTestSnapshotData(
+        cards: [oldCard], foregroundSuffix: oldCard.suffix))
+    let old = Task { @MainActor in await viewModel.focus(oldIdentity) }
+    let deadline = ContinuousClock.now.advanced(by: .seconds(2))
+    while await !transport.isWaiting, ContinuousClock.now < deadline { await Task.yield() }
+    let started = await transport.isWaiting
+    #expect(started)
+    guard started else { await transport.release(); await old.value; return }
+    try viewModel.receiveSnapshotDataForTesting(petTestSnapshotData(cards: [newCard]))
+    let newIdentity = try #require(viewModel.displayInteraction?.identity)
+    if acquireNewFocus {
+        await backend.enqueue(type: "focus_interaction", response: try petTestFocusResponse())
+        await backend.enqueue(type: "get_state", response: try petTestSnapshotData(
+            cards: [newCard], foregroundSuffix: newCard.suffix))
+        await viewModel.focus(newIdentity)
+        #expect(viewModel.localForegroundIdentity == newIdentity)
+    }
+    await transport.release()
+    await old.value
+    #expect(viewModel.displayInteraction?.identity == newIdentity)
+    #expect(viewModel.localForegroundIdentity == (acquireNewFocus ? newIdentity : nil))
+    #expect(viewModel.pendingFocusIdentity == nil)
+    #expect(viewModel.lastError == nil)
+    #expect(await backend.requestCount(type: "focus_interaction") == (acquireNewFocus ? 2 : 1))
+    #expect(await backend.requestCount(type: "select") == 0)
+}
+
+@Test("A false or malformed focus acknowledgment cannot borrow authority from a matching snapshot", .petLanguage(.korean), arguments: [false, true])
+@MainActor
+func blabeePetInvalidFocusAcknowledgmentFailsClosed(_ malformed: Bool) async throws {
+    let transport = PetFakeTransport()
+    let model = blabeePetViewModel(transport: transport, opener: PetFakeApplicationOpener())
+    let card = PetTestCard(suffix: "invalid_ack")
+    try model.receiveSnapshotDataForTesting(petTestSnapshotData(cards: [card]))
+    let identity = try #require(model.displayInteraction?.identity)
+    let response: Data
+    if malformed { response = Data("not-json".utf8) }
+    else { response = try petTestData(["focused": false]) }
+    await transport.enqueue(type: "focus_interaction", response: response)
+    await transport.enqueue(type: "get_state", response: try petTestSnapshotData(cards: [card], foregroundSuffix: card.suffix))
+    await model.focus(identity)
+    #expect(model.snapshot?.routing.foreground == identity)
+    #expect(model.localForegroundIdentity == nil && model.pendingFocusIdentity == nil)
+    await model.handleGlobalSlot(1)
+    #expect(await transport.requestCount(type: "select") == 0)
+}
+
+@Test("BlabeePet never auto-focuses over a different authoritative foreground", .petLanguage(.korean))
 @MainActor
 func blabeePetDoesNotStealDifferentAuthoritativeForeground() async throws {
     let transport = PetFakeTransport()
@@ -278,7 +473,7 @@ func blabeePetDoesNotStealDifferentAuthoritativeForeground() async throws {
     #expect(viewModel.localForegroundIdentity == nil)
 }
 
-@Test("BlabeePet clears an accepted next-turn card without presenting work success")
+@Test("BlabeePet clears an accepted next-turn card without presenting work success", .petLanguage(.korean))
 @MainActor
 func blabeePetClearsAcceptedNextTurnCard() async throws {
     let transport = PetFakeTransport()
@@ -330,7 +525,7 @@ func blabeePetClearsAcceptedNextTurnCard() async throws {
     #expect(viewModel.presentationState == .ready)
 }
 
-@Test("BlabeePet auto-focuses the first FIFO decision from multiple sessions")
+@Test("BlabeePet auto-focuses the first FIFO decision from multiple sessions", .petLanguage(.korean))
 @MainActor
 func blabeePetAutoFocusesFIFOHeadFromMultipleSessions() async throws {
     let transport = PetFakeTransport()
@@ -357,7 +552,7 @@ func blabeePetAutoFocusesFIFOHeadFromMultipleSessions() async throws {
     #expect(viewModel.fifoQueueCount == 2)
 }
 
-@Test("BlabeePet advances to the next FIFO session after selection")
+@Test("BlabeePet advances to the next FIFO session after selection", .petLanguage(.korean))
 @MainActor
 func blabeePetAdvancesFIFOAfterSelection() async throws {
     let transport = PetFakeTransport()
@@ -402,7 +597,7 @@ func blabeePetAdvancesFIFOAfterSelection() async throws {
     #expect(viewModel.fifoQueueCount == 1)
 }
 
-@Test("BlabeePet never lets a ready later session overtake a blocked FIFO head")
+@Test("BlabeePet never lets a ready later session overtake a blocked FIFO head", .petLanguage(.korean))
 @MainActor
 func blabeePetDoesNotOvertakeBlockedFIFOHead() async throws {
     let transport = PetFakeTransport()
@@ -427,7 +622,7 @@ func blabeePetDoesNotOvertakeBlockedFIFOHead() async throws {
     #expect(attentionEvents == 0)
 }
 
-@Test("BlabeePet rejects direct focus and selection for a FIFO follower")
+@Test("BlabeePet rejects direct focus and selection for a FIFO follower", .petLanguage(.korean))
 @MainActor
 func blabeePetRejectsDirectFIFOBypass() async throws {
     let transport = PetFakeTransport()
@@ -454,7 +649,7 @@ func blabeePetRejectsDirectFIFOBypass() async throws {
     #expect(viewModel.displayInteractionQueuePosition == 1)
 }
 
-@Test("BlabeePet emits attention once per new decision and toggle requests panel visibility")
+@Test("BlabeePet emits attention once per new decision and toggle requests panel visibility", .petLanguage(.korean))
 @MainActor
 func blabeePetAttentionAndPanelToggleCallbacks() throws {
     let transport = PetFakeTransport()
@@ -488,7 +683,7 @@ func blabeePetAttentionAndPanelToggleCallbacks() throws {
     #expect(viewModel.displayInteraction?.identity.interactionID == "interaction_attention")
 }
 
-@Test("BlabeePet focuses explicitly and a new second session never steals local foreground")
+@Test("BlabeePet focuses explicitly and a new second session never steals local foreground", .petLanguage(.korean))
 @MainActor
 func blabeePetExplicitFocusAndNoSteal() async throws {
     let transport = PetFakeTransport()
@@ -521,7 +716,7 @@ func blabeePetExplicitFocusAndNoSteal() async throws {
     #expect(viewModel.focusedInteraction == nil)
 }
 
-@Test("BlabeePet treats refocusing the exact authoritative card as a no-op")
+@Test("BlabeePet treats refocusing the exact authoritative card as a no-op", .petLanguage(.korean))
 @MainActor
 func blabeePetExactRefocusNoOp() async throws {
     let transport = PetFakeTransport()
@@ -541,7 +736,7 @@ func blabeePetExactRefocusNoOp() async throws {
     #expect(viewModel.pendingFocusIdentity == nil)
 }
 
-@Test("BlabeePet clears stale revision and rejects expired input")
+@Test("BlabeePet clears stale revision and rejects expired input", .petLanguage(.korean))
 @MainActor
 func blabeePetStaleRevisionAndExpiry() async throws {
     let transport = PetFakeTransport()
@@ -598,7 +793,7 @@ func blabeePetStaleRevisionAndExpiry() async throws {
     #expect(await expiredTransport.requestCount(type: "select") == 0)
 }
 
-@Test("BlabeePet keeps one selection in flight across different slots")
+@Test("BlabeePet keeps one selection in flight across different slots", .petLanguage(.korean))
 @MainActor
 func blabeePetDuplicateSubmitSingleFlight() async throws {
     let transport = PetFakeTransport()
@@ -633,7 +828,7 @@ func blabeePetDuplicateSubmitSingleFlight() async throws {
     #expect(opener.opened.count == 1)
 }
 
-@Test("BlabeePet global slot submission owns progress until selection resolves")
+@Test("BlabeePet global slot submission owns progress until selection resolves", .petLanguage(.korean))
 @MainActor
 func blabeePetGlobalSlotSelectionProgress() async throws {
     let transport = PetFakeTransport()
@@ -677,7 +872,7 @@ func blabeePetGlobalSlotSelectionProgress() async throws {
     #expect(await transport.requestCount(type: "select") == 1)
 }
 
-@Test("BlabeePet gives progress to the clicked row and clears it after submission")
+@Test("BlabeePet clears selection progress without replacing a newer displayed card", .petLanguage(.korean))
 @MainActor
 func blabeePetPanelSelectionProgressOwnershipAndClearing() async throws {
     let transport = PetFakeTransport()
@@ -762,16 +957,26 @@ func blabeePetPanelSelectionProgressOwnershipAndClearing() async throws {
         interaction: followerInteraction.identity
     )
     #expect(await transport.requestCount(type: "select") == 1)
+    let snapshotsBeforeCompletion = await transport.requestCount(type: "get_state")
+    var acceptedActions = 0
+    viewModel.onUsageAccepted = { _ in acceptedActions += 1 }
 
     await transport.setSelectionBlocked(false)
     await selection.value
 
+    // The earlier selection's successful response has no authority over the
+    // replacement card. Do not consume its queued empty snapshot, return to
+    // its external app, or publish acceptance into this newer presentation.
     #expect(viewModel.selectionSubmission == nil)
-    #expect(viewModel.displayInteraction == nil)
+    #expect(viewModel.displayInteraction?.identity == followerInteraction.identity)
+    #expect(viewModel.canRequestPanelSelection(followerInteraction.identity))
+    #expect(viewModel.lastError == nil && viewModel.selectionDeliveryNotice == nil)
+    #expect(opener.opened.isEmpty && acceptedActions == 0)
+    #expect(await transport.requestCount(type: "get_state") == snapshotsBeforeCompletion)
     #expect(await transport.requestCount(type: "select") == 1)
 }
 
-@Test("BlabeePet clears panel selection progress after an ambiguous failure")
+@Test("BlabeePet clears panel selection progress after an ambiguous failure", .petLanguage(.korean))
 @MainActor
 func blabeePetPanelSelectionProgressClearsAfterFailure() async throws {
     let transport = PetFakeTransport()
@@ -820,7 +1025,7 @@ func blabeePetPanelSelectionProgressClearsAfterFailure() async throws {
     #expect(await transport.requestCount(type: "select") == 1)
 }
 
-@Test("BlabeePet high-risk confirmation never leaves panel selection progress behind")
+@Test("BlabeePet high-risk confirmation never leaves panel selection progress behind", .petLanguage(.korean))
 @MainActor
 func blabeePetHighRiskConfirmationClearsPanelSelectionProgress() async throws {
     let transport = PetFakeTransport()
@@ -870,7 +1075,7 @@ func blabeePetHighRiskConfirmationClearsPanelSelectionProgress() async throws {
     #expect(await transport.requestCount(type: "select") == 1)
 }
 
-@Test("BlabeePet generates a fresh selection id for each newly focused card")
+@Test("BlabeePet generates a fresh selection id for each newly focused card", .petLanguage(.korean))
 @MainActor
 func blabeePetFreshSelectionIDPerCard() async throws {
     let transport = PetFakeTransport()
@@ -916,7 +1121,7 @@ func blabeePetFreshSelectionIDPerCard() async throws {
     #expect(selectionIDs == ["selection_fresh_1", "selection_fresh_2"])
 }
 
-@Test("BlabeePet gates high-risk actions and preserves legacy pause as a secondary control")
+@Test("BlabeePet gates high-risk actions and preserves legacy pause as a secondary control", .petLanguage(.korean))
 @MainActor
 func blabeePetHighRiskGateAndExplicitConfirmation() async throws {
     let transport = PetFakeTransport()
@@ -972,7 +1177,7 @@ func blabeePetHighRiskGateAndExplicitConfirmation() async throws {
     #expect(pauseViewModel.presentationState == .paused)
 }
 
-@Test("BlabeePet treats ranked slots three and four as executable next actions")
+@Test("BlabeePet treats ranked slots three and four as executable next actions", .petLanguage(.korean))
 @MainActor
 func blabeePetRankedTrailingActions() async throws {
     let transport = PetFakeTransport()
@@ -1003,7 +1208,7 @@ func blabeePetRankedTrailingActions() async throws {
     #expect(viewModel.presentationState == .ready)
 }
 
-@Test("BlabeePet treats ambiguous selection failure as stale until refocused")
+@Test("BlabeePet treats ambiguous selection failure as stale until refocused", .petLanguage(.korean))
 @MainActor
 func blabeePetAmbiguousSelectionFailureClearsAuthority() async throws {
     let transport = PetFakeTransport()
@@ -1027,7 +1232,7 @@ func blabeePetAmbiguousSelectionFailureClearsAuthority() async throws {
     #expect(await transport.requestCount(type: "select") == 1)
 }
 
-@Test("BlabeePet drops prior authority after an ambiguous focus response")
+@Test("BlabeePet drops prior authority after an ambiguous focus response", .petLanguage(.korean))
 @MainActor
 func blabeePetAmbiguousFocusFailureClearsAuthority() async throws {
     let transport = PetFakeTransport()
@@ -1065,7 +1270,7 @@ func blabeePetAmbiguousFocusFailureClearsAuthority() async throws {
     #expect(await transport.requestCount(type: "select") == 0)
 }
 
-@Test("BlabeePet keeps selection single-flight across interaction identities")
+@Test("BlabeePet keeps selection single-flight across interaction identities", .petLanguage(.korean))
 @MainActor
 func blabeePetGlobalSelectionSingleFlight() async throws {
     let transport = PetFakeTransport()
@@ -1109,7 +1314,7 @@ func blabeePetGlobalSelectionSingleFlight() async throws {
     #expect(await transport.requestCount(type: "select") == 1)
 }
 
-@Test("BlabeePet resolves an authoritative permission request exactly once", arguments: PetPermissionDecision.allCases)
+@Test("BlabeePet resolves an authoritative permission request exactly once", .petLanguage(.korean), arguments: PetPermissionDecision.allCases)
 @MainActor
 func blabeePetPermissionNotificationOwnership(decision: PetPermissionDecision) async throws {
     let transport = PetFakeTransport()
@@ -1218,7 +1423,7 @@ func blabeePetPermissionNumberedDecisionsPreserveAvailability(
     #expect(viewModel.lastError == nil)
 }
 
-@Test("BlabeePet rejects direct once-only approval without current Hook qualification")
+@Test("BlabeePet rejects direct once-only approval without current Hook qualification", .petLanguage(.korean))
 @MainActor
 func blabeePetPermissionAllowOnceRequiresCurrentQualification() async throws {
     let transport = PetFakeTransport()
@@ -1248,7 +1453,7 @@ func blabeePetPermissionAllowOnceRequiresCurrentQualification() async throws {
     #expect(viewModel.lastError == nil)
 }
 
-@Test("BlabeePet keeps one Hook approval in flight across duplicate clicks and FIFO changes")
+@Test("BlabeePet keeps one Hook approval in flight across duplicate clicks and FIFO changes", .petLanguage(.korean))
 @MainActor
 func blabeePetPermissionAllowOnceInFlightProtectsFIFO() async throws {
     let transport = PetFakeTransport()
@@ -1307,7 +1512,7 @@ func blabeePetPermissionAllowOnceInFlightProtectsFIFO() async throws {
     #expect(viewModel.pendingPermissionRequest == displayedSecond)
 }
 
-@Test("BlabeePet ignores a Hook decision after its visible FIFO head changes", arguments: [false, true])
+@Test("BlabeePet ignores a Hook decision after its visible FIFO head changes", .petLanguage(.korean), arguments: [false, true])
 @MainActor
 func blabeePetPermissionDecisionRequiresExactVisibleHead(allowOnceAvailable: Bool) async throws {
     let transport = PetFakeTransport()
@@ -1344,7 +1549,7 @@ func blabeePetPermissionDecisionRequiresExactVisibleHead(allowOnceAvailable: Boo
         == "permission_replacement_head")
 }
 
-@Test("BlabeePet preserves approval delivery errors after snapshot recovery")
+@Test("BlabeePet preserves approval delivery errors after snapshot recovery", .petLanguage(.korean))
 @MainActor
 func blabeePetApprovalResolutionErrorSurvivesRefresh() async throws {
     let hookTransport = PetFakeTransport()
@@ -1471,7 +1676,7 @@ func blabeePetApprovalResolutionErrorSurvivesRefresh() async throws {
     #expect(managedFailureEvents == 1)
 }
 
-@Test("BlabeePet blocks every approval choice while Codex delivery is pending", arguments: [false, true])
+@Test("BlabeePet blocks every approval choice while Codex delivery is pending", .petLanguage(.korean), arguments: [false, true])
 @MainActor
 func blabeePetApprovalDeliveryPendingBlocksDuplicateChoices(allowOnceAvailable: Bool) async throws {
     let hookTransport = PetFakeTransport()
@@ -1524,7 +1729,7 @@ func blabeePetApprovalDeliveryPendingBlocksDuplicateChoices(allowOnceAvailable: 
     #expect(managedViewModel.pendingManagedCommandApproval == managedRequest)
 }
 
-@Test("BlabeePet emits a dedicated presentation event for each permission FIFO head")
+@Test("BlabeePet emits a dedicated presentation event for each permission FIFO head", .petLanguage(.korean))
 @MainActor
 func blabeePetPermissionPresentationCallbacks() throws {
     let transport = PetFakeTransport()
@@ -1565,7 +1770,7 @@ func blabeePetPermissionPresentationCallbacks() throws {
     ])
 }
 
-@Test("BlabeePet displays and resolves the globally oldest approval")
+@Test("BlabeePet displays and resolves the globally oldest approval", .petLanguage(.korean))
 @MainActor
 func blabeePetManagedCommandApprovalOwnership() async throws {
     let transport = PetFakeTransport()
@@ -1657,7 +1862,7 @@ func blabeePetManagedCommandApprovalOwnership() async throws {
     #expect(String(describing: object).contains("acceptForSession") == false)
 }
 
-@Test("BlabeePet ignores a stale managed approval click after the FIFO head changes")
+@Test("BlabeePet ignores a stale managed approval click after the FIFO head changes", .petLanguage(.korean))
 @MainActor
 func blabeePetManagedCommandApprovalRejectsStaleDisplayedRequest() async throws {
     let transport = PetFakeTransport()
@@ -1726,7 +1931,7 @@ func blabeePetManagedCommandApprovalRejectsStaleDisplayedRequest() async throws 
     #expect(try petTestObject(payload)["decision"] as? String == "decline")
 }
 
-@Test("BlabeePet reports every exact global approval head change")
+@Test("BlabeePet reports every exact global approval head change", .petLanguage(.korean))
 @MainActor
 func blabeePetManagedCommandApprovalPresentationCallbacks() throws {
     let viewModel = blabeePetViewModel(
@@ -1760,7 +1965,7 @@ func blabeePetManagedCommandApprovalPresentationCallbacks() throws {
     ])
 }
 
-@Test("BlabeePet keeps shortcut collisions out of permission cards")
+@Test("BlabeePet keeps shortcut collisions out of permission cards", .petLanguage(.korean))
 @MainActor
 func blabeePetPermissionCardSuppressesShortcutDiagnostic() throws {
     let viewModel = blabeePetViewModel(
@@ -1812,7 +2017,7 @@ func blabeePetPermissionCardSuppressesShortcutDiagnostic() throws {
     #expect(viewModel.hasVisibleStatusMessage)
 }
 
-@Test("BlabeePet sends one managed approval resolution while a click is in flight")
+@Test("BlabeePet sends one managed approval resolution while a click is in flight", .petLanguage(.korean))
 @MainActor
 func blabeePetManagedApprovalResolutionIsSingleFlight() async throws {
     let transport = PetFakeTransport()
@@ -1872,7 +2077,7 @@ func blabeePetManagedApprovalResolutionIsSingleFlight() async throws {
     #expect(viewModel.pendingManagedCommandApproval == nil)
 }
 
-@Test("BlabeePet permission head blocks hidden decision actions and shortcuts", arguments: [false, true])
+@Test("BlabeePet permission head blocks hidden decision actions and shortcuts", .petLanguage(.korean), arguments: [false, true])
 @MainActor
 func blabeePetPermissionBlocksDecisionActions(allowOnceAvailable: Bool) async throws {
     let transport = PetFakeTransport()
@@ -1909,7 +2114,7 @@ func blabeePetPermissionBlocksDecisionActions(allowOnceAvailable: Bool) async th
     #expect(await transport.requestCount(type: "select") == 0)
 }
 
-@Test("BlabeePet keeps permission and successful-selection return targets separate")
+@Test("BlabeePet keeps permission and successful-selection return targets separate", .petLanguage(.korean))
 @MainActor
 func blabeePetReturnTargetOwnership() async throws {
     let transport = PetFakeTransport()

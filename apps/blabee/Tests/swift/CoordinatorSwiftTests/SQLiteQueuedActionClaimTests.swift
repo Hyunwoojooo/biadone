@@ -45,17 +45,33 @@ private struct SQLiteClaimIOCounts: Equatable {
     var freshnessCAS = 0
 }
 
+private struct SQLiteClaimWorkCounts: Equatable {
+    var fullValidationScans = 0
+    var eventPreparations = 0
+    var documentPreparations = 0
+    var verificationPreparations = 0
+    var strictJSONDecodingPasses = 0
+    var sidecarCandidates = 0
+    var fullReplayEvents: [Int] = []
+    var incrementalEvents: [Int] = []
+    var validationNanoseconds: [UInt64] = []
+    var fullReplayNanoseconds: [UInt64] = []
+    var incrementalNanoseconds: [UInt64] = []
+}
+
 /// Enabled only around the operation under measurement, excluding fixture
 /// creation, journal reopen, and assertions. Freshness uses memory, not Keychain.
 private final class SQLiteClaimIOMeter: @unchecked Sendable {
     private let lock = NSLock()
     private var recording = false
     private var counts = SQLiteClaimIOCounts()
+    private var workCounts = SQLiteClaimWorkCounts()
 
     func start() {
         lock.lock()
         defer { lock.unlock() }
         counts = SQLiteClaimIOCounts()
+        workCounts = SQLiteClaimWorkCounts()
         recording = true
     }
 
@@ -70,6 +86,42 @@ private final class SQLiteClaimIOMeter: @unchecked Sendable {
         defer { lock.unlock() }
         recording = false
         return counts
+    }
+
+    func observe(_ work: SQLiteJournalWork) {
+        lock.lock()
+        defer { lock.unlock() }
+        guard recording else { return }
+        switch work {
+        case .fullValidationScan: workCounts.fullValidationScans += 1
+        case let .fullValidationFinished(elapsedNanoseconds):
+            workCounts.validationNanoseconds.append(elapsedNanoseconds)
+        case .eventPreparation: workCounts.eventPreparations += 1
+        case .documentPreparation: workCounts.documentPreparations += 1
+        case .verificationPreparation: workCounts.verificationPreparations += 1
+        case .strictJSONDecodingPass: workCounts.strictJSONDecodingPasses += 1
+        case let .sidecarCandidates(count): workCounts.sidecarCandidates += count
+        }
+    }
+
+    func observe(_ work: CoordinatorSemanticReplayWork) {
+        lock.lock()
+        defer { lock.unlock() }
+        guard recording else { return }
+        switch work {
+        case let .fullReplay(eventCount): workCounts.fullReplayEvents.append(eventCount)
+        case let .incrementalApplication(eventCount): workCounts.incrementalEvents.append(eventCount)
+        case let .fullReplayFinished(elapsedNanoseconds):
+            workCounts.fullReplayNanoseconds.append(elapsedNanoseconds)
+        case let .incrementalApplicationFinished(elapsedNanoseconds):
+            workCounts.incrementalNanoseconds.append(elapsedNanoseconds)
+        }
+    }
+
+    func measuredWork() -> SQLiteClaimWorkCounts {
+        lock.lock()
+        defer { lock.unlock() }
+        return workCounts
     }
 }
 
@@ -93,13 +145,25 @@ private final class SQLiteClaimMeteredJournal: CoordinatorSemanticJournalPort, @
         documents: [Data],
         verificationRecords: [Data]
     ) throws -> JournalAppendResult {
+        try append(expectedSequence: expectedSequence, events: events, documents: documents,
+            verificationRecords: verificationRecords, validateAdmission: {})
+    }
+
+    func append(
+        expectedSequence: Int64,
+        events: [Data],
+        documents: [Data],
+        verificationRecords: [Data],
+        validateAdmission: () throws -> Void
+    ) throws -> JournalAppendResult {
         meter.record {
             $0.publicAppends += 1
             $0.appendedEventCounts.append(events.count)
         }
         return try journal.append(
             expectedSequence: expectedSequence, events: events,
-            documents: documents, verificationRecords: verificationRecords
+            documents: documents, verificationRecords: verificationRecords,
+            validateAdmission: validateAdmission
         )
     }
 }
@@ -307,7 +371,7 @@ private func sqliteClaimClosedHistory(suffix: String, pairCount: Int) throws -> 
 private func makeSQLiteClaimFixture(
     _ suffix: String,
     closedHistoryPairs: Int = 0,
-    completeTransport: ((CoordinatorRoutingApplication, SQLiteClaimIOMeter, Data, Data) throws -> Void)? = nil
+    completeTransport: ((SQLiteJournal, CoordinatorRoutingApplication, SQLiteClaimIOMeter, Data, Data) throws -> Void)? = nil
 ) throws -> SQLiteClaimFixture {
     let directory = try sqliteClaimTemporaryDirectory()
     let databaseURL = directory.appendingPathComponent("journal.sqlite")
@@ -317,7 +381,8 @@ private func makeSQLiteClaimFixture(
     let journalA = try SQLiteJournal(
         databaseURL: databaseURL,
         keyURL: keyURL,
-        freshnessStore: freshness
+        freshnessStore: freshness,
+        workObserver: { meter.observe($0) }
     )
     let history = try sqliteClaimClosedHistory(suffix: suffix, pairCount: closedHistoryPairs)
     if !history.isEmpty {
@@ -410,7 +475,7 @@ private func makeSQLiteClaimFixture(
         "close_reason": "queued_transport_completed",
     ])
     if let completeTransport {
-        try completeTransport(routingA, meter, completion, close)
+        try completeTransport(journalA, routingA, meter, completion, close)
     } else {
         _ = try routingA.executeCommand(completion)
         _ = try routingA.executeCommand(close)
@@ -421,7 +486,8 @@ private func makeSQLiteClaimFixture(
     let journalB = try SQLiteJournal(
         databaseURL: databaseURL,
         keyURL: keyURL,
-        freshnessStore: freshness
+        freshnessStore: freshness,
+        workObserver: { meter.observe($0) }
     )
     let routingB = try CoordinatorRoutingApplication(
         journal: SQLiteClaimMeteredJournal(journal: journalB, meter: meter),
@@ -662,6 +728,144 @@ private struct SQLiteReceiptPhaseSample {
     let counts: SQLiteClaimIOCounts
 }
 
+@Test("SQLite queued claims retain full scans while preparing history only once per scan")
+func sqliteQueuedClaimValidationWorkIsOperationLocal() throws {
+    let fixture = try makeSQLiteClaimFixture("validation_work", closedHistoryPairs: 12)
+    defer { fixture.remove() }
+    let before = try fixture.journalA.load()
+    let meter = fixture.meter
+    let semantic = CoordinatorSemanticApplication(
+        journal: SQLiteClaimMeteredJournal(journal: fixture.journalA, meter: meter),
+        workObserver: { meter.observe($0) }
+    )
+    let command = try sqliteClaimCommand(
+        fixture: fixture, eventID: "event_validation_work_claim", turnID: "turn_validation_work"
+    )
+    meter.start()
+    let first = try semantic.execute(command: command)
+    let io = meter.stop()
+    let work = meter.measuredWork()
+    #expect(first.commit.eventCount == 1)
+    #expect(io == SQLiteClaimIOCounts(
+        publicLoads: 1, publicAppends: 1, appendedEventCounts: [1],
+        freshnessLoads: 3, freshnessCAS: 2
+    ))
+    // Authority, preappend and postcommit all authenticate complete history.
+    // Before the fix the preappend history was parsed a fourth time; the new
+    // row is still prepared once on ingress and once on postcommit validation.
+    #expect(work.fullValidationScans == 3)
+    #expect(work.eventPreparations == 3 * before.events.count + 2)
+    #expect(work.documentPreparations == 3 * before.documents.count)
+    #expect(work.verificationPreparations == 3 * before.verificationRecords.count)
+    #expect(work.fullReplayEvents == [before.events.count])
+    #expect(work.incrementalEvents == [1])
+    #expect(work.validationNanoseconds.count == 3)
+    #expect(work.fullReplayNanoseconds.count == 1)
+    #expect(work.incrementalNanoseconds.count == 1)
+
+    meter.start()
+    let retry = try semantic.execute(command: command)
+    let retryIO = meter.stop()
+    let retryWork = meter.measuredWork()
+    #expect(retry.commit.eventCount == 0)
+    #expect(retryIO == SQLiteClaimIOCounts(publicLoads: 1, freshnessLoads: 1))
+    #expect(retryWork.fullValidationScans == 1)
+    #expect(retryWork.eventPreparations == before.events.count + 1)
+    #expect(retryWork.fullReplayEvents == [before.events.count + 1])
+    #expect(retryWork.incrementalEvents.isEmpty)
+
+    var otherSession = try sqliteClaimObject(command)
+    var wrongBinding = fixture.binding
+    wrongBinding["session_id"] = "session_validation_work_other"
+    otherSession["binding"] = wrongBinding
+    sqliteClaimExpectCode("decision_boundary_binding_mismatch") {
+        _ = try semantic.execute(command: sqliteClaimData(otherSession))
+    }
+    var wrongDigest = try sqliteClaimObject(command)
+    wrongDigest["queued_prompt_sha256"] = "sha256:" + String(repeating: "c", count: 64)
+    sqliteClaimExpectCode("queued_action_context_claim_mismatch") {
+        _ = try semantic.execute(command: sqliteClaimData(wrongDigest))
+    }
+    #expect(try sqliteClaimEvents(fixture.journalB.load()).count == 1)
+}
+
+@Test("SQLite competing writer invalidates a projected queued claim before effects escape")
+func sqliteQueuedClaimIncrementalProjectionReloadsAfterWriterChange() throws {
+    let fixture = try makeSQLiteClaimFixture("projection_writer")
+    defer { fixture.remove() }
+    let meter = fixture.meter
+    let semantic = CoordinatorSemanticApplication(
+        journal: fixture.journalA, workObserver: { meter.observe($0) }
+    )
+    let stale = try semantic.authorityProjection()
+    let winner = try sqliteClaimCommand(
+        fixture: fixture, eventID: "event_projection_writer_winner", turnID: "turn_projection_writer_winner"
+    )
+    _ = try CoordinatorSemanticApplication(journal: fixture.journalB).execute(command: winner)
+    meter.start()
+    sqliteClaimExpectCode("queued_action_context_already_claimed") {
+        _ = try semantic.execute(command: sqliteClaimCommand(
+            fixture: fixture,
+            eventID: "event_projection_writer_loser",
+            turnID: "turn_projection_writer_loser"
+        ), using: stale)
+    }
+    _ = meter.stop()
+    let work = meter.measuredWork()
+    #expect(work.fullValidationScans == 2) // Rejected append, then fresh authority.
+    #expect(work.incrementalEvents == [1])
+    #expect(work.fullReplayEvents == [stale.snapshot.events.count + 1])
+    let snapshot = try fixture.journalA.load()
+    #expect(snapshot.journalSequence == stale.state.eventSequence + 1)
+    #expect(try sqliteClaimEvents(snapshot).count == 1)
+}
+
+@Test("queued delivery applies its three events without replaying the verified prefix again")
+func sqliteQueuedDeliveryUsesOneFullSemanticReplay() throws {
+    // Commit before opening routingB: a real second service startup must keep
+    // its fail-closed recovery of otherwise unterminated continuations.
+    let fixture = try makeSQLiteClaimFixture("delivery_replay", closedHistoryPairs: 12) { journal, routing, meter, completion, close in
+        let before = try journal.load()
+        let state = try routing.authoritativeState()
+        let continuationID = "continuation_sqlite_claim_delivery_replay"
+        let action = try state.selectedActionJSON(for: continuationID)
+        let semantic = CoordinatorSemanticApplication(
+            journal: SQLiteClaimMeteredJournal(journal: journal, meter: meter),
+            workObserver: { meter.observe($0) }
+        )
+        let claim = try sqliteClaimData([
+            "type": "claim_queued_action_context", "event_id": "event_delivery_replay_claim",
+            "occurred_at": "2026-08-21T12:00:04Z",
+            "binding": sqliteClaimBinding("delivery_replay"), "continuation_id": continuationID,
+            "delivery_turn_id": "turn_delivery_replay",
+            "queued_prompt_sha256": "sha256:" + String(repeating: "a", count: 64),
+            "cwd_sha256": "sha256:" + String(repeating: "b", count: 64),
+            "action_sha256": CoordinatorSHA256.fingerprint(action),
+        ])
+        meter.start()
+        let result = try semantic.executeQueuedActionDelivery(
+            commands: [completion, close, claim], using: semantic.authorityProjection()
+        )
+        let io = meter.stop()
+        let work = meter.measuredWork()
+        #expect(result.commit.eventCount == 3)
+        #expect(io == SQLiteClaimIOCounts(
+            publicLoads: 1, publicAppends: 1, appendedEventCounts: [3],
+            freshnessLoads: 3, freshnessCAS: 2
+        ))
+        #expect(work.fullValidationScans == 3)
+        #expect(work.eventPreparations == 3 * before.events.count + 6)
+        #expect(work.fullReplayEvents == [before.events.count])
+        #expect(work.incrementalEvents == [1, 1, 1])
+    }
+    defer { fixture.remove() }
+    let after = try fixture.journalB.load()
+    #expect(try sqliteClaimEvents(after).count == 1)
+    let state = try CoordinatorSemanticReplay.replay(after)
+    #expect(state.continuation(id: fixture.continuationID)?.workOutcome == nil)
+    #expect(try state.selectedActionJSON(for: fixture.continuationID) == fixture.actionJSON)
+}
+
 private func sqliteReceiptMeasure(
     _ meter: SQLiteClaimIOMeter,
     _ operation: () throws -> Void
@@ -692,7 +896,7 @@ private func sqliteReceiptExercise(
     let fixture = try makeSQLiteClaimFixture(
         suffix,
         closedHistoryPairs: closedHistoryPairs
-    ) { routing, meter, completion, originalClose in
+    ) { _, routing, meter, completion, originalClose in
         let before = try routing.authoritativeState()
         sequenceBeforeCompletion = before.eventSequence
         let continuation = try #require(before.continuation(id: "continuation_sqlite_claim_\(suffix)"))
@@ -817,6 +1021,273 @@ func sqliteReceiptCompletionBatchPreservesQueuedClaim() throws {
 )
 func sqliteReceiptCompletionBenchmarkWithClosedHistory() throws {
     try sqliteReceiptCompare(closedHistoryPairs: 600)
+}
+
+private struct SQLitePacketClaimLifecycle {
+    let snapshot: JournalSnapshot
+    let completion: Data
+    let close: Data
+    let claim: Data
+    let continuationID: String
+    let actionJSON: Data
+}
+
+/// Builds only synthetic persisted bytes. Fingerprints identify fixture text;
+/// no production token, database, storage key, or Keychain item is consulted.
+private func sqlitePacketClaimLifecycle(
+    suffix: String,
+    firstSequence: Int64,
+    completed: Bool,
+    claimed: Bool,
+    padded: Bool
+) throws -> SQLitePacketClaimLifecycle {
+    let binding = sqliteClaimBinding(suffix)
+    var packet = try sqliteClaimPacket(
+        suffix: suffix, binding: binding,
+        validAfterEventSequence: firstSequence + 1, rankedActions: true
+    )
+    var choices = try #require(packet["choices"] as? [[String: Any]])
+    if padded {
+        packet["summary"] = String(repeating: "s", count: 4_096)
+        for index in choices.indices {
+            var action = try #require(choices[index]["action"] as? [String: Any])
+            action["objective"] = String(repeating: "o", count: 1_024)
+            choices[index]["action"] = action
+        }
+        packet["choices"] = choices
+    }
+    let choice = try #require(choices.first)
+    let actionJSON = try sqliteClaimData(try #require(choice["action"] as? [String: Any]))
+    let continuationID = "continuation_sqlite_claim_\(suffix)"
+    func eventID(_ type: String) -> String { "event_sqlite_claim_\(suffix)_\(type)" }
+    var events: [Data] = []
+    func appendEvent(_ type: String, second: Int, payload: [String: Any]) throws {
+        var object = binding
+        object["schema_version"] = "1.0"
+        object["kind"] = "blabee_runtime_event"
+        object["event_id"] = eventID(type)
+        object["event_sequence"] = firstSequence + Int64(events.count)
+        object["event_type"] = type
+        object["event_category"] = type.hasPrefix("decision_") ? "decision_lifecycle" : "transport"
+        object["occurred_at"] = String(format: "2026-08-21T12:00:%02dZ", second)
+        object["payload"] = payload
+        events.append(try sqliteClaimData(object))
+    }
+    try appendEvent("decision_boundary_opened", second: 0, payload: ["proposal_id": "proposal_\(suffix)"])
+    try appendEvent("decision_packet_sealed", second: 1, payload: [
+        "interaction_id": packet["interaction_id"]!, "packet_id": packet["packet_id"]!,
+        "revision": 1, "expires_at": packet["expires_at"]!,
+    ])
+    try appendEvent("decision_selection_claimed", second: 2, payload: [
+        "selection_id": "selection_\(suffix)", "interaction_id": packet["interaction_id"]!,
+        "packet_id": packet["packet_id"]!, "revision": 1, "option_id": choice["option_id"]!,
+    ])
+    try appendEvent("continuation_dispatched", second: 2, payload: [
+        "continuation_id": continuationID, "interaction_id": packet["interaction_id"]!,
+        "packet_id": packet["packet_id"]!, "revision": 1,
+        "option_id": choice["option_id"]!, "action_id": choice["action_id"]!,
+        "dispatch_mode": "queued_next_turn", "queued_action_context_claim_protocol": "v1",
+        "issued_at": "2026-08-21T12:00:02Z", "expires_at": "2026-08-21T12:02:02Z",
+        "in_flight_deadline_at": "2026-08-21T12:05:02Z",
+    ])
+    try appendEvent("continuation_consumed", second: 3, payload: [
+        "continuation_id": continuationID, "dispatch_mode": "queued_next_turn",
+    ])
+    if completed {
+        try appendEvent("continuation_transport_completed", second: 4, payload: [
+            "continuation_id": continuationID, "transport_status": "completed",
+            "work_outcome_status": "not_recorded",
+        ])
+        try appendEvent("decision_boundary_closed", second: 5, payload: [
+            "close_reason": "queued_transport_completed",
+        ])
+    }
+    let claimPayload: [String: Any] = [
+        "continuation_id": continuationID, "delivery_turn_id": "delivery_\(suffix)",
+        "queued_prompt_sha256": CoordinatorSHA256.fingerprint(Data("fixture_prompt_\(suffix)".utf8)),
+        "cwd_sha256": CoordinatorSHA256.fingerprint(Data("fixture_cwd_\(suffix)".utf8)),
+        "action_sha256": CoordinatorSHA256.fingerprint(actionJSON),
+    ]
+    if claimed { try appendEvent("queued_action_context_claimed", second: 6, payload: claimPayload) }
+    var verification = binding
+    verification.merge([
+        "schema_version": "1.0", "kind": "blabee_continuation_verification_record",
+        "dispatch_event_id": eventID("continuation_dispatched"), "continuation_id": continuationID,
+        "interaction_id": packet["interaction_id"]!, "packet_id": packet["packet_id"]!,
+        "revision": 1, "option_id": choice["option_id"]!, "action_id": choice["action_id"]!,
+        "correlation_token_fingerprint": CoordinatorSHA256.fingerprint(Data("fixture_fingerprint_\(suffix)".utf8)),
+    ]) { _, replacement in replacement }
+    let completion = try sqliteClaimData([
+        "type": "complete_transport", "event_id": eventID("continuation_transport_completed"),
+        "occurred_at": "2026-08-21T12:00:04Z", "binding": binding, "continuation_id": continuationID,
+    ])
+    let close = try sqliteClaimData([
+        "type": "close_boundary", "event_id": eventID("decision_boundary_closed"),
+        "occurred_at": "2026-08-21T12:00:05Z", "binding": binding,
+        "close_reason": "queued_transport_completed",
+    ])
+    var claim = claimPayload
+    claim.merge([
+        "type": "claim_queued_action_context", "event_id": eventID("queued_action_context_claimed"),
+        "occurred_at": "2026-08-21T12:00:06Z", "binding": binding,
+    ]) { _, replacement in replacement }
+    return SQLitePacketClaimLifecycle(
+        snapshot: JournalSnapshot(
+            events: events, documents: [try sqliteClaimData(packet)],
+            verificationRecords: [try sqliteClaimData(verification)],
+            journalSequence: firstSequence + Int64(events.count) - 1
+        ),
+        completion: completion, close: close, claim: try sqliteClaimData(claim),
+        continuationID: continuationID, actionJSON: actionJSON
+    )
+}
+
+private func sqlitePacketClaimHistory(
+    packetCount: Int,
+    closedOnlyPairs: Int,
+    padded: Bool
+) throws -> JournalSnapshot {
+    var events = try sqliteClaimClosedHistory(suffix: "packet_rich", pairCount: closedOnlyPairs)
+    var documents: [Data] = []
+    var verifications: [Data] = []
+    for index in 0..<packetCount {
+        let lifecycle = try sqlitePacketClaimLifecycle(
+            suffix: "packet_history_\(index)", firstSequence: Int64(events.count) + 1,
+            completed: true, claimed: true, padded: padded
+        )
+        events += lifecycle.snapshot.events
+        documents += lifecycle.snapshot.documents
+        verifications += lifecycle.snapshot.verificationRecords
+    }
+    return JournalSnapshot(
+        events: events, documents: documents, verificationRecords: verifications,
+        journalSequence: Int64(events.count)
+    )
+}
+
+@discardableResult
+private func sqlitePacketClaimExercise(
+    history: JournalSnapshot,
+    preReceipt: Bool,
+    benchmark: Bool
+) throws -> SQLiteClaimWorkCounts {
+    let mode = preReceipt ? "pre_receipt_delivery" : "post_receipt_claim"
+    let target = try sqlitePacketClaimLifecycle(
+        suffix: mode, firstSequence: history.journalSequence + 1,
+        completed: !preReceipt, claimed: false, padded: false
+    )
+    let seed = JournalSnapshot(
+        events: history.events + target.snapshot.events,
+        documents: history.documents + target.snapshot.documents,
+        verificationRecords: history.verificationRecords + target.snapshot.verificationRecords,
+        journalSequence: target.snapshot.journalSequence
+    )
+    let initialState = try CoordinatorSemanticReplay.replay(seed)
+    #expect(try initialState.selectedActionJSON(for: target.continuationID) == target.actionJSON)
+    #expect(initialState.continuation(id: target.continuationID)?.queuedActionContextClaim == nil)
+    let directory = try sqliteClaimTemporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let meter = SQLiteClaimIOMeter()
+    let freshness = SQLiteClaimFreshnessStore(meter: meter)
+    let journal = try SQLiteJournal(
+        databaseURL: directory.appendingPathComponent("journal.sqlite"),
+        keyURL: directory.appendingPathComponent("journal.key"), freshnessStore: freshness,
+        workObserver: { meter.observe($0) }
+    )
+    // All fixture setup stays outside the measured span and uses one append.
+    _ = try journal.append(
+        expectedSequence: 0, events: seed.events, documents: seed.documents,
+        verificationRecords: seed.verificationRecords
+    )
+    let semantic = CoordinatorSemanticApplication(
+        journal: SQLiteClaimMeteredJournal(journal: journal, meter: meter),
+        workObserver: { meter.observe($0) }
+    )
+    let appendedCount = preReceipt ? 3 : 1
+    let sample = try sqliteReceiptMeasure(meter) {
+        let result: CoordinatorSemanticExecutionResult
+        if preReceipt {
+            result = try semantic.executeQueuedActionDelivery(
+                commands: [target.completion, target.close, target.claim],
+                using: semantic.authorityProjection()
+            )
+        } else {
+            result = try semantic.execute(command: target.claim)
+        }
+        #expect(result.commit.eventCount == appendedCount)
+        #expect(result.commit.lastSequence == seed.journalSequence + Int64(appendedCount))
+    }
+    let work = meter.measuredWork()
+    #expect(sample.counts == SQLiteClaimIOCounts(
+        publicLoads: 1, publicAppends: 1, appendedEventCounts: [appendedCount],
+        freshnessLoads: 3, freshnessCAS: 2
+    ))
+    #expect(work.fullValidationScans == 3)
+    #expect(work.eventPreparations == 3 * seed.events.count + 2 * appendedCount)
+    #expect(work.documentPreparations == 3 * seed.documents.count)
+    #expect(work.verificationPreparations == 3 * seed.verificationRecords.count)
+    #expect(work.fullReplayEvents == [seed.events.count])
+    #expect(work.incrementalEvents == Array(repeating: 1, count: appendedCount))
+    let after = try journal.load()
+    let state = try CoordinatorSemanticReplay.replay(after)
+    let continuation = try #require(state.continuation(id: target.continuationID))
+    #expect(continuation.transport?.status == .completed)
+    #expect(continuation.workOutcome == nil)
+    #expect(continuation.queuedActionContextClaim?.deliveryTurnID == "delivery_\(mode)")
+    #expect(try state.selectedActionJSON(for: target.continuationID) == target.actionJSON)
+    #expect(try sqliteClaimEvents(after).count == history.verificationRecords.count + 1)
+    if benchmark {
+        let payloadBytes = (seed.events + seed.documents + seed.verificationRecords).reduce(0) { $0 + $1.count }
+        func milliseconds(_ values: [UInt64]) -> String {
+            String(format: "%.3f", Double(values.reduce(0, +)) / 1_000_000)
+        }
+        print(
+            "SQLITE_QUEUED_CLAIM_BENCHMARK mode=\(mode) scope=semantic_and_sqlite"
+                + " history_events=\(history.events.count) seed_events=\(seed.events.count)"
+                + " packets=\(seed.documents.count) verifications=\(seed.verificationRecords.count)"
+                + " canonical_payload_bytes=\(payloadBytes) freshness_backend=in_memory"
+                + " elapsed_ms=\(String(format: "%.3f", sample.elapsedSeconds * 1_000))"
+                + " validation_ms=\(milliseconds(work.validationNanoseconds))"
+                + " replay_ms=\(milliseconds(work.fullReplayNanoseconds))"
+                + " incremental_ms=\(milliseconds(work.incrementalNanoseconds))"
+                + " full_scans=\(work.fullValidationScans) event_preparations=\(work.eventPreparations)"
+                + " document_preparations=\(work.documentPreparations) verification_preparations=\(work.verificationPreparations)"
+                + " strict_json_decodes=\(work.strictJSONDecodingPasses) sidecar_candidates=\(work.sidecarCandidates)"
+                + " public_loads=\(sample.counts.publicLoads) public_appends=\(sample.counts.publicAppends)"
+                + " freshness_loads=\(sample.counts.freshnessLoads) freshness_cas=\(sample.counts.freshnessCAS)"
+        )
+    }
+    return work
+}
+
+@Test("SQLite queued claims validate packet and continuation history per operation", arguments: [false, true])
+func sqliteQueuedClaimWorkWithPacketRichHistory(preReceipt: Bool) throws {
+    let history = try sqlitePacketClaimHistory(packetCount: 4, closedOnlyPairs: 2, padded: false)
+    let work = try sqlitePacketClaimExercise(history: history, preReceipt: preReceipt, benchmark: false)
+    // Ingress and canonical bytes both retain their strict gate. Reusing the
+    // already decoded ingress object must not add a third decoding pass.
+    #expect(work.strictJSONDecodingPasses == 2 * (work.eventPreparations + work.documentPreparations)
+        + work.verificationPreparations)
+    // Each of seven bidirectional sidecar relationships inspects exactly one
+    // candidate for each history packet and the target, on every full scan.
+    #expect(work.sidecarCandidates == 7 * (history.documents.count + 1) * work.fullValidationScans)
+}
+
+// Timings are comparative evidence, not a timing assertion or a claim about
+// actor wait, UDS transport, startup, or the live Keychain backend.
+@Test(
+    "SQLite queued claim benchmark with 2500 events and packet-rich 5-8 MiB history",
+    .enabled(if: ProcessInfo.processInfo.environment["BLABEE_SQLITE_QUEUED_CLAIM_BENCHMARK"] == "1")
+)
+func sqliteQueuedClaimBenchmarkWithPacketRichHistory() throws {
+    let history = try sqlitePacketClaimHistory(packetCount: 300, closedOnlyPairs: 50, padded: true)
+    let bytes = (history.events + history.documents + history.verificationRecords).reduce(0) { $0 + $1.count }
+    #expect(history.events.count == 2_500)
+    #expect(history.documents.count == 300 && history.verificationRecords.count == 300)
+    #expect((5 * 1_024 * 1_024...8 * 1_024 * 1_024).contains(bytes))
+    for preReceipt in [false, true] {
+        try sqlitePacketClaimExercise(history: history, preReceipt: preReceipt, benchmark: true)
+    }
 }
 
 /// Synthetic history is validated in memory and seeded in one SQLite batch.

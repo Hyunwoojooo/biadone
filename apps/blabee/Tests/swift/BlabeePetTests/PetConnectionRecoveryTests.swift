@@ -208,6 +208,7 @@ struct PetConnectionRecoveryTests {
         await viewModel.beginOnboarding()
         await viewModel.refreshCodexPluginSetup()
         try viewModel.receiveSnapshotDataForTesting(petTestSnapshotData(cards: [PetTestCard(suffix: "one")]))
+        viewModel.setConnectionProviderSelected(.codex, selected: true)
         #expect(!viewModel.isConnectionSetupReady)
         let check = Task { await viewModel.checkCodexHooks() }
         let deadline = ContinuousClock.now.advanced(by: .seconds(2))

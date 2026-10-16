@@ -14,9 +14,14 @@ public enum QueuedPromptEnvelope: Sendable {
     /// It deliberately contains no ref, action payload, binding, identifier,
     /// or transport error detail.
     public static let unavailableAdditionalContext =
-        "Blabee could not verify the selected action in time. Do not execute this request. Ask the user to select a fresh Blabee action."
+        "Blabee could not complete internal Hook verification of the selected action. "
+        + "This verification failure does not show that the user's selection deadline expired. "
+        + "Do not execute this request or infer or replay an action from its ref. "
+        + "Explain the internal verification failure and ask the user to select a fresh Blabee action."
 
     public enum Classification: Equatable, Sendable {
+        // Compatibility name for a prompt without the Blabee envelope. This
+        // does not attest that a person authored it or identify a host task.
         case human
         case exact(reference: String)
         case malformed

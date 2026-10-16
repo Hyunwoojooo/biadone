@@ -11,6 +11,33 @@ public protocol CoordinatorSemanticJournalPort: Sendable {
         documents: [Data],
         verificationRecords: [Data]
     ) throws -> JournalAppendResult
+
+    /// Synchronous, non-reentrant admission after storage validation and before
+    /// starting the durable freshness transition. Never performs journal I/O.
+    func append(
+        expectedSequence: Int64,
+        events: [Data],
+        documents: [Data],
+        verificationRecords: [Data],
+        validateAdmission: () throws -> Void
+    ) throws -> JournalAppendResult
+}
+
+extension CoordinatorSemanticJournalPort {
+    /// Compatibility for immediate in-memory ports. Storage-owning ports must
+    /// override at their final transactional admission point; wrappers must
+    /// forward the callback so slow validation cannot move it ahead of storage.
+    public func append(
+        expectedSequence: Int64,
+        events: [Data],
+        documents: [Data],
+        verificationRecords: [Data],
+        validateAdmission: () throws -> Void
+    ) throws -> JournalAppendResult {
+        try validateAdmission()
+        return try append(expectedSequence: expectedSequence, events: events,
+            documents: documents, verificationRecords: verificationRecords)
+    }
 }
 
 extension SQLiteJournal: CoordinatorSemanticJournalPort {
@@ -18,14 +45,26 @@ extension SQLiteJournal: CoordinatorSemanticJournalPort {
         expectedSequence: Int64,
         events: [Data],
         documents: [Data],
+        verificationRecords: [Data],
+        validateAdmission: () throws -> Void
+    ) throws -> JournalAppendResult {
+        try appendRecoveringPendingTransition(
+            expectedSequence: expectedSequence, events: events, documents: documents,
+            verificationRecords: verificationRecords, validateAdmission: validateAdmission
+        )
+    }
+
+    public func append(
+        expectedSequence: Int64,
+        events: [Data],
+        documents: [Data],
         verificationRecords: [Data]
     ) throws -> JournalAppendResult {
-        try append(
+        try appendRecoveringPendingTransition(
             expectedSequence: expectedSequence,
             events: events,
             documents: documents,
-            verificationRecords: verificationRecords,
-            crashPoint: nil
+            verificationRecords: verificationRecords
         )
     }
 }
@@ -83,6 +122,7 @@ public final class CoordinatorSemanticApplication: @unchecked Sendable {
     private let tokenGenerator: TokenGenerator
     private let tokenHMACKey: Data?
     private let authorityID = UUID()
+    private var workObserver: (@Sendable (CoordinatorSemanticReplayWork) -> Void)?
 
     public init(
         journal: any CoordinatorSemanticJournalPort,
@@ -108,6 +148,25 @@ public final class CoordinatorSemanticApplication: @unchecked Sendable {
         )
     }
 
+    func execute(
+        command commandData: Data,
+        validateAdmission: () throws -> Void
+    ) throws -> CoordinatorSemanticExecutionResult {
+        try execute(command: commandData, initialAuthority: nil,
+            reportAmbiguousAppend: false, maxSequenceConflicts: 2,
+            validateAdmission: validateAdmission)
+    }
+
+    convenience init(
+        journal: any CoordinatorSemanticJournalPort,
+        tokenHMACKey: Data? = nil,
+        tokenGenerator: TokenGenerator? = nil,
+        workObserver: @escaping @Sendable (CoordinatorSemanticReplayWork) -> Void
+    ) {
+        self.init(journal: journal, tokenHMACKey: tokenHMACKey, tokenGenerator: tokenGenerator)
+        self.workObserver = workObserver
+    }
+
     /// Loads and verifies one authority projection for a routing operation that
     /// must inspect state before submitting its CAS command.
     func authorityProjection() throws -> CoordinatorSemanticAuthorityProjection {
@@ -115,7 +174,7 @@ public final class CoordinatorSemanticApplication: @unchecked Sendable {
         return CoordinatorSemanticAuthorityProjection(
             authorityID: authorityID,
             snapshot: snapshot,
-            state: try CoordinatorSemanticReplay.replay(snapshot)
+            state: try CoordinatorSemanticReplay.replay(snapshot, observing: workObserver)
         )
     }
 
@@ -125,14 +184,16 @@ public final class CoordinatorSemanticApplication: @unchecked Sendable {
     func execute(
         command commandData: Data,
         using authority: CoordinatorSemanticAuthorityProjection,
-        maxSequenceConflicts: Int = 2
+        maxSequenceConflicts: Int = 2,
+        validateAdmission: () throws -> Void = {}
     ) throws -> CoordinatorSemanticExecutionResult {
         try require(authority.authorityID == authorityID, "authority_projection_mismatch")
         return try execute(
             command: commandData,
             initialAuthority: authority,
             reportAmbiguousAppend: true,
-            maxSequenceConflicts: maxSequenceConflicts
+            maxSequenceConflicts: maxSequenceConflicts,
+            validateAdmission: validateAdmission
         )
     }
 
@@ -143,9 +204,11 @@ public final class CoordinatorSemanticApplication: @unchecked Sendable {
     /// the entire journal three times while Codex is holding its Hook open.
     func executeQueuedActionDelivery(
         commands commandData: [Data],
-        using authority: CoordinatorSemanticAuthorityProjection
+        using authority: CoordinatorSemanticAuthorityProjection,
+        validateAdmission: () throws -> Void = {}
     ) throws -> CoordinatorSemanticExecutionResult {
         try require(authority.authorityID == authorityID, "authority_projection_mismatch")
+        try validateAdmission()
         try require(commandData.count == 3, "queued_action_delivery_commands_invalid")
         let commands = try commandData.map { try SemanticJSON.command($0) }
         let commandTypes = try commands.map { try SemanticJSON.commandType($0) }
@@ -158,13 +221,12 @@ public final class CoordinatorSemanticApplication: @unchecked Sendable {
             "queued_action_delivery_commands_invalid"
         )
 
-        var candidate = authority.snapshot
+        var state = authority.state
         var appendedEvents: [Data] = []
         var appendedDocuments: [Data] = []
         var appendedVerifications: [Data] = []
         var effects: [Data] = []
         for command in commands {
-            let state = try CoordinatorSemanticReplay.replay(candidate)
             let change = try CoordinatorSemanticDecision.decide(
                 state: state,
                 commandObject: command,
@@ -175,15 +237,8 @@ public final class CoordinatorSemanticApplication: @unchecked Sendable {
             appendedDocuments.append(contentsOf: change.documents)
             appendedVerifications.append(contentsOf: change.verificationRecords)
             effects.append(contentsOf: change.effects)
-            candidate = JournalSnapshot(
-                events: candidate.events + change.events,
-                documents: candidate.documents + change.documents,
-                verificationRecords: candidate.verificationRecords
-                    + change.verificationRecords,
-                journalSequence: state.eventSequence + Int64(change.events.count)
-            )
+            state = try CoordinatorSemanticReplay.applying(change, to: state, observing: workObserver)
         }
-        _ = try CoordinatorSemanticReplay.replay(candidate)
         try require(
             appendedEvents.count == 3
                 && appendedDocuments.isEmpty
@@ -196,7 +251,8 @@ public final class CoordinatorSemanticApplication: @unchecked Sendable {
                 expectedSequence: authority.state.eventSequence,
                 events: appendedEvents,
                 documents: appendedDocuments,
-                verificationRecords: appendedVerifications
+                verificationRecords: appendedVerifications,
+                validateAdmission: validateAdmission
             )
             return CoordinatorSemanticExecutionResult(commit: commit, effects: effects)
         } catch {
@@ -216,7 +272,8 @@ public final class CoordinatorSemanticApplication: @unchecked Sendable {
         completion completionData: Data,
         close closeData: Data,
         using initialAuthority: CoordinatorSemanticAuthorityProjection,
-        maxSequenceConflicts: Int = 2
+        maxSequenceConflicts: Int = 2,
+        validateAdmission: () throws -> Void = {}
     ) throws -> CoordinatorSemanticExecutionResult {
         try require(initialAuthority.authorityID == authorityID, "authority_projection_mismatch")
         try require(maxSequenceConflicts >= 0, "retry_limit_invalid")
@@ -260,9 +317,12 @@ public final class CoordinatorSemanticApplication: @unchecked Sendable {
             else { throw CoordinatorError("continuation_binding_mismatch") }
 
             var commands: [[String: Any]] = []
+            // A durable completion/terminal close retry needs no new time
+            // authority. Uncommitted completion does, including after CAS reload.
+            let needsAdmission = continuation.transport == nil
+            if needsAdmission { try validateAdmission() }
             if continuation.transport == nil { commands.append(completion) }
             if !boundary.closed { commands.append(close) }
-            var candidate = authority.snapshot
             var state = authority.state
             var events: [Data] = []
             for command in commands {
@@ -276,13 +336,7 @@ public final class CoordinatorSemanticApplication: @unchecked Sendable {
                     "transport_completion_change_invalid"
                 )
                 events.append(contentsOf: change.events)
-                candidate = JournalSnapshot(
-                    events: candidate.events + change.events,
-                    documents: candidate.documents,
-                    verificationRecords: candidate.verificationRecords,
-                    journalSequence: state.eventSequence + 1
-                )
-                state = try CoordinatorSemanticReplay.replay(candidate)
+                state = try CoordinatorSemanticReplay.applying(change, to: state, observing: workObserver)
             }
             if events.isEmpty {
                 return CoordinatorSemanticExecutionResult(
@@ -295,7 +349,8 @@ public final class CoordinatorSemanticApplication: @unchecked Sendable {
             do {
                 let commit = try journal.append(
                     expectedSequence: authority.state.eventSequence,
-                    events: events, documents: [], verificationRecords: []
+                    events: events, documents: [], verificationRecords: [],
+                    validateAdmission: { if needsAdmission { try validateAdmission() } }
                 )
                 return CoordinatorSemanticExecutionResult(commit: commit, effects: [])
             } catch let error as CoordinatorError where error.code == "journal_sequence_conflict" {
@@ -312,7 +367,8 @@ public final class CoordinatorSemanticApplication: @unchecked Sendable {
         command commandData: Data,
         initialAuthority: CoordinatorSemanticAuthorityProjection?,
         reportAmbiguousAppend: Bool,
-        maxSequenceConflicts: Int
+        maxSequenceConflicts: Int,
+        validateAdmission: () throws -> Void = {}
     ) throws -> CoordinatorSemanticExecutionResult {
         try require(maxSequenceConflicts >= 0, "retry_limit_invalid")
         let parsed = try SemanticJSON.command(commandData)
@@ -339,21 +395,14 @@ public final class CoordinatorSemanticApplication: @unchecked Sendable {
             } else {
                 authority = try authorityProjection()
             }
-            let snapshot = authority.snapshot
             let state = authority.state
+            try validateAdmission()
             let change = try CoordinatorSemanticDecision.decide(
                 state: state,
                 commandObject: parsed,
                 tokenMaterial: tokenMaterial,
                 tokenHMACKey: tokenHMACKey
             )
-            let candidate = JournalSnapshot(
-                events: snapshot.events + change.events,
-                documents: snapshot.documents + change.documents,
-                verificationRecords: snapshot.verificationRecords + change.verificationRecords,
-                journalSequence: state.eventSequence + Int64(change.events.count)
-            )
-            _ = try CoordinatorSemanticReplay.replay(candidate)
             if change.events.isEmpty {
                 try require(
                     commandType == "claim_queued_action_context"
@@ -361,6 +410,9 @@ public final class CoordinatorSemanticApplication: @unchecked Sendable {
                         && change.verificationRecords.isEmpty,
                     "semantic_change_empty"
                 )
+                // decide has validated the complete exact retry tuple. The
+                // unchanged authority was already replayed; no new bytes are
+                // present to validate and no append or replay is warranted.
                 return CoordinatorSemanticExecutionResult(
                     commit: JournalAppendResult(
                         firstSequence: state.eventSequence,
@@ -370,12 +422,14 @@ public final class CoordinatorSemanticApplication: @unchecked Sendable {
                     effects: change.effects
                 )
             }
+            _ = try CoordinatorSemanticReplay.applying(change, to: state, observing: workObserver)
             do {
                 let commit = try journal.append(
                     expectedSequence: state.eventSequence,
                     events: change.events,
                     documents: change.documents,
-                    verificationRecords: change.verificationRecords
+                    verificationRecords: change.verificationRecords,
+                    validateAdmission: validateAdmission
                 )
                 // Do not expose effects until the complete logical batch is
                 // durably accepted. A lost response is therefore not evidence
@@ -1033,7 +1087,6 @@ private extension CoordinatorSemanticDecision {
         guard let boundary = state.boundaries[continuation.binding.fullKey] else {
             throw CoordinatorError("unknown_decision_boundary")
         }
-        try require(!boundary.closed, "decision_boundary_closed")
         try require(continuation.transport != nil, "transport_terminal_observation_missing")
         try require(continuation.workOutcome == nil, "work_outcome_already_recorded")
         guard let status = command["status"] as? String,
@@ -1050,6 +1103,33 @@ private extension CoordinatorSemanticDecision {
         let eventID = try SemanticJSON.identifier(command, "event_id")
         try require(!state.eventIDs.contains(eventID), "runtime_event_id_duplicate")
         let occurredAt = try SemanticJSON.timestampString(command, "occurred_at", code: "runtime_event_time_invalid")
+        if boundary.closed {
+            let claim = try state.closedQueuedOutcomeClaim(
+                for: continuation,
+                occurredAt: RFC3339Instant(occurredAt, code: "runtime_event_time_invalid")
+            )
+            let actionID = try SemanticJSON.identifier(command, "action_id")
+            try require(
+                IdentifierNormalization.isByteExact(actionID, continuation.actionID),
+                "decision_boundary_binding_mismatch"
+            )
+            // This is a trusted internal command, not an ingress endpoint.
+            // A future adapter must derive this turn from authenticated caller
+            // context, never accept an untrusted self-asserted turn as proof.
+            // The v1 journal keeps the original binding and durable claim;
+            // command-only authorization does not change its payload schema.
+            let deliveryTurnID = try SemanticJSON.identifier(command, "delivery_turn_id")
+            try require(
+                IdentifierNormalization.isByteExact(deliveryTurnID, claim.deliveryTurnID),
+                "work_outcome_delivery_turn_mismatch"
+            )
+        } else if command["action_id"] != nil {
+            let actionID = try SemanticJSON.identifier(command, "action_id")
+            try require(
+                IdentifierNormalization.isByteExact(actionID, continuation.actionID),
+                "decision_boundary_binding_mismatch"
+            )
+        }
         let eventObject = try event(
             state: state,
             type: "work_outcome_recorded",

@@ -1,6 +1,31 @@
 # 제품 연결 작업 상태
 
-기준일: 2026-09-21. **CP-00~CP-06 완료, CP-07 runtime·업데이트 보호 검증 완료. CP-08 통합 앱/DMG에 일반 `claude`·`claude --resume` 자동 연결을 추가했다.** 앱과 DMG는 하나이며 브릿지 버전·세션을 내부에서 구분한다. 사용자가 r62 설치 완료를 보고했고, 현재 설치 build 62에는 자동 연결 기능이 없다. r63 자동 연결 구현·격리 회귀를 완료했으며 새 후보 설치·실제 모델·사람 클릭·장시간 수용과 일반 Channels 배포 자격은 별도로 남아 있다. 이번 작업에서 운영 앱·세션·사용자 셸 설정을 변경하지 않았다.
+2026-10-11 브릿지 디버깅: 전송 전 취소된 MCP 요청이 대기열 슬롯을 계속 차지하는 문제와
+Hook 출력 실패 뒤 늦은 EPIPE, 입력 실패 뒤 진단 중 취소로 발생하는 프로세스 종료를 수정했다.
+진행 중인 RPC의 슬롯·단일 전달·같은 waiter generation을 유지하며 회귀 12개를 추가했다.
+Node **157/157**, JS 문법 **53개 파일**, 변경 범위 diff/문서 링크 검사가 통과했다.
+[디버깅 기록](DEBUG_20261011.md)에 수정 범위·재현·독립 검토·증거를 기록했다.
+Swift는 읽기 전용 검토했으며, 빌드·Swift 테스트·설치·실제 Claude 세션 실행은 하지 않았다.
+
+2026-10-11 연결 업데이트: 초기 MCP 도구 호출이 실제 SessionStart 등록을 같은 단일 연결에서
+기다리도록 보완하고, 취소·대기 한도·종료 회귀를 추가했다. 최신 관리 명령
+`daemon`·`purge`·`self-hosted-runner`와 `--desktop`은 자동 연결 옵션 없이 원본 CLI로 전달한다.
+SDK 협상 회귀와 [최신 호환성 검토](COMPATIBILITY.md)를 추가했다. 최신 공개판은 2.1.296,
+로컬 CLI 파일은 2.1.289이며 기존 native 왕복 증거는 2.1.282다. 이번 변경의 빌드·Swift 테스트·
+설치·실제 모델 왕복은 실행하지 않았다. 아래 기록은 각 날짜의 검증 범위로 유지한다.
+Node 145개·제품 wire 계약 195개·JS 문법 53개 파일·변경 범위 diff/문서 링크 검사를 통과했다.
+처음 Node 검사는 샌드박스의 임시 소켓 `EPERM`으로 실패했으며 허용된 환경의 재검사 결과를 사용한다.
+검증 로그는 `build/claude-tests/update-20261011/`에 있다.
+
+2026-09-22: 일반 `claude`로 시작한 설치 build 64 / Claude Code `2.1.278` 대화에서 도구 등록과
+Channel 수신은 확인됐으나 ACK가 `session_v2_unavailable`로 실패했다. 실행 중 추가 입력의
+Hook 충돌로 작업 관측을 폐기한 뒤, 늦은 Stop이 그 이후 새로 만든 probe까지 폐기하는 경로를
+수정하고 회귀 테스트를 추가했다. **소스 검토·구문 검사 범위이며 Swift 테스트 실행·빌드·설치·
+실제 모델 재검증은 하지 않았다.** 실행 중 추가 입력의 작업 boundary 연결은 아직 후속이며,
+이번 ACK 수정으로 작업 권한을 복구하지 않는다. 조건과 수용 절차는
+[SESSION_LIFECYCLE](SESSION_LIFECYCLE.md)과 [ACCEPTANCE](ACCEPTANCE.md)에 기록한다.
+
+기준일: 2026-09-21. **CP-08 연결 화면 개선은 소스 구현·테스트 추가·정적 검토까지 완료했다. 사용자 지시에 따라 이번 변경의 빌드·Swift 테스트 실행·설치·실제 모델 실행은 하지 않았다.** 설정에서 환경 확인→지원하는 자동 설정→Terminal/Ghostty 새 대화→동일 세션 ACK 확인을 이어준다. 아래 r62/r63 결과는 이전 후보의 기록이며 새 화면이나 현재 설치 앱의 수용 결과로 쓰지 않는다. 앱과 DMG는 하나이며 브릿지 버전·세션을 내부에서 구분한다. 실제 모델·사람 클릭·장시간 수용과 일반 Channels 배포 자격은 별도로 남아 있다.
 
 2026-09-20 기록 보관: 아래 `claude/build/` 로그·작업 기준점은
 [새 보관 위치와 파일 색인](../../../history/claude/PRE_LAYOUT_ARTIFACTS.md)에서 확인할 수 있다.
@@ -446,3 +471,47 @@ Assembly manifest: `sha256:b2c591a9e1aa58592174dd42b1b7bd2bc66d6c81e1279525a7443
 연결을 켠 뒤 일반 `claude`의 ACK/A 왕복, 정상 종료 뒤 `claude --resume`의 새 ACK와
 대화 유지 여부를 [수용 절차](ACCEPTANCE.md)대로 확인하는 것이다. 실제 모델·사람 클릭,
 다중 provider·장시간·수면/compact·일반 Channels 승인은 아직 이 후보의 합격 근거가 없다.
+
+
+## CP-08 연결 화면 개선 — 소스만 변경
+
+사용자 승인 범위는 Claude 연결의 쉬운 설정이며 빌드·DMG 작업은 제외한다.
+설정의 **Claude 연결**은 환경을 확인해 지원하는 자동 설정을 저장하고, 필요한 경우
+꺼진 앱 소유 서비스를 시작한 뒤 작업 폴더의 새 Claude 창을 연다. 사용 중인 Ghostty
+1.3+를 추천하고 Terminal 선택도 제공한다. macOS/Claude의 기본 승인 절차를 유지한다.
+
+설정 저장, 창 열기 요청, 실제 세션 연결을 구분했다. 새 대화의 명시적 native UUID,
+canonical project, service generation/incarnation, scope/session incarnation/authority epoch,
+최신 projection generation과 실제 readiness ACK가 모두 맞아야 완료 표시를 낸다.
+일반 터미널의 `claude`/`claude --resume` 경로에는 세션 ID를 추가하지 않는다.
+
+신선한 directory 조회 증거를 선택 중인 대화의 projection 오류와 분리하여, 종료된
+Claude가 선택되어 있어도 새 연결을 막지 않는다. 처음 발견한 정확한 세션만 한 번
+자동 선택하고 이후 사용자의 provider 선택을 강제로 되돌리지 않는다. 연결 만료·종료·
+조회 실패·서비스 교체는 완료 표시를 해제한다. 불명확한 창 열기는 같은 UUID를 관찰하며
+재실행하지 않는다. 연결 실패 뒤의 명시적 재시도는 앱 안에서 제공한다.
+
+셸 프로필을 실행하지 않고 환경을 점검하며, 원래 CLI 설치 위치는 매번 다시 찾는다.
+관리 설정과 기존 updater symlink를 보존한다. 지원하지 않는 셸 또는 안전하게 편집할 수
+없는 설정은 덮어쓰지 않으며, 앱에서 새 대화를 연결할 수 있는지는 따로 표시한다.
+계정 셸이 바뀌어도 정확한 기존 관리 설정의 제거 경로를 유지한다.
+
+주요 파일: `PetClaudeConnection.swift`, `PetViewModel.swift`, `PetClaudeLauncher.swift`,
+`PetProviderModels.swift`/`PetProviderTransport.swift`, `PetModels.swift`, `PetApplication.swift`,
+`ClaudeAutoConnectSettingsView.swift`/`PetSettingsView.swift`, `ClaudeAutoConnectSetup.swift`,
+`ClaudeInstalledLauncher.swift`. `Package.swift`는 새 controller 파일을 기존 target에 한 번 추가했다.
+Swift 회귀 소스는 해당 setup/launcher/controller/transport/app-service 테스트에 추가했다.
+
+검증 경계:
+
+- 변경 Swift/manifest 18개 파일의 `swiftc -frontend -parse` 구문 검사 통과.
+- 작업 범위 diff 검사와 별도 정적 QA 완료. QA에서 발견한 종료 세션의 새 연결 차단,
+  성공 후 대기 타이머 소실, 같은 setup 인스턴스의 설치 경로 갱신 누락을 수정했다.
+- **타입 검사·Swift 테스트 실행·빌드·패키징·설치·실제 터미널/모델 실행은 미수행**이다.
+  기존 r63 자동 시험 통과를 이번 변경의 실행 결과로 보고하지 않는다.
+- 기준점/검사 기록은 `build/claude-tests/connection-onboarding/`에 있다. 공통 engine과
+  `Contracts/v1`은 기준점과 같다. 동시에 발생한 Codex 파일 변경은 이 작업이 아니며 보존했다.
+
+후속 실행 담당자는 [ACCEPTANCE의 새 연결 화면 수용](ACCEPTANCE.md)을 따른다.
+특히 빈 새 Claude 대화의 첫 Channel→모델 ACK→Stop, Ghostty/Terminal Automation 허용,
+일반 실행/재개, 다중 세션과 연결 만료 복구는 실제 후보에서 확인해야 한다.

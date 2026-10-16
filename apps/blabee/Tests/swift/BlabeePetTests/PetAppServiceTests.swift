@@ -89,7 +89,49 @@ private func waitForAppService(_ predicate: () -> Bool) async throws {
     try #require(predicate())
 }
 
-@Test("App-owned service is opt-in and repeated startup never launches twice")
+@Test("New Claude setup can open a session while an ended Claude projection is selected", .petLanguage(.korean))
+@MainActor
+func petAppServiceClaudeSetupIgnoresEndedProjection() async throws {
+    let h = AppServiceHarness()
+    let service = h.controller()
+    let inspection = ClaudeAutoConnectSetup.Inspection(isEnabled: false, canEnable: false,
+        canDisable: false, detail: "direct launch fixture", canLaunch: true)
+    let connection = PetClaudeConnectionController(inspect: { inspection },
+        enable: { inspection }, disable: { inspection })
+    var requests = 0
+    let vm = PetViewModel(
+        transport: PetProviderTransport(codex: PetFakeTransport(), access: { nil }),
+        externalApplicationOpener: PetFakeApplicationOpener(), provider: .claude,
+        connectClaude: { _, _ in requests += 1; return nil }, claudeConnection: connection,
+        onboardingAdapter: h.registration, appService: service
+    )
+    await vm.enableAppOwnedService()
+    let child = try #require(h.launcher.children.first)
+    child.hasPublishedService = true
+    child.petSelectorCredential = String(repeating: "a", count: 64)
+    service.receivedVerifiedSnapshot(generation: service.generation)
+    let context = PetProviderContext(provider: .claude, scopeID: UUID().uuidString.lowercased(),
+        serviceIncarnation: UUID().uuidString.lowercased(), sessionIncarnation: UUID().uuidString.lowercased(),
+        authorityEpoch: UUID().uuidString.lowercased(), uiGeneration: 2)
+    var snapshot = try PetSnapshot.parse(petTestSnapshotData(cards: []))
+    snapshot.providerContext = context
+    snapshot.providerSessions = [.init(id: "claude:ended", context: context,
+        projectID: "claude_project_old", sessionID: "claude_session_old", cwd: "/tmp/old",
+        state: "disconnected", title: "Ended Claude", nativeSessionID: UUID().uuidString.lowercased())]
+    snapshot.providerDiagnostic = "연결이 끊겼어요. Claude에서 새로 시작해 주세요."
+    snapshot.providerDirectory = .init(serviceGeneration: service.generation,
+        serviceIncarnation: context.serviceIncarnation)
+    vm.applySnapshotForTesting(snapshot)
+    let operation = Task { await vm.connectClaudeSession(terminal: .terminal) }
+    defer { operation.cancel() }
+    try await waitForAppService { requests == 1 }
+    await operation.value
+    #expect(requests == 1 && h.launcher.launches == 1 && child.stopCount == 0)
+    #expect(connection.phase == .idle) // The injected project chooser was cancelled.
+    await vm.shutdownAppOwnedService()
+}
+
+@Test("App-owned service is opt-in and repeated startup never launches twice", .petLanguage(.korean))
 @MainActor
 func petAppServiceOptInAndReadiness() async throws {
     let h = AppServiceHarness()
@@ -123,7 +165,56 @@ func petAppServiceOptInAndReadiness() async throws {
     #expect(!h.preference.enabled)
 }
 
-@Test("Existing macOS registration blocks app-owned launch without changing registration",
+@Test("Signed-out Pet observes service startup and recovery without authorizing actions", .petLanguage(.korean))
+@MainActor
+func petAppServiceSignedOutHealthRemainsObservable() async throws {
+    let h = AppServiceHarness()
+    let service = h.controller()
+    let transport = PetFakeTransport()
+    let access = PetAccessController(transport: transport,
+        ownedAccess: { service.petProviderAccess }, automaticPolling: false)
+    let vm = PetViewModel(transport: transport, externalApplicationOpener: PetFakeApplicationOpener(),
+        onboardingAdapter: h.registration, appService: service, productAccess: access)
+    await vm.enableAppOwnedService()
+    let child = try #require(h.launcher.children.first)
+    child.hasPublishedService = true
+    child.petSelectorCredential = String(repeating: "a", count: 64)
+    let data = try petTestSnapshotData(cards: [PetTestCard(suffix: "locked-health")],
+        permissionRequests: [PetTestPermissionRequest(suffix: "locked-health", allowOnceAvailable: true)])
+    #expect(service.state == .starting)
+    #expect(access.state == .signedOut)
+
+    await transport.enqueue(type: "get_state", response: data)
+    await vm.refresh()
+    #expect(service.state == .ready)
+    #expect(vm.hasVerifiedServiceConnection)
+    #expect(vm.snapshot?.permissionRequests.count == 1)
+    #expect(vm.isProductAccessBlocked)
+    #expect(!vm.canActOnDisplayedEvent)
+    #expect(vm.approvalHead == nil)
+    await vm.requestPanelSelection(1)
+    vm.handleShortcut(.slot1)
+
+    await transport.enqueueFailure(type: "get_state", code: "offline_fixture")
+    await vm.refresh()
+    #expect(service.state == .reconnecting)
+    #expect(!vm.hasVerifiedServiceConnection)
+    await transport.enqueue(type: "get_state", response: data)
+    await vm.refresh()
+    #expect(service.state == .ready)
+    #expect(vm.hasVerifiedServiceConnection)
+    #expect(access.state == .signedOut)
+    #expect(vm.isProductAccessBlocked)
+    #expect(child.stopCount == 0)
+    #expect(await transport.requestCount(type: "get_state") == 3)
+    for type in ["focus_interaction", "focus_event", "select", "resolve_permission_request", "resolve_managed_command_approval"] {
+        #expect(await transport.requestCount(type: type) == 0)
+    }
+    access.stop()
+    await vm.shutdownAppOwnedService()
+}
+
+@Test("Existing macOS registration blocks app-owned launch without changing registration", .petLanguage(.korean),
       arguments: [PetServiceRegistrationState.enabled, .requiresApproval, .unknown])
 @MainActor
 func petAppServiceRegistrationConflict(_ registration: PetServiceRegistrationState) async {
@@ -141,7 +232,209 @@ func petAppServiceRegistrationConflict(_ registration: PetServiceRegistrationSta
     #expect(c.state == .disabled)
 }
 
-@Test("Claude start waits for the app-owned service and private selector access")
+@Test("Mandatory account access cannot opt a fresh installation into an unowned legacy service", .petLanguage(.korean),
+      arguments: [PetServiceRegistrationState.notRegistered, .notFound])
+@MainActor
+func petAppServiceAccessRejectsLegacyRegistration(_ registration: PetServiceRegistrationState) async throws {
+    let h = AppServiceHarness()
+    h.registration.state = registration
+    let service = h.controller()
+    let transport = PetFakeTransport()
+    let access = PetAccessController(transport: transport,
+        ownedAccess: { service.petProviderAccess }, automaticPolling: false)
+    defer { access.stop() }
+    let vm = PetViewModel(transport: transport, externalApplicationOpener: PetFakeApplicationOpener(),
+        onboardingAdapter: h.registration, appService: service, productAccess: access)
+    await vm.refreshOnboarding()
+    access.receiveVerifiedCredential(.init(userID: UUID(), accessToken: "fixture-verified-social-token",
+        expiresAt: Date().addingTimeInterval(3_600)))
+    await access.synchronize()
+
+    #expect(access.effectiveState == .unavailable && vm.isProductAccessBlocked)
+    #expect(!vm.canRegisterOnboardingService && !vm.showsLegacyServiceSettings)
+    #expect(vm.legacyServiceMigrationDetail.isEmpty)
+    await vm.registerOnboardingService() // An already captured, obsolete callback must also fail closed.
+    await vm.registerOnboardingService()
+    #expect(h.registration.registerCount == 0 && h.registration.unregisterCount == 0)
+    #expect(h.registration.state == registration && h.launcher.launches == 0)
+    #expect(await transport.requestCount(type: "product_access_v1") == 0)
+
+    // The normal explicit app-owned start is still available. Starting a child
+    // does not itself grant account access or replay any selection.
+    await vm.enableAppOwnedService()
+    #expect(h.launcher.launches == 1 && service.state == .starting)
+    #expect(vm.isProductAccessBlocked)
+    #expect(await transport.requestCount(type: "select") == 0)
+    await vm.shutdownAppOwnedService()
+}
+
+@Test("Legacy cleanup remains explicit with mandatory access and never launches a replacement automatically", .petLanguage(.korean),
+      arguments: [PetServiceRegistrationState.enabled, .requiresApproval])
+@MainActor
+func petAppServiceAccessPreservesExplicitLegacyCleanup(_ registration: PetServiceRegistrationState) async throws {
+    let h = AppServiceHarness()
+    h.registration.state = registration
+    let service = h.controller()
+    let transport = PetFakeTransport()
+    let access = PetAccessController(transport: transport,
+        ownedAccess: { service.petProviderAccess }, automaticPolling: false)
+    defer { access.stop() }
+    let vm = PetViewModel(transport: transport, externalApplicationOpener: PetFakeApplicationOpener(),
+        onboardingAdapter: h.registration, appService: service, productAccess: access)
+    await vm.refreshOnboarding()
+    access.receiveVerifiedCredential(.init(userID: UUID(), accessToken: "fixture-verified-social-token",
+        expiresAt: Date().addingTimeInterval(3_600)))
+    await access.synchronize()
+
+    #expect(vm.isProductAccessBlocked && !vm.canRegisterOnboardingService)
+    #expect(vm.showsLegacyServiceSettings && vm.canUnregisterOnboardingService)
+    #expect(vm.legacyServiceMigrationDetail.contains("앱 실행형 서비스 켜기"))
+    await vm.registerOnboardingService()
+    #expect(h.registration.registerCount == 0 && h.registration.unregisterCount == 0)
+    #expect(h.launcher.launches == 0)
+
+    await vm.unregisterOnboardingService()
+    #expect(h.registration.unregisterCount == 1 && h.registration.state == .notRegistered)
+    #expect(!vm.showsLegacyServiceSettings && !vm.canRegisterOnboardingService)
+    #expect(h.launcher.launches == 0 && !h.preference.enabled && vm.isProductAccessBlocked)
+
+    await vm.enableAppOwnedService()
+    #expect(h.launcher.launches == 1 && service.state == .starting)
+    #expect(vm.isProductAccessBlocked && h.registration.registerCount == 0)
+    #expect(await transport.requestCount(type: "select") == 0)
+    await vm.shutdownAppOwnedService()
+}
+
+@Test("Unknown legacy registration stays fail closed even after social identity verification", .petLanguage(.korean))
+@MainActor
+func petAppServiceAccessUnknownRegistrationFailsClosed() async {
+    let h = AppServiceHarness()
+    h.registration.state = .unknown
+    let service = h.controller()
+    let transport = PetFakeTransport()
+    let access = PetAccessController(transport: transport,
+        ownedAccess: { service.petProviderAccess }, automaticPolling: false)
+    defer { access.stop() }
+    let vm = PetViewModel(transport: transport, externalApplicationOpener: PetFakeApplicationOpener(),
+        onboardingAdapter: h.registration, appService: service, productAccess: access)
+    await vm.refreshOnboarding()
+    access.receiveVerifiedCredential(.init(userID: UUID(), accessToken: "fixture-verified-social-token",
+        expiresAt: Date().addingTimeInterval(3_600)))
+    await access.synchronize()
+
+    #expect(vm.isProductAccessBlocked && vm.showsLegacyServiceSettings)
+    #expect(!vm.canRegisterOnboardingService && !vm.canUnregisterOnboardingService)
+    await vm.registerOnboardingService()
+    await vm.unregisterOnboardingService()
+    await vm.enableAppOwnedService()
+    #expect(service.state == .failed("service_registration_unknown"))
+    #expect(h.launcher.launches == 0 && h.registration.registerCount == 0 && h.registration.unregisterCount == 0)
+    #expect(h.registration.state == .unknown && vm.isProductAccessBlocked)
+    #expect(await transport.requestCount(type: "product_access_v1") == 0)
+    await vm.shutdownAppOwnedService()
+}
+
+@Test("Cleared legacy registration offers an explicit setup restart without granting account access", .petLanguage(.korean),
+      arguments: [PetServiceRegistrationState.notRegistered, .notFound])
+@MainActor
+func petAppServiceSetupRestartAfterLegacyCleanup(_ clearedRegistration: PetServiceRegistrationState) async throws {
+    let h = AppServiceHarness()
+    h.registration.state = .enabled
+    let service = h.controller()
+    let transport = PetFakeTransport()
+    let access = PetAccessController(transport: transport,
+        ownedAccess: { service.petProviderAccess }, automaticPolling: false)
+    defer { access.stop() }
+    let inspection = ClaudeAutoConnectSetup.Inspection(isEnabled: false, canEnable: false,
+        canDisable: false, detail: "fixture only", canLaunch: false)
+    let connection = PetClaudeConnectionController(inspect: { inspection },
+        enable: { inspection }, disable: { inspection })
+    let vm = PetViewModel(transport: transport, externalApplicationOpener: PetFakeApplicationOpener(),
+        claudeConnection: connection, onboardingAdapter: h.registration,
+        appService: service, productAccess: access)
+    await vm.refreshOnboarding()
+    access.receiveVerifiedCredential(.init(userID: UUID(), accessToken: "fixture-verified-social-token",
+        expiresAt: Date().addingTimeInterval(3_600)))
+    await access.synchronize()
+    await vm.enableAppOwnedService()
+    let view = PetConnectionSetupView(viewModel: vm)
+    #expect(service.state == .blocked && h.launcher.launches == 0)
+    #expect(!vm.needsAppOwnedServiceRestartAfterLegacyCleanup)
+    #expect(view.primaryActionTitle != "서비스 다시 시작")
+    await vm.restartConnectionSetupService()
+    #expect(h.launcher.launches == 0)
+
+    await vm.unregisterOnboardingService()
+    #expect(h.registration.unregisterCount == 1 && h.registration.state == .notRegistered)
+    h.registration.state = clearedRegistration
+    await vm.refreshOnboarding()
+    #expect(service.state == .blocked && vm.needsAppOwnedServiceRestartAfterLegacyCleanup)
+    #expect(view.primaryActionTitle == "서비스 다시 시작" && view.primaryActionEnabled)
+    #expect(view.summaryDetail == vm.appOwnedServiceDetail)
+    #expect(view.summaryDetail.contains("등록이 해제된 상태"))
+    #expect(vm.appOwnedServiceTitle == "서비스 다시 시작 필요")
+    #expect(vm.connectionReadiness.checks.first(where: { $0.id == "service" })?.detail == vm.appOwnedServiceDetail)
+
+    await vm.refreshConnectionSetup()
+    #expect(h.launcher.launches == 0 && !service.hasOwnedChild)
+    #expect(service.state == .blocked && view.primaryActionTitle == "서비스 다시 시작")
+    #expect(vm.isProductAccessBlocked && service.petProviderAccess == nil)
+
+    // Only this explicit primary action may create a replacement child.
+    await vm.restartConnectionSetupService()
+    #expect(h.launcher.launches == 1 && service.state == .starting)
+    #expect(!vm.needsAppOwnedServiceRestartAfterLegacyCleanup)
+    let child = try #require(h.launcher.children.first)
+    child.petSelectorCredential = String(repeating: "a", count: 64)
+    child.hasPublishedService = true
+    service.receivedVerifiedSnapshot(generation: service.generation)
+    #expect(service.state == .ready && service.petProviderAccess != nil)
+    #expect(vm.isProductAccessBlocked) // A service credential is not a verified account grant.
+    await vm.restartConnectionSetupService() // A stale primary callback cannot launch again.
+    #expect(h.launcher.launches == 1 && child.stopCount == 0)
+    #expect(h.registration.unregisterCount == 1 && h.registration.registerCount == 0)
+    #expect(await transport.requestCount(type: "select") == 0)
+    await vm.shutdownAppOwnedService()
+}
+
+@Test("Setup restart rejects a legacy registration that reappears or becomes unknown", .petLanguage(.korean),
+      arguments: [PetServiceRegistrationState.enabled, .requiresApproval, .unknown], [true, false])
+@MainActor
+func petAppServiceSetupRestartRejectsChangedRegistration(
+    _ registration: PetServiceRegistrationState,
+    refreshFirst: Bool
+) async {
+    let h = AppServiceHarness()
+    h.registration.state = .enabled
+    let service = h.controller()
+    let inspection = ClaudeAutoConnectSetup.Inspection(isEnabled: false, canEnable: false,
+        canDisable: false, detail: "fixture only", canLaunch: false)
+    let connection = PetClaudeConnectionController(inspect: { inspection },
+        enable: { inspection }, disable: { inspection })
+    let vm = PetViewModel(transport: PetFakeTransport(), externalApplicationOpener: PetFakeApplicationOpener(),
+        claudeConnection: connection, onboardingAdapter: h.registration, appService: service)
+    await vm.refreshOnboarding()
+    await vm.enableAppOwnedService()
+    await vm.unregisterOnboardingService()
+    #expect(vm.needsAppOwnedServiceRestartAfterLegacyCleanup)
+
+    h.registration.state = registration
+    if refreshFirst {
+        await vm.refreshOnboarding()
+        #expect(!vm.needsAppOwnedServiceRestartAfterLegacyCleanup)
+        #expect(PetConnectionSetupView(viewModel: vm).primaryActionTitle != "서비스 다시 시작")
+    } else {
+        // The screen still offers the old action. The launcher must read the
+        // registration again instead of relying on this stale presentation.
+        #expect(vm.needsAppOwnedServiceRestartAfterLegacyCleanup)
+    }
+    await vm.restartConnectionSetupService()
+    #expect(h.launcher.launches == 0 && service.petProviderAccess == nil)
+    #expect(h.registration.state == registration && h.registration.unregisterCount == 1)
+    await vm.shutdownAppOwnedService()
+}
+
+@Test("Claude start waits for the app-owned service and private selector access", .petLanguage(.korean))
 @MainActor
 func petAppServiceClaudeStartReadiness() async throws {
     let h = AppServiceHarness()
@@ -196,7 +489,7 @@ func petAppServiceClaudeStartReadiness() async throws {
     await vm.shutdownAppOwnedService()
 }
 
-@Test("Claude start requires an explicit registration removal and app-service restart",
+@Test("Claude start requires an explicit registration removal and app-service restart", .petLanguage(.korean),
       arguments: [PetServiceRegistrationState.enabled, .requiresApproval])
 @MainActor
 func petAppServiceClaudeStartRegistrationConflict(_ registration: PetServiceRegistrationState) async throws {
@@ -214,7 +507,7 @@ func petAppServiceClaudeStartRegistrationConflict(_ registration: PetServiceRegi
     await vm.enableAppOwnedService()
     #expect(vm.appOwnedServiceState == .blocked)
     let guidance = try #require(vm.claudeStartGuidance)
-    #expect(guidance.contains("‘macOS 자동 시작 서비스’를 등록 해제")
+    #expect(guidance.contains("‘이전 자동 시작 서비스’를 등록 해제")
         && guidance.contains("‘서비스 다시 시작’"))
     #expect(!vm.canStartClaude)
     await vm.startClaudeSession()
@@ -250,7 +543,7 @@ func petAppServiceClaudeStartRegistrationConflict(_ registration: PetServiceRegi
     await vm.shutdownAppOwnedService()
 }
 
-@Test("No known registration permits explicit launch", arguments: [PetServiceRegistrationState.notRegistered, .notFound])
+@Test("No known registration permits explicit launch", .petLanguage(.korean), arguments: [PetServiceRegistrationState.notRegistered, .notFound])
 @MainActor
 func petAppServiceNoRegistration(_ registration: PetServiceRegistrationState) async {
     let h = AppServiceHarness()
@@ -261,7 +554,7 @@ func petAppServiceNoRegistration(_ registration: PetServiceRegistrationState) as
     await c.shutdown()
 }
 
-@Test("Launch failures are diagnostic-only and never auto-respawn")
+@Test("Launch failures are diagnostic-only and never auto-respawn", .petLanguage(.korean))
 @MainActor
 func petAppServiceLaunchFailureIsManual() async {
     let h = AppServiceHarness()
@@ -278,7 +571,7 @@ func petAppServiceLaunchFailureIsManual() async {
     await c.shutdown()
 }
 
-@Test("Startup deadline stops the owned child and leaves manual recovery")
+@Test("Startup deadline stops the owned child and leaves manual recovery", .petLanguage(.korean))
 @MainActor
 func petAppServiceStartupTimeout() async throws {
     let h = AppServiceHarness()
@@ -292,7 +585,7 @@ func petAppServiceStartupTimeout() async throws {
     await c.shutdown()
 }
 
-@Test("Initial readiness can wait for Keychain beyond the reconnect budget")
+@Test("Initial readiness can wait for Keychain beyond the reconnect budget", .petLanguage(.korean))
 @MainActor
 func petAppServiceDelayedInitialReadiness() async throws {
     let h = AppServiceHarness()
@@ -311,7 +604,7 @@ func petAppServiceDelayedInitialReadiness() async throws {
     await c.shutdown()
 }
 
-@Test("The first verified snapshot cancels the initial startup deadline")
+@Test("The first verified snapshot cancels the initial startup deadline", .petLanguage(.korean))
 @MainActor
 func petAppServiceInitialReadinessCancelsDeadline() async throws {
     let h = AppServiceHarness()
@@ -327,7 +620,7 @@ func petAppServiceInitialReadinessCancelsDeadline() async throws {
     await c.shutdown()
 }
 
-@Test("Shutdown cancels the initial deadline without another stop or restart")
+@Test("Shutdown cancels the initial deadline without another stop or restart", .petLanguage(.korean))
 @MainActor
 func petAppServiceShutdownCancelsStartupDeadline() async throws {
     let h = AppServiceHarness()
@@ -342,7 +635,7 @@ func petAppServiceShutdownCancelsStartupDeadline() async throws {
     #expect(h.launcher.launches == 1)
 }
 
-@Test("Crash and uncertain cleanup never adopt or start another service")
+@Test("Crash and uncertain cleanup never adopt or start another service", .petLanguage(.korean))
 @MainActor
 func petAppServiceCrashAndCleanupFailure() async throws {
     let h = AppServiceHarness()
@@ -369,7 +662,7 @@ func petAppServiceCrashAndCleanupFailure() async throws {
     #expect(!h.preference.enabled)
 }
 
-@Test("Late snapshots cannot mark a replacement ready and slow responses do not stop the child")
+@Test("Late snapshots cannot mark a replacement ready and slow responses do not stop the child", .petLanguage(.korean))
 @MainActor
 func petAppServiceGenerationAndConnectionLoss() async throws {
     let h = AppServiceHarness()
@@ -410,7 +703,7 @@ func petAppServiceGenerationAndConnectionLoss() async throws {
     #expect(child.stopCount == 1)
 }
 
-@Test("A verified response cancels the reconnect deadline without stopping or replacing the child")
+@Test("A verified response cancels the reconnect deadline without stopping or replacing the child", .petLanguage(.korean))
 @MainActor
 func petAppServiceRecoveryCancelsReconnectDeadline() async throws {
     let h = AppServiceHarness()
@@ -429,7 +722,7 @@ func petAppServiceRecoveryCancelsReconnectDeadline() async throws {
     await c.shutdown()
 }
 
-@Test("Manual restart during reconnect fences old responses and deadlines and starts exactly one replacement",
+@Test("Manual restart during reconnect fences old responses and deadlines and starts exactly one replacement", .petLanguage(.korean),
       arguments: [false, true])
 @MainActor
 func petAppServiceUnresponsiveManualRestart(_ afterTimeout: Bool) async throws {
@@ -461,7 +754,7 @@ func petAppServiceUnresponsiveManualRestart(_ afterTimeout: Bool) async throws {
     #expect(h.launcher.launches == 2)
 }
 
-@Test("An unresponsive child that actually exits fails without automatic replacement")
+@Test("An unresponsive child that actually exits fails without automatic replacement", .petLanguage(.korean))
 @MainActor
 func petAppServiceUnresponsiveChildExit() async throws {
     let h = AppServiceHarness()
@@ -488,7 +781,7 @@ func petAppServiceUnresponsiveChildExit() async throws {
     await c.shutdown()
 }
 
-@Test("Shutdown during reconnect cancels its deadline and ignores late responses")
+@Test("Shutdown during reconnect cancels its deadline and ignores late responses", .petLanguage(.korean))
 @MainActor
 func petAppServiceShutdownCancelsReconnectDeadline() async throws {
     let h = AppServiceHarness()
@@ -509,7 +802,7 @@ func petAppServiceShutdownCancelsReconnectDeadline() async throws {
     #expect(h.launcher.launches == 1)
 }
 
-@Test("Concurrent restart and opt-out are serialized around owned cleanup")
+@Test("Concurrent restart and opt-out are serialized around owned cleanup", .petLanguage(.korean))
 @MainActor
 func petAppServiceConcurrentRestart() async throws {
     let h = AppServiceHarness()
@@ -530,7 +823,7 @@ func petAppServiceConcurrentRestart() async throws {
     #expect(!h.preference.enabled)
 }
 
-@Test("ViewModel shows registration conflicts as actions and unknown registration as failure",
+@Test("ViewModel shows registration conflicts as actions and unknown registration as failure", .petLanguage(.korean),
       arguments: [PetServiceRegistrationState.enabled, .requiresApproval, .unknown])
 @MainActor
 func petAppServiceViewModelRegistrationReadiness(_ registration: PetServiceRegistrationState) async {
@@ -562,7 +855,7 @@ func petAppServiceViewModelRegistrationReadiness(_ registration: PetServiceRegis
     await vm.shutdownAppOwnedService()
 }
 
-@Test("ViewModel keeps an automatic service transport failure classified as an error")
+@Test("ViewModel keeps an automatic service transport failure classified as an error", .petLanguage(.korean))
 @MainActor
 func petAppServiceViewModelTransportFailureReadiness() async throws {
     let h = AppServiceHarness()
@@ -596,7 +889,7 @@ func petAppServiceViewModelTransportFailureReadiness() async throws {
     await vm.shutdownAppOwnedService()
 }
 
-@Test("App-service settings keep registration explicit and gate snapshot readiness")
+@Test("App-service settings keep registration explicit and gate snapshot readiness", .petLanguage(.korean))
 @MainActor
 func petAppServiceViewModelReadiness() async throws {
     let h = AppServiceHarness()
@@ -646,7 +939,7 @@ private actor DelayedAppServiceSnapshot: PetCoordinatorTransport {
     func complete(_ data: Data) { continuation?.resume(returning: data); continuation = nil }
 }
 
-@Test("Snapshot already in flight cannot restore UI after app shutdown")
+@Test("Snapshot already in flight cannot restore UI after app shutdown", .petLanguage(.korean))
 @MainActor
 func petAppServiceLateSnapshotAfterShutdown() async throws {
     let h = AppServiceHarness()
@@ -671,7 +964,7 @@ func petAppServiceLateSnapshotAfterShutdown() async throws {
     #expect(h.launcher.launches == 1)
 }
 
-@Test("Service polling backs off on errors and remains bounded")
+@Test("Service polling backs off on errors and remains bounded", .petLanguage(.korean))
 func petAppServicePollingBackoff() {
     #expect(PetServicePollingPolicy.delayNanoseconds(base: 500_000_000, consecutiveFailures: 0) == 500_000_000)
     #expect(PetServicePollingPolicy.delayNanoseconds(base: 500_000_000, consecutiveFailures: 1) == 1_000_000_000)
@@ -679,7 +972,7 @@ func petAppServicePollingBackoff() {
     #expect(PetServicePollingPolicy.delayNanoseconds(base: .max, consecutiveFailures: 3) == .max)
 }
 
-@Test("Identical ready snapshots do not publish service state repeatedly")
+@Test("Identical ready snapshots do not publish service state repeatedly", .petLanguage(.korean))
 @MainActor
 func petAppServiceIdleStateDoesNotRepublish() async throws {
     let h = AppServiceHarness()
@@ -696,11 +989,18 @@ func petAppServiceIdleStateDoesNotRepublish() async throws {
     await c.shutdown()
 }
 
-@Test("Service failures explain manual recovery without destructive advice")
+@Test("Service failures explain manual recovery without destructive advice", .petLanguage(.korean))
 func petAppServiceRecoveryMessages() {
     #expect(PetAppServiceState.failed("operational_owner_active").detail.contains("기존 실행을 직접 종료"))
     #expect(PetAppServiceState.failed("app_service_identity_mismatch").detail.contains("앱을 완전히 종료"))
     #expect(PetAppServiceState.failed("freshness_anchor_corrupt").detail.contains("삭제하지 말고"))
+    #expect(PetAppServiceState.failed("freshness_lock_busy").detail.contains("대기를 마쳤습니다"))
+    #expect(PetAppServiceState.failed("freshness_lock_busy").detail.contains("자동으로 다시 실행하지 않습니다"))
+    #expect(AppOwnedServiceControlFrame.failureCode(
+        in: AppOwnedServiceControlFrame.failure(code: "freshness_lock_busy")
+    ) == "freshness_lock_busy")
+    #expect(PetAppServiceState.failed("freshness_transition_pending").detail.contains("원래 저장 내용과 권한"))
+    #expect(PetAppServiceState.failed("freshness_transition_pending").detail.contains("과거 선택을 다시 보내거나"))
     #expect(PetAppServiceState.failed("app_service_connection_timeout").detail.contains("다시 시작"))
     #expect(PetAppServiceState.failed("app_service_stop_incomplete").detail.contains("새 실행을 막았습니다"))
     #expect(PetAppServiceState.unresponsive.title == "서비스 응답 지연")
@@ -709,7 +1009,7 @@ func petAppServiceRecoveryMessages() {
     #expect(PetAppServiceState.unresponsive.detail.contains("설정에서 서비스 다시 시작"))
 }
 
-@Test("Cancelled app shutdown joins a pending restart stop without respawning")
+@Test("Cancelled app shutdown joins a pending restart stop without respawning", .petLanguage(.korean))
 @MainActor
 func petAppServiceShutdownDuringRestart() async throws {
     let h = AppServiceHarness()
@@ -732,7 +1032,7 @@ func petAppServiceShutdownDuringRestart() async throws {
     #expect(!c.mayQueryCoordinator)
 }
 
-@Test("VM ignores an earlier generation's snapshot after explicit restart")
+@Test("VM ignores an earlier generation's snapshot after explicit restart", .petLanguage(.korean))
 @MainActor
 func petAppServiceLateSnapshotAfterRestart() async throws {
     let h = AppServiceHarness()
@@ -765,7 +1065,7 @@ func petAppServiceLateSnapshotAfterRestart() async throws {
     await vm.shutdownAppOwnedService()
 }
 
-@Test("A delayed service keeps actions cleared beyond its reconnect budget and a verified response restores them")
+@Test("A delayed service keeps actions cleared beyond its reconnect budget and a verified response restores them", .petLanguage(.korean))
 @MainActor
 func petAppServiceConnectionLossClearsActions() async throws {
     let h = AppServiceHarness()

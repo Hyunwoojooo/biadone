@@ -5,6 +5,7 @@ import CryptoKit
 import Darwin
 import Dispatch
 import Foundation
+import OSLog
 import Security
 
 private let operationalMaximumMessageBytes = 1_048_576
@@ -695,13 +696,191 @@ struct UnixDomainSocketClient {
             throw CoordinatorError("operational_response_invalid")
         }
         if !ok {
-            let code = (response["error"] as? [String: Any])?["code"] as? String
+            let details = response["error"] as? [String: Any]
+            let code = details?["code"] as? String
+            if let rawFailure = details?["dispatch_failure"] {
+                guard let object = rawFailure as? [String: Any] else {
+                    throw CoordinatorError("operational_response_invalid")
+                }
+                let diagnostic = try CoordinatorNextTurnDispatchFailure(jsonObject: object)
+                guard diagnostic.code == code else {
+                    throw CoordinatorError("operational_response_invalid")
+                }
+                throw CoordinatorError(diagnostic.code, dispatchFailure: diagnostic)
+            }
             throw CoordinatorError(code ?? "operational_request_failed")
         }
         guard let result = response["result"] as? [String: Any] else {
             throw CoordinatorError("operational_response_invalid")
         }
         return result
+    }
+}
+
+/// Diagnostic evidence only. A completed socket write does not prove that a
+/// client read the frame, accepted its context, or executed an action.
+struct OperationalResponseWriteTiming: Equatable, Sendable {
+    enum Response: String, Sendable { case result, error }
+    enum Outcome: String, Sendable {
+        case succeeded = "response_write_succeeded"
+        case timedOut = "response_write_timeout"
+        case closed = "response_write_closed"
+        case cancelled = "response_write_cancelled"
+        case failed = "response_write_failed"
+
+        init(error: any Error) {
+            if error is CancellationError { self = .cancelled; return }
+            guard let failure = error as? CoordinatorError else { self = .failed; return }
+            switch failure.code {
+            case "operational_response_timeout": self = .timedOut
+            case "operational_transport_closed": self = .closed
+            default: self = .failed
+            }
+        }
+    }
+
+    let response: Response
+    let outcome: Outcome
+    let elapsedNanoseconds: UInt64
+}
+
+/// One final frame attempt, including the existing deadline. A partial write
+/// must never trigger an error frame, a retry, or a delivery acknowledgement.
+struct OperationalResponseWriter: Sendable {
+    typealias Write = @Sendable (Data, Int32, UInt64) async throws -> Void
+    private let writer: Write
+    private let clock: @Sendable () -> UInt64
+    private let observer: (@Sendable (OperationalResponseWriteTiming) -> Void)?
+
+    init(
+        writer: @escaping Write = { data, descriptor, deadline in
+            try await writeAllAsync(data, descriptor: descriptor, deadline: deadline)
+        },
+        clock: @escaping @Sendable () -> UInt64 = { DispatchTime.now().uptimeNanoseconds },
+        observer: (@Sendable (OperationalResponseWriteTiming) -> Void)? = nil
+    ) {
+        self.writer = writer
+        self.clock = clock
+        self.observer = observer
+    }
+
+    func write(
+        _ data: Data,
+        descriptor: Int32,
+        deadline: UInt64,
+        response: OperationalResponseWriteTiming.Response,
+        observeUserPromptSubmit: Bool
+    ) async {
+        let record = observeUserPromptSubmit ? observer : nil
+        let startedAt = record == nil ? nil : clock()
+        let outcome: OperationalResponseWriteTiming.Outcome
+        do {
+            try await writer(data, descriptor, deadline)
+            outcome = .succeeded
+        } catch {
+            outcome = .init(error: error)
+        }
+        if let record, let startedAt {
+            let finishedAt = clock()
+            record(OperationalResponseWriteTiming(
+                response: response,
+                outcome: outcome,
+                elapsedNanoseconds: finishedAt >= startedAt ? finishedAt - startedAt : 0
+            ))
+        }
+    }
+}
+
+enum OperationalServiceDiagnostic: Equatable, Sendable {
+    case requestTiming(CoordinatorOperationalRequestTiming)
+    case responseWrite(OperationalResponseWriteTiming)
+}
+
+/// Bounded, payload-free OSLog events. No filesystem writes or asynchronous
+/// backlog are introduced at the actor boundary. The lock protects only three
+/// counters; the sink is called after unlocking. Targeted requests, slow/failed
+/// background requests, and response writes have separate 60-per-minute budgets
+/// so polling cannot consume selection, Hook, or response-write evidence.
+final class OperationalServiceDiagnostics: @unchecked Sendable {
+    static let slowRequestNanoseconds: UInt64 = 250_000_000
+    static let maximumEventsPerWindow = 60
+    static let windowNanoseconds: UInt64 = 60_000_000_000
+    private static let logger = Logger(
+        subsystem: BlabeeProductProfile.current.bundleIdentifier,
+        category: "operational"
+    )
+
+    private struct Window {
+        var startedAt: UInt64?
+        var count = 0
+
+        mutating func admit(at now: UInt64) -> Bool {
+            let withinWindow = startedAt.map {
+                now < $0 || now - $0 < OperationalServiceDiagnostics.windowNanoseconds
+            } ?? false
+            if !withinWindow {
+                startedAt = now
+                count = 0
+            }
+            guard count < OperationalServiceDiagnostics.maximumEventsPerWindow else { return false }
+            count += 1
+            return true
+        }
+    }
+
+    private let lock = NSLock()
+    private var requestWindow = Window()
+    private var backgroundWindow = Window()
+    private var responseWindow = Window()
+    private let clock: @Sendable () -> UInt64
+    private let sink: @Sendable (OperationalServiceDiagnostic) -> Void
+
+    init(
+        clock: @escaping @Sendable () -> UInt64 = { DispatchTime.now().uptimeNanoseconds },
+        sink: @escaping @Sendable (OperationalServiceDiagnostic) -> Void = OperationalServiceDiagnostics.log
+    ) {
+        self.clock = clock
+        self.sink = sink
+    }
+
+    func recordRequestTiming(_ timing: CoordinatorOperationalRequestTiming) {
+        let targeted: Bool
+        switch timing.operation {
+        case .select, .focusInteraction, .focusEvent, .userPromptSubmit: targeted = true
+        default: targeted = false
+        }
+        guard targeted || !timing.succeeded
+            || timing.actorQueueWaitNanoseconds >= Self.slowRequestNanoseconds
+            || timing.actorHandlerElapsedNanoseconds >= Self.slowRequestNanoseconds
+        else { return }
+        emit(.requestTiming(timing), targeted: targeted)
+    }
+
+    func recordResponseWrite(_ timing: OperationalResponseWriteTiming) {
+        emit(.responseWrite(timing))
+    }
+
+    private func emit(_ diagnostic: OperationalServiceDiagnostic, targeted: Bool = false) {
+        let now = clock()
+        lock.lock()
+        let admitted: Bool
+        switch diagnostic {
+        case .requestTiming:
+            admitted = targeted ? requestWindow.admit(at: now) : backgroundWindow.admit(at: now)
+        case .responseWrite: admitted = responseWindow.admit(at: now)
+        }
+        lock.unlock()
+        if admitted { sink(diagnostic) }
+    }
+
+    private static func log(_ diagnostic: OperationalServiceDiagnostic) {
+        switch diagnostic {
+        case .requestTiming(let timing):
+            let code = timing.succeeded ? "request_succeeded" : "request_failed"
+            logger.notice("event=operational_request_timing request_type=\(timing.operation.rawValue, privacy: .public) code=\(code, privacy: .public) actor_wait_ms=\(timing.actorQueueWaitNanoseconds / 1_000_000, privacy: .public) handler_ms=\(timing.actorHandlerElapsedNanoseconds / 1_000_000, privacy: .public)")
+        case .responseWrite(let timing):
+            logger.notice("event=operational_response_write request_type=user_prompt_submit response=\(timing.response.rawValue, privacy: .public) code=\(timing.outcome.rawValue, privacy: .public) write_ms=\(timing.elapsedNanoseconds / 1_000_000, privacy: .public)")
+        }
     }
 }
 
@@ -719,6 +898,7 @@ final class UnixDomainSocketServer: @unchecked Sendable {
         "resolve_managed_command_approval",
         "ack_managed_command_approval_delivery",
         "doctor_status",
+        "update_status",
         "pet_snapshot",
         "get_state",
         "focus_interaction",
@@ -730,11 +910,15 @@ final class UnixDomainSocketServer: @unchecked Sendable {
         "claude_session_v2",
         "pet_provider_v1",
         "pet_directory_v1",
+        "pet_inbox_v1",
+        "product_access_v1",
     ]
 
     private let socketPath: String
     private let runtimeIdentity: String
     private let compatiblePreviousRuntimes: [OperationalRuntimeCompatibilityPolicy]
+    private let responseWriter: OperationalResponseWriter
+    private let updateAdmission: (@Sendable () throws -> any Sendable)?
     private let lockDescriptor: Int32
     private let admissionGate = ConnectionAdmissionGate(limit: 64)
     private let stateLock = NSLock()
@@ -746,7 +930,9 @@ final class UnixDomainSocketServer: @unchecked Sendable {
     init(
         socketPath: String,
         runtimeIdentity: String? = nil,
-        compatiblePreviousRuntimes: [OperationalRuntimeCompatibilityPolicy]? = nil
+        compatiblePreviousRuntimes: [OperationalRuntimeCompatibilityPolicy]? = nil,
+        responseWriter: OperationalResponseWriter = OperationalResponseWriter(),
+        updateAdmission: (@Sendable () throws -> any Sendable)? = nil
     ) throws {
         guard socketPath.hasPrefix("/") else {
             throw CoordinatorError("operational_socket_invalid", "socket path must be absolute")
@@ -777,6 +963,8 @@ final class UnixDomainSocketServer: @unchecked Sendable {
         self.socketPath = socketPath
         self.runtimeIdentity = resolvedSnapshot.runtimeIdentity
         self.compatiblePreviousRuntimes = resolvedSnapshot.compatiblePreviousRuntimes
+        self.responseWriter = responseWriter
+        self.updateAdmission = updateAdmission
 
         let socketURL = URL(fileURLWithPath: socketPath, isDirectory: false)
         let parent = socketURL.deletingLastPathComponent()
@@ -850,7 +1038,7 @@ final class UnixDomainSocketServer: @unchecked Sendable {
             interruptSource.cancel()
             terminationSource.cancel()
         }
-        Self.startScheduler(application: application)
+        Self.startScheduler(application: application, updateAdmission: updateAdmission)
         while true {
             let descriptor = accept(activeListener, nil, nil)
             if descriptor < 0 {
@@ -884,6 +1072,8 @@ final class UnixDomainSocketServer: @unchecked Sendable {
             let gate = admissionGate
             let serverRuntimeIdentity = runtimeIdentity
             let serverCompatiblePreviousRuntimes = compatiblePreviousRuntimes
+            let serverResponseWriter = responseWriter
+            let serverUpdateAdmission = updateAdmission
             Task.detached(priority: .userInitiated) {
                 defer { gate.release() }
                 await Self.handleConnection(
@@ -891,7 +1081,9 @@ final class UnixDomainSocketServer: @unchecked Sendable {
                     application: application,
                     secretCorpus: secretCorpus,
                     runtimeIdentity: serverRuntimeIdentity,
-                    compatiblePreviousRuntimes: serverCompatiblePreviousRuntimes
+                    compatiblePreviousRuntimes: serverCompatiblePreviousRuntimes,
+                    responseWriter: serverResponseWriter,
+                    updateAdmission: serverUpdateAdmission
                 )
             }
         }
@@ -932,13 +1124,20 @@ final class UnixDomainSocketServer: @unchecked Sendable {
         application: any CoordinatorOperationalHandling,
         secretCorpus: RuntimeSecretCorpus,
         runtimeIdentity: String,
-        compatiblePreviousRuntimes: [OperationalRuntimeCompatibilityPolicy]
+        compatiblePreviousRuntimes: [OperationalRuntimeCompatibilityPolicy],
+        responseWriter: OperationalResponseWriter,
+        updateAdmission: (@Sendable () throws -> any Sendable)?
     ) async {
         defer { close(descriptor) }
+        // Retain through response publication, not merely actor completion:
+        // an already-committed queued claim still needs its reply delivered.
+        var updateRequestLease: (any Sendable)?
+        defer { withExtendedLifetime(updateRequestLease) {} }
         guard peerHasCurrentEffectiveUserID(descriptor) else { return }
 
         var requestID = "unknown"
         var responseRuntimeIdentity = runtimeIdentity
+        var observeUserPromptSubmit = false
         let requestSecretCorpus = RuntimeSecretCorpus()
         do {
             let line = try await readOneLineAsync(
@@ -994,6 +1193,11 @@ final class UnixDomainSocketServer: @unchecked Sendable {
             {
                 throw CoordinatorError("operational_runtime_request_not_compatible")
             }
+            observeUserPromptSubmit = type == "user_prompt_submit"
+            if type != "update_status", let updateAdmission {
+                do { updateRequestLease = try updateAdmission() }
+                catch { throw CoordinatorError("app_update_in_progress") }
+            }
 
             // Never add unvalidated client material to the daemon-wide corpus:
             // one malicious request could otherwise poison all later output.
@@ -1002,7 +1206,7 @@ final class UnixDomainSocketServer: @unchecked Sendable {
             requestSecretCorpus.registerKnownSecrets(inJSONObject: payload)
             // A Claude capability is an input only. Do not weaken the existing
             // response guard or let an unauthenticated value poison other calls.
-            if [ClaudeBridgeCoordinator.requestType, "claude_session_v1", "claude_session_v2", "pet_provider_v1", "pet_directory_v1"].contains(type),
+            if [ClaudeBridgeCoordinator.requestType, "claude_session_v1", "claude_session_v2", "pet_provider_v1", "pet_directory_v1", "pet_inbox_v1", "product_access_v1"].contains(type),
                let token = payload["auth_token"] as? String {
                 requestSecretCorpus.register(token)
             }
@@ -1010,6 +1214,13 @@ final class UnixDomainSocketServer: @unchecked Sendable {
             let resultData: Data
             if type == "doctor_status" {
                 resultData = try await application.doctorStatus(payload: payloadData)
+            } else if type == "update_status" {
+                var status = try StrictJSONTransport.object(
+                    from: await application.handle(type: type, payload: payloadData)
+                )
+                status["service_pid"] = getpid()
+                status["service_parent_pid"] = getppid()
+                resultData = try StrictJSONTransport.data(forJSONObject: status)
             } else if type == "permission_request"
                         || type == "managed_command_approval"
             {
@@ -1048,28 +1259,39 @@ final class UnixDomainSocketServer: @unchecked Sendable {
             // Once a response starts, an I/O failure may have left a partial
             // frame on the wire. Close it instead of appending an error frame
             // or starting another five-second write attempt.
-            try? await writeAllAsync(
+            await responseWriter.write(
                 response,
                 descriptor: descriptor,
-                deadline: monotonicDeadline(afterMilliseconds: 5_000)
+                deadline: monotonicDeadline(afterMilliseconds: 5_000),
+                response: .result,
+                observeUserPromptSubmit: observeUserPromptSubmit
             )
         } catch {
             let failure = error.coordinatorError
+            var details: [String: Any] = [
+                "code": safeErrorCode(failure.code),
+                "message": "request failed",
+            ]
+            // Optional presentation diagnostics. Old clients still use `code`;
+            // neither this envelope nor the local log creates action authority.
+            if let diagnostic = failure.dispatchFailure,
+               diagnostic.code == safeErrorCode(failure.code) {
+                details["dispatch_failure"] = diagnostic.jsonObject
+            }
             guard let response = try? operationalJSONData([
                 "request_id": requestID,
                 "runtime_identity": responseRuntimeIdentity,
                 "ok": false,
-                "error": [
-                    "code": safeErrorCode(failure.code),
-                    "message": "request failed",
-                ],
+                "error": details,
             ],
             secretCorpus: secretCorpus,
             requestSecretCorpus: requestSecretCorpus) else { return }
-            try? await writeAllAsync(
+            await responseWriter.write(
                 response,
                 descriptor: descriptor,
-                deadline: monotonicDeadline(afterMilliseconds: 5_000)
+                deadline: monotonicDeadline(afterMilliseconds: 5_000),
+                response: .error,
+                observeUserPromptSubmit: observeUserPromptSubmit
             )
         }
     }
@@ -1208,7 +1430,10 @@ final class UnixDomainSocketServer: @unchecked Sendable {
         return .cancelled
     }
 
-    private static func startScheduler(application: any CoordinatorOperationalHandling) {
+    private static func startScheduler(
+        application: any CoordinatorOperationalHandling,
+        updateAdmission: (@Sendable () throws -> any Sendable)?
+    ) {
         Task.detached(priority: .utility) {
             let pollingIntervalMilliseconds: Int32 = 250
             let initialFailureBackoffMilliseconds: Int32 = 250
@@ -1255,6 +1480,8 @@ final class UnixDomainSocketServer: @unchecked Sendable {
                       requestedDelay <= pollingIntervalMilliseconds
                 else { continue }
                 do {
+                    let lease = try updateAdmission?()
+                    defer { withExtendedLifetime(lease) {} }
                     _ = try await application.processTime()
                     retryDelayRemainingMilliseconds = 0
                     nextFailureBackoffMilliseconds = initialFailureBackoffMilliseconds

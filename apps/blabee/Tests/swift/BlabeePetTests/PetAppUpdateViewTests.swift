@@ -3,7 +3,7 @@ import SwiftUI
 import Testing
 @testable import BlabeeCoordinator
 
-@Suite("Pet app update view")
+@Suite("Pet app update view", .petLanguage(.korean))
 struct PetAppUpdateViewTests {
     @Test("Update menu presents settings before checking and keeps an open panel visible")
     @MainActor

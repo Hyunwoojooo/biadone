@@ -439,8 +439,11 @@ struct ClaudePetTransportTests {
     @Test("Only supported Pet operations reach the native selector")
     func unsupportedAndReceipts() async throws {
         let f = try ClaudePetFixture(); try f.prepare()
-        for type in ["dismiss_interaction", "resolve_permission_request", "session.end", "selection.claim"] {
+        for type in ["resolve_permission_request", "session.end", "selection.claim"] {
             await claudePetExpectRejected { _ = try await f.transport.request(type: type, payload: Data("{}".utf8)) }
+        }
+        await claudePetExpectRejected {
+            _ = try await f.transport.request(type: "dismiss_interaction", payload: Data("{}".utf8))
         }
         let request = try claudePetSelection(try await f.snapshot())
         let data = try await f.transport.request(type: "select", payload: request.data())
@@ -448,6 +451,83 @@ struct ClaudePetTransportTests {
         await claudePetExpectRejected { _ = try await f.transport.selectionOutcome(data, request: forged) }
         await claudePetExpectRejected { _ = try await f.transport.selectionOutcome(petTestSelectionResponse(), request: request) }
         #expect(try await f.transport.selectionOutcome(data, request: request) == .channelPending)
+    }
+
+    @Test("Dismissal rejects stale full identities and expired cards without selecting or delivering")
+    func dismissalIdentityAndExpiry() async throws {
+        let f = try ClaudePetFixture(); try f.prepare()
+        let identity = try #require(try await f.snapshot().interactions.first?.identity)
+        let request = PetDismissRequest(identity: identity)
+        let before = try f.journalSequence()
+        let mutations: [(String, Any)] = [
+            ("project_id", "another-project"), ("session_id", claudePetID()),
+            ("source_prompt_id", claudePetID()), ("decision_boundary_id", claudePetID()),
+            ("interaction_id", "another-interaction"), ("packet_id", "another-packet"), ("revision", 2),
+        ]
+        for (field, value) in mutations {
+            var object = request.jsonObject; object[field] = value
+            let data = try petTestData(object)
+            await claudePetExpectRejected { _ = try await f.transport.request(type: "dismiss_interaction", payload: data) }
+        }
+        #expect(try f.journalSequence() == before)
+        #expect(try await f.snapshot().interactions.first?.identity == identity)
+        f.clock.advanceMonotonic(600)
+        await claudePetExpectRejected { _ = try await f.transport.request(type: "dismiss_interaction", payload: request.data()) }
+        #expect(try await f.snapshot().routing.inFlightCount == 0)
+        #expect(try f.poll() == nil)
+    }
+
+    @Test("Dismissal owns the same mutation slot as selection before a slow fresh read")
+    func dismissalReservesBeforeRead() async throws {
+        let f = try ClaudePetFixture(); try f.prepare()
+        let selection = try claudePetSelection(try await f.snapshot())
+        let request = PetDismissRequest(identity: selection.identity)
+        let gate = ClaudePetSnapshotGate()
+        let native = f.controller
+        let transport = try f.makeTransport { data in
+            let object = try StrictJSONTransport.object(from: data)
+            if (object["request"] as? [String: Any])?["operation"] as? String == "pet.snapshot" {
+                gate.entered.signal()
+                guard gate.release.wait(timeout: .now() + 10) == .success else { throw PetTestError.injected("gate_timeout") }
+            }
+            return try native.handle(payload: data)
+        }
+        let pending = Task { try await transport.request(type: "dismiss_interaction", payload: request.data()) }
+        let entered = await withCheckedContinuation { continuation in
+            DispatchQueue.global().async {
+                continuation.resume(returning: gate.entered.wait(timeout: .now() + 5) == .success)
+            }
+        }
+        #expect(entered)
+        defer { gate.release.signal() }
+        await claudePetExpectRejected { _ = try await transport.request(type: "select", payload: selection.data()) }
+        await claudePetExpectRejected { _ = try await transport.request(type: "dismiss_interaction", payload: request.data()) }
+        gate.release.signal()
+        try request.requireDismissed(await pending.value)
+        #expect(try f.poll() == nil)
+        #expect(try await f.snapshot().interactions.isEmpty)
+    }
+
+    @Test("An uncertain dismissal response is never converted into execution or automatically retried")
+    func lostDismissalResponse() async throws {
+        let f = try ClaudePetFixture(); try f.prepare()
+        let request = PetDismissRequest(identity: try #require(try await f.snapshot().interactions.first?.identity))
+        let native = f.controller
+        let calls = ClaudePetSelectFault()
+        let transport = try f.makeTransport { data in
+            let request = try StrictJSONTransport.object(from: data)["request"] as? [String: Any]
+            let response = try native.handle(payload: data)
+            if request?["operation"] as? String == "dismiss_interaction" {
+                calls.record()
+                throw CoordinatorError("lost_dismissal_receipt")
+            }
+            return response
+        }
+        await claudePetExpectRejected { _ = try await transport.request(type: "dismiss_interaction", payload: request.data()) }
+        #expect(calls.count == 1)
+        #expect(try await f.snapshot().interactions.isEmpty)
+        #expect(try await f.snapshot().routing.inFlightCount == 0)
+        #expect(try f.poll() == nil)
     }
 
     @Test("Side-effect kinds are rejected before admission or remain displayable by the common Pet", arguments: [

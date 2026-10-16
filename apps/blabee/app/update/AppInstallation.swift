@@ -69,39 +69,39 @@ struct AppInstallationError: Error, LocalizedError, Sendable {
     var userMessage: String {
         switch code {
         case .invalidSource:
-            "유효한 Blabee 앱 번들을 확인하지 못했습니다. 배포된 앱을 다시 받아 주세요."
+            PetL10n.text("Unable to verify a valid Blabee app bundle. Download the distributed app again.", korean: "유효한 Blabee 앱 번들을 확인하지 못했습니다. 배포된 앱을 다시 받아 주세요.")
         case .invalidDestination:
-            "설치 위치나 기존 앱을 안전하게 확인하지 못했습니다. Finder에서 응용 프로그램 폴더를 확인해 주세요."
+            PetL10n.text("Unable to safely verify the installation location or existing app. Check Applications in Finder.", korean: "설치 위치나 기존 앱을 안전하게 확인하지 못했습니다. Finder에서 응용 프로그램 폴더를 확인해 주세요.")
         case .identityMismatch:
-            "실행 중인 앱과 설치할 앱의 서명 또는 빌드가 일치하지 않습니다. 앱을 다시 열어 주세요."
+            PetL10n.text("The running app and installation app have different signatures or builds. Reopen the app.", korean: "실행 중인 앱과 설치할 앱의 서명 또는 빌드가 일치하지 않습니다. 앱을 다시 열어 주세요.")
         case .changedSinceInspection:
-            "확인한 뒤 앱이나 설치 폴더가 변경되었습니다. 설치 화면에서 다시 확인해 주세요."
+            PetL10n.text("The app or installation folder changed after verification. Check again in the installation window.", korean: "확인한 뒤 앱이나 설치 폴더가 변경되었습니다. 설치 화면에서 다시 확인해 주세요.")
         case .replacementApprovalRequired:
-            "기존 Blabee 앱을 백업하고 교체하려면 먼저 교체를 확인해 주세요."
+            PetL10n.text("Confirm replacement before backing up and replacing the existing Blabee app.", korean: "기존 Blabee 앱을 백업하고 교체하려면 먼저 교체를 확인해 주세요.")
         case .destinationActive:
-            "Blabee 또는 Codex에 연결된 Blabee 보조 프로세스가 실행 중입니다. 작업을 저장하고 Blabee와 연결된 Codex 세션을 종료한 뒤 다시 설치해 주세요."
+            PetL10n.text("Blabee or a helper connected to Codex is running. Save your work, close Blabee and connected Codex sessions, then try installing again.", korean: "Blabee 또는 Codex에 연결된 Blabee 보조 프로세스가 실행 중입니다. 작업을 저장하고 Blabee와 연결된 Codex 세션을 종료한 뒤 다시 설치해 주세요.")
         case .activityInspectionIncomplete:
-            "macOS가 일부 프로세스의 실행 파일을 확인하지 못했습니다. Blabee가 실행 중이라는 뜻은 아닙니다. Blabee와 연결된 Codex 세션을 종료했다면 ‘종료 확인 후 교체’를 선택할 수 있습니다."
+            PetL10n.text("macOS could not identify some process executables. This does not necessarily mean Blabee is running. If you have closed Blabee and connected Codex sessions, you can choose Confirm Closed and Replace.", korean: "macOS가 일부 프로세스의 실행 파일을 확인하지 못했습니다. Blabee가 실행 중이라는 뜻은 아닙니다. Blabee와 연결된 Codex 세션을 종료했다면 ‘종료 확인 후 교체’를 선택할 수 있습니다.")
         case .activityInspectionUnavailable:
-            "macOS에서 실행 중인 프로세스 상태를 확인하지 못했습니다. ‘다시 확인’으로 재시도하거나 Finder에서 응용 프로그램 폴더를 확인해 주세요."
+            PetL10n.text("Unable to check running processes in macOS. Choose Check Again or inspect Applications in Finder.", korean: "macOS에서 실행 중인 프로세스 상태를 확인하지 못했습니다. ‘다시 확인’으로 재시도하거나 Finder에서 응용 프로그램 폴더를 확인해 주세요.")
         case .runtimeUseLeaseUnavailable:
-            "Blabee 실행 잠금을 확인할 수 없어 안전하게 설치를 중단했습니다. 앱을 다시 열어 재시도해 주세요."
+            PetL10n.text("Installation stopped safely because the Blabee runtime lock could not be verified. Reopen the app and try again.", korean: "Blabee 실행 잠금을 확인할 수 없어 안전하게 설치를 중단했습니다. 앱을 다시 열어 재시도해 주세요.")
         case .claudeRuntimeBlocked:
-            "Claude Code에서 Blabee를 사용 중이거나 사용 종료를 확인하지 못했습니다. 작업을 저장하고 연결된 Claude Code를 정상 종료한 뒤 다시 확인해 주세요."
+            PetL10n.text("Claude Code is using Blabee, or its release could not be confirmed. Save your work, exit connected Claude Code sessions normally, and check again.", korean: "Claude Code에서 Blabee를 사용 중이거나 사용 종료를 확인하지 못했습니다. 작업을 저장하고 연결된 Claude Code를 정상 종료한 뒤 다시 확인해 주세요.")
         case .insufficientPermissions:
-            "응용 프로그램 폴더에 설치할 권한이 없습니다. Finder에서 앱을 복사하고 macOS의 권한 안내를 따라 주세요."
+            PetL10n.text("You do not have permission to install in Applications. Copy the app using Finder and follow macOS permission prompts.", korean: "응용 프로그램 폴더에 설치할 권한이 없습니다. Finder에서 앱을 복사하고 macOS의 권한 안내를 따라 주세요.")
         case .installationBusy:
-            "다른 Blabee 설치가 진행 중이거나 설치 잠금을 확인할 수 없습니다. 잠시 후 다시 시도해 주세요."
+            PetL10n.text("Another Blabee installation is running, or the installation lock could not be verified. Try again shortly.", korean: "다른 Blabee 설치가 진행 중이거나 설치 잠금을 확인할 수 없습니다. 잠시 후 다시 시도해 주세요.")
         case .sizeLimitExceeded:
-            "앱의 파일 수나 크기가 자동 설치 범위를 벗어났습니다. 배포된 앱을 다시 확인해 주세요."
+            PetL10n.text("The app's file count or size exceeds automatic installation limits. Check the distributed app again.", korean: "앱의 파일 수나 크기가 자동 설치 범위를 벗어났습니다. 배포된 앱을 다시 확인해 주세요.")
         case .deadlineExceeded:
-            "설치 작업이 제한 시간을 넘었습니다. 남은 설치 자료를 확인한 뒤 다시 시도해 주세요."
+            PetL10n.text("Installation timed out. Check the remaining installation files before trying again.", korean: "설치 작업이 제한 시간을 넘었습니다. 남은 설치 자료를 확인한 뒤 다시 시도해 주세요.")
         case .copyFailed:
-            "앱 전체를 복사하지 못했습니다. 디스크 여유 공간과 접근 권한을 확인해 주세요."
+            PetL10n.text("Unable to copy the entire app. Check available disk space and permissions.", korean: "앱 전체를 복사하지 못했습니다. 디스크 여유 공간과 접근 권한을 확인해 주세요.")
         case .publishFailed:
-            "설치를 완료하지 못했습니다. 설치 위치와 남은 설치 자료를 확인한 뒤 다시 시도해 주세요."
+            PetL10n.text("Unable to complete installation. Check the installation location and remaining files before trying again.", korean: "설치를 완료하지 못했습니다. 설치 위치와 남은 설치 자료를 확인한 뒤 다시 시도해 주세요.")
         case .recoveryRequired:
-            "설치 중 다른 변경을 감지했습니다. 앱과 복구 자료를 보존했으므로 Finder에서 확인해 주세요."
+            PetL10n.text("Another change was detected during installation. The app and recovery files were preserved; check them in Finder.", korean: "설치 중 다른 변경을 감지했습니다. 앱과 복구 자료를 보존했으므로 Finder에서 확인해 주세요.")
         }
     }
 }
@@ -151,13 +151,15 @@ struct AppInstallationService: Sendable {
     private let validator: Validator
     private let activityGuard: ActivityGuard
     private let claudeInstallationGuard: ClaudeInstallationGuard
+    private let updateTransitionGuard: @Sendable (URL) throws -> any Sendable
     private let copyBundle: @Sendable (URL, URL) throws -> Void
     private let checkpoint: Checkpoint
     private let limits: AppInstallationLimits
 
     static func live(
         expectedSourceIdentity: String,
-        activityGuard: @escaping ActivityGuard
+        activityGuard: @escaping ActivityGuard,
+        updateAdmission: AppUpdateAdmissionLease? = nil
     ) -> Self {
         Self(
             destinationURL: productionDestinationURL,
@@ -169,7 +171,13 @@ struct AppInstallationService: Sendable {
                 return inspection.snapshot.runtimeIdentity
             },
             activityGuard: activityGuard,
-            claudeInstallationGuard: { try AppClaudeRuntimeUpdateGuard.acquire() }
+            claudeInstallationGuard: { try AppClaudeRuntimeUpdateGuard.acquire() },
+            updateTransitionGuard: { candidate in
+                let lease = try updateAdmission ?? AppUpdateAdmissionGate.acquireForUpdate()
+                try lease.verifyForUpdate()
+                try AppUpdateTransitionPreflight.requireReadySynchronously(candidateApplicationURL: candidate)
+                return lease
+            }
         )
     }
 
@@ -180,6 +188,7 @@ struct AppInstallationService: Sendable {
         validator: @escaping Validator,
         activityGuard: @escaping ActivityGuard = { _ in },
         claudeInstallationGuard: @escaping ClaudeInstallationGuard = { () },
+        updateTransitionGuard: @escaping @Sendable (URL) throws -> any Sendable = { _ in () },
         copyBundle: @escaping @Sendable (URL, URL) throws -> Void = {
             try FileManager().copyItem(at: $0, to: $1)
         },
@@ -191,6 +200,7 @@ struct AppInstallationService: Sendable {
         self.validator = validator
         self.activityGuard = activityGuard
         self.claudeInstallationGuard = claudeInstallationGuard
+        self.updateTransitionGuard = updateTransitionGuard
         self.copyBundle = copyBundle
         self.checkpoint = checkpoint
         self.limits = limits
@@ -244,6 +254,10 @@ struct AppInstallationService: Sendable {
         let lockFile = try Self.identity(lock)
         try verifyTransaction(parent: parent, plan: plan, lock: lock, lockFile: lockFile)
         try recheck(plan, parent: parent, deadline: deadline)
+        // The UI preflight is advisory. Recheck under an ingress reservation
+        // and retain it through publication/rollback, including the DMG path.
+        let transition = try updateTransitionGuard(plan.sourceURL)
+        defer { withExtendedLifetime(transition) {} }
         // This mandatory guard covers fresh, legacy and v1 lease installs. Its
         // exclusive admission lock prevents a new Claude launch until every
         // publication/rollback path has left this transaction.

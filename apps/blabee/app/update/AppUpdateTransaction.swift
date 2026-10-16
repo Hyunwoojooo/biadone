@@ -1,5 +1,6 @@
 import AppKit
 import Combine
+import CoordinatorSwift
 import Darwin
 import Foundation
 import Security
@@ -7,17 +8,25 @@ import Security
 enum AppUpdateTransactionError: Error, LocalizedError, Equatable {
     case invalidJournal, unsafeJournal, updateBusy, changedSinceReview, sessionsNotReady
     case helperUnverified, helperNotReady, parentDidNotExit, recoveryRequired
+    case safePointTimedOut
+    case serviceHealthNotConfirmed, serviceHealthIdentityMismatch, serviceHealthResponseInvalid
+    case transitionBlocked(String)
     var errorDescription: String? {
         switch self {
-        case .invalidJournal: "업데이트 기록의 버전, 세션 또는 작업 식별자를 확인하지 못했습니다."
-        case .unsafeJournal: "업데이트 기록 폴더의 소유권과 접근 권한을 확인하지 못했습니다."
-        case .updateBusy: "다른 업데이트 작업이 진행 중입니다."
-        case .changedSinceReview: "확인 이후 앱이나 Codex 세션이 변경되었습니다. 업데이트를 다시 확인해 주세요."
-        case .sessionsNotReady: "작업 중이거나 복원을 확인할 수 없는 Codex 세션이 있습니다. 먼저 작업을 마무리해 주세요."
-        case .helperUnverified: "업데이트 도우미의 실행 위치 또는 서명을 확인하지 못했습니다."
-        case .helperNotReady: "업데이트 도우미가 준비되지 않아 Blabee를 종료하지 않았습니다."
-        case .parentDidNotExit: "Blabee가 정상 종료되지 않아 업데이트를 중단했습니다."
-        case .recoveryRequired: "이전 업데이트의 완료 여부를 확인할 수 없습니다. 보존된 앱과 세션 상태를 먼저 확인해 주세요."
+        case .invalidJournal: PetL10n.text("Unable to verify the version, session, or task identifiers in the update record.", korean: "업데이트 기록의 버전, 세션 또는 작업 식별자를 확인하지 못했습니다.")
+        case .unsafeJournal: PetL10n.text("Unable to verify ownership and permissions for the update record folder.", korean: "업데이트 기록 폴더의 소유권과 접근 권한을 확인하지 못했습니다.")
+        case .updateBusy: PetL10n.text("Another update is in progress.", korean: "다른 업데이트 작업이 진행 중입니다.")
+        case .changedSinceReview: PetL10n.text("The app or Codex sessions changed after verification. Check for updates again.", korean: "확인 이후 앱이나 Codex 세션이 변경되었습니다. 업데이트를 다시 확인해 주세요.")
+        case .sessionsNotReady: PetL10n.text("Some Codex sessions are busy or cannot be verified for restoration. Finish those tasks first.", korean: "작업 중이거나 복원을 확인할 수 없는 Codex 세션이 있습니다. 먼저 작업을 마무리해 주세요.")
+        case .helperUnverified: PetL10n.text("Unable to verify the update helper's location or signature.", korean: "업데이트 도우미의 실행 위치 또는 서명을 확인하지 못했습니다.")
+        case .helperNotReady: PetL10n.text("The update helper was not ready, so Blabee was not closed.", korean: "업데이트 도우미가 준비되지 않아 Blabee를 종료하지 않았습니다.")
+        case .parentDidNotExit: PetL10n.text("The update stopped because Blabee did not exit normally.", korean: "Blabee가 정상 종료되지 않아 업데이트를 중단했습니다.")
+        case .recoveryRequired: PetL10n.text("Unable to determine whether the previous update completed. Check the preserved apps and session state first.", korean: "이전 업데이트의 완료 여부를 확인할 수 없습니다. 보존된 앱과 세션 상태를 먼저 확인해 주세요.")
+        case .safePointTimedOut: PetL10n.text("The update could not reach a safe restart point within 30 seconds. Your conversations are still running. Finish the pending request, then retry the update.", korean: "30초 안에 안전하게 재시작할 시점을 확인하지 못했습니다. 대화는 계속 실행 중입니다. 대기 중인 요청을 마친 뒤 업데이트를 다시 시도해 주세요.")
+        case .serviceHealthNotConfirmed: PetL10n.text("The new app is installed, but its service did not become verifiably available within 30 seconds. Check Blabee's connection settings. Conversations will not be restarted automatically.", korean: "새 앱은 설치됐지만 30초 안에 서비스가 정상 실행됐는지 확인하지 못했습니다. Blabee 연결 설정을 확인해 주세요. 대화를 자동으로 다시 실행하지 않습니다.")
+        case .serviceHealthIdentityMismatch: PetL10n.text("The installed app or running service does not match the verified update. The apps have been preserved; check the installation before continuing.", korean: "설치된 앱 또는 실행 중인 서비스가 검증한 업데이트와 일치하지 않습니다. 앱은 보존했으며 설치 상태 확인이 필요합니다.")
+        case .serviceHealthResponseInvalid: PetL10n.text("The new app is installed, but its service returned an unverified status response. Check Blabee's connection settings.", korean: "새 앱은 설치됐지만 서비스 상태 응답을 검증하지 못했습니다. Blabee 연결 설정을 확인해 주세요.")
+        case .transitionBlocked(let reason): reason
         }
     }
 }
@@ -44,6 +53,12 @@ struct AppUpdateTransactionEffects {
     // Fixtures inject an inert or controlled check. The live helper explicitly
     // supplies the persistent Claude payload-use inspection below.
     var requireClaudeInactive: () throws -> Void = {}
+    var requirePreservedConnectionsReady: (AppUpdateJournal) async throws -> Void = { _ in
+        throw AppUpdateTransactionError.changedSinceReview
+    }
+    var requireLaunchedServiceHealthy: (String) async throws -> Void = { _ in
+        throw AppUpdateTransactionError.serviceHealthNotConfirmed
+    }
 }
 
 @MainActor
@@ -53,7 +68,9 @@ struct AppUpdateTransactionEngine {
     func execute(_ initial: AppUpdateJournal) async -> AppUpdateJournal {
         var journal = initial
         // A crashed pausing/installing/restoring record is deliberately never replayed.
-        guard journal.phase == .waitingForExit,
+        guard [1, 2].contains(journal.schema),
+              !journal.preservesConnections || journal.sessions.isEmpty,
+              journal.phase == .waitingForExit,
               journal.sessions.allSatisfy({ $0.step == .pending }) else {
             journal.phase = .recoveryRequired
             journal.detail = AppUpdateTransactionError.recoveryRequired.localizedDescription
@@ -62,19 +79,23 @@ struct AppUpdateTransactionEngine {
         }
         var installationAttempted = false
         do {
-            try effects.requireClaudeInactive()
+            if !journal.preservesConnections { try effects.requireClaudeInactive() }
             try await effects.reverify(journal)
             guard effects.installedIdentity() == journal.previousIdentity else {
                 throw AppUpdateTransactionError.changedSinceReview
             }
-            let current = try await effects.sessions()
-            try Self.preflight(frozen: journal.sessions.map(\.value), current: current)
+            if journal.preservesConnections {
+                try await effects.requirePreservedConnectionsReady(journal)
+            } else {
+                let current = try await effects.sessions()
+                try Self.preflight(frozen: journal.sessions.map(\.value), current: current)
+            }
             for index in journal.sessions.indices {
                 // A clear review is advisory, not a promise that no new
                 // Claude owner started while async preflight was suspended.
                 try effects.requireClaudeInactive()
                 journal.phase = .pausing; journal.sessions[index].step = .pausing
-                journal.detail = "Codex 세션을 저장하고 정상 종료하는 중입니다."
+                journal.detail = PetL10n.text("Saving Codex sessions and closing them normally.", korean: "Codex 세션을 저장하고 정상 종료하는 중입니다.")
                 try persist(&journal)
                 try await effects.pause(journal.sessions[index].value, journal.jobID)
                 journal.sessions[index].step = .paused
@@ -85,21 +106,31 @@ struct AppUpdateTransactionEngine {
             guard effects.installedIdentity() == journal.previousIdentity else {
                 throw AppUpdateTransactionError.changedSinceReview
             }
-            try effects.requireClaudeInactive()
-            journal.phase = .installing; journal.detail = "기존 Blabee를 백업하고 새 버전을 설치하는 중입니다."
+            if journal.preservesConnections {
+                try await effects.requirePreservedConnectionsReady(journal)
+            } else { try effects.requireClaudeInactive() }
+            journal.phase = .installing; journal.detail = PetL10n.text("Backing up the existing Blabee app and installing the new version.", korean: "기존 Blabee를 백업하고 새 버전을 설치하는 중입니다.")
             try persist(&journal)
             installationAttempted = true
             let receipt = try await effects.install(journal)
             journal.backupURL = receipt.backupURL
-            journal.phase = .published; journal.detail = "새 Blabee 설치를 마쳤습니다. 실행을 확인하는 중입니다."
+            journal.phase = .published; journal.detail = PetL10n.text("The new Blabee app is installed. Checking its launch.", korean: "새 Blabee 설치를 마쳤습니다. 실행을 확인하는 중입니다.")
             try persist(&journal)
             try await effects.openApp(journal.candidateIdentity)
+            if journal.preservesConnections {
+                journal.detail = PetL10n.text("The new Blabee app opened. Verifying its service connection.", korean: "새 Blabee 앱을 열었습니다. 서비스 연결을 확인하는 중입니다.")
+                try persist(&journal)
+                try await effects.requireLaunchedServiceHealthy(journal.candidateIdentity)
+            }
             await restoreConfirmed(&journal)
             if journal.sessions.allSatisfy({ $0.step == .restored }) {
-                journal.phase = .succeeded; journal.detail = "Blabee 업데이트와 Codex 세션 복원을 완료했습니다."
+                journal.phase = .succeeded
+                journal.detail = journal.preservesConnections
+                    ? PetL10n.text("Blabee was updated. Existing conversations were left running.", korean: "Blabee 업데이트를 완료했습니다. 기존 대화는 종료하지 않았습니다.")
+                    : PetL10n.text("Blabee was updated and Codex sessions were restored.", korean: "Blabee 업데이트와 Codex 세션 복원을 완료했습니다.")
             } else {
                 journal.phase = .partialRestore
-                journal.detail = "Blabee 업데이트를 마쳤지만 일부 Codex 세션 복원을 확인하지 못했습니다. 중복 실행을 막기 위해 자동 재시도하지 않습니다."
+                journal.detail = PetL10n.text("Blabee was updated, but some Codex session restorations could not be confirmed. They will not be retried automatically to avoid duplicate sessions.", korean: "Blabee 업데이트를 마쳤지만 일부 Codex 세션 복원을 확인하지 못했습니다. 중복 실행을 막기 위해 자동 재시도하지 않습니다.")
             }
             try persist(&journal)
         } catch {
@@ -123,16 +154,16 @@ struct AppUpdateTransactionEngine {
                 catch { relaunchFailure = Self.message(error) }
                 journal.phase = relaunchFailure != nil || journal.sessions.contains(where: { [.uncertain, .restoring].contains($0.step) })
                     ? .recoveryRequired : .failed
-                journal.detail = failure + " 기존 앱과 백업을 보존했습니다."
-                    + (relaunchFailure.map { " 앱 재실행 확인: " + $0 } ?? "")
+                journal.detail = failure + PetL10n.text(" The existing app and backup have been preserved.", korean: " 기존 앱과 백업을 보존했습니다.")
+                    + (relaunchFailure.map { PetL10n.text(" App relaunch check: ", korean: " 앱 재실행 확인: ") + $0 } ?? "")
             } else if published {
                 // No post-publication rollback. Preserve both apps and recover only confirmed paused sessions.
                 await restoreConfirmed(&journal)
                 journal.phase = .recoveryRequired
-                journal.detail = failure + " 새 앱과 기존 앱 백업을 보존했습니다. Finder에서 앱 실행을 확인해 주세요."
+                journal.detail = failure + PetL10n.text(" The new app and existing app backup have been preserved. Check the app in Finder.", korean: " 새 앱과 기존 앱 백업을 보존했습니다. Finder에서 앱 실행을 확인해 주세요.")
             } else {
                 journal.phase = .recoveryRequired
-                journal.detail = failure + " 설치 경로가 변경되어 자동 복원을 중단했습니다. 앱과 세션 기록을 보존했습니다."
+                journal.detail = failure + PetL10n.text(" Automatic restoration stopped because the installation path changed. Apps and session records have been preserved.", korean: " 설치 경로가 변경되어 자동 복원을 중단했습니다. 앱과 세션 기록을 보존했습니다.")
             }
             try? persist(&journal)
         }
@@ -155,7 +186,7 @@ struct AppUpdateTransactionEngine {
         for index in journal.sessions.indices where journal.sessions[index].step == .paused {
             do {
                 journal.phase = .restoring; journal.sessions[index].step = .restoring
-                journal.detail = "저장한 Codex 세션을 복원하는 중입니다."
+                journal.detail = PetL10n.text("Restoring saved Codex sessions.", korean: "저장한 Codex 세션을 복원하는 중입니다.")
                 try persist(&journal) // Durable intent before an action that must not be repeated blindly.
                 try await effects.resume(journal.sessions[index].value, journal.jobID)
                 journal.sessions[index].step = .restored
@@ -179,18 +210,166 @@ struct AppUpdateTransactionEngine {
     }
 }
 
+/// Availability after launch is distinct from update readiness. A healthy new
+/// service may already have received new cards or approvals; never require idle
+/// state here, and never send those actions again to test the connection.
+@MainActor
+struct AppUpdateLaunchedServiceHealth {
+    var probe: (String) async throws -> AppUpdateServiceReadiness = {
+        try await Self.inspectInstalledService(expectedIdentity: $0)
+    }
+    var uptime: () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }
+    var sleep: (Duration) async throws -> Void = { try await Task.sleep(for: $0) }
+    var timeout: TimeInterval = 30
+
+    func requireHealthy(expectedIdentity: String) async throws {
+        let deadline = uptime() + timeout
+        while true {
+            try Task.checkCancellation()
+            do {
+                _ = try await probe(expectedIdentity)
+                try Task.checkCancellation()
+                guard uptime() <= deadline else { throw AppUpdateTransactionError.serviceHealthNotConfirmed }
+                return
+            } catch {
+                if error is CancellationError { throw error }
+                if let failure = error as? AppUpdateTransactionError,
+                   [.serviceHealthIdentityMismatch, .serviceHealthResponseInvalid].contains(failure) {
+                    throw failure
+                }
+                guard uptime() < deadline else { throw AppUpdateTransactionError.serviceHealthNotConfirmed }
+                try await sleep(.milliseconds(500))
+            }
+        }
+    }
+
+    nonisolated static func requireIdentity(
+        expected: String, installed: String?, service: String?, parent: String?
+    ) throws {
+        guard OperationalRuntimeIdentity.isValid(expected), installed == expected,
+              service == expected, parent == expected else {
+            throw AppUpdateTransactionError.serviceHealthIdentityMismatch
+        }
+    }
+
+    nonisolated private static func inspectInstalledService(
+        expectedIdentity: String
+    ) async throws -> AppUpdateServiceReadiness {
+        try await Task.detached(priority: .utility) {
+            let executable = AppInstallationService.productionDestinationURL
+                .appendingPathComponent(AppRuntimeUseLease.executablePath)
+            guard OperationalRuntimeIdentity.installedIdentity(forExecutable: executable) == expectedIdentity else {
+                throw AppUpdateTransactionError.serviceHealthIdentityMismatch
+            }
+            let socketPath = OperationalSocketPath.defaultPath(homeDirectory: FileManager.default.homeDirectoryForCurrentUser)
+            let client = try UnixDomainSocketClient(socketPath: socketPath, runtimeIdentity: expectedIdentity)
+            // The client binds request ID, expected runtime identity, private
+            // socket ownership and peer UID before exposing this result.
+            let response = try client.request(type: "update_status", payload: [:],
+                connectTimeoutMilliseconds: 250, responseTimeoutMilliseconds: 1_000)
+            let status: AppUpdateServiceReadiness
+            do { status = try .parse(StrictJSONTransport.data(forJSONObject: response)) }
+            catch { throw AppUpdateTransactionError.serviceHealthResponseInvalid }
+            let reader = AppInstallationProcessReader.live
+            let serviceState = reader.state(status.servicePID)
+            let parentState = reader.state(status.serviceParentPID)
+            guard case .running(let service) = serviceState,
+                  case .running(let parent) = parentState,
+                  service.processID == status.servicePID, parent.processID == status.serviceParentPID,
+                  service.effectiveUserID == geteuid(), parent.effectiveUserID == geteuid(),
+                  service.parentProcessID == status.serviceParentPID else {
+                throw AppUpdateTransactionError.serviceHealthNotConfirmed
+            }
+            try requireIdentity(expected: expectedIdentity,
+                installed: OperationalRuntimeIdentity.installedIdentity(forExecutable: executable),
+                service: AppUpdateHelper.runningIdentity(status.servicePID, executable: executable),
+                parent: AppUpdateHelper.runningIdentity(status.serviceParentPID, executable: executable))
+            guard reader.state(status.servicePID) == serviceState,
+                  reader.state(status.serviceParentPID) == parentState else {
+                throw AppUpdateTransactionError.serviceHealthNotConfirmed
+            }
+            return status
+        }.value
+    }
+}
+
+/// Waiting never replays an approval or dispatch. Only the read-only readiness
+/// inspection is repeated; permanent compatibility errors stop immediately.
+@MainActor
+struct AppUpdateSafePointWaiter {
+    var requireReady: (URL) async throws -> Void = {
+        try await AppUpdateTransitionPreflight.requireReady(candidateApplicationURL: $0)
+    }
+    var isTransient: (Error) -> Bool = AppUpdateTransitionPreflight.isTransient
+    var uptime: () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }
+    var sleep: (Duration) async throws -> Void = { try await Task.sleep(for: $0) }
+    var timeout: TimeInterval = 30
+
+    func wait(candidateApplicationURL: URL, isCurrent: () -> Bool = { true },
+              onWaiting: (String) -> Void) async throws {
+        let deadline = uptime() + timeout
+        while true {
+            try Task.checkCancellation()
+            guard isCurrent() else { throw CancellationError() }
+            do {
+                try await requireReady(candidateApplicationURL)
+                try Task.checkCancellation()
+                guard isCurrent() else { throw CancellationError() }
+                return
+            } catch {
+                if error is CancellationError { throw error }
+                guard isTransient(error) else { throw error }
+                onWaiting(AppUpdateTransactionEngine.message(error))
+                guard uptime() < deadline else { throw AppUpdateTransactionError.safePointTimedOut }
+                try await sleep(.milliseconds(500))
+            }
+        }
+    }
+}
+
+/// A live PID alone is not evidence that the update is still making progress.
+/// Timeout reporting never kills a helper, rolls back an app, or replays work.
+enum AppUpdateProgressPolicy {
+    static func isStalled(_ journal: AppUpdateJournal, now: Date) -> Bool {
+        guard !journal.phase.isTerminal else { return false }
+        let limit: TimeInterval
+        switch journal.phase {
+        case .prepared: limit = 600 // Bounded signature/notary checks.
+        case .waitingForExit: limit = 900 // Two independent candidate reverifications.
+        case .ready: limit = 45 // The helper gives its parent 30 seconds to exit.
+        case .pausing, .restoring: limit = 300
+        case .installing: limit = 600
+        case .published: limit = 60
+        case .succeeded, .failed, .partialRestore, .recoveryRequired: return false
+        }
+        let age = now.timeIntervalSince(journal.updatedAt)
+        return age > limit || age < -60
+    }
+
+    static var stalledMessage: String {
+        PetL10n.text("The update helper has not reported progress within the expected time. Apps and conversation records have been preserved. Check status again; this update will not be restarted automatically.", korean: "정해진 시간 안에 업데이트 도우미의 진행 상태를 확인하지 못했습니다. 앱과 대화 기록은 보존했습니다. 상태를 다시 확인해 주세요. 업데이트를 자동으로 다시 실행하지 않습니다.")
+    }
+}
+
 @MainActor
 final class AppUpdateTransactionController: ObservableObject {
     enum Phase: Equatable {
-        case idle, preparing, review, startingHelper, updating, succeeded, failed, partialRestore, recoveryRequired
+        case idle, preparing, review, waitingForSafePoint, deferred, startingHelper, updating
+        case succeeded, failed, partialRestore, recoveryRequired
     }
     @Published private(set) var phase: Phase = .idle
     @Published private(set) var detail = ""
     @Published private(set) var preparedReview: AppUpdatePreparedReview?
     @Published private(set) var lastResult: AppUpdateJournal?
     var productMetrics: PetProductUpdateMetrics?
-    var isBusy: Bool { [.preparing, .startingHelper, .updating].contains(phase) || helperProcess?.isRunning == true }
-    var canBeginInstallation: Bool { phase == .review && preparedReview?.canInstall == true }
+    var isBusy: Bool { [.preparing, .waitingForSafePoint, .startingHelper, .updating].contains(phase) }
+    var canPrepare: Bool {
+        !isBusy && phase != .recoveryRequired && preparedReview == nil && helperProcess?.isRunning != true
+    }
+    var canBeginInstallation: Bool {
+        [.review, .deferred].contains(phase) && preparedReview?.canInstall == true && helperProcess?.isRunning != true
+    }
+    var canCancel: Bool { ![.startingHelper, .updating].contains(phase) && helperProcess?.isRunning != true }
     private let downloader: AppUpdateDownloadPreparer
     private let store: AppUpdateJournalStore
     private var prepared: AppUpdatePreparedDownload?
@@ -198,50 +377,47 @@ final class AppUpdateTransactionController: ObservableObject {
     private var generation = 0
     private var helperProcess: Process?
     private var productUpdateOperation: UUID?
-    private let requireClaudeInactive: @Sendable () throws -> Void
+    private let safePointWaiter: AppUpdateSafePointWaiter
+    private let prepareDownload: @Sendable (PetAppUpdateRelease) async throws -> AppUpdatePreparedDownload
+    private let cleanupDownload: @Sendable (AppUpdatePreparedDownload) async throws -> Void
+    private let installedVersion: () throws -> (version: PetAppUpdateVersion, identity: String)
 
     init(downloader: AppUpdateDownloadPreparer = .init(), store: AppUpdateJournalStore = .live(),
-         requireClaudeInactive: @escaping @Sendable () throws -> Void = AppClaudeRuntimeUpdateGuard.requireLiveClear) {
+         safePointWaiter: AppUpdateSafePointWaiter = .init(),
+         prepareDownload: (@Sendable (PetAppUpdateRelease) async throws -> AppUpdatePreparedDownload)? = nil,
+         cleanupDownload: (@Sendable (AppUpdatePreparedDownload) async throws -> Void)? = nil,
+         installedVersion: (() throws -> (version: PetAppUpdateVersion, identity: String))? = nil) {
         self.downloader = downloader; self.store = store
-        self.requireClaudeInactive = requireClaudeInactive
+        self.safePointWaiter = safePointWaiter
+        self.prepareDownload = prepareDownload ?? { try await downloader.prepare($0) }
+        self.cleanupDownload = cleanupDownload ?? { try await downloader.cleanup($0) }
+        self.installedVersion = installedVersion ?? Self.currentInstalledVersion
     }
 
     func prepare(_ release: PetAppUpdateRelease) async {
-        guard !isBusy else { return }
+        guard !isBusy, helperProcess?.isRunning != true else { return }
         productUpdateOperation = productMetrics?.start(target: release.version)
         generation += 1
         let request = generation
-        phase = .preparing; detail = "업데이트를 다운로드하고 서명과 공증을 확인하는 중입니다."
+        phase = .preparing; detail = PetL10n.text("Downloading the update and verifying its signature and notarization.", korean: "업데이트를 다운로드하고 서명과 공증을 확인하는 중입니다.")
         preparedReview = nil
         let old = prepared
         prepared = nil
-        if let old { try? await downloader.cleanup(old) }
+        if let old { try? await cleanupDownload(old) }
         guard request == generation else { return }
         do {
-            try requireClaudeInactive()
             if let previous = try store.latest(), !previous.phase.isTerminal {
                 throw AppUpdateTransactionError.recoveryRequired
             }
-            let current = try Self.currentInstalledVersion()
+            let current = try installedVersion()
             guard release.version > current.version else { throw AppUpdateTransactionError.changedSinceReview }
-            let download = try await downloader.prepare(release)
-            guard request == generation else { try? await downloader.cleanup(download); return }
+            let download = try await prepareDownload(release)
+            guard request == generation else { try? await cleanupDownload(download); return }
             prepared = download
-            let sessions = try await UpdateManagedCodexSessions.live().sessions()
-            try requireClaudeInactive()
-            let blockers = sessions.compactMap { session -> String? in
-                guard session.state == .running, let thread = session.threadID, UUID(uuidString: thread) != nil else {
-                    return "\(session.cwd): 작업 종료 또는 세션 저장을 확인해야 합니다."
-                }
-                return nil
-            }
-            guard request == generation else { try? await downloader.cleanup(download); return }
             frozenIdentity = current.identity
-            preparedReview = .init(release: release, currentVersion: current.version, sessions: sessions, blockers: blockers)
+            preparedReview = .init(release: release, currentVersion: current.version, sessions: [], blockers: [])
             phase = .review
-            detail = blockers.isEmpty
-                ? "확인하면 Blabee와 관리 중인 Codex 세션을 정상 종료한 뒤 업데이트하고 복원합니다. 외부에서 실행한 연결 프로세스가 남으면 설치를 중단합니다."
-                : "진행 중인 Codex 작업을 먼저 마무리해 주세요."
+            detail = PetL10n.text("The download is verified. Checking whether Blabee can restart while keeping your conversations open.", korean: "다운로드 검증을 마쳤습니다. 대화를 유지한 채 Blabee를 재시작할 수 있는지 확인합니다.")
         } catch {
             if request == generation {
                 phase = .failed; detail = AppUpdateTransactionEngine.message(error)
@@ -254,22 +430,32 @@ final class AppUpdateTransactionController: ObservableObject {
 
     /// True means a verified copied helper acknowledged durable readiness. The caller may now terminate NSApp normally.
     func beginInstallation() async throws -> Bool {
-        guard phase == .review, let review = preparedReview, review.canInstall,
+        guard canBeginInstallation, let review = preparedReview,
               let prepared, let frozenIdentity else { throw AppUpdateTransactionError.sessionsNotReady }
-        phase = .startingHelper; detail = "업데이트 도우미를 준비하는 중입니다."
+        if phase == .deferred { productUpdateOperation = productMetrics?.start(target: review.release.version) }
+        let request = generation
+        phase = .waitingForSafePoint
+        detail = PetL10n.text("Checking active requests and connection compatibility. Your conversations will remain open.", korean: "진행 중인 요청과 연결 호환성을 확인합니다. 대화는 계속 실행됩니다.")
         var pendingJournal: AppUpdateJournal?
         var helperStarted = false
+        var confirmedPreExitFailure = false
         do {
-            try requireClaudeInactive()
+            try await safePointWaiter.wait(candidateApplicationURL: prepared.applicationURL,
+                isCurrent: { request == self.generation }) { reason in
+                guard request == self.generation else { return }
+                self.detail = reason
+            }
+            guard request == generation else { return false }
+            phase = .startingHelper; detail = PetL10n.text("Preparing the update helper.", korean: "업데이트 도우미를 준비하는 중입니다.")
             try await downloader.reverify(prepared)
-            let current = try Self.currentInstalledVersion()
+            let current = try installedVersion()
             guard current.identity == frozenIdentity, current.version == review.currentVersion else {
                 throw AppUpdateTransactionError.changedSinceReview
             }
-            let sessions = try await UpdateManagedCodexSessions.live().sessions()
-            try AppUpdateTransactionEngine.preflight(frozen: review.sessions, current: sessions)
-            try requireClaudeInactive()
-            let helperParent = prepared.workRootURL.appendingPathComponent("helper-runtime", isDirectory: true)
+            let jobID = UUID().uuidString.lowercased()
+            // A failed attempt's helper is retained as evidence. A retry uses a
+            // fresh destination instead of overwriting or trusting that copy.
+            let helperParent = prepared.workRootURL.appendingPathComponent("helper-runtime-\(jobID)", isDirectory: true)
             guard mkdir(helperParent.path, 0o700) == 0 else { throw AppUpdateTransactionError.unsafeJournal }
             let helper = try await Task.detached { try AppUpdateRuntimeCopy.prepareCurrent(in: helperParent) }.value
             try await downloader.reverify(prepared)
@@ -279,12 +465,12 @@ final class AppUpdateTransactionController: ObservableObject {
                 throw AppUpdateTransactionError.changedSinceReview
             }
             let now = Date()
-            let journal = AppUpdateJournal(schema: 1, jobID: UUID().uuidString.lowercased(),
+            let journal = AppUpdateJournal(schema: 2, jobID: jobID,
                 nonce: UUID().uuidString.lowercased(), parentPID: getpid(),
                 parentStartTime: try UpdateManagedCodexProcessIdentity.startTime(pid: getpid()), createdAt: now,
                 previousIdentity: frozenIdentity, candidateIdentity: candidateIdentity,
                 download: try .init(prepared), helperApplicationURL: helper,
-                sessions: sessions.map { .init(value: $0) }, updatedAt: now)
+                sessions: [], updatedAt: now)
             try store.save(journal)
             pendingJournal = journal
             productMetrics?.attachJournal(journal.jobID, operationID: productUpdateOperation)
@@ -296,9 +482,11 @@ final class AppUpdateTransactionController: ObservableObject {
             process.currentDirectoryURL = helperParent
             process.standardInput = FileHandle.nullDevice
             process.standardOutput = FileHandle.nullDevice; process.standardError = FileHandle.nullDevice
-            try requireClaudeInactive()
+            process.terminationHandler = { [weak self] _ in
+                Task { @MainActor in self?.objectWillChange.send() }
+            }
             try process.run(); helperStarted = true; helperProcess = process
-            let deadline = ContinuousClock.now.advanced(by: .seconds(45))
+            let deadline = ContinuousClock.now.advanced(by: .seconds(600))
             while ContinuousClock.now < deadline {
                 let progress = try store.load(jobID: journal.jobID, nonce: journal.nonce)
                 if progress.phase == .ready, progress.helperPID == process.processIdentifier,
@@ -306,9 +494,14 @@ final class AppUpdateTransactionController: ObservableObject {
                    try UpdateManagedCodexProcessIdentity.isAlive(pid: process.processIdentifier, startTime: start),
                    AppUpdateHelper.runningIdentity(process.processIdentifier,
                        executable: process.executableURL!) == frozenIdentity {
-                    try requireClaudeInactive()
-                    phase = .updating; detail = "업데이트 도우미가 준비되었습니다. Blabee를 정상 종료합니다."
+                    phase = .updating; detail = PetL10n.text("The update helper is ready. Closing Blabee normally.", korean: "업데이트 도우미가 준비되었습니다. Blabee를 정상 종료합니다.")
                     return true
+                }
+                if progress.phase.isTerminal {
+                    // The parent is still running: a failed readiness check
+                    // cannot have reached the helper's installation phase.
+                    confirmedPreExitFailure = progress.phase == .failed
+                    throw AppUpdateTransactionError.transitionBlocked(progress.detail)
                 }
                 guard process.isRunning, !progress.phase.isTerminal else {
                     throw AppUpdateTransactionError.helperNotReady
@@ -322,7 +515,13 @@ final class AppUpdateTransactionController: ObservableObject {
                 journal.detail = AppUpdateTransactionEngine.message(error)
                 try? store.save(journal)
             }
-            phase = .failed; detail = AppUpdateTransactionEngine.message(error)
+            guard request == generation else { return false }
+            phase = !helperStarted || confirmedPreExitFailure ? .deferred : .failed
+            let waitingReason = detail
+            detail = AppUpdateTransactionEngine.message(error)
+            if error as? AppUpdateTransactionError == .safePointTimedOut {
+                detail += "\n" + waitingReason
+            }
             productMetrics?.finish(Task.isCancelled || error is CancellationError
                 || (error as? URLError)?.code == .cancelled ? .cancelled : .failed,
                 operationID: productUpdateOperation)
@@ -331,23 +530,28 @@ final class AppUpdateTransactionController: ObservableObject {
     }
 
     func cancel() async {
-        guard phase != .updating, phase != .startingHelper, helperProcess?.isRunning != true else { return }
+        guard canCancel else { return }
         productMetrics?.finish(.cancelled, operationID: productUpdateOperation)
         productUpdateOperation = nil
         generation += 1
         let cancelled = prepared
         prepared = nil; preparedReview = nil; frozenIdentity = nil
-        phase = .idle; detail = "업데이트를 취소했습니다."
-        if let cancelled { try? await downloader.cleanup(cancelled) }
+        phase = .idle; detail = PetL10n.text("Update cancelled.", korean: "업데이트를 취소했습니다.")
+        if let cancelled { try? await cleanupDownload(cancelled) }
     }
 
     /// Startup only reports persisted state. It never retries an interrupted stop, install, or resume.
     func loadLastResult() {
-        guard ![.preparing, .review, .startingHelper].contains(phase) else { return }
+        guard ![.preparing, .review, .waitingForSafePoint, .deferred, .startingHelper].contains(phase) else { return }
         recoverProductMetrics()
         do {
             guard let journal = try store.latest() else { return }
             lastResult = journal; detail = journal.detail
+            if AppUpdateProgressPolicy.isStalled(journal, now: Date()) {
+                phase = .recoveryRequired
+                detail = AppUpdateProgressPolicy.stalledMessage
+                return
+            }
             switch journal.phase {
             case .succeeded: phase = .succeeded
             case .failed: phase = .failed
@@ -361,7 +565,7 @@ final class AppUpdateTransactionController: ObservableObject {
                     phase = .updating
                 } else {
                     phase = .recoveryRequired
-                    detail = "중단된 업데이트 기록이 있습니다. 중복 복원을 막기 위해 자동 실행하지 않습니다. 앱과 Codex 세션 상태를 확인해 주세요."
+                    detail = PetL10n.text("An interrupted update record exists. Nothing will run automatically to avoid duplicate restoration. Check Blabee and Codex session status.", korean: "중단된 업데이트 기록이 있습니다. 중복 복원을 막기 위해 자동 실행하지 않습니다. 앱과 Codex 세션 상태를 확인해 주세요.")
                 }
             }
         } catch { phase = .recoveryRequired; detail = AppUpdateTransactionEngine.message(error) }
@@ -378,7 +582,9 @@ final class AppUpdateTransactionController: ObservableObject {
                 && current?.version.build == journal.download.build
                 && current?.identity == journal.candidateIdentity
             let result: PetProductUpdateObservation.Result
-            if targetRunning {
+            // Schema 2 succeeds only after the new service was observed, not
+            // merely because the GUI process has the target version on disk.
+            if targetRunning && (!journal.preservesConnections || journal.phase == .succeeded) {
                 result = .targetRunning
             } else if journal.phase == .failed {
                 result = .failed
@@ -409,6 +615,35 @@ final class AppUpdateTransactionController: ObservableObject {
 
 @MainActor
 enum AppUpdateHelper {
+    static func acquireAdmissionWhenReady(
+        candidateApplicationURL: URL,
+        acquire: @escaping () throws -> AppUpdateAdmissionLease = { try AppUpdateAdmissionGate.acquireForUpdate() },
+        waiter: AppUpdateSafePointWaiter = .init()
+    ) async throws -> AppUpdateAdmissionLease {
+        var acquired: AppUpdateAdmissionLease?
+        var gatedWaiter = waiter
+        let check = waiter.requireReady
+        gatedWaiter.requireReady = { candidate in
+            let attempt = try acquire()
+            do {
+                try await check(candidate)
+                acquired = attempt
+            } catch {
+                // Pending approvals must be able to finish between attempts.
+                attempt.release()
+                throw error
+            }
+        }
+        do {
+            try await gatedWaiter.wait(candidateApplicationURL: candidateApplicationURL, onWaiting: { _ in })
+            guard let acquired else { throw AppUpdateAdmissionError.unavailable }
+            return acquired
+        } catch {
+            acquired?.release()
+            throw error
+        }
+    }
+
     static func run(arguments: [String],
                     requireClaudeInactive: @escaping @Sendable () throws -> Void = AppClaudeRuntimeUpdateGuard.requireLiveClear) async -> Int32 {
         let store = AppUpdateJournalStore.live()
@@ -416,6 +651,8 @@ enum AppUpdateHelper {
         let jobID = arguments[1], nonce = arguments[3]
         var loaded: AppUpdateJournal?
         var parentExited = false
+        var admission: AppUpdateAdmissionLease?
+        defer { admission?.release() }
         do {
             let lock = try store.acquireHelperLock()
             defer { withExtendedLifetime(lock) {} }
@@ -442,17 +679,23 @@ enum AppUpdateHelper {
                 throw AppUpdateTransactionError.changedSinceReview
             }
             let sessions = UpdateManagedCodexSessions.live()
-            try AppUpdateTransactionEngine.preflight(frozen: journal.sessions.map(\.value),
-                current: try await sessions.sessions())
-            try requireClaudeInactive()
+            if journal.preservesConnections {
+                // A snapshot poll may have started since the UI check. Retry
+                // acquisition briefly, and recheck while new work is fenced.
+                admission = try await acquireAdmissionWhenReady(candidateApplicationURL: prepared.applicationURL)
+            } else {
+                try AppUpdateTransactionEngine.preflight(frozen: journal.sessions.map(\.value),
+                    current: try await sessions.sessions())
+                try requireClaudeInactive()
+            }
             journal.helperPID = getpid()
             journal.helperStartTime = try UpdateManagedCodexProcessIdentity.startTime(pid: getpid())
             journal.phase = .ready; journal.updatedAt = Date()
-            journal.detail = "도우미가 준비되어 Blabee의 정상 종료를 기다립니다."
+            journal.detail = PetL10n.text("The helper is ready and waiting for Blabee to close normally.", korean: "도우미가 준비되어 Blabee의 정상 종료를 기다립니다.")
             try store.save(journal); loaded = journal
             let deadline = ContinuousClock.now.advanced(by: .seconds(30))
             while ContinuousClock.now < deadline {
-                try requireClaudeInactive()
+                if !journal.preservesConnections { try requireClaudeInactive() }
                 if try !UpdateManagedCodexProcessIdentity.isAlive(pid: journal.parentPID, startTime: journal.parentStartTime) {
                     parentExited = true; break
                 }
@@ -474,7 +717,8 @@ enum AppUpdateHelper {
                 resume: { try await sessions.resume($0, transactionID: $1) },
                 install: { record in
                     let service = AppInstallationService.live(expectedSourceIdentity: record.candidateIdentity,
-                        activityGuard: AppInstallationProcessGuard().requireInactive)
+                        activityGuard: AppInstallationProcessGuard().requireInactive,
+                        updateAdmission: admission)
                     return try await Task.detached {
                         let plan = try service.inspect(source: prepared.applicationURL)
                         guard plan.existing?.runtimeIdentity == record.previousIdentity,
@@ -485,10 +729,21 @@ enum AppUpdateHelper {
                     }.value
                 },
                 installedIdentity: installedIdentity,
-                openApp: { try await AppInstallationApplicationOpener().openInstalled(
-                    applicationURL: AppInstallationService.productionDestinationURL, expectedIdentity: $0) },
+                openApp: {
+                    // Installation has finished (or failed before publication).
+                    // The new service needs ingress to establish its generation.
+                    admission?.release(); admission = nil
+                    try await AppInstallationApplicationOpener().openInstalled(
+                        applicationURL: AppInstallationService.productionDestinationURL, expectedIdentity: $0)
+                },
                 save: { try store.save($0) },
-                requireClaudeInactive: requireClaudeInactive)
+                requireClaudeInactive: requireClaudeInactive,
+                requirePreservedConnectionsReady: { record in
+                    try await AppUpdateTransitionPreflight.requireReady(
+                        candidateApplicationURL: record.download.prepared().applicationURL)
+                }, requireLaunchedServiceHealthy: { identity in
+                    try await AppUpdateLaunchedServiceHealth().requireHealthy(expectedIdentity: identity)
+                })
             let result = await AppUpdateTransactionEngine(effects: effects).execute(journal)
             return result.phase == .succeeded ? 0 : 1
         } catch {
@@ -496,6 +751,7 @@ enum AppUpdateHelper {
                 journal.phase = .failed; journal.detail = AppUpdateTransactionEngine.message(error)
                 if parentExited, installedIdentity() == journal.previousIdentity {
                     do {
+                        admission?.release(); admission = nil
                         try await AppInstallationApplicationOpener().openInstalled(
                             applicationURL: AppInstallationService.productionDestinationURL,
                             expectedIdentity: journal.previousIdentity)
@@ -513,7 +769,7 @@ enum AppUpdateHelper {
     }
 
     /// Bind the acknowledgement to the exact executing signed helper, not just the file now at that path.
-    static func runningIdentity(_ pid: Int32, executable: URL) -> String? {
+    nonisolated static func runningIdentity(_ pid: Int32, executable: URL) -> String? {
         guard case .running(let observed) = AppInstallationProcessReader.live.observe(pid),
               observed.resolvingSymlinksInPath().path == executable.resolvingSymlinksInPath().path,
               let before = signature(pid) else { return nil }
@@ -525,7 +781,7 @@ enum AppUpdateHelper {
         return identity
     }
 
-    private static func signature(_ pid: Int32) -> OperationalCodeSignatureEvidence? {
+    nonisolated private static func signature(_ pid: Int32) -> OperationalCodeSignatureEvidence? {
         var code: SecCode?
         guard pid > 0,
               SecCodeCopyGuestWithAttributes(nil, [kSecGuestAttributePid: NSNumber(value: pid)] as CFDictionary,

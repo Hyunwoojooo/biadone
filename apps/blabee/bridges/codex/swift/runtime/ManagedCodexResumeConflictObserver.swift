@@ -197,9 +197,9 @@ final class ManagedCodexActiveWriterNoticeEmitter: @unchecked Sendable {
     typealias Sink = @Sendable (Data) -> Void
 
     private static let notice = Data((
-        "\n[Blabee 안내] 다른 Codex 클라이언트가 이 세션을 사용 중입니다. "
-            + "그 클라이언트에서 사용을 끝낸 뒤 다시 시도하세요. "
-            + "Blabee는 세션이나 잠금을 변경하지 않았습니다.\n"
+        PetL10n.text("\n[Blabee] Another Codex client is using this session. ", korean: "\n[Blabee 안내] 다른 Codex 클라이언트가 이 세션을 사용 중입니다. ")
+            + PetL10n.text("Finish using it in that client, then try again. ", korean: "그 클라이언트에서 사용을 끝낸 뒤 다시 시도하세요. ")
+            + PetL10n.text("Blabee did not change the session or its locks.\n", korean: "Blabee는 세션이나 잠금을 변경하지 않았습니다.\n")
     ).utf8)
 
     private let lock = NSLock()

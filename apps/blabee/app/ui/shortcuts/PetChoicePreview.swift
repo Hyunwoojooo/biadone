@@ -22,7 +22,7 @@ enum PetChoicePreviewShortcutPreset: String, Codable, Sendable, CaseIterable, Id
         }
     }
 
-    var displayLabel: String { self == .disabled ? "사용 안 함" : labelPrefix + " + 1~4" }
+    var displayLabel: String { self == .disabled ? PetL10n.text("Disabled", korean: "사용 안 함") : labelPrefix + " + 1~4" }
     var holdKeyName: String { self == .optionCommand ? "Option" : "Control" }
     var holdModifier: NSEvent.ModifierFlags { self == .optionCommand ? .option : .control }
 
@@ -134,9 +134,9 @@ final class PetChoicePreviewHotKeys {
             }
         }
         guard !unavailable.isEmpty else { return nil }
-        return "상세 미리보기 단축키를 등록하지 못했습니다: "
+        return PetL10n.text("Unable to register detail preview shortcuts: ", korean: "상세 미리보기 단축키를 등록하지 못했습니다: ")
             + unavailable.map { preset.labelPrefix + String($0) }.joined(separator: ", ")
-            + ". 다른 단축키와의 충돌을 확인해 주세요."
+            + PetL10n.text(". Check for conflicts with other shortcuts.", korean: ". 다른 단축키와의 충돌을 확인해 주세요.")
     }
 
     deinit {

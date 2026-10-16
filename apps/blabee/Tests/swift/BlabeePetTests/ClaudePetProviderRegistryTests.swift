@@ -64,6 +64,7 @@ private final class PetRegistryFixture {
     let corpus = RuntimeSecretCorpus()
     let anchors = PetRegistryAnchors()
     let registry: ClaudeSessionRegistry
+    var waiters: [UUID: [String: Any]] = [:]
 
     init() throws {
         root = URL(fileURLWithPath: "/private/tmp/blabee-cp06-registry-" + UUID().uuidString.lowercased())
@@ -100,7 +101,7 @@ private final class PetRegistryFixture {
 
     func session(_ scope: PetRegistryScope, _ operation: String, _ payload: [String: Any] = [:],
                  role: String = "bridge") throws -> [String: Any] {
-        let envelope: [String: Any] = ["schema_version": "blabee.claude-session.v2", "kind": "request",
+        let envelope: [String: Any] = ["schema_version": "blabee.claude-session.v3", "kind": "request",
             "provider": "claude", "request_id": UUID().uuidString.lowercased(), "role": role,
             "operation": operation, "authority": scope.authority, "payload": payload]
         return try StrictJSONTransport.object(from: registry.handleSession(StrictJSONTransport.data(forJSONObject: [
@@ -113,7 +114,9 @@ private final class PetRegistryFixture {
         payload.merge(fields) { _, value in value }
         let response = try session(scope, "hook", payload, role: "hook")
         #expect(response["ok"] as? Bool == true)
-        return try #require(response["result"] as? [String: Any])
+        let result = try #require(response["result"] as? [String: Any])
+        if event == "Stop" { waiters[scope.id] = result["waiter"] as? [String: Any] }
+        return result
     }
 
     func target(_ scope: PetRegistryScope) throws -> [String: Any] {
@@ -149,15 +152,24 @@ private final class PetRegistryFixture {
 
     func acknowledge(_ scope: PetRegistryScope, bridge: String, event: [String: Any]) throws {
         let id = try #require(event["probe_id"] as? String), nonce = try #require(event["nonce"] as? String)
-        let text = "<channel source=\"blabee-claude\" kind=\"readiness_probe\" probe_id=\"\(id)\">\n"
-            + "Blabee connection probe. Call ack_readiness_probe_v1 with these values; do not run a task.\n"
-            + "{\"probe_id\":\"\(id)\",\"nonce\":\"\(nonce)\"}\n</channel>"
-        let prompt = UUID().uuidString.lowercased()
-        try hook(scope, "UserPromptSubmit", ["prompt_id": prompt,
-            "prompt_sha256": SHA256.hash(data: Data(text.utf8)).map { String(format: "%02x", $0) }.joined()])
         let ack = try session(scope, "readiness.ack", ["bridge_id": bridge, "probe_id": id, "nonce": nonce])
         #expect(ack["ok"] as? Bool == true)
-        try hook(scope, "Stop", ["prompt_id": prompt, "background_task_ids": []])
+    }
+
+    func probe(_ scope: PetRegistryScope, bridge: String) throws -> [String: Any] {
+        let response = try session(scope, "readiness.begin", ["bridge_id": bridge])
+        #expect(response["ok"] as? Bool == true)
+        return try #require(response["result"] as? [String: Any])
+    }
+
+    func pollSelection(_ scope: PetRegistryScope) throws -> [String: Any]? {
+        let waiter = try #require(waiters[scope.id])
+        let response = try session(scope, "hook.poll", [
+            "native_session_id": scope.authority["native_session_id"]!, "cwd": cwd,
+            "prompt_id": waiter["prompt_id"]!, "waiter_generation": waiter["generation"]!,
+        ], role: "hook")
+        #expect(response["ok"] as? Bool == true)
+        return (response["result"] as? [String: Any])?["event"] as? [String: Any]
     }
 
     func start(_ scope: PetRegistryScope, bridgeFirst: Bool = false) throws -> String {
@@ -170,7 +182,7 @@ private final class PetRegistryFixture {
 
     func readyCard(_ scope: PetRegistryScope) throws -> String {
         let bridge = try start(scope)
-        try acknowledge(scope, bridge: bridge, event: #require(try poll(scope, bridge: bridge)))
+        try acknowledge(scope, bridge: bridge, event: probe(scope, bridge: bridge))
         let prompt = UUID().uuidString.lowercased()
         let hook = try hook(scope, "UserPromptSubmit", ["prompt_id": prompt, "prompt_sha256": String(repeating: "d", count: 64)])
         let boundary = try #require(hook["boundary_id"] as? String)
@@ -187,6 +199,10 @@ private final class PetRegistryFixture {
         let emitted = try session(scope, "proposal.emit", ["bridge_id": bridge, "boundary_id": boundary, "proposal": proposal])
         #expect(emitted["ok"] as? Bool == true)
         try self.hook(scope, "Stop", ["prompt_id": prompt, "background_task_ids": []])
+        // Receiving a Stop response alone does not prove that its delivery
+        // process survived. The actual waiter arms itself with its first poll.
+        #expect(try snapshot(scope)["selection_enabled"] as? Bool == false)
+        #expect(try pollSelection(scope) == nil)
         return bridge
     }
 
@@ -250,8 +266,9 @@ struct ClaudePetProviderRegistryTests {
             #expect(try f.snapshot(scope)["readiness_status"] as? String == "starting")
             try f.hook(scope, "SessionStart", ["source": "startup"])
         }
-        let initial = try #require(try f.poll(scope, bridge: bridge))
-        #expect(initial["kind"] as? String == "readiness_probe")
+        #expect(try f.poll(scope, bridge: bridge) == nil)
+        let initial = try f.probe(scope, bridge: bridge)
+        #expect(initial["status"] as? String == "pending")
         let pending = try f.snapshot(scope)
         #expect(pending["readiness_status"] as? String == "pending")
         let snapshotBytes = try StrictJSONTransport.data(forJSONObject: pending)
@@ -304,11 +321,12 @@ struct ClaudePetProviderRegistryTests {
             try #require(Date() < deadline)
             try await Task.sleep(for: .milliseconds(5))
         }
-        #expect(try f.poll(scope, bridge: bridge)?["kind"] as? String == "readiness_probe")
         #expect(try f.poll(scope, bridge: bridge) == nil)
+        #expect(try f.snapshot(scope)["readiness_status"] as? String == "pending")
+        #expect(try f.probe(scope, bridge: bridge)["nonce"] is String)
     }
 
-    @Test("UI readiness preserves a valid card and exact Channel Hook boundary; reads append nothing")
+    @Test("UI readiness preserves a valid card and live Hook waiter; reads append nothing")
     func explicitReadinessPreservesCard() throws {
         let f = try PetRegistryFixture(), scope = try f.enroll()
         let bridge = try f.readyCard(scope)
@@ -316,14 +334,15 @@ struct ClaudePetProviderRegistryTests {
         let oldTarget = try f.target(scope)
         let begin = try f.pet(oldTarget, "readiness.begin")
         #expect(begin["ok"] as? Bool == true)
+        #expect((begin["result"] as? [String: Any])?["nonce"] == nil)
         #expect(try f.pet(oldTarget)["ok"] as? Bool == false)
         let checking = try f.snapshot(scope)
-        #expect(checking["selection_enabled"] as? Bool == false)
+        #expect(checking["selection_enabled"] as? Bool == true)
         #expect(checking["boundary_id"] as? String == before["boundary_id"] as? String)
         #expect((checking["cards"] as? [[String: Any]])?.count == 1)
         #expect(try f.sequences(scope) == sequence)
         f.clock.advance(1)
-        try f.acknowledge(scope, bridge: bridge, event: #require(try f.poll(scope, bridge: bridge)))
+        try f.acknowledge(scope, bridge: bridge, event: f.probe(scope, bridge: bridge))
         let ready = try f.snapshot(scope)
         #expect(ready["selection_enabled"] as? Bool == true)
         #expect(ready["boundary_id"] as? String == before["boundary_id"] as? String)
@@ -347,7 +366,9 @@ struct ClaudePetProviderRegistryTests {
         #expect(try f.pet(targetA, "select", selectionA)["ok"] as? Bool == false)
         #expect(try f.pet(targetB)["ok"] as? Bool == true)
         f.clock.advance(1)
-        #expect(try f.poll(a, bridge: bridgeA)?["kind"] as? String == "selection")
+        #expect(try f.poll(a, bridge: bridgeA) == nil)
+        #expect(try f.pollSelection(a)?["kind"] as? String == "selection")
+        #expect(try f.pollSelection(a) == nil)
         let seqB = try f.sequences(b)
         try f.registry.disconnectPet(target: f.target(a))
         #expect(f.registry.activeScopeCount == 1)
@@ -364,6 +385,7 @@ struct ClaudePetProviderRegistryTests {
         _ = try f.readyCard(a)
         let bridgeB = try f.readyCard(b)
         f.clock.advance(4); _ = try f.poll(b, bridge: bridgeB)
+        _ = try f.pollSelection(b)
         f.clock.advance(2)
         let before = try f.sequences(a)
         let snapshot = try f.snapshot(a)

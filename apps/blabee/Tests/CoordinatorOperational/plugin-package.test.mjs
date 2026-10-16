@@ -72,7 +72,7 @@ test("plugin manifest has production metadata and relies on default hook discove
 
   assert.equal(manifest.name, "blabee");
   assert.match(manifest.version, /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/);
-  assert.equal(manifest.version, "0.1.2");
+  assert.equal(manifest.version, "0.1.3");
   assert.equal(manifest.author.name, "BiaDone");
   assert.equal(manifest.skills, "./skills/");
   assert.equal(manifest.mcpServers, "./.mcp.json");
@@ -777,6 +777,7 @@ test("decision skill applies suggestion modes and preserves the exact v1 contrac
     "session_id",
     "source_prompt_id",
     "source_turn_id",
+    "suggestion_kind",
   ]);
   assert.deepEqual(Object.keys(payload.proposal).sort(), [
     "correlation_token",
@@ -790,6 +791,8 @@ test("decision skill applies suggestion modes and preserves the exact v1 contrac
   ]);
   assert.equal(payload.proposal.schema_version, "1.0");
   assert.equal(payload.proposal.interaction_kind, "blabee_decision");
+  assert.equal(payload.suggestion_kind, "current_task");
+  assert.equal(Object.hasOwn(payload.proposal, "suggestion_kind"), false);
   assert.equal(payload.proposal.next_actions.length >= 2, true);
   assert.equal(payload.proposal.next_actions.length <= 4, true);
   assert.equal(payload.proposal.next_actions.every((action) => (
@@ -807,6 +810,29 @@ test("decision skill applies suggestion modes and preserves the exact v1 contrac
   assert.match(skill, /보정 재시도를 한 번/);
   assert.match(skill, /prompt 이외의 값도 다르거나/);
   assert.match(skill, /권한 승인이나 네이티브 질문/);
+  assert.match(skill, /내부 자동 추천 생성 결과도 사용자에게 유용한 새 제안이면 허용/);
+  assert.match(skill, /현재 사용자 작업의 후속 선택은 `current_task`, 유용한 새로운 아이디어는 `new_suggestion`/);
+  assert.match(skill, /최상위 wrapper.*`suggestion_kind`를 지정하고, `proposal` 내부에는 넣지 않는다/);
+  assert.match(skill, /현재 MCP 도구 스키마가 이 필드를 지원할 때만/);
+  assert.match(skill, /이전 도구 스키마에 필드가 없으면 생략한다/);
+  assert.match(skill, /필드를 생략한 이전 클라이언트 요청은 분류 미상/);
+  assert.match(skill, /작업의 실제 출처나 실행 권한을 증명하지 않는다/);
+  assert.match(skill, /`new_suggestion`은.*서로 다른 실제로 유용한 다음 항목이 둘 이상/);
+  assert.match(skill, /유용한 항목이 0~1개이면 추가 항목을 채워 넣거나 호출하지 않는다/);
+  assert.match(skill, /아래 모드별 필수 제출 규칙은 `current_task`에 적용/);
+  assert.match(skill, /하위 에이전트의 내부 보고나 백그라운드 메타작업의 진행 상태를 그대로 카드로 옮기지 않는다/);
+  assert.match(skill, /영어로 작성되었다는 이유만으로 내부 작업이라고 판단하지 않는다/);
+  assert.match(skill, /네이티브 권한·승인 이벤트 처리를 차단하지 않는다/);
+  assert.match(skill, /사용자가 명시한 응답 언어를 우선/);
+  assert.match(skill, /실제 사용자 대화의 언어/);
+  assert.match(skill, /둘 다 알 수 없으면 Hook 또는 MCP 설명에 제공된 시스템 언어 fallback/);
+  assert.match(skill, /`Locale.preferredLanguages`의 첫 유효 language tag이며 없으면 `en`/);
+  assert.match(skill, /내부 자동 추천을 생성하라는 영어 지시문 자체는 사용자의 응답 언어 요청이나 실제 사용자 대화의 언어로 간주하지 않는다/);
+  assert.match(skill, /그 지시문만 언어 단서로 주어졌다면 위의 macOS 시스템 언어 fallback을 사용/);
+  assert.match(skill, /내부 프롬프트, 도구 설명 또는 예시가 다른 언어로 되어 있어도 그 언어로 전환하지 않는다/);
+  assert.match(skill, /`task_goal`, `outcome.summary`, `next_actions`.*`title`, `objective`, `constraints`, `done_when`, `reported_side_effects`.*`summary`/);
+  assert.match(skill, /코드·경로·식별자·제품명은 원문을 유지/);
+  assert.match(skill, /다른 언어로 요청한 산출물도 요청한 언어를 유지/);
   assert.match(skill, /도구 호출이나 부수 효과를 명시적으로 금지/);
   assert.match(skill, /정확한 출력 하나, 명령의 정확히 한 번 실행 또는 추가 작업 금지/);
   assert.match(skill, /모든 답변을 번호 선택지나 고정된 1~4 형식으로 바꾸지 않는다/);
@@ -816,7 +842,8 @@ test("decision skill applies suggestion modes and preserves the exact v1 contrac
   assert.match(skill, /실행하지 않은 테스트/);
   assert.match(skill, /검증되지 않은 롤백 가능성/);
   assert.match(skill, /설명·분석 후속 제안도 기존/);
-  assert.match(skill, /`suggestion_kind` 같은 새 필드를 추가하지 않는다/);
+  assert.match(skill, /`suggestion_kind`는 wrapper에서만 `current_task` 또는 `new_suggestion`/);
+  assert.match(skill, /동결된 v1 `proposal`과 packet에는 새 필드를 추가하지 않는다/);
   assert.equal((skill.match(/`emit_decision`/g) ?? []).length, 3);
   assert.match(metadata, /\$blabee-decision/);
 });

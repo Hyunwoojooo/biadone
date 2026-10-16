@@ -58,7 +58,7 @@ private func drainNavigationEvents() async {
     for _ in 0..<20 { await Task.yield() }
 }
 
-@Suite("Event navigation hotkeys reserve Option arrows only for an eligible visible context")
+@Suite("Event navigation hotkeys reserve Option arrows only for an eligible visible context", .petLanguage(.korean))
 struct PetEventNavigationHotKeyTests {
     @Test("Disabled contexts leave arrow navigation to other applications")
     @MainActor

@@ -73,7 +73,7 @@ private final class HookReadinessFixture: @unchecked Sendable {
                     "pluginId": scenario == .pluginIdentityMismatch ? "blabee@other" : "blabee@blabee-app",
                     "name": "blabee", "installed": true,
                     "enabled": scenario != .pluginDisabled,
-                    "version": "0.1.2",
+                    "version": "0.1.3",
                     "source": ["source": "local", "path": path],
                 ]]
                 return CodexPluginSetupProcessResult(
@@ -129,7 +129,7 @@ private final class HookReadinessFixture: @unchecked Sendable {
     }
 }
 
-@Test("Hook check is explicit and inspects only plugin metadata and hook trust")
+@Test("Hook check is explicit and inspects only plugin metadata and hook trust", .petLanguage(.korean))
 func petHookReadinessExplicitInspection() async throws {
     let fixture = try HookReadinessFixture()
     let manager = fixture.manager()
@@ -143,7 +143,7 @@ func petHookReadinessExplicitInspection() async throws {
     #expect(state.detail.contains("새 요청으로 확인"))
 }
 
-@Test("Hook trust reports fail closed for untrusted, disabled, stale, or wrong metadata",
+@Test("Hook trust reports fail closed for untrusted, disabled, stale, or wrong metadata", .petLanguage(.korean),
       arguments: [
         HookReadinessScenario.untrusted, .changed, .disabled, .missing,
         .duplicate, .wrongPlugin, .wrongSource, .emptyHash,
@@ -156,14 +156,14 @@ private func petHookReadinessNeedsReview(_ scenario: HookReadinessScenario) asyn
     #expect(fixture.invocations.filter { $0 == ["plugin", "list", "--json"] }.count == 1)
 }
 
-@Test("Managed Hook trust from Codex is accepted independently of command approval")
+@Test("Managed Hook trust from Codex is accepted independently of command approval", .petLanguage(.korean))
 func petHookReadinessManagedTrust() async throws {
     let fixture = try HookReadinessFixture(.managed)
     let result = await fixture.manager().inspect(projectURL: fixture.root)
     #expect(result == .trusted)
 }
 
-@Test("Hook inspection rejects malformed and wrong-project responses",
+@Test("Hook inspection rejects malformed and wrong-project responses", .petLanguage(.korean),
       arguments: [HookReadinessScenario.malformed, .wrongProject, .requesterFails])
 private func petHookReadinessUnavailable(_ scenario: HookReadinessScenario) async throws {
     let fixture = try HookReadinessFixture(scenario)
@@ -171,7 +171,7 @@ private func petHookReadinessUnavailable(_ scenario: HookReadinessScenario) asyn
     #expect(result == .unavailable(code: "hook_trust_unavailable"))
 }
 
-@Test("Plugin installation failures never start the Hook inspector",
+@Test("Plugin installation failures never start the Hook inspector", .petLanguage(.korean),
       arguments: [
         (HookReadinessScenario.pluginMissing, "plugin_not_installed"),
         (.pluginDisabled, "plugin_disabled"),
@@ -187,7 +187,7 @@ private func petHookReadinessInstallationPrerequisites(
     #expect(!fixture.invocations.contains(["hooks/list"]))
 }
 
-@Test("Plugin replacement during inspection cannot produce a trusted result",
+@Test("Plugin replacement during inspection cannot produce a trusted result", .petLanguage(.korean),
       arguments: [HookReadinessScenario.installationChanges, .hookFileChanges])
 private func petHookReadinessChangedDuringInspection(_ scenario: HookReadinessScenario) async throws {
     let fixture = try HookReadinessFixture(scenario)
@@ -195,7 +195,7 @@ private func petHookReadinessChangedDuringInspection(_ scenario: HookReadinessSc
     #expect(result == .unavailable(code: "hook_plugin_changed_during_check"))
 }
 
-@Test("Unqualified Codex and missing project stop before subprocess inspection")
+@Test("Unqualified Codex and missing project stop before subprocess inspection", .petLanguage(.korean))
 func petHookReadinessPrerequisiteFailures() async throws {
     let fixture = try HookReadinessFixture(.qualifierFails)
     let manager = fixture.manager()
@@ -207,7 +207,7 @@ func petHookReadinessPrerequisiteFailures() async throws {
     #expect(fixture.invocations == [["qualify"]])
 }
 
-@Test("Hook inspection never executes a request after its overall deadline")
+@Test("Hook inspection never executes a request after its overall deadline", .petLanguage(.korean))
 func petHookReadinessOverallDeadline() async throws {
     let fixture = try HookReadinessFixture()
     let clock = HookReadinessClock()

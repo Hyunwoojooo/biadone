@@ -89,7 +89,16 @@ private func queueErrorCode(
     }
 }
 
-@Test("Codex queue dispatcher uses an exact shell-free argv and parses the exact receipt")
+private func queueFailureEvidence(
+    _ dispatcher: CodexQueueNextTurnDispatcher
+) async throws -> CoordinatorNextTurnDispatchFailure {
+    var failure: CoordinatorNextTurnDispatchFailure?
+    do { _ = try await dispatcher.dispatch(queueRequest()) }
+    catch { failure = error.coordinatorError.dispatchFailure }
+    return try #require(failure)
+}
+
+@Test("Codex queue dispatcher uses an exact shell-free argv and parses the exact receipt", .petLanguage(.korean))
 func codexQueueDispatcherUsesExactArguments() async throws {
     let recorder = QueueInvocationRecorder()
     let executable = URL(fileURLWithPath: "/private/tmp/codex-qualified")
@@ -125,7 +134,7 @@ func codexQueueDispatcherUsesExactArguments() async throws {
     ))
 }
 
-@Test("Codex queue native command runner receives one exact command")
+@Test("Codex queue native command runner receives one exact command", .petLanguage(.korean))
 func codexQueueNativeCommandRunnerUsesExactArgumentsOnce() async throws {
     let recorder = QueueCommandInvocationRecorder()
     let message = "다음 턴에서 권장 작업을 실행해."
@@ -159,7 +168,7 @@ func codexQueueNativeCommandRunnerUsesExactArgumentsOnce() async throws {
     ])
 }
 
-@Test("Codex queue preserves native readiness failure without retry")
+@Test("Codex queue preserves native readiness failure without retry", .petLanguage(.korean))
 func codexQueueNativeReadinessFailureIsStableAndNotRetried() async {
     let recorder = QueueCommandInvocationRecorder()
     let dispatcher = CodexQueueNextTurnDispatcher(
@@ -181,7 +190,7 @@ func codexQueueNativeReadinessFailureIsStableAndNotRetried() async {
     #expect(recorder.invocations.count == 1)
 }
 
-@Test("Codex queue collapses non-native command errors without retry")
+@Test("Codex queue collapses non-native command errors without retry", .petLanguage(.korean))
 func codexQueueForeignCommandFailureIsCollapsedAndNotRetried() async {
     let recorder = QueueCommandInvocationRecorder()
     let dispatcher = CodexQueueNextTurnDispatcher(
@@ -203,7 +212,7 @@ func codexQueueForeignCommandFailureIsCollapsedAndNotRetried() async {
     #expect(recorder.invocations.count == 1)
 }
 
-@Test("an explicit missing Codex executable fails without PATH fallback")
+@Test("an explicit missing Codex executable fails without PATH fallback", .petLanguage(.korean))
 func codexQueueResolverRejectsMissingExplicitExecutable() {
     let missing = URL(
         fileURLWithPath: "/private/tmp/blabee-missing-codex-\(UUID().uuidString)"
@@ -216,7 +225,7 @@ func codexQueueResolverRejectsMissingExplicitExecutable() {
     }
 }
 
-@Test("Codex queue nonzero exit maps to a stable public error")
+@Test("Codex queue nonzero exit maps to a stable public error", .petLanguage(.korean))
 func codexQueueDispatcherRejectsNonzeroExit() async {
     let dispatcher = CodexQueueNextTurnDispatcher(
         executableResolver: { URL(fileURLWithPath: "/private/tmp/codex") },
@@ -230,7 +239,7 @@ func codexQueueDispatcherRejectsNonzeroExit() async {
     } == "codex_queue_process_failed")
 }
 
-@Test("Codex queue does not retry nonzero or ambiguous native results")
+@Test("Codex queue does not retry nonzero or ambiguous native results", .petLanguage(.korean))
 func codexQueueNativeTerminalResultsAreNotRetried() async {
     let outcomes: [(CodexQueueProcessResult, String)] = [
         (
@@ -265,7 +274,7 @@ func codexQueueNativeTerminalResultsAreNotRetried() async {
     }
 }
 
-@Test("Codex queue process runner uses shell signal exit status")
+@Test("Codex queue process runner uses shell signal exit status", .petLanguage(.korean))
 func codexQueueProcessRunnerMapsSignalTermination() throws {
     let result = try CodexQueueProcessRunner.run(
         executable: URL(fileURLWithPath: "/bin/sh"),
@@ -274,9 +283,10 @@ func codexQueueProcessRunnerMapsSignalTermination() throws {
     )
 
     #expect(result.exitCode == 128 + SIGKILL)
+    #expect(result.terminationSignal == SIGKILL)
 }
 
-@Test("Codex queue timeout maps to a stable public error")
+@Test("Codex queue timeout maps to a stable public error", .petLanguage(.korean))
 func codexQueueDispatcherPreservesTimeoutCode() async {
     let dispatcher = CodexQueueNextTurnDispatcher(
         executableResolver: { URL(fileURLWithPath: "/private/tmp/codex") },
@@ -290,7 +300,7 @@ func codexQueueDispatcherPreservesTimeoutCode() async {
     } == "codex_queue_process_timeout")
 }
 
-@Test("Codex queue accepts only the exact one-line success shape")
+@Test("Codex queue accepts only the exact one-line success shape", .petLanguage(.korean))
 func codexQueueDispatcherRejectsMalformedSuccessOutput() async {
     let malformed = [
         "queued message \(queueSubmissionID) for thread \(queueSessionID).\n",
@@ -312,7 +322,7 @@ func codexQueueDispatcherRejectsMalformedSuccessOutput() async {
     }
 }
 
-@Test("Codex queue rejects a receipt for a different session")
+@Test("Codex queue rejects a receipt for a different session", .petLanguage(.korean))
 func codexQueueDispatcherRejectsSessionMismatch() async {
     let dispatcher = CodexQueueNextTurnDispatcher(
         executableResolver: { URL(fileURLWithPath: "/private/tmp/codex") },
@@ -329,4 +339,71 @@ func codexQueueDispatcherRejectsSessionMismatch() async {
     #expect(await queueErrorCode {
         _ = try await dispatcher.dispatch(queueRequest())
     } == "codex_queue_session_mismatch")
+}
+
+@Test("Queue resolver failures prove this request never invoked the command", .petLanguage(.korean))
+func codexQueueResolutionFailureIsNotSubmitted() async throws {
+    let recorder = QueueCommandInvocationRecorder()
+    let dispatcher = CodexQueueNextTurnDispatcher(
+        executableResolver: { throw CoordinatorError("codex_queue_executable_unavailable") },
+        processRunner: { _, arguments, timeout in
+            recorder.record(arguments: arguments, timeoutMilliseconds: timeout)
+            return CodexQueueProcessResult(exitCode: 0, stdout: Data())
+        }
+    )
+    let evidence = try await queueFailureEvidence(dispatcher)
+    #expect(evidence.code == "codex_queue_executable_unavailable")
+    #expect(evidence.stage == .qualification)
+    #expect(evidence.deliveryState == .notSubmitted)
+    #expect(!evidence.commandInvocationAttempted)
+    #expect(!evidence.cachedFailure)
+    #expect(evidence.exitCode == nil)
+    #expect(recorder.invocations.isEmpty)
+}
+
+@Test("Queue timeout after runner invocation remains unknown and is never retried", .petLanguage(.korean))
+func codexQueueTimeoutHasConservativeInvocationEvidence() async throws {
+    let recorder = QueueCommandInvocationRecorder()
+    let dispatcher = CodexQueueNextTurnDispatcher(commandRunner: { arguments, timeout in
+        recorder.record(arguments: arguments, timeoutMilliseconds: timeout)
+        throw CoordinatorError("codex_queue_process_timeout", "private prompt and output")
+    })
+    let evidence = try await queueFailureEvidence(dispatcher)
+    #expect(evidence.code == "codex_queue_process_timeout")
+    #expect(evidence.stage == .command)
+    #expect(evidence.deliveryState == .unknown)
+    #expect(evidence.commandInvocationAttempted)
+    #expect(evidence.elapsedMilliseconds >= 0)
+    #expect(evidence.exitCode == nil)
+    #expect(recorder.invocations.count == 1)
+    let encoded = try JSONEncoder().encode(evidence)
+    #expect(!String(decoding: encoded, as: UTF8.self).contains("private prompt"))
+}
+
+@Test("Nonzero queue exits and invalid receipts retain bounded exit evidence without replay", .petLanguage(.korean))
+func codexQueueTerminalFailureEvidence() async throws {
+    let cases: [(CodexQueueProcessResult, String, CoordinatorNextTurnDispatchFailure.Stage)] = [
+        (.init(exitCode: 17, stdout: Data()), "codex_queue_process_failed", .queueExit),
+        (.init(exitCode: 128 + SIGKILL, stdout: Data(), terminationSignal: SIGKILL),
+         "codex_queue_process_failed", .queueExit),
+        (.init(exitCode: 0, stdout: Data("unexpected receipt".utf8)), "codex_queue_output_invalid", .receipt),
+        (.init(exitCode: 0, stdout: Data("Queued message test for thread another-session.\n".utf8)),
+         "codex_queue_session_mismatch", .receipt),
+    ]
+    for (result, expectedCode, expectedStage) in cases {
+        let recorder = QueueCommandInvocationRecorder()
+        let dispatcher = CodexQueueNextTurnDispatcher(commandRunner: { arguments, timeout in
+            recorder.record(arguments: arguments, timeoutMilliseconds: timeout)
+            return result
+        })
+        let evidence = try await queueFailureEvidence(dispatcher)
+        #expect(evidence.code == expectedCode)
+        #expect(evidence.stage == expectedStage)
+        #expect(evidence.deliveryState == .unknown)
+        #expect(evidence.commandInvocationAttempted)
+        #expect(evidence.exitCode == result.exitCode)
+        #expect(evidence.terminationSignal == result.terminationSignal)
+        #expect(!evidence.cachedFailure)
+        #expect(recorder.invocations.count == 1)
+    }
 }

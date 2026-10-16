@@ -219,7 +219,7 @@ private func petReadinessSnapshot(hasCard: Bool = false) throws -> PetSnapshot {
     return try PetSnapshot.parse(petTestData(object))
 }
 
-@Test("Connection summary separates service, installation, saved scope and real cards")
+@Test("Connection summary separates service, installation, saved scope and real cards", .petLanguage(.korean))
 @MainActor
 func petConnectionReadinessUsesBoundedEvidence() async throws {
     let adapter = PetFakeOnboardingAdapter()
@@ -256,7 +256,7 @@ func petConnectionReadinessUsesBoundedEvidence() async throws {
     #expect(adapter.disabledPaths.isEmpty)
 }
 
-@Test("Connection summary surfaces pending project additions and removals without stale green")
+@Test("Connection summary surfaces pending project additions and removals without stale green", .petLanguage(.korean))
 @MainActor
 func petConnectionReadinessTracksRuntimeScopeAndFailure() async throws {
     let adapter = PetFakeOnboardingAdapter()
@@ -291,7 +291,7 @@ func petConnectionReadinessTracksRuntimeScopeAndFailure() async throws {
     #expect(adapter.enabledPaths.isEmpty)
 }
 
-@Test("Unknown project configuration cannot be presented as ready")
+@Test("Unknown project configuration cannot be presented as ready", .petLanguage(.korean))
 @MainActor
 func petConnectionReadinessRejectsUnknownScope() async throws {
     let adapter = PetFakeOnboardingAdapter()
@@ -310,7 +310,7 @@ func petConnectionReadinessRejectsUnknownScope() async throws {
     #expect(!viewModel.projectSettingsNeedRestart)
 }
 
-@Test("Connection settings render at the panel size without the system glass compositor")
+@Test("Connection settings render at the panel size without the system glass compositor", .petLanguage(.korean))
 @MainActor
 func petConnectionReadinessRendersInPanel() async throws {
     for dark in [false, true] {
@@ -369,7 +369,7 @@ func petConnectionReadinessRendersInPanel() async throws {
     }
 }
 
-@Test("Opening settings does not execute Codex and Plugin actions remain explicit")
+@Test("Opening settings does not execute Codex and Plugin actions remain explicit", .petLanguage(.korean))
 @MainActor
 func petCodexPluginSetupUsesExplicitActions() async {
     let adapter = PetFakeOnboardingAdapter()
@@ -405,7 +405,7 @@ func petCodexPluginSetupUsesExplicitActions() async {
     #expect(await transport.requestCount(type: "get_state") == 0)
 }
 
-@Test("Pet requires two explicit steps before migrating a detected legacy Blabee connection")
+@Test("Pet requires two explicit steps before migrating a detected legacy Blabee connection", .petLanguage(.korean))
 @MainActor
 func petCodexPluginSetupRequiresLegacyMigrationConfirmation() async {
     let adapter = PetFakeOnboardingAdapter()
@@ -486,7 +486,7 @@ func petCodexPluginSetupRequiresLegacyMigrationConfirmation() async {
     #expect(await transport.requestCount(type: "get_state") == 0)
 }
 
-@Test("Pet Codex Plugin setup blocks duplicate clicks while an operation is running")
+@Test("Pet Codex Plugin setup blocks duplicate clicks while an operation is running", .petLanguage(.korean))
 @MainActor
 func petCodexPluginSetupSingleFlight() async {
     let adapter = PetFakeOnboardingAdapter()
@@ -520,7 +520,7 @@ func petCodexPluginSetupSingleFlight() async {
 
     await viewModel.registerOnboardingService()
     await viewModel.chooseAndEnableProject()
-    #expect(adapter.registerCalls == 1)
+    #expect(adapter.registerCalls == 0)
     #expect(adapter.enabledPaths == ["/tmp/blabee-pet-plugin-independent"])
     #expect(chooser.calls == 1)
     #expect(viewModel.isCodexPluginOperationInFlight)
@@ -534,7 +534,7 @@ func petCodexPluginSetupSingleFlight() async {
     #expect(await transport.requestCount(type: "get_state") == 0)
 }
 
-@Test("Pet settings refresh detects external Codex Plugin changes")
+@Test("Pet settings refresh detects external Codex Plugin changes", .petLanguage(.korean))
 @MainActor
 func petOnboardingRefreshIncludesCodexPluginState() async {
     let adapter = PetFakeOnboardingAdapter()
@@ -560,7 +560,7 @@ func petOnboardingRefreshIncludesCodexPluginState() async {
     #expect(await transport.requestCount(type: "get_state") == 0)
 }
 
-@Test("Pet coalesces a Plugin refresh requested during a Plugin mutation")
+@Test("Pet coalesces a Plugin refresh requested during a Plugin mutation", .petLanguage(.korean))
 @MainActor
 func petCodexPluginRefreshCoalescesDuringMutation() async {
     let adapter = PetFakeOnboardingAdapter()
@@ -593,7 +593,7 @@ func petCodexPluginRefreshCoalescesDuringMutation() async {
     #expect(await transport.requestCount(type: "get_state") == 0)
 }
 
-@Test("Pet coalesces repeated settings refreshes into a service operation final reload")
+@Test("Pet coalesces repeated settings refreshes into a service operation final reload", .petLanguage(.korean))
 @MainActor
 func petOnboardingRefreshCoalescesDuringServiceMutation() async {
     let adapter = PetFakeOnboardingAdapter()
@@ -623,7 +623,7 @@ func petOnboardingRefreshCoalescesDuringServiceMutation() async {
     #expect(await transport.requestCount(type: "get_state") == 0)
 }
 
-@Test("A crossing project action cannot erase a failed service operation error")
+@Test("A crossing project action cannot erase a failed service operation error", .petLanguage(.korean))
 @MainActor
 func petOnboardingFailureSurvivesRejectedCrossDomainMutation() async {
     let adapter = PetFakeOnboardingAdapter()
@@ -658,16 +658,16 @@ func petOnboardingFailureSurvivesRejectedCrossDomainMutation() async {
     #expect(await transport.requestCount(type: "get_state") == 0)
 }
 
-@Test("Pet onboarding exposes all service states and refresh never mutates")
+@Test("Pet onboarding exposes all service states and refresh never mutates", .petLanguage(.korean))
 @MainActor
 func petOnboardingStatesAndRefreshAreReadOnly() async {
     let adapter = PetFakeOnboardingAdapter()
     let (viewModel, transport) = petOnboardingViewModel(adapter: adapter)
     let expectations: [(PetServiceRegistrationState, Bool, Bool, Bool)] = [
-        (.notRegistered, true, false, false),
+        (.notRegistered, false, false, false),
         (.enabled, false, true, false),
         (.requiresApproval, false, true, true),
-        (.notFound, true, false, false),
+        (.notFound, false, false, false),
         (.unknown, false, false, false),
     ]
 
@@ -680,6 +680,7 @@ func petOnboardingStatesAndRefreshAreReadOnly() async {
         #expect(viewModel.canRegisterOnboardingService == canRegister)
         #expect(viewModel.canUnregisterOnboardingService == canUnregister)
         #expect(viewModel.canOpenOnboardingSystemSettings == canOpenSettings)
+        #expect(viewModel.showsLegacyServiceSettings == [.enabled, .requiresApproval, .unknown].contains(state))
     }
 
     #expect(adapter.registerCalls == 0)
@@ -690,7 +691,7 @@ func petOnboardingStatesAndRefreshAreReadOnly() async {
     #expect(await transport.requestCount(type: "get_state") == 0)
 }
 
-@Test("Pet distinguishes service registration from Coordinator transport health")
+@Test("Pet distinguishes service registration from Coordinator transport health", .petLanguage(.korean))
 @MainActor
 func petOnboardingSeparatesRegistrationAndRuntimeHealth() async throws {
     let adapter = PetFakeOnboardingAdapter()
@@ -720,7 +721,7 @@ func petOnboardingSeparatesRegistrationAndRuntimeHealth() async throws {
     #expect(await transport.requestCount(type: "get_state") == 2)
 }
 
-@Test("Pet onboarding initializes, applies snapshots, and changes screens without mutation")
+@Test("Pet onboarding initializes, applies snapshots, and changes screens without mutation", .petLanguage(.korean))
 @MainActor
 func petOnboardingPassivePathsDoNotMutate() async throws {
     let adapter = PetFakeOnboardingAdapter()
@@ -756,7 +757,7 @@ func petOnboardingPassivePathsDoNotMutate() async throws {
     #expect(await transport.requestCount(type: "get_state") == 0)
 }
 
-@Test("Pet onboarding registers and unregisters only from explicit allowed actions")
+@Test("Pet onboarding rejects new registration and preserves explicit removal of existing registration", .petLanguage(.korean))
 @MainActor
 func petOnboardingExplicitRegistrationActions() async {
     let adapter = PetFakeOnboardingAdapter()
@@ -765,12 +766,12 @@ func petOnboardingExplicitRegistrationActions() async {
     adapter.stateAfterRegister = .requiresApproval
 
     await viewModel.registerOnboardingService()
-    #expect(adapter.registerCalls == 1)
-    #expect(viewModel.onboardingServiceState == .requiresApproval)
-    #expect(adapter.statusCalls == 2)
+    #expect(adapter.registerCalls == 0)
+    #expect(viewModel.onboardingServiceState == .notRegistered)
+    #expect(adapter.statusCalls == 1)
 
     await viewModel.registerOnboardingService()
-    #expect(adapter.registerCalls == 1)
+    #expect(adapter.registerCalls == 0)
 
     adapter.state = .enabled
     adapter.stateAfterUnregister = .notRegistered
@@ -781,7 +782,7 @@ func petOnboardingExplicitRegistrationActions() async {
     #expect(await transport.requestCount(type: "get_state") == 0)
 }
 
-@Test("Pet onboarding registers unseen services while unknown state remains fail closed")
+@Test("Pet onboarding never registers unseen services and unknown state remains fail closed", .petLanguage(.korean))
 @MainActor
 func petOnboardingApprovalAndFailClosedActions() async {
     let adapter = PetFakeOnboardingAdapter()
@@ -805,7 +806,7 @@ func petOnboardingApprovalAndFailClosedActions() async {
     adapter.stateAfterRegister = .notRegistered
     await viewModel.refreshOnboarding()
     await viewModel.registerOnboardingService()
-    #expect(adapter.registerCalls == 1)
+    #expect(adapter.registerCalls == 0)
 
     adapter.state = .unknown
     await viewModel.refreshOnboarding()
@@ -816,6 +817,7 @@ func petOnboardingApprovalAndFailClosedActions() async {
     await viewModel.disableConfiguredProject("/tmp/blabee-pet-configured")
 
     #expect(adapter.unregisterCalls == 1)
+    #expect(adapter.registerCalls == 0)
     #expect(adapter.openSystemSettingsCalls == 1)
     #expect(chooser.calls == 0)
     #expect(adapter.enabledPaths.isEmpty)
@@ -823,7 +825,7 @@ func petOnboardingApprovalAndFailClosedActions() async {
     #expect(await transport.requestCount(type: "get_state") == 0)
 }
 
-@Test("Pet onboarding re-reads status after an operation error")
+@Test("A stale registration action cannot call even a failing registration adapter", .petLanguage(.korean))
 @MainActor
 func petOnboardingRefreshesAfterError() async {
     let adapter = PetFakeOnboardingAdapter()
@@ -835,14 +837,14 @@ func petOnboardingRefreshesAfterError() async {
 
     await viewModel.registerOnboardingService()
 
-    #expect(adapter.registerCalls == 1)
-    #expect(adapter.statusCalls == statusCallsBeforeMutation + 1)
-    #expect(viewModel.onboardingServiceState == .requiresApproval)
-    #expect(viewModel.onboardingError?.contains("injected") == true)
+    #expect(adapter.registerCalls == 0)
+    #expect(adapter.statusCalls == statusCallsBeforeMutation)
+    #expect(viewModel.onboardingServiceState == .notRegistered)
+    #expect(viewModel.onboardingError == nil)
     #expect(await transport.requestCount(type: "get_state") == 0)
 }
 
-@Test("Pet service operations stay single-flight without blocking Plugin inspection")
+@Test("Pet service operations stay single-flight without blocking Plugin inspection", .petLanguage(.korean))
 @MainActor
 func petOnboardingSingleFlight() async {
     let adapter = PetFakeOnboardingAdapter()
@@ -902,7 +904,7 @@ func petOnboardingSingleFlight() async {
     #expect(await transport.requestCount(type: "get_state") == 0)
 }
 
-@Test("Pet onboarding re-reads status and config after unregister fails")
+@Test("Pet onboarding re-reads status and config after unregister fails", .petLanguage(.korean))
 @MainActor
 func petOnboardingRefreshesAfterUnregisterError() async {
     let adapter = PetFakeOnboardingAdapter()
@@ -927,7 +929,7 @@ func petOnboardingRefreshesAfterUnregisterError() async {
     #expect(await transport.requestCount(type: "get_state") == 0)
 }
 
-@Test("Pet onboarding writes projects only after chooser confirmation and explicit removal")
+@Test("Pet onboarding writes projects only after chooser confirmation and explicit removal", .petLanguage(.korean))
 @MainActor
 func petOnboardingProjectActions() async throws {
     let adapter = PetFakeOnboardingAdapter()
@@ -961,7 +963,7 @@ func petOnboardingProjectActions() async throws {
     #expect(await transport.requestCount(type: "get_state") == 0)
 }
 
-@Test("Pet onboarding clears stale configured paths and blocks writes after a read failure")
+@Test("Pet onboarding clears stale configured paths and blocks writes after a read failure", .petLanguage(.korean))
 @MainActor
 func petOnboardingConfiguredPathsFailClosedAfterReadFailure() async {
     let adapter = PetFakeOnboardingAdapter()
@@ -990,7 +992,7 @@ func petOnboardingConfiguredPathsFailClosedAfterReadFailure() async {
     #expect(await transport.requestCount(type: "get_state") == 0)
 }
 
-@Test("Pet onboarding keeps snapshot-only active paths visible until restart")
+@Test("Pet onboarding keeps snapshot-only active paths visible until restart", .petLanguage(.korean))
 @MainActor
 func petOnboardingDistinguishesActiveOnlyProjectPaths() async throws {
     let activePath = "/tmp/blabee-pet-restart-pending"

@@ -3,8 +3,10 @@ import SwiftUI
 import Testing
 @testable import BlabeeCoordinator
 
-@Suite("Manual feedback views") @MainActor
+@Suite("Manual feedback views", .petLanguage(.korean)) @MainActor
 struct PetFeedbackViewTests {
+    init() throws { try PetTypographyTestResources.register() }
+
     @Test("editor and redacted review render at minimum and standard window sizes")
     func renderEditorAndReview() throws {
         if let directory = ProcessInfo.processInfo.environment["BLABEE_FEEDBACK_RENDER_DIRECTORY"] {

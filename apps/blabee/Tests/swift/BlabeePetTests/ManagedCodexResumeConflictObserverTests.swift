@@ -65,7 +65,7 @@ private func managedCodexActiveWriterResponse(
     )
 }
 
-@Test("Resume observer reports one exact active-writer response")
+@Test("Resume observer reports one exact active-writer response", .petLanguage(.korean))
 func managedCodexResumeObserverReportsCanonicalConflictOnce() throws {
     let recorder = ManagedCodexResumeObserverRecorder()
     let observer = ManagedCodexResumeConflictObserver(reporter: recorder.record)
@@ -81,7 +81,7 @@ func managedCodexResumeObserverReportsCanonicalConflictOnce() throws {
     #expect(recorder.events == [.activeWriter])
 }
 
-@Test("Resume observer rejects uncorrelated and noncanonical responses")
+@Test("Resume observer rejects uncorrelated and noncanonical responses", .petLanguage(.korean))
 func managedCodexResumeObserverRejectsFalseCorrelations() throws {
     let noRequestRecorder = ManagedCodexResumeObserverRecorder()
     ManagedCodexResumeConflictObserver(reporter: noRequestRecorder.record)
@@ -139,7 +139,7 @@ func managedCodexResumeObserverRejectsFalseCorrelations() throws {
     #expect(successRecorder.events == [.activeWriter])
 }
 
-@Test("Malformed and over-limit observer inputs remain exact pass-through")
+@Test("Malformed and over-limit observer inputs remain exact pass-through", .petLanguage(.korean))
 func managedCodexResumeObserverIgnoresHostileInputs() {
     let recorder = ManagedCodexResumeObserverRecorder()
     let observer = ManagedCodexResumeConflictObserver(reporter: recorder.record)
@@ -181,7 +181,7 @@ func managedCodexResumeObserverIgnoresHostileInputs() {
     #expect(recorder.events.isEmpty)
 }
 
-@Test("Resume observer fails silent for duplicate IDs and capacity overflow")
+@Test("Resume observer fails silent for duplicate IDs and capacity overflow", .petLanguage(.korean))
 func managedCodexResumeObserverBoundsAmbiguousState() throws {
     let duplicateRecorder = ManagedCodexResumeObserverRecorder()
     let duplicate = ManagedCodexResumeConflictObserver(
@@ -208,7 +208,7 @@ func managedCodexResumeObserverBoundsAmbiguousState() throws {
     #expect(capacityRecorder.events == [.activeWriter])
 }
 
-@Test("Resume observer handles an immediate response without racing correlation")
+@Test("Resume observer handles an immediate response without racing correlation", .petLanguage(.korean))
 func managedCodexResumeObserverCorrelatesImmediateResponse() throws {
     let recorder = ManagedCodexResumeObserverRecorder()
     let observer = ManagedCodexResumeConflictObserver(reporter: recorder.record)
@@ -230,7 +230,7 @@ func managedCodexResumeObserverCorrelatesImmediateResponse() throws {
     #expect(recorder.events == [.activeWriter])
 }
 
-@Test("Failed request forwarding leaves no resumable correlation")
+@Test("Failed request forwarding leaves no resumable correlation", .petLanguage(.korean))
 func managedCodexResumeObserverDoesNotTrackFailedForward() {
     let recorder = ManagedCodexResumeObserverRecorder()
     let observer = ManagedCodexResumeConflictObserver(reporter: recorder.record)
@@ -244,7 +244,7 @@ func managedCodexResumeObserverDoesNotTrackFailedForward() {
     #expect(recorder.events.isEmpty)
 }
 
-@Test("Active-writer notice is one-shot and contains no session identity")
+@Test("Active-writer notice is one-shot and contains no session identity", .petLanguage(.korean))
 func managedCodexActiveWriterNoticeIsBoundedAndPrivate() {
     let recorder = ManagedCodexResumeObserverRecorder()
     let emitter = ManagedCodexActiveWriterNoticeEmitter(sink: recorder.recordNotice)
@@ -259,7 +259,7 @@ func managedCodexActiveWriterNoticeIsBoundedAndPrivate() {
     #expect(notice?.contains("Blabee는 세션이나 잠금을 변경하지 않았습니다.") == true)
 }
 
-@Test("A blocked notice sink never blocks the Codex transport caller")
+@Test("A blocked notice sink never blocks the Codex transport caller", .petLanguage(.korean))
 func managedCodexActiveWriterNoticeRunsOffTransportQueue() {
     let sinkStarted = DispatchSemaphore(value: 0)
     let releaseSink = DispatchSemaphore(value: 0)

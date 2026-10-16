@@ -5,6 +5,24 @@ import Testing
 @Suite("Consented product metrics")
 @MainActor
 struct PetProductMetricsTests {
+    @Test("New observations use the selected UI language while in-flight operations retain their original environment")
+    func languageChangesPreserveOperationContext() throws {
+        let fixture = ProductFixture(environment: nil)
+        defer { fixture.recorder.stop() }
+        let operation = try PetL10n.$languageOverride.withValue(.english) {
+            #expect(fixture.recorder.productEnvironment.uiLanguage == .en)
+            return try #require(fixture.recorder.beginFeature(feature: .choice, inputMethod: .button))
+        }
+        try PetL10n.$languageOverride.withValue(.korean) {
+            #expect(fixture.recorder.productEnvironment.uiLanguage == .ko)
+            fixture.recorder.finishFeature(operation, outcome: .succeeded)
+            let next = try #require(fixture.recorder.beginFeature(feature: .choice, inputMethod: .button))
+            #expect(next.environment.uiLanguage == .ko)
+        }
+        #expect(fixture.products.map(\.environment.uiLanguage) == [.en, .en, .ko])
+        #expect(fixture.products[0].operationID == fixture.products[1].operationID)
+    }
+
     @Test("The former usage opt-in never enables expanded collection")
     func requiresFreshConsent() throws {
         let suite = "blabee-product-consent-test-\(UUID().uuidString)"
@@ -320,7 +338,7 @@ struct PetProductTransportTests {
         #expect(calls == 0)
     }
 
-    @Test("Environment and targets strip free text during both construction and persisted decoding")
+    @Test("Environment and targets strip free text during both construction and persisted decoding", .petLanguage(.english))
     func environmentSanitization() throws {
         let environment = PetProductEnvironment(appVersion: "secret-email@example.com", appBuild: "/Users/name/project",
                                                osMajor: "26.1", uiLanguage: .ko)
@@ -340,7 +358,7 @@ struct PetProductTransportTests {
         for value in ["", "1..2", "1234567", "１", "1.2.3.4.5", "1\n"] {
             #expect(PetProductEnvironment.normalizedVersion(value) == "unknown")
         }
-        #expect(PetProductEnvironment.current.uiLanguage == .ko)
+        #expect(PetProductEnvironment.current.uiLanguage == .en)
     }
 
     @Test("Private file round-trip preserves product operation and legacy event schemas")
@@ -390,12 +408,13 @@ private final class ProductFixture {
     var products: [PetProductMetricPayload] { store.events.compactMap(\.product) }
 
     init(enabled: Bool = true, user: String = ProductValues.user, stored: [PetUsageEvent] = [],
-         consentID: UUID = UUID(), identity: PetProductIdentity? = nil) {
+         consentID: UUID = UUID(), identity: PetProductIdentity? = nil,
+         environment: PetProductEnvironment? = ProductValues.environment) {
         state.auth = ProductValues.authorization(user: user)
         store.events = stored
         recorder = PetUsageAnalytics(isEnabled: enabled, authorization: { [state] in state.auth }, store: store, service: service,
             now: { [state] in state.date }, sleep: { [state] in state.delays.append($0) },
-            productEnvironment: ProductValues.environment, monotonicNow: { [state] in state.uptime },
+            productEnvironment: environment, monotonicNow: { [state] in state.uptime },
             consentID: consentID, persistedProductIdentity: identity,
             saveConsentID: { [state] in state.savedConsent = $0 }, saveProductIdentity: { [state] in state.savedIdentity = $0 })
     }

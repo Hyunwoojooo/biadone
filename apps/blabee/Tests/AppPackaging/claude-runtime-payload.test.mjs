@@ -6,7 +6,7 @@ import test from "node:test";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import {
   canonicalClaudeRuntimeJSON, CLAUDE_NODE_ENTITLEMENTS, CLAUDE_RUNTIME_LIMITS,
-  prepareClaudeRuntime, refreshClaudeRuntimeManifest, verifyClaudeRuntimeDirectory,
+  prepareClaudeRuntime, refreshClaudeRuntimeManifest, verifyClaudeRuntimeDirectory, verifyPublicClaudeRuntimeDirectory,
 } from "../../scripts/prepare-claude-runtime.mjs";
 import { signClaudeRuntimeAdhoc } from "../../scripts/sign-claude-runtime.mjs";
 import { fixtureFile, makeClaudeRuntimeFixture } from "./claude-runtime-fixtures.mjs";
@@ -24,7 +24,11 @@ test("prepares deterministic, indexed runtime with licenses and only explicit No
   const fixture = await makeClaudeRuntimeFixture(t);
   const second = await prepareClaudeRuntime({ ...fixture.options, outputDirectory: join(fixture.root, "runtime-two") });
   assert.deepEqual(second.manifest, fixture.manifest);
-  assert.equal(fixture.manifest.channel_mode, "development-preview");
+  assert.equal(fixture.manifest.schema_version, "blabee.claude-runtime.v2");
+  assert.equal(fixture.manifest.delivery_mode, "mcp-hook-v1");
+  assert.equal(fixture.manifest.contract_versions.session, "blabee.claude-session.v3");
+  for (const key of ["channel_mode", "channel_source", "channel_selector"]) assert.equal(Object.hasOwn(fixture.manifest, key), false);
+  assert.ok(fixture.manifest.files.some(file => file.path === "payload/src/session-v2-waiter.mjs"));
   assert.match(fixture.manifest.payload_digest, /^sha256:[0-9a-f]{64}$/u);
   assert.equal(fixture.manifest.files.filter(file => file.executable).length, 1);
   assert.equal(fixture.manifest.files.find(file => file.executable).path, "node/bin/node");
@@ -87,7 +91,9 @@ test("manifest rejects unqualified mode, unknown keys, duplicates, unsorted path
   const fixture = await makeClaudeRuntimeFixture(t);
   const original = await readFile(join(fixture.outputDirectory, "manifest.json"));
   for (const mutate of [
-    value => { value.channel_mode = "approved-plugin"; },
+    value => { value.delivery_mode = "development-preview"; },
+    value => { value.channel_selector = "server:blabee-claude"; },
+    value => { value.contract_versions.session = "blabee.claude-session.v2"; },
     value => { value.extra = true; },
     value => { value.files.reverse(); },
     value => { value.files.push(value.files[0]); },
@@ -98,9 +104,23 @@ test("manifest rejects unqualified mode, unknown keys, duplicates, unsorted path
     await rewriteManifest(fixture.outputDirectory, mutate);
     await assert.rejects(verifyClaudeRuntimeDirectory(fixture.outputDirectory), /Claude runtime/u);
   }
-  const text = original.toString("utf8").replace('"channel_mode":"development-preview"', '"channel_mode":"development-preview","channel_mode":"development-preview"');
+  const text = original.toString("utf8").replace('"delivery_mode":"mcp-hook-v1"', '"delivery_mode":"mcp-hook-v1","delivery_mode":"mcp-hook-v1"');
   await writeFile(join(fixture.outputDirectory, "manifest.json"), text);
   await assert.rejects(verifyClaudeRuntimeDirectory(fixture.outputDirectory), /canonical/u);
+});
+
+test("historical development runtime verifies and reseals without acquiring public eligibility", async t => {
+  const fixture = await makeClaudeRuntimeFixture(t, { legacy: true });
+  assert.deepEqual(await verifyClaudeRuntimeDirectory(fixture.outputDirectory), fixture.manifest);
+  await assert.rejects(verifyPublicClaudeRuntimeDirectory(fixture.outputDirectory), /development Channels/u);
+  const node = join(fixture.outputDirectory, "node/bin/node");
+  await writeFile(node, Buffer.concat([await readFile(node), Buffer.from("historical-signature")]));
+  const updated = await refreshClaudeRuntimeManifest(fixture.outputDirectory);
+  assert.equal(updated.schema_version, "blabee.claude-runtime.v1");
+  assert.equal(updated.channel_mode, "development-preview");
+  assert.equal(updated.contract_versions.session, "blabee.claude-session.v2");
+  assert.equal(updated.delivery_mode, undefined);
+  await assert.rejects(verifyPublicClaudeRuntimeDirectory(fixture.outputDirectory), /development Channels/u);
 });
 
 test("reseal accepts only Node byte changes and indexes the newly signed bytes", async t => {

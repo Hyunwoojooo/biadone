@@ -5,6 +5,11 @@ import Foundation
 /// One exclusive native app-server and its remote TUI. Approval requests are
 /// forwarded byte-for-byte; this bridge never supplies a decision or a prompt.
 final class UpdateManagedCodexRuntime: @unchecked Sendable {
+    /// Constructed only while condition proves that admission has not frozen.
+    struct PauseAdmissionBusy: Error {
+        fileprivate init() {}
+    }
+
     private let condition = NSCondition()
     private var observer: UpdateManagedCodexObserver
     private let appServer = Process()
@@ -24,10 +29,27 @@ final class UpdateManagedCodexRuntime: @unchecked Sendable {
     private var paused = false
     private var codexHome: String?
     private let changed: @Sendable () -> Void
+    private var beforePauseAdmissionForTesting: ((inout UpdateManagedCodexObserver) throws -> Void)?
 
     init(cwd: String, resumeThreadID: String?, changed: @escaping @Sendable () -> Void = {}) {
         observer = UpdateManagedCodexObserver(expectedResumeID: resumeThreadID, expectedCWD: cwd)
         self.changed = changed
+    }
+
+    /// Seeds only the observer/transport for deterministic tests; no native process is started.
+    init(testingObserver: UpdateManagedCodexObserver, codexHome: String,
+         writer: ManagedCodexJSONLineWriter,
+         beforePauseAdmission: ((inout UpdateManagedCodexObserver) throws -> Void)? = nil) {
+        observer = testingObserver
+        self.codexHome = codexHome
+        self.writer = writer
+        changed = {}
+        beforePauseAdmissionForTesting = beforePauseAdmission
+    }
+
+    func withObserverForTesting<T>(_ body: (inout UpdateManagedCodexObserver) throws -> T) rethrows -> T {
+        condition.lock(); defer { condition.unlock() }
+        return try body(&observer)
     }
 
     var snapshot: (threadID: String?, cwd: String?, state: UpdateManagedSessionState, detail: String?) {
@@ -39,7 +61,7 @@ final class UpdateManagedCodexRuntime: @unchecked Sendable {
         var detail: String?
         if state == .running, !hasDurableRoot() {
             state = .busy
-            detail = "아직 저장된 대화 기록이 없습니다. 이 세션을 계속 사용하거나 직접 닫은 뒤 업데이트하세요."
+            detail = PetL10n.text("No saved conversation history exists yet. Continue using this session or close it yourself before updating.", korean: "아직 저장된 대화 기록이 없습니다. 이 세션을 계속 사용하거나 직접 닫은 뒤 업데이트하세요.")
         }
         return (observer.rootThreadID, observer.rootCWD, state, detail)
     }
@@ -138,12 +160,16 @@ final class UpdateManagedCodexRuntime: @unchecked Sendable {
         condition.lock()
         let requests: [[String: Any]]
         do {
+            try beforePauseAdmissionForTesting?(&observer)
             guard observer.rootThreadID == expectedThreadID, observer.rootCWD == expectedCWD else {
                 throw CoordinatorError("update_managed_frozen_session_changed")
             }
             guard let codexHome else { throw CoordinatorError("update_managed_root_not_persisted") }
             try UpdateManagedCodexPersistence.requireRoot(threadID: observer.rootThreadID,
                 rolloutPath: observer.rootRolloutPath, codexHome: codexHome)
+            if !observer.frozen, observer.failure == nil, observer.busy, !observer.threads.isEmpty {
+                throw PauseAdmissionBusy()
+            }
             requests = try observer.beginPause()
             for request in requests {
                 guard DispatchTime.now().uptimeNanoseconds < pauseDeadline else { throw CoordinatorError("update_managed_pause_timeout") }

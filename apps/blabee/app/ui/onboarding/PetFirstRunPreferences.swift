@@ -12,9 +12,9 @@ enum PetFirstRunTheme: String, CaseIterable, Identifiable, Sendable {
 
     var title: String {
         switch self {
-        case .system: "시스템 설정"
-        case .light: "라이트"
-        case .dark: "다크"
+        case .system: PetL10n.text("System", korean: "시스템 설정")
+        case .light: PetL10n.text("Light", korean: "라이트")
+        case .dark: PetL10n.text("Dark", korean: "다크")
         }
     }
 }
@@ -28,11 +28,11 @@ enum PetLaunchAtLoginStatus: Equatable, Sendable {
 
     var title: String {
         switch self {
-        case .notRegistered: "꺼짐"
-        case .enabled: "켜짐"
-        case .requiresApproval: "시스템 설정에서 승인 필요"
-        case .notFound: "앱 등록 확인 필요"
-        case .unavailable: "상태 확인 불가"
+        case .notRegistered: PetL10n.text("Off", korean: "꺼짐")
+        case .enabled: PetL10n.text("On", korean: "켜짐")
+        case .requiresApproval: PetL10n.text("Approval required in System Settings", korean: "시스템 설정에서 승인 필요")
+        case .notFound: PetL10n.text("Check app registration", korean: "앱 등록 확인 필요")
+        case .unavailable: PetL10n.text("Status unavailable", korean: "상태 확인 불가")
         }
     }
 }
@@ -125,14 +125,14 @@ final class PetFirstRunPreferences: ObservableObject {
             }
             launchAtLoginStatus = loginItem.status
             if enabled && launchAtLoginStatus != .enabled && launchAtLoginStatus != .requiresApproval {
-                launchAtLoginError = "로그인 시 실행 설정을 확인하지 못했습니다. 다시 시도해 주세요."
+                launchAtLoginError = PetL10n.text("Unable to verify Launch at Login. Please try again.", korean: "로그인 시 실행 설정을 확인하지 못했습니다. 다시 시도해 주세요.")
             } else if !enabled && launchAtLoginStatus != .notRegistered && launchAtLoginStatus != .notFound {
-                launchAtLoginError = "로그인 시 실행이 꺼졌는지 확인하지 못했습니다. 시스템 설정을 확인해 주세요."
+                launchAtLoginError = PetL10n.text("Unable to verify that Launch at Login is off. Check System Settings.", korean: "로그인 시 실행이 꺼졌는지 확인하지 못했습니다. 시스템 설정을 확인해 주세요.")
             }
         } catch {
             // Reflect the actual state even if the registration call changed it before failing.
             launchAtLoginStatus = loginItem.status
-            launchAtLoginError = "로그인 시 실행 설정을 변경하지 못했습니다. \(String(error.localizedDescription.prefix(300)))"
+            launchAtLoginError = PetL10n.text("Unable to change Launch at Login. \(String(error.localizedDescription.prefix(300)))", korean: "로그인 시 실행 설정을 변경하지 못했습니다. \(String(error.localizedDescription.prefix(300)))")
         }
     }
 

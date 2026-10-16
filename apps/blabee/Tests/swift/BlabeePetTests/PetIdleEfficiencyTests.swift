@@ -44,7 +44,7 @@ private final class PetIdleTestHotKeyBackend: PetHotKeyBackend, @unchecked Senda
     }
 }
 
-@Test("BlabeePet does not republish an identical snapshot but preserves heartbeat callbacks")
+@Test("BlabeePet does not republish an identical snapshot but preserves heartbeat callbacks", .petLanguage(.korean))
 @MainActor
 func blabeePetIdenticalSnapshotDoesNotRepublish() throws {
     let viewModel = PetViewModel(
@@ -70,7 +70,7 @@ func blabeePetIdenticalSnapshotDoesNotRepublish() throws {
     withExtendedLifetime(observation) {}
 }
 
-@Test("BlabeePet does not republish the same disconnect error on every poll")
+@Test("BlabeePet does not republish the same disconnect error on every poll", .petLanguage(.korean))
 @MainActor
 func blabeePetRepeatedDisconnectDoesNotRepublish() async {
     let transport = PetFakeTransport()
@@ -99,7 +99,7 @@ func blabeePetRepeatedDisconnectDoesNotRepublish() async {
     withExtendedLifetime(observation) {}
 }
 
-@Test("BlabeePet suppresses identical failed shortcut registration until explicit apply")
+@Test("BlabeePet suppresses identical failed shortcut registration until explicit apply", .petLanguage(.korean))
 @MainActor
 func blabeePetFailedHotKeyRegistrationRetriesOnlyOnExplicitApply() throws {
     let defaults = PetShortcutConfiguration.defaults
@@ -139,7 +139,7 @@ func blabeePetFailedHotKeyRegistrationRetriesOnlyOnExplicitApply() throws {
     }
 }
 
-@Test("BlabeePet retries a failed shortcut once when eligibility changes")
+@Test("BlabeePet retries a failed shortcut once when eligibility changes", .petLanguage(.korean))
 @MainActor
 func blabeePetFailedHotKeyRegistrationRetriesOncePerEligibilityPlan() throws {
     let defaults = PetShortcutConfiguration.defaults

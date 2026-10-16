@@ -28,16 +28,16 @@ if sys.argv[1:] == ['--version']:
         Path(__file__).with_name('auto-preflight-started').write_text('started')
         time.sleep(0.75)
         sys.exit(99)
-    print('2.1.276 (Claude Code)')
+    print('2.1.282 (Claude Code)')
     sys.exit(0)
 try:
     Path(__file__).with_name('auto-native-child-started').write_text('started')
     args = sys.argv[1:]
     assert all(os.isatty(fd) for fd in (0, 1, 2))
     assert os.tcgetpgrp(0) == os.getpgrp() == os.getpid()
-    assert args[:2] == ['--dangerously-load-development-channels', 'server:blabee-claude']
-    assert args[2] == '--mcp-config' and args[4] == '--settings'
-    assert args[6:] == __FORWARDED__
+    assert '--dangerously-load-development-channels' not in args
+    assert args[0] == '--mcp-config' and args[2] == '--settings'
+    assert args[4:] == __FORWARDED__
     assert '--session-id' not in args and '--fork-session' not in args
     assert '--dangerously-skip-permissions' not in args
     descriptors = []
@@ -50,14 +50,14 @@ try:
     assert descriptors == []
     assert not any(key.startswith('BLABEE_CLAUDE_SESSION_V2_') for key in os.environ)
     tokens = [os.environ['BLABEE_CLAUDE_BOOTSTRAP_' + role + '_TOKEN'] for role in ['HOOK', 'BRIDGE']]
-    for path in [args[3], args[5]]:
+    for path in [args[1], args[3]]:
         text = Path(path).read_text()
         assert all(value not in text for value in tokens)
         json.loads(text)
     environment = dict(os.environ)
     # The observed native ID is selected by Claude, not the Blabee owner.
     environment['CLAUDE_CODE_SESSION_ID'] = str(uuid.uuid4())
-    result = subprocess.run([__NODE__, __DRIVER__, args[5], args[3], __SOURCE__],
+    result = subprocess.run([__NODE__, __DRIVER__, args[3], args[1], __SOURCE__],
         env=environment, capture_output=True, text=True, timeout=25)
     if result.returncode != 0:
         # The driver reports only a fixed fixture phase, never raw requests.

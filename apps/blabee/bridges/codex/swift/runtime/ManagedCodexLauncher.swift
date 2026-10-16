@@ -132,11 +132,15 @@ struct ManagedCodexLaunchFailure: Error {
 struct ManagedCodexLauncherArguments: Equatable {
     let explicitCodexURL: URL?
     let coordinatorSocketPath: String
+    /// Preserve the user's native invocation for an explicitly chosen fallback.
     let tuiArguments: [String]
+    let remoteTUIArguments: [String]
+    let appServerArguments: [String]
 
     init(
         _ values: [String],
-        environment: [String: String] = ProcessInfo.processInfo.environment
+        environment: [String: String] = ProcessInfo.processInfo.environment,
+        qualifiedVersion: String? = nil
     ) throws {
         var explicitCodexURL: URL?
         var coordinatorSocketPath: String?
@@ -176,19 +180,140 @@ struct ManagedCodexLauncherArguments: Equatable {
             )
         }
         let tuiArguments = Array(values[index...])
-        guard !tuiArguments.contains(where: Self.isReservedRemoteArgument) else {
-            throw CoordinatorError(
-                "managed_codex_arguments_invalid",
-                "managed-codex owns the Codex remote transport arguments"
-            )
-        }
+        let routed = try Self.routeRemoteArguments(
+            tuiArguments,
+            qualifiedVersion: qualifiedVersion
+        )
         self.explicitCodexURL = explicitCodexURL
         self.coordinatorSocketPath = try OperationalSocketPath.resolve(
             explicitPath: coordinatorSocketPath,
             environment: environment
         )
         self.tuiArguments = tuiArguments
+        remoteTUIArguments = routed.tui
+        appServerArguments = ["app-server", "--listen", "stdio://"]
+            + routed.server
     }
+
+    private static func routeRemoteArguments(
+        _ arguments: [String],
+        qualifiedVersion: String?
+    ) throws -> (tui: [String], server: [String]) {
+        // Older qualified TUIs send their own runtimeWorkspaceRoots. Moving
+        // their overrides would let that client list overwrite the server's
+        // roots. Only the audited server-owned versions use this routing.
+        let serverOwnsWorkspaceRoots = qualifiedVersion == "0.156.0"
+            || qualifiedVersion == "0.156.1"
+            || qualifiedVersion == "0.157.0"
+            || qualifiedVersion == "0.157.1"
+            || qualifiedVersion == "0.158.0"
+            || qualifiedVersion == "0.159.0"
+            || qualifiedVersion == "0.159.1"
+            || qualifiedVersion == "0.159.2"
+            || qualifiedVersion == "0.159.3"
+            || qualifiedVersion == "0.160.0"
+            || qualifiedVersion == "0.160.1"
+            || qualifiedVersion == "0.161.0"
+            || qualifiedVersion == "0.162.0"
+            || qualifiedVersion == "0.162.1"
+            || qualifiedVersion == "0.163.0"
+        var tui: [String] = []
+        var server: [String] = []
+        var hasProfile = false
+        var index = 0
+        while index < arguments.count {
+            let argument = arguments[index]
+            if argument == "--" {
+                // The native separator makes every remaining token literal
+                // prompt/session input, including strings that look like flags.
+                tui.append(contentsOf: arguments[index...])
+                break
+            }
+            guard !isReservedRemoteArgument(argument) else {
+                throw CoordinatorError(
+                    "managed_codex_arguments_invalid",
+                    "managed-codex owns the Codex remote transport arguments"
+                )
+            }
+            if argument == "--no-daemon" || argument.hasPrefix("--no-daemon=") {
+                throw CoordinatorError(
+                    "managed_codex_arguments_invalid",
+                    "--no-daemon cannot be used with the managed Codex remote transport"
+                )
+            }
+            if serverOwnsWorkspaceRoots,
+               argument == "--add-dir" || argument.hasPrefix("--add-dir=")
+            {
+                // --add-dir is additive; a writable_roots CLI override replaces
+                // existing roots. Never silently turn one into the other.
+                throw CoordinatorError(
+                    "managed_codex_arguments_invalid",
+                    "Codex \(qualifiedVersion ?? "") remote mode does not support --add-dir; configure the complete sandbox_workspace_write.writable_roots list on the server"
+                )
+            }
+
+            var configOverride: String?
+            var consumed = 1
+            if argument == "-c" || argument == "--config" {
+                // Native Codex diagnoses missing/malformed operands. In
+                // particular, an option-looking operand is never reinterpreted
+                // here as one of Blabee's transport or compatibility flags.
+                if index + 1 < arguments.count {
+                    configOverride = arguments[index + 1]
+                    consumed = 2
+                }
+            } else if argument.hasPrefix("--config=") {
+                configOverride = String(argument.dropFirst("--config=".count))
+            } else if argument.hasPrefix("-c"), argument.count > 2 {
+                let attached = String(argument.dropFirst(2))
+                configOverride = attached.hasPrefix("=")
+                    ? String(attached.dropFirst()) : attached
+            }
+            if serverOwnsWorkspaceRoots, let configOverride,
+               let separator = configOverride.firstIndex(of: "=")
+            {
+                // Codex splits the first '=' and trims the key, but parses
+                // the RHS as TOML. Keep that native parser and whole tables,
+                // including network_access and future keys, authoritative.
+                let key = configOverride[..<separator]
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                if key == "sandbox_workspace_write"
+                    || key.hasPrefix("sandbox_workspace_write.")
+                {
+                    server.append(contentsOf: ["--config", configOverride])
+                    index += consumed
+                    continue
+                }
+            }
+
+            if argument == "--profile" || argument == "-p"
+                || argument.hasPrefix("--profile=")
+                || (argument.hasPrefix("-p") && argument.count > 2)
+            {
+                hasProfile = true
+            }
+            if consumed == 1, Self.nativeOptionsWithOperand.contains(argument),
+               index + 1 < arguments.count
+            {
+                consumed = 2
+            }
+            tui.append(contentsOf: arguments[index..<(index + consumed)])
+            index += consumed
+        }
+        guard server.isEmpty || !hasProfile else {
+            throw CoordinatorError(
+                "managed_codex_arguments_invalid",
+                "Codex remote App Server does not load --profile; use server workspace settings without --profile when passing sandbox_workspace_write overrides"
+            )
+        }
+        return (tui, server)
+    }
+
+    private static let nativeOptionsWithOperand: Set<String> = [
+        "--model", "-m", "--local-provider", "--profile", "-p",
+        "--sandbox", "-s", "--ask-for-approval", "-a", "--cd", "-C",
+        "--image", "-i", "--enable", "--disable", "--add-dir",
+    ]
 
     private static func isReservedRemoteArgument(_ value: String) -> Bool {
         value == "--remote"
@@ -655,6 +780,13 @@ private func recordManagedCodexDeliveryAckFailure(_ error: Error) {
 /// `codex app-server --listen stdio://`. Approval waits run on their own serial
 /// queue, leaving both transport read loops free to forward unrelated traffic.
 final class ManagedCodexAppServerBridge: @unchecked Sendable {
+    private struct PendingApproval {
+        let requestID: ManagedCodexApprovalRequestIdentity
+        let threadID: String
+        let cancellation: ManagedCodexApprovalCancellation
+        var delivered = false
+    }
+
     private enum ApprovalAdmission {
         case admitted(UUID, ManagedCodexApprovalCancellation)
         case full
@@ -678,12 +810,13 @@ final class ManagedCodexAppServerBridge: @unchecked Sendable {
     private let maximumSeenApprovalRequestIDs: Int
     private let approvalWaitNanoseconds: UInt64
     private let stateLock = NSLock()
+    // Native resolution and downstream delivery have one ordering boundary.
+    // Never hold stateLock during I/O; stop must still cancel and close peers.
+    private let approvalDeliveryLock = NSLock()
     private var stopped = false
     private var managedInterceptionDisabled = false
     private var seenApprovalRequestIDs: Set<ManagedCodexApprovalRequestIdentity> = []
-    private var pendingApprovalCancellations: [
-        UUID: ManagedCodexApprovalCancellation
-    ] = [:]
+    private var pendingApprovals: [UUID: PendingApproval] = [:]
 
     init(
         connection: ManagedCodexWebSocketConnection,
@@ -759,17 +892,16 @@ final class ManagedCodexAppServerBridge: @unchecked Sendable {
             do {
                 try appServerReader.readLines { [self] message in
                     if let requestID = managedCodexApprovalEnvelopeIdentity(message) {
-                        let interceptable: Bool
+                        let threadID: String?
                         do {
-                            _ = try CodexAppServerApprovalAdapter.parse(message)
-                            interceptable = true
+                            threadID = try CodexAppServerApprovalAdapter.parse(message).threadID
                         } catch {
                             recordManagedCodexApprovalFallback(error)
-                            interceptable = false
+                            threadID = nil
                         }
                         switch admitApproval(
                             requestID: requestID,
-                            interceptable: interceptable
+                            threadID: threadID
                         ) {
                         case .admitted(let admissionID, let cancellation):
                             approvalQueue.async { [self] in
@@ -780,33 +912,13 @@ final class ManagedCodexAppServerBridge: @unchecked Sendable {
                                     context: connectionContext,
                                     cancellation: cancellation
                                 )
-                                guard !cancellation.isCancelled, !isStopped else {
-                                    return
-                                }
                                 do {
-                                    if cancellation.isExpired {
-                                        try connection.sendText(message)
-                                        return
-                                    }
-                                    switch routingResult.route {
-                                    case .appServer(let response):
-                                        try appServerWriter.write(response)
-                                    case .codex(let request):
-                                        try connection.sendText(request)
-                                    }
-                                    if let delivery = routingResult.delivery {
-                                        // Selection receipt and downstream delivery are
-                                        // separate facts. Acknowledge exactly once only
-                                        // after the intended peer accepted every byte.
-                                        do {
-                                            try approvalRouter.acknowledgeDelivery(delivery)
-                                        } catch {
-                                            // The downstream response cannot be rolled
-                                            // back. Do not retry or tear down a healthy
-                                            // Codex session; the coordinator retains the
-                                            // unresolved delivery state instead.
-                                            recordManagedCodexDeliveryAckFailure(error)
-                                        }
+                                    if let delivery = try deliverApproval(
+                                        admissionID,
+                                        originalMessage: message,
+                                        result: routingResult
+                                    ) {
+                                        acknowledgeApproval(delivery)
                                     }
                                 } catch {
                                     if !isStopped { errors.record(error) }
@@ -830,6 +942,7 @@ final class ManagedCodexAppServerBridge: @unchecked Sendable {
                             return
                         }
                     } else {
+                        resolveApproval(message)
                         try connection.sendText(message)
                         resumeConflictObserver.observeForwardedResponse(message)
                     }
@@ -852,7 +965,7 @@ final class ManagedCodexAppServerBridge: @unchecked Sendable {
             return
         }
         stopped = true
-        let cancellations = Array(pendingApprovalCancellations.values)
+        let cancellations = pendingApprovals.values.map(\.cancellation)
         stateLock.unlock()
         for cancellation in cancellations { cancellation.cancel() }
         connection.close()
@@ -868,7 +981,7 @@ final class ManagedCodexAppServerBridge: @unchecked Sendable {
 
     private func admitApproval(
         requestID: ManagedCodexApprovalRequestIdentity,
-        interceptable: Bool
+        threadID: String?
     ) -> ApprovalAdmission {
         stateLock.lock()
         defer { stateLock.unlock() }
@@ -886,8 +999,8 @@ final class ManagedCodexAppServerBridge: @unchecked Sendable {
             return .nativeOnly
         }
         seenApprovalRequestIDs.insert(requestID)
-        guard interceptable else { return .nativeOnly }
-        guard pendingApprovalCancellations.count < maximumPendingApprovals else {
+        guard let threadID else { return .nativeOnly }
+        guard pendingApprovals.count < maximumPendingApprovals else {
             return .full
         }
         let admissionID = UUID()
@@ -899,16 +1012,93 @@ final class ManagedCodexAppServerBridge: @unchecked Sendable {
         let cancellation = ManagedCodexApprovalCancellation(
             deadlineNanoseconds: deadline
         )
-        pendingApprovalCancellations[admissionID] = cancellation
+        pendingApprovals[admissionID] = PendingApproval(
+            requestID: requestID,
+            threadID: threadID,
+            cancellation: cancellation
+        )
         approvalGroup.enter()
         return .admitted(admissionID, cancellation)
     }
 
     private func releaseApproval(_ admissionID: UUID) {
         stateLock.lock()
-        let removed = pendingApprovalCancellations.removeValue(forKey: admissionID)
+        let removed = pendingApprovals.removeValue(forKey: admissionID)
         stateLock.unlock()
         if removed != nil { approvalGroup.leave() }
+    }
+
+    private func resolveApproval(_ message: Data) {
+        guard let object = try? StrictJSONTransport.object(
+            from: message,
+            limits: StrictJSONLimits(maximumBytes: 1_048_576, maximumDepth: 72)
+        ),
+              object["method"] as? String == "serverRequest/resolved",
+              object["id"] == nil, object["result"] == nil, object["error"] == nil,
+              object["jsonrpc"] == nil || object["jsonrpc"] as? String == "2.0",
+              let params = object["params"] as? [String: Any],
+              let requestID = ManagedCodexApprovalRequestIdentity(jsonValue: params["requestId"]),
+              let threadID = params["threadId"] as? String
+        else { return }
+
+        approvalDeliveryLock.lock()
+        defer { approvalDeliveryLock.unlock() }
+        stateLock.lock()
+        let cancellation = pendingApprovals.values.first {
+            !$0.delivered && $0.requestID == requestID
+                && $0.threadID.utf8.elementsEqual(threadID.utf8)
+        }?.cancellation
+        stateLock.unlock()
+        // Retain the admission until its queued closure exits. Resolution and
+        // stop may both cancel it, but only releaseApproval leaves the group.
+        cancellation?.cancel()
+    }
+
+    private func activeApprovalCancellation(
+        _ admissionID: UUID
+    ) -> ManagedCodexApprovalCancellation? {
+        stateLock.lock()
+        defer { stateLock.unlock() }
+        guard !stopped else { return nil }
+        return pendingApprovals[admissionID]?.cancellation
+    }
+
+    private func deliverApproval(
+        _ admissionID: UUID,
+        originalMessage: Data,
+        result: ManagedCodexApprovalRoutingResult
+    ) throws -> ManagedCodexApprovalDelivery? {
+        approvalDeliveryLock.lock()
+        defer { approvalDeliveryLock.unlock() }
+        guard let cancellation = activeApprovalCancellation(admissionID),
+              !cancellation.isCancelled else { return nil }
+        let delivery: ManagedCodexApprovalDelivery?
+        if cancellation.isExpired {
+            try connection.sendText(originalMessage)
+            delivery = nil
+        } else {
+            switch result.route {
+            case .appServer(let response): try appServerWriter.write(response)
+            case .codex(let request): try connection.sendText(request)
+            }
+            delivery = result.delivery
+        }
+        stateLock.lock()
+        pendingApprovals[admissionID]?.delivered = true
+        stateLock.unlock()
+        return delivery
+    }
+
+    private func acknowledgeApproval(_ delivery: ManagedCodexApprovalDelivery) {
+        // Successful delivery remains a fact even if native resolution follows
+        // immediately. Never hold the delivery lock during coordinator I/O.
+        do {
+            try approvalRouter.acknowledgeDelivery(delivery)
+        } catch {
+            // Written bytes cannot be rolled back. Never retry the delivery or
+            // tear down a healthy session because its acknowledgement failed.
+            recordManagedCodexDeliveryAckFailure(error)
+        }
     }
 }
 
@@ -1066,6 +1256,7 @@ private final class ManagedCodexAuxiliarySession: @unchecked Sendable {
 final class ManagedCodexAuxiliaryConnectionBroker: @unchecked Sendable {
     private let admission: ManagedCodexListenerAdmission
     private let executable: URL
+    private let appServerArguments: [String]
     private let environment: [String: String]
     private let coordinatorSocketPath: String
     private let brokerEpoch: String
@@ -1087,6 +1278,7 @@ final class ManagedCodexAuxiliaryConnectionBroker: @unchecked Sendable {
         environment: [String: String],
         coordinatorSocketPath: String,
         brokerEpoch: String,
+        appServerArguments: [String] = ["app-server", "--listen", "stdio://"],
         approvedExecutableProvider: ManagedCodexExecutableProvider? = nil,
         resumeConflictReporter: @escaping ManagedCodexResumeConflictObserver.Reporter = {
             _ in
@@ -1099,6 +1291,7 @@ final class ManagedCodexAuxiliaryConnectionBroker: @unchecked Sendable {
     ) {
         self.admission = admission
         self.executable = executable
+        self.appServerArguments = appServerArguments
         self.environment = environment
         self.coordinatorSocketPath = coordinatorSocketPath
         self.brokerEpoch = brokerEpoch
@@ -1258,9 +1451,12 @@ final class ManagedCodexAuxiliaryConnectionBroker: @unchecked Sendable {
         let appServerInput = Pipe()
         let appServerOutput = Pipe()
         let appServerDiagnostics = appServerDiagnosticsFactory()
+        // Pre-spawn environment/approval failures must also deliver EOF to the
+        // diagnostics reader so it releases its self-retaining handler.
+        defer { appServerDiagnostics.closeParentWriter() }
         let process = Process()
         process.executableURL = executable
-        process.arguments = ["app-server", "--listen", "stdio://"]
+        process.arguments = appServerArguments
         process.standardInput = appServerInput
         process.standardOutput = appServerOutput
         process.standardError = appServerDiagnostics.childPipe
@@ -1373,6 +1569,7 @@ struct ManagedCodexLauncher {
     func run(
         arguments rawArguments: [String],
         environment: [String: String] = ProcessInfo.processInfo.environment,
+        qualifiedVersion: String? = nil,
         approvedExecutableProvider: ManagedCodexExecutableProvider? = nil,
         appServerDiagnosticsFactory: @escaping
             ManagedCodexAppServerDiagnosticsFactory = {
@@ -1381,7 +1578,8 @@ struct ManagedCodexLauncher {
     ) throws -> Int32 {
         let arguments = try ManagedCodexLauncherArguments(
             rawArguments,
-            environment: environment
+            environment: environment,
+            qualifiedVersion: qualifiedVersion
         )
         let executable: URL
         if let approvedExecutableProvider {
@@ -1403,9 +1601,11 @@ struct ManagedCodexLauncher {
         let appServerInput = Pipe()
         let appServerOutput = Pipe()
         let appServerDiagnostics = appServerDiagnosticsFactory()
+        // Cover failures before Process.run(), as well as its existing cleanup.
+        defer { appServerDiagnostics.closeParentWriter() }
         let appServer = Process()
         appServer.executableURL = executable
-        appServer.arguments = ["app-server", "--listen", "stdio://"]
+        appServer.arguments = arguments.appServerArguments
         appServer.standardInput = appServerInput
         appServer.standardOutput = appServerOutput
         appServer.standardError = appServerDiagnostics.childPipe
@@ -1421,7 +1621,7 @@ struct ManagedCodexLauncher {
         tui.arguments = [
             "--remote", "ws://127.0.0.1:\(admission.port)",
             "--remote-auth-token-env", Self.authenticationEnvironmentName,
-        ] + arguments.tuiArguments
+        ] + arguments.remoteTUIArguments
         tui.standardInput = FileHandle.standardInput
         tui.standardOutput = FileHandle.standardOutput
         tui.standardError = FileHandle.standardError
@@ -1539,6 +1739,7 @@ struct ManagedCodexLauncher {
                 environment: environment,
                 coordinatorSocketPath: arguments.coordinatorSocketPath,
                 brokerEpoch: brokerEpoch,
+                appServerArguments: arguments.appServerArguments,
                 approvedExecutableProvider: approvedExecutableProvider,
                 resumeConflictReporter: resumeConflictReporter,
                 appServerDiagnosticsFactory: appServerDiagnosticsFactory

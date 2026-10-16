@@ -5,6 +5,187 @@ import Testing
 @Suite("Pet first-run lifecycle")
 @MainActor
 struct PetFirstRunTests {
+    @Test("Deferred documents save disabled preferences without creating legal acceptance")
+    func deferredPreferencesDefaultToDisabled() {
+        let fixture = FirstRunFixture(legalDocuments: .deferred)
+        fixture.advanceToTerms()
+        #expect(fixture.controller.legalDocumentsDeferred)
+        #expect(!fixture.controller.acceptsTerms)
+        #expect(!fixture.controller.canAcceptTerms)
+        #expect(fixture.controller.canSaveDataSharingPreferences)
+        #expect(!fixture.controller.usageStatisticsEnabled)
+        #expect(!fixture.controller.errorDiagnosticsEnabled)
+        #expect(!fixture.controller.acceptTerms())
+        #expect(fixture.controller.saveDataSharingPreferences())
+        #expect(fixture.controller.step == .setup)
+        #expect(fixture.controller.canFinishSetup)
+        #expect(fixture.store.value?.consentReceipt == nil)
+        #expect(fixture.store.value?.dataSharingPreferences == PetFirstRunDataSharingPreferences(
+            accountID: FirstRunFixture.accountID, savedAt: FirstRunFixture.date,
+            usageStatisticsEnabled: false, errorDiagnosticsEnabled: false
+        ))
+        var applied: [Bool] = []
+        #expect(fixture.controller.finishSetup(isReady: false, connectionDeferred: true) { applied = [$0, $1] })
+        #expect(applied == [false, false])
+        #expect(fixture.controller.isComplete)
+        #expect(fixture.store.value?.consentReceipt == nil)
+        let saves = fixture.store.saveCount
+        for documents in [PetFirstRunLegalDocuments?.none, .placeholder, .deferred, publishedDocuments] {
+            let resumed = PetFirstRunController(store: fixture.store, legalDocuments: documents)
+            #expect(resumed.isComplete)
+            resumed.synchronizeAccount(id: "different-user", email: nil)
+            resumed.back()
+            #expect(resumed.isComplete)
+        }
+        #expect(fixture.store.saveCount == saves)
+    }
+
+    @Test("Deferred opt-in activates only after saving and resumes only with verified matching identity")
+    func deferredSavedChoicesAndResume() {
+        let fixture = FirstRunFixture(legalDocuments: .deferred)
+        var consents: [Bool] = []
+        fixture.controller.onDiagnosticsConsentChanged = { consents.append($0) }
+        fixture.advanceToTerms()
+        fixture.controller.usageStatisticsEnabled = true
+        fixture.controller.errorDiagnosticsEnabled = true
+        fixture.store.failSave = true
+        #expect(!fixture.controller.saveDataSharingPreferences())
+        #expect(fixture.controller.step == .terms)
+        #expect(fixture.store.value?.dataSharingPreferences == nil)
+        #expect(fixture.store.value?.consentReceipt == nil)
+        #expect(!consents.contains(true))
+        #expect(!fixture.controller.canFinishSetup)
+        fixture.store.failSave = false
+        #expect(fixture.controller.saveDataSharingPreferences())
+        #expect(consents.last == true)
+        #expect(fixture.store.value?.dataSharingPreferences?.errorDiagnosticsEnabled == true)
+        let resumed = PetFirstRunController(store: fixture.store, legalDocuments: .deferred)
+        var resumedConsents: [Bool] = []
+        resumed.onDiagnosticsConsentChanged = { resumedConsents.append($0) }
+        #expect(resumed.step == .signIn)
+        #expect(resumed.accountID == nil)
+        #expect(!resumed.acceptsTerms)
+        #expect(resumed.usageStatisticsEnabled)
+        #expect(resumed.errorDiagnosticsEnabled)
+        #expect(!resumed.canFinishSetup)
+        #expect(!resumed.continueAfterSignIn())
+        #expect(!resumed.finishSetup(isReady: true))
+        #expect(resumedConsents.isEmpty)
+        resumed.synchronizeAccount(id: FirstRunFixture.accountID, email: nil)
+        #expect(resumedConsents.last == false)
+        #expect(resumed.continueAfterSignIn())
+        #expect(resumed.step == .setup)
+        #expect(resumedConsents.last == true)
+        // Unsaved edits must not replace the choices that authorized setup.
+        resumed.usageStatisticsEnabled = false
+        resumed.errorDiagnosticsEnabled = false
+        var applied: [Bool] = []
+        #expect(resumed.finishSetup(isReady: true) { applied = [$0, $1] })
+        #expect(applied == [true, true])
+        #expect(fixture.store.value?.consentReceipt == nil)
+    }
+
+    @Test("Account switches revoke deferred choices even if the revocation write fails", arguments: [false, true])
+    func deferredAccountSwitchRevokesSavedChoices(writeFails: Bool) {
+        let fixture = FirstRunFixture(legalDocuments: .deferred)
+        fixture.advanceToTerms()
+        fixture.controller.usageStatisticsEnabled = true
+        fixture.controller.errorDiagnosticsEnabled = true
+        #expect(fixture.controller.saveDataSharingPreferences())
+        var consents: [Bool] = []
+        fixture.controller.onDiagnosticsConsentChanged = { consents.append($0) }
+        fixture.store.failSave = writeFails
+        fixture.controller.synchronizeAccount(id: "different-user", email: nil)
+        #expect(consents.last == false)
+        #expect(fixture.controller.step == .signIn)
+        #expect(!fixture.controller.acceptsTerms)
+        #expect(!fixture.controller.usageStatisticsEnabled)
+        #expect(!fixture.controller.errorDiagnosticsEnabled)
+        #expect(!fixture.controller.canFinishSetup)
+        if !writeFails { #expect(fixture.store.value?.dataSharingPreferences == nil) }
+        fixture.controller.synchronizeAccount(id: FirstRunFixture.accountID, email: nil)
+        fixture.store.failSave = false
+        #expect(fixture.controller.continueAfterSignIn())
+        #expect(fixture.controller.step == .terms)
+        #expect(fixture.store.value?.consentReceipt == nil)
+        #expect(fixture.store.value?.dataSharingPreferences == nil)
+        #expect(!fixture.controller.finishSetup(isReady: true))
+        #expect(!consents.contains(true))
+    }
+
+    @Test("Deferred preferences cannot bypass published terms, placeholders, or invalid document configuration")
+    func deferredChoicesDoNotReplaceLegalAcceptance() {
+        let fixture = FirstRunFixture(legalDocuments: .deferred)
+        fixture.advanceToTerms()
+        fixture.controller.usageStatisticsEnabled = true
+        fixture.controller.errorDiagnosticsEnabled = true
+        #expect(fixture.controller.saveDataSharingPreferences())
+        for documents in [PetFirstRunLegalDocuments?.none, .placeholder, publishedDocuments] {
+            let store = FirstRunMemoryStore(value: fixture.store.value)
+            let resumed = PetFirstRunController(store: store, legalDocuments: documents)
+            var consents: [Bool] = []
+            resumed.onDiagnosticsConsentChanged = { consents.append($0) }
+            #expect(!resumed.acceptsTerms)
+            #expect(!resumed.usageStatisticsEnabled)
+            #expect(!resumed.errorDiagnosticsEnabled)
+            resumed.synchronizeAccount(id: FirstRunFixture.accountID, email: nil)
+            #expect(resumed.continueAfterSignIn())
+            #expect(resumed.step == .terms)
+            #expect(!resumed.canAcceptTerms)
+            #expect(!resumed.canSaveDataSharingPreferences)
+            #expect(!resumed.saveDataSharingPreferences())
+            #expect(!resumed.finishSetup(isReady: true))
+            #expect(!consents.contains(true))
+            #expect(store.value?.consentReceipt == nil)
+            #expect(store.value?.dataSharingPreferences == nil)
+            resumed.acceptsTerms = true
+            #expect(resumed.acceptTerms() == (documents != nil))
+            #expect(store.value?.dataSharingPreferences == nil)
+        }
+    }
+
+    @Test("A legal receipt cannot substitute for saved deferred preferences")
+    func receiptDoesNotSkipDeferredChoices() {
+        let fixture = FirstRunFixture()
+        fixture.advanceToSetup()
+        let resumed = PetFirstRunController(store: fixture.store, legalDocuments: .deferred)
+        #expect(!resumed.acceptsTerms)
+        resumed.synchronizeAccount(id: FirstRunFixture.accountID, email: nil)
+        #expect(resumed.continueAfterSignIn())
+        #expect(resumed.step == .terms)
+        #expect(fixture.store.value?.consentReceipt == nil)
+        #expect(fixture.store.value?.dataSharingPreferences == nil)
+        #expect(!resumed.canFinishSetup)
+    }
+
+    private var publishedDocuments: PetFirstRunLegalDocuments? {
+        PetFirstRunLegalDocuments.configured(info: [
+            "BlabeeTermsURL": "https://example.test/terms",
+            "BlabeePrivacyURL": "https://example.test/privacy",
+            "BlabeeLegalDocumentVersion": "published-v1",
+        ])
+    }
+
+    @Test("Persisted diagnostic consent takes effect before setup, and account changes revoke it")
+    func diagnosticsDuringSetup() {
+        let fixture = FirstRunFixture()
+        var consents: [Bool] = []
+        fixture.controller.onDiagnosticsConsentChanged = { consents.append($0) }
+        fixture.advanceToTerms()
+        fixture.controller.acceptsTerms = true
+        fixture.controller.errorDiagnosticsEnabled = true
+        #expect(!consents.contains(true))
+        fixture.store.failSave = true
+        #expect(!fixture.controller.acceptTerms())
+        #expect(!consents.contains(true))
+        fixture.store.failSave = false
+        #expect(fixture.controller.acceptTerms())
+        #expect(consents.last == true)
+        #expect(!fixture.controller.isComplete)
+        fixture.controller.synchronizeAccount(id: "other-account", email: nil)
+        #expect(consents.last == false)
+    }
+
     @Test("The three tutorial scenes resume until completion is explicitly saved")
     func tutorialResumes() {
         let store = FirstRunMemoryStore()
@@ -157,6 +338,10 @@ struct PetFirstRunTests {
     func changedDocumentsInvalidateIncompleteConsent() {
         let fixture = FirstRunFixture()
         fixture.advanceToSetup()
+        fixture.store.value?.dataSharingPreferences = PetFirstRunDataSharingPreferences(
+            accountID: FirstRunFixture.accountID, savedAt: FirstRunFixture.date,
+            usageStatisticsEnabled: true, errorDiagnosticsEnabled: true
+        )
         let documents = PetFirstRunLegalDocuments.configured(info: [
             "BlabeeTermsURL": "https://example.test/terms",
             "BlabeePrivacyURL": "https://example.test/privacy",
@@ -167,7 +352,10 @@ struct PetFirstRunTests {
         #expect(resumed.continueAfterSignIn())
         #expect(resumed.step == .terms)
         #expect(!resumed.acceptsTerms)
+        #expect(!resumed.usageStatisticsEnabled)
+        #expect(!resumed.errorDiagnosticsEnabled)
         #expect(fixture.store.value?.consentReceipt == nil)
+        #expect(fixture.store.value?.dataSharingPreferences == nil)
     }
 
     @Test("Placeholder acknowledgements retain their draft identity and timestamp")
@@ -290,6 +478,64 @@ struct PetFirstRunTests {
         fixture.controller.acceptsTerms = true
         #expect(!fixture.controller.acceptTerms())
         #expect(fixture.store.value?.consentReceipt == nil)
+    }
+
+    @Test("Document deferral requires an explicit Boolean and forbids every document key")
+    func deferredConfigurationValidation() throws {
+        let documents = try #require(PetFirstRunLegalDocuments.configured(info: ["BlabeeLegalDocumentsDeferred": true]))
+        #expect(documents == .deferred)
+        #expect(!documents.isPlaceholder)
+        #expect(documents.termsURL == nil)
+        #expect(documents.privacyURL == nil)
+        #expect(PetFirstRunLegalDocuments.configured(info: ["BlabeeLegalDocumentsDeferred": false]) == .placeholder)
+        #expect(PetFirstRunLegalDocuments.configured(info: ["BlabeeLegalDocumentsDeferred": NSNumber(value: true)]) == .deferred)
+        let invalidFlags: [Any] = ["true", "false", 1, 0, NSNumber(value: 1), NSNull()]
+        for flag in invalidFlags {
+            #expect(PetFirstRunLegalDocuments.configured(info: ["BlabeeLegalDocumentsDeferred": flag]) == nil)
+        }
+        for key in ["BlabeeTermsURL", "BlabeePrivacyURL", "BlabeeLegalDocumentVersion"] {
+            let values: [Any] = ["", "https://example.test/document", NSNull()]
+            for value in values {
+                #expect(PetFirstRunLegalDocuments.configured(info: [
+                    "BlabeeLegalDocumentsDeferred": true, key: value,
+                ]) == nil)
+            }
+        }
+        var published: [String: Any] = [
+            "BlabeeTermsURL": "https://example.test/terms",
+            "BlabeePrivacyURL": "https://example.test/privacy",
+            "BlabeeLegalDocumentVersion": "published-v1",
+            "BlabeeLegalDocumentsDeferred": false,
+        ]
+        #expect(PetFirstRunLegalDocuments.configured(info: published) == publishedDocuments)
+        published["BlabeeLegalDocumentsDeferred"] = true
+        #expect(PetFirstRunLegalDocuments.configured(info: published) == nil)
+        published["BlabeeLegalDocumentsDeferred"] = "false"
+        #expect(PetFirstRunLegalDocuments.configured(info: published) == nil)
+    }
+
+    @Test("Schema-v1 JSON without preferences retains its terms step, receipt, and completion")
+    func legacyJSONStillDecodes() throws {
+        for completion in ["", #", "completedAt": "2026-09-18T00:00:00Z""#] {
+            let json = """
+            {"schemaVersion":1,"step":"terms","tutorialIndex":2,"accountID":"verified-social-account",
+             "consentReceipt":{"accountID":"verified-social-account","documentVersion":"draft-onboarding-v1",
+               "isPlaceholder":true,"acceptedAt":"2026-09-18T00:00:00Z",
+               "usageStatisticsEnabled":false,"errorDiagnosticsEnabled":true},"setupDeferred":false\(completion)}
+            """
+            let decoder = JSONDecoder()
+            decoder.dateDecodingStrategy = .iso8601
+            let state = try decoder.decode(PetFirstRunState.self, from: Data(json.utf8))
+            #expect(state.schemaVersion == 1)
+            #expect(state.step == .terms)
+            #expect(state.dataSharingPreferences == nil)
+            #expect(state.consentReceipt?.isPlaceholder == true)
+            #expect(state.consentReceipt?.errorDiagnosticsEnabled == true)
+            let store = FirstRunMemoryStore(value: state)
+            let resumed = PetFirstRunController(store: store, legalDocuments: .deferred)
+            #expect(resumed.isComplete == !completion.isEmpty)
+            #expect(store.saveCount == 0)
+        }
     }
 
     @Test("Atomic file persistence survives replacement without retaining tokens or email")

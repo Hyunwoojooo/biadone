@@ -1,18 +1,16 @@
 import { execFile as execFileCallback } from "node:child_process";
 import { join } from "node:path";
 import { promisify } from "node:util";
-import { refreshClaudeRuntimeManifest, verifyClaudeRuntimeDirectory } from "./prepare-claude-runtime.mjs";
+import { refreshClaudeRuntimeManifest, requirePublicClaudeRuntime, verifyClaudeRuntimeDirectory } from "./prepare-claude-runtime.mjs";
 import { claudeNodeIdentifier, normalizeReleaseSigning, verifyDeveloperIDSignature,
   verifyEmbeddedSigningEntitlements } from "./release-signing.mjs";
 
 const execFile = promisify(execFileCallback);
 
-// Ad-hoc packaging validates isolated artifacts; real same-Team peer checks use
-// the explicitly requested internal Developer ID capability below.
+// Ad-hoc packaging is only for isolated validation, never a public fallback.
 export async function signClaudeRuntimeAdhoc(directory, { runner = execFile } = {}) {
   if (typeof runner !== "function") throw new Error("Claude Node signing requires a command runner");
-  const before = await verifyClaudeRuntimeDirectory(directory);
-  if (before.channel_mode !== "development-preview") throw new Error("Claude channel mode is not qualified for signing");
+  await verifyClaudeRuntimeDirectory(directory);
   const node = join(directory, "node", "bin", "node");
   const options = { timeout: 30_000, maxBuffer: 1024 * 1024, encoding: "utf8",
     env: { PATH: "/usr/bin:/bin:/usr/sbin:/sbin", LANG: "C", LC_ALL: "C" } };
@@ -23,12 +21,22 @@ export async function signClaudeRuntimeAdhoc(directory, { runner = execFile } = 
 }
 
 export async function signClaudeRuntimeInternal(directory, signing, { runner = execFile } = {}) {
+  return signClaudeRuntimeDeveloperID(directory, signing, { runner, internalPreview: true });
+}
+
+export async function signClaudeRuntimeRelease(directory, signing, { runner = execFile } = {}) {
+  return signClaudeRuntimeDeveloperID(directory, signing, { runner, internalPreview: false });
+}
+
+async function signClaudeRuntimeDeveloperID(directory, signing, { runner, internalPreview }) {
   if (typeof runner !== "function") throw new Error("Claude Node signing requires a command runner");
   const run = (command, args, options) => runner(command, args, { ...options, timeout: 30_000 });
   const normalized = normalizeReleaseSigning(signing);
-  if (normalized === null) throw new Error("internal Claude signing requires an explicit Developer ID identity and Team ID");
+  if (normalized === null) throw new Error("Claude signing requires an explicit Developer ID identity and Team ID");
   const before = await verifyClaudeRuntimeDirectory(directory);
-  if (before.channel_mode !== "development-preview") throw new Error("internal Claude signing requires a development preview runtime");
+  if (internalPreview) {
+    if (before.channel_mode !== "development-preview") throw new Error("internal Claude signing requires a development preview runtime");
+  } else requirePublicClaudeRuntime(before);
   const node = join(directory, "node", "bin", "node");
   const options = { timeout: 30_000, maxBuffer: 1024 * 1024, encoding: "utf8",
     env: { PATH: "/usr/bin:/bin:/usr/sbin:/sbin", LANG: "C", LC_ALL: "C" } };

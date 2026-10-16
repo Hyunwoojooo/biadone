@@ -19,9 +19,64 @@
 
 공식 근거: [공통 입력 필드](https://code.claude.com/docs/en/hooks#common-input-fields), [SessionStart](https://code.claude.com/docs/en/hooks#sessionstart-input), [Stop](https://code.claude.com/docs/en/hooks#stop-input), [StopFailure](https://code.claude.com/docs/en/hooks#stopfailure). compact에 prompt ID가 항상 온다고 가정하지 않는다.
 
+### 2026-09-23: 메인 에이전트와 원본 Hook 크기
+
+제품 v2 Hook은 `agent_id`가 있으면 값과 무관하게 하위 에이전트 입력으로 거부한다.
+`agent_type`만 있는 입력은 `claude --agent` 메인 세션에도 올 수 있으므로 이 필드만으로
+거부하지 않는다. 메인 세션의 실제 native ID·cwd 및 등록 권한 검증은 그대로 적용하며,
+`agent_type`을 권한이나 작업 내용으로 전달하지 않는다.
+
+원본 Hook JSON은 최대 **1MiB**, 읽기 기한은 기존 **2.5초**다. 프롬프트 본문의
+**128KiB UTF-8 제한**과 정규화 후 **SHA-256만 전달**하는 규칙은 유지한다.
+128KiB 본문도 JSON 이스케이프 시 최대 768KiB가 필요하므로 두 상한을 구분한다.
+이로써 JSON 부가 필드·이스케이프나 긴 `last_assistant_message` 때문에 기존 128KiB
+원본 한도를 넘던 prompt·Stop 관측을 받을 수 있다. assistant·오류 본문은 전달하지 않는다.
+
+원본 JSON의 중복 key·잘못된 UTF-8·1MiB 초과는 여전히 등록/전달 전에 거부한다.
+원본 상한 안에서 프롬프트 본문만 128KiB를 넘으면 기존 정책대로
+`ObservationUnavailable(invalid_prompt_text)`를 보내며 boundary를 만들지 않는다.
+임의 크기의 Hook을 모두 지원하거나 원본 수신 실패를 정상 Stop으로 간주하지 않는다.
+
+회귀는 `session-v2-lifecycle.test.mjs`, `auto-connect.test.mjs`,
+`session-v2-hook-input.test.mjs`에 있다. 격리 Node 검증 기록은
+`build/claude-tests/hook-compatibility-20260923/`다. 이번 수정은 Claude Node 소스 범위이며,
+Swift·공통 UI·readiness 5분 정책 변경이나 빌드·설치·실제 모델 수용 결과를 포함하지 않는다.
+
 ## 재생 방지와 저장 경계
 
 [ClaudeNativeReplayPort](../../../../bridges/claude/swift/adapter/ClaudeNativeReplayPort.swift)는 prompt·proposal·selection·Hook request의 소비를 scope별 metadata에 기록한다. 같은 현재 prompt의 동일 digest 재관측만 현재 상태에서 처리하고, 같은 ID의 다른 digest는 충돌로 처리해 미claim 카드와 readiness를 폐기한다. 과거 prompt/제안/선택 ID 재사용은 거부한다. 역할 자격·nonce·선택 참조·prompt 원문은 tombstone에 저장하지 않는다.
+
+### 2026-09-22: 추가 입력 뒤 연결 확인과 늦은 Stop
+
+설치된 Claude Code `2.1.278`은 실행 중 입력한 메시지를 `absorbed_mid_turn`으로
+기존 턴에 포함할 수 있다. 이 경로의 `UserPromptSubmit`은 새 메시지마다 고유한 ID를
+발급하지 않고 당시의 `prompt_id`를 사용할 수 있다. 공식 문서는 이 값을 현재 처리 중인
+프롬프트의 ID로 설명하며 메시지별 불변 ID로 보장하지 않는다.
+[공통 Hook 입력](https://code.claude.com/docs/en/hooks#common-input-fields).
+
+설치 build 64에서 최초 자동 probe 처리 중 명시적 연결 확인 프롬프트를 입력한 실제 기록은
+`UserPromptSubmit binding_mismatch → 새 check 성공 → Stop binding_mismatch →
+새 Channel 수신 → 정확한 nonce ACK의 unavailable` 순서였다. 현재 소스의 이 처리 경로는
+처음 충돌에서 작업 관측을 폐기하고, 뒤늦은 Stop에서 **그 뒤 새로 발급한 probe까지** 다시 폐기한다.
+이 기록은 도구 누락이나 nonce 전사 오류와 구별되며, 세션 권한의 장기 만료 증거가 아니다.
+
+제품 v2에서는 다음 조건을 모두 만족하는 불일치 Stop에 한해 대기 중인 새 probe를 보존한다.
+
+- 작업 관측이 이미 `new_prompt_required`이며 현재 prompt·boundary·Stop·미claim 전달이 없다.
+- 이전 ready 상태와 보류 중인 관측/전달 폐기가 없다.
+- 동일 bridge의 새 probe가 유효 기간 안에 있고 heartbeat가 살아 있으며, 아직 Channel Hook의
+  native prompt에 연결되지 않았다.
+
+Stop 응답은 여전히 `binding_mismatch`다. probe를 이미 poll했는지는 보존 조건이 아니며,
+ACK 자체의 전달 여부·bridge·probe ID·nonce·기한 검증은 유지한다. 기존 작업이 남은 Stop
+불일치, digest 충돌 자체, heartbeat 단절, 만료·회수·compact에는 이 예외를 적용하지 않는다.
+이미 claim한 작업의 결과 보고 권한은 기존 정책대로 유지한다.
+
+이 변경은 **연결 확인의 불필요한 폐기만** 수정한다. 실행 중 추가 입력의 작업 boundary를
+안전하게 연결하는 지원은 아직 남아 있다. ACK 성공이 폐기된 제안·선택 권한을 복구하지
+않으며, 작업에는 이후 실제 새 입력의 Hook과 새 boundary가 필요하다. Hook ID를 추측하거나
+불일치 Stop을 정상 완료로 처리하지 않는다. 새 회귀 테스트는 추가했지만 사용자 지시에 따라
+빌드·Swift 테스트 실행·설치 후 재검증은 하지 않았다.
 
 새 metadata 저장소는 **v2**다. HMAC 감사 기록의 prepared/finalized에 replay key를 포함하고 operation/replay lookup을 같은 SQLite 트랜잭션에서 저장한다. 매번 인증 연쇄를 순차 검증하면서 lookup의 최초 sequence와 전체 행 수를 대조한다. lookup 삭제·추가·변조로 오래된 ID를 다시 사용할 수 없다. 정상 중복은 `claude_metadata_replay`로 거부하며 이 이유만으로 scope를 격리하지 않는다.
 

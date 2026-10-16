@@ -41,7 +41,7 @@ private struct LegacyCleanupFixture: Sendable {
     }
 }
 
-@Test("Legacy shell inspection and confirmation are read only; cleanup preserves startup bytes and backs up exact wrapper")
+@Test("Legacy shell inspection and confirmation are read only; cleanup preserves startup bytes and backs up exact wrapper", .petLanguage(.korean))
 func legacyCodexShellCleanupExactV4() async throws {
     let fixture = try LegacyCleanupFixture()
     defer { fixture.remove() }
@@ -63,7 +63,7 @@ func legacyCodexShellCleanupExactV4() async throws {
     #expect(try fixture.backups().count == 1)
 }
 
-@Test("Legacy shell cleanup never creates directories on absent inspection")
+@Test("Legacy shell cleanup never creates directories on absent inspection", .petLanguage(.korean))
 func legacyCodexShellCleanupAbsent() async throws {
     let home = URL(fileURLWithPath: "/private/tmp", isDirectory: true).appendingPathComponent("blabee-missing-" + UUID().uuidString)
     let manager = LegacyCodexShellCleanupManager(homeURL: home)
@@ -72,7 +72,7 @@ func legacyCodexShellCleanupAbsent() async throws {
     #expect(!FileManager.default.fileExists(atPath: home.path))
 }
 
-@Test("Legacy shell cleanup refuses edited body, mismatched metadata, older generator and duplicated connections", arguments: ["body", "metadata", "v3", "unconditional", "duplicate", "startup-missing"])
+@Test("Legacy shell cleanup refuses edited body, mismatched metadata, older generator and duplicated connections", .petLanguage(.korean), arguments: ["body", "metadata", "v3", "unconditional", "duplicate", "startup-missing"])
 func legacyCodexShellCleanupOwnership(_ variation: String) async throws {
     let fixture = try LegacyCleanupFixture()
     defer { fixture.remove() }
@@ -98,7 +98,7 @@ func legacyCodexShellCleanupOwnership(_ variation: String) async throws {
     #expect(try fixture.backups().isEmpty)
 }
 
-@Test("Legacy shell cleanup resolves explicit private ZDOTDIR without changing HOME startup")
+@Test("Legacy shell cleanup resolves explicit private ZDOTDIR without changing HOME startup", .petLanguage(.korean))
 func legacyCodexShellCleanupZDOTDIR() async throws {
     let fixture = try LegacyCleanupFixture(customDotDirectory: true)
     defer { fixture.remove() }
@@ -112,7 +112,7 @@ func legacyCodexShellCleanupZDOTDIR() async throws {
     #expect(try Data(contentsOf: homeStartup) == homeBytes)
 }
 
-@Test("Legacy shell cleanup refuses uncertain ZDOTDIR and links or unsafe permissions", arguments: ["dynamic", "empty", "relative", "external", "symlink", "hardlink", "directory-mode", "public-backup-directory", "file-mode", "startup-symlink"])
+@Test("Legacy shell cleanup refuses uncertain ZDOTDIR and links or unsafe permissions", .petLanguage(.korean), arguments: ["dynamic", "empty", "relative", "external", "symlink", "hardlink", "directory-mode", "public-backup-directory", "file-mode", "startup-symlink"])
 func legacyCodexShellCleanupUnsafe(_ variation: String) async throws {
     let fixture = try LegacyCleanupFixture()
     defer { fixture.remove() }
@@ -139,7 +139,7 @@ func legacyCodexShellCleanupUnsafe(_ variation: String) async throws {
     #expect(try fixture.backups().isEmpty)
 }
 
-@Test("Legacy shell confirmation is bound to both wrapper and user startup snapshots", arguments: [true, false])
+@Test("Legacy shell confirmation is bound to both wrapper and user startup snapshots", .petLanguage(.korean), arguments: [true, false])
 func legacyCodexShellCleanupConfirmationDrift(_ editWrapper: Bool) async throws {
     let fixture = try LegacyCleanupFixture()
     defer { fixture.remove() }
@@ -152,7 +152,7 @@ func legacyCodexShellCleanupConfirmationDrift(_ editWrapper: Bool) async throws 
     #expect(try fixture.backups().isEmpty)
 }
 
-@Test("Legacy shell final rename race restores editor replacement without losing bytes")
+@Test("Legacy shell final rename race restores editor replacement without losing bytes", .petLanguage(.korean))
 func legacyCodexShellCleanupBeforeMoveRace() async throws {
     let fixture = try LegacyCleanupFixture()
     defer { fixture.remove() }
@@ -164,7 +164,7 @@ func legacyCodexShellCleanupBeforeMoveRace() async throws {
     #expect(try fixture.backups().isEmpty)
 }
 
-@Test("Legacy shell startup changes after move cause exclusive restoration without startup overwrite")
+@Test("Legacy shell startup changes after move cause exclusive restoration without startup overwrite", .petLanguage(.korean))
 func legacyCodexShellCleanupStartupRace() async throws {
     let fixture = try LegacyCleanupFixture()
     defer { fixture.remove() }
@@ -176,7 +176,7 @@ func legacyCodexShellCleanupStartupRace() async throws {
     #expect(try Data(contentsOf: fixture.startup) == replacement)
 }
 
-@Test("Legacy shell race preserves both backup and new wrapper when exclusive restoration conflicts")
+@Test("Legacy shell race preserves both backup and new wrapper when exclusive restoration conflicts", .petLanguage(.korean))
 func legacyCodexShellCleanupRecoveryConflict() async throws {
     let fixture = try LegacyCleanupFixture()
     defer { fixture.remove() }
@@ -189,7 +189,7 @@ func legacyCodexShellCleanupRecoveryConflict() async throws {
     #expect(try Data(contentsOf: URL(fileURLWithPath: #require(result.backupPath))) == fixture.original)
 }
 
-@Test("Legacy shell cleanup is serialized across managers and absent judgments do not recreate wrappers", arguments: Array(0..<64))
+@Test("Legacy shell cleanup is serialized across managers and absent judgments do not recreate wrappers", .petLanguage(.korean), arguments: Array(0..<64))
 func legacyCodexShellCleanupTwoManagers(_ iteration: Int) async throws {
     let fixture = try LegacyCleanupFixture()
     defer { fixture.remove() }
@@ -204,7 +204,7 @@ func legacyCodexShellCleanupTwoManagers(_ iteration: Int) async throws {
     #expect(try fixture.backups().count == 1)
 }
 
-@Test("Legacy shell busy lock returns a bounded error and does not mutate wrapper")
+@Test("Legacy shell busy lock returns a bounded error and does not mutate wrapper", .petLanguage(.korean))
 func legacyCodexShellCleanupBusyLock() async throws {
     let fixture = try LegacyCleanupFixture()
     defer { fixture.remove() }
@@ -220,7 +220,7 @@ func legacyCodexShellCleanupBusyLock() async throws {
     #expect(try Data(contentsOf: fixture.wrapper) == fixture.original)
 }
 
-@Test("Legacy shell existing lock open still rejects links, writable permissions and nonempty files", arguments: ["symlink", "hardlink", "mode", "data", "fifo"])
+@Test("Legacy shell existing lock open still rejects links, writable permissions and nonempty files", .petLanguage(.korean), arguments: ["symlink", "hardlink", "mode", "data", "fifo"])
 func legacyCodexShellCleanupUnsafeExistingLock(_ kind: String) async throws {
     let fixture = try LegacyCleanupFixture()
     defer { fixture.remove() }
@@ -246,7 +246,7 @@ func legacyCodexShellCleanupUnsafeExistingLock(_ kind: String) async throws {
     #expect(try fixture.backups().isEmpty)
 }
 
-@Test("Legacy shell directory rotation preserves backup and reports its actual location")
+@Test("Legacy shell directory rotation preserves backup and reports its actual location", .petLanguage(.korean))
 func legacyCodexShellCleanupDirectoryRotation() async throws {
     let fixture = try LegacyCleanupFixture()
     defer { fixture.remove() }
@@ -264,7 +264,7 @@ func legacyCodexShellCleanupDirectoryRotation() async throws {
     #expect(!FileManager.default.fileExists(atPath: fixture.wrapper.path))
 }
 
-@Test("Legacy shell final rename race restores unsafe replacements without following or reading them", arguments: ["symlink", "fifo", "hardlink"])
+@Test("Legacy shell final rename race restores unsafe replacements without following or reading them", .petLanguage(.korean), arguments: ["symlink", "fifo", "hardlink"])
 func legacyCodexShellCleanupUnsafeReplacementRace(_ kind: String) async throws {
     let fixture = try LegacyCleanupFixture()
     defer { fixture.remove() }
@@ -289,7 +289,7 @@ func legacyCodexShellCleanupUnsafeReplacementRace(_ kind: String) async throws {
     #expect(try fixture.backups().isEmpty)
 }
 
-@Test("Legacy shell reprepare invalidates an earlier confirmation without consuming the latest one")
+@Test("Legacy shell reprepare invalidates an earlier confirmation without consuming the latest one", .petLanguage(.korean))
 func legacyCodexShellCleanupStaleConfirmation() async throws {
     let fixture = try LegacyCleanupFixture()
     defer { fixture.remove() }

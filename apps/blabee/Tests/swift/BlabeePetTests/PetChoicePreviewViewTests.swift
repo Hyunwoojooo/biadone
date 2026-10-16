@@ -3,8 +3,10 @@ import SwiftUI
 import Testing
 @testable import BlabeeCoordinator
 
-@Suite("Pet choice preview view")
+@Suite("Pet choice preview view", .petLanguage(.korean))
 struct PetChoicePreviewViewTests {
+    init() throws { try PetTypographyTestResources.register() }
+
     @Test("Preview preferences render in compact light and dark panels", arguments: [
         PetChoicePreviewShortcutPreset.controlOption, .control,
     ])

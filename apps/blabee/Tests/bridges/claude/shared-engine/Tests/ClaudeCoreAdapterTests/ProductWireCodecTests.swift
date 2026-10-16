@@ -85,7 +85,15 @@ private struct ProductWireCodecTests {
             // and operation bindings still match the ordinary request fixture.
             let operation = try #require(entry.value["operation"] as? String)
             let provider = try #require(entry.value["provider"] as? String)
-            let requestValue = try fixture(entry.contract, "request", operation, provider: provider)
+            var requestValue = try fixture(entry.contract, "request", operation, provider: provider)
+            if operation == "hook", let waiter = (entry.value["result"] as? [String: Any])?["waiter"] as? [String: Any] {
+                var payload = try object(requestValue["payload"])
+                payload.removeValue(forKey: "source")
+                payload["event"] = "Stop"
+                payload["prompt_id"] = waiter["prompt_id"]
+                payload["background_task_ids"] = [String]()
+                requestValue["payload"] = payload
+            }
             let request = try codec.decodeRequest(json(requestValue))
             let response = try codec.decodeResponse(json(entry.value), matching: request, connection: connection(requestValue))
             #expect(response.kind == .response)
@@ -125,15 +133,15 @@ private struct ProductWireCodecTests {
         rejects(.correlationMismatch) { _ = try codec.decodeResponse(json(response), matching: owner, connection: context) }
         let differentOperation = try fixture("claude-owner.v1", "response", "end")
         rejects(.correlationMismatch) { _ = try codec.decodeResponse(json(differentOperation), matching: owner, connection: context) }
-        let differentContract = try fixture("claude-session.v2", "response", "bridge.open")
+        let differentContract = try fixture("claude-session.v3", "response", "bridge.open")
         rejects(.correlationMismatch) { _ = try codec.decodeResponse(json(differentContract), matching: owner, connection: context) }
         let claudeValue = try fixture("pet-provider.v1", "request", "snapshot")
         let claude = try codec.decodeRequest(json(claudeValue))
         let codexResponse = try fixture("pet-provider.v1", "response", "snapshot", provider: "codex")
         rejects(.correlationMismatch) { _ = try codec.decodeResponse(json(codexResponse), matching: claude, connection: connection(claudeValue)) }
-        let bridgeValue = try fixture("claude-session.v2", "request", "bridge.open")
+        let bridgeValue = try fixture("claude-session.v3", "request", "bridge.open")
         let bridge = try codec.decodeRequest(json(bridgeValue))
-        let hookResponse = try fixture("claude-session.v2", "response", "hook")
+        let hookResponse = try fixture("claude-session.v3", "response", "hook")
         rejects(.correlationMismatch) { _ = try codec.decodeResponse(json(hookResponse), matching: bridge, connection: connection(bridgeValue)) }
         rejects(.invalidEnvelope) { _ = try codec.decodeRequest(json(hookResponse)) }
     }
@@ -145,7 +153,7 @@ private struct ProductWireCodecTests {
             ("claude-owner.v1", "enroll", "claude"),
             ("claude-owner.v1", "enroll_observed", "claude"),
             ("claude-owner.v1", "renew", "claude"),
-            ("claude-session.v2", "bridge.poll", "claude"),
+            ("claude-session.v3", "bridge.poll", "claude"),
             ("pet-provider.v1", "snapshot", "claude"),
             ("pet-provider.v1", "snapshot", "codex"),
         ]
@@ -285,9 +293,9 @@ private struct ProductWireCodecTests {
         response["result"] = result
         rejects(.correlationMismatch) { _ = try codec.decodeResponse(json(response), matching: owner, connection: connection(ownerValue)) }
         for operation in ["selection.claim", "selection.complete"] {
-            let value = try fixture("claude-session.v2", "request", operation)
+            let value = try fixture("claude-session.v3", "request", operation)
             let request = try codec.decodeRequest(json(value))
-            var response = try fixture("claude-session.v2", "response", operation)
+            var response = try fixture("claude-session.v3", "response", operation)
             try nested(&response, "result") { $0["selection_id"] = uuid() }
             rejects(.correlationMismatch) { _ = try codec.decodeResponse(json(response), matching: request, connection: connection(value)) }
         }
@@ -323,6 +331,49 @@ private struct ProductWireCodecTests {
             result["selection"] = selection; response["result"] = result
             rejects(.correlationMismatch) { _ = try codec.decodeResponse(json(response), matching: request, connection: connection(value)) }
         }
+    }
+
+    @Test("Dismissal receipts bind every card and session field and cannot become selection or native approval")
+    func petDismissalCorrelation() throws {
+        let codec = Codec(credentialCorpus: RuntimeSecretCorpus())
+        var value = try fixture("pet-provider.v1", "request", "select")
+        var payload = try object(value["payload"])
+        payload.removeValue(forKey: "option_id"); payload.removeValue(forKey: "selection_id")
+        payload["interaction_id"] = "interaction-dismiss-fixture"
+        value["operation"] = "dismiss_interaction"; value["payload"] = payload
+        let request = try codec.decodeRequest(json(value))
+        var original = value
+        original["kind"] = "response"; original.removeValue(forKey: "payload")
+        original["ok"] = true; original["result"] = ["dismissal": payload, "dismissed": true]
+        _ = try codec.decodeResponse(json(original), matching: request, connection: connection(value))
+        for field in ["interaction_id", "packet_id", "revision"] {
+            var response = original
+            var result = try object(response["result"])
+            try nested(&result, "dismissal") { $0[field] = field == "revision" ? 2 : "different-card" }
+            response["result"] = result
+            rejects(.correlationMismatch) { _ = try codec.decodeResponse(json(response), matching: request, connection: connection(value)) }
+        }
+        for field in ["project_id", "session_id", "source_turn_id", "source_prompt_id", "episode_id",
+                      "episode_root_prompt_id", "episode_baseline_checkpoint_id", "decision_boundary_id", "boundary_sequence"] {
+            var response = original, result = try object(original["result"])
+            var dismissal = try object(result["dismissal"])
+            try nested(&dismissal, "binding") { $0[field] = field == "boundary_sequence" ? 2 : "different-session" }
+            result["dismissal"] = dismissal; response["result"] = result
+            rejects(.correlationMismatch) { _ = try codec.decodeResponse(json(response), matching: request, connection: connection(value)) }
+        }
+        for field in ["scope_id", "service_incarnation", "session_incarnation", "authority_epoch", "ui_generation"] {
+            var response = original
+            try nested(&response, "target") { $0[field] = field == "ui_generation" ? "2" : uuid() }
+            rejects(.correlationMismatch) { _ = try codec.decodeResponse(json(response), matching: request, connection: connection(value)) }
+        }
+        for extra in ["option_id", "selection_id", "permission_id"] {
+            var request = value
+            try nested(&request, "payload") { $0[extra] = "not-a-dismissal-field" }
+            rejects(.invalidEnvelope) { _ = try codec.decodeRequest(json(request)) }
+        }
+        var falseReceipt = original
+        try nested(&falseReceipt, "result") { $0["dismissed"] = false }
+        rejects(.invalidEnvelope) { _ = try codec.decodeResponse(json(falseReceipt), matching: request, connection: connection(value)) }
     }
 
     @Test("UInt64 string boundaries retain all bits and invalid numeric values reject")
@@ -378,15 +429,15 @@ private struct ProductWireCodecTests {
         #expect(!corpus.containsKnownSecret(in: Data("unregistered-public-text".utf8)))
     }
 
-    @Test("One-use references appear only in explicit poll and matching request shapes, never grants or acknowledgements")
+    @Test("Transient references appear only in MCP readiness and Hook delivery slots, never grants or acknowledgements")
     func oneUseReferences() throws {
         let corpus = RuntimeSecretCorpus()
         let codec = Codec(credentialCorpus: corpus)
         let cases = try fixtures().filter { $0.name.hasPrefix("poll/variant-") }
         #expect(cases.count == 2)
         for entry in cases { _ = try codec.inspectEnvelope(json(entry.value)) }
-        _ = try codec.decodeRequest(json(fixture("claude-session.v2", "request", "readiness.ack")))
-        _ = try codec.decodeRequest(json(fixture("claude-session.v2", "request", "selection.claim")))
+        _ = try codec.decodeRequest(json(fixture("claude-session.v3", "request", "readiness.ack")))
+        _ = try codec.decodeRequest(json(fixture("claude-session.v3", "request", "selection.claim")))
         // A capability supplied in the syntactically permitted nonce slot must
         // still be rejected. Field position never overrides the credential corpus.
         corpus.register(String(repeating: "a", count: 64))
@@ -396,7 +447,7 @@ private struct ProductWireCodecTests {
     @Test("Opaque DTOs remain explicitly unvalidated and Codex queue payloads preserve their existing fields")
     func opaqueBoundary() throws {
         let codec = Codec(credentialCorpus: RuntimeSecretCorpus())
-        let proposal = try codec.decodeRequest(json(fixture("claude-session.v2", "request", "proposal.emit")))
+        let proposal = try codec.decodeRequest(json(fixture("claude-session.v3", "request", "proposal.emit")))
         #expect(proposal.requiresInnerValidation)
         let requestValue = try fixture("pet-provider.v1", "request", "select", provider: "codex")
         let request = try codec.decodeRequest(json(requestValue))

@@ -5,8 +5,8 @@ import { compileContracts, formatAjvErrors } from '../../../Contracts/contract-h
 
 const contractRoot = new URL('../../../../Contracts/bridge/', import.meta.url);
 const fixturePath = new URL('../fixtures/product-wire/cases.json', import.meta.url);
-const families = ['claude-owner.v1', 'claude-session.v2', 'pet-provider.v1'];
-const allowedFiles = new Set([...families, 'common.v1', 'pet-directory.v1'].map(name => `${name}.json`));
+const families = ['claude-owner.v1', 'claude-session.v3', 'pet-provider.v1'];
+const allowedFiles = new Set([...families, 'claude-session.v2', 'common.v1', 'pet-directory.v1'].map(name => `${name}.json`));
 const files = (await readdir(contractRoot)).filter(name => name.endsWith('.json')).sort();
 assert(files.every(name => allowedFiles.has(name)), 'unexpected bridge contract file');
 for (const family of families) assert(files.includes(`${family}.json`), `missing ${family}`);

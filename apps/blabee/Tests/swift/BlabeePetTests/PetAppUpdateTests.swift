@@ -2,7 +2,7 @@ import Foundation
 import Testing
 @testable import BlabeeCoordinator
 
-@Suite("Pet app update versions and release checks")
+@Suite("Pet app update versions and release checks", .petLanguage(.korean))
 struct PetAppUpdateTests {
     @Test("Version and build ordering is numeric")
     func comparesVersionsNumerically() throws {

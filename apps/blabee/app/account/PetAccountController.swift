@@ -10,6 +10,14 @@ enum PetAccountPhase: Equatable {
     case unavailable
 }
 
+/// Issued only after getUser and durable session storage both succeed. This
+/// handoff deliberately cannot carry a refresh token to the product service.
+struct PetAccountVerifiedCredential: Sendable, Equatable {
+    let userID: UUID
+    let accessToken: String
+    let expiresAt: Date
+}
+
 /// Account identity lives independently of the Coordinator journal and paid
 /// entitlements. Every await is fenced so a late response cannot undo logout.
 @MainActor
@@ -26,6 +34,8 @@ final class PetAccountController: ObservableObject {
     @Published private(set) var message = ""
     var onSignInCompleted: (() -> Void)?
     var onPhaseChanged: ((PetAccountPhase) -> Void)?
+    var onVerifiedCredential: ((PetAccountVerifiedCredential) -> Void)?
+    var onCredentialInvalidated: (() -> Void)?
     weak var errorDiagnostics: PetErrorDiagnostics?
 
     private let service: any PetAccountServicing
@@ -100,6 +110,7 @@ final class PetAccountController: ObservableObject {
         let attempt = begin(.checking)
         do {
             guard var candidate = try session ?? store.load() else {
+                onCredentialInvalidated?()
                 phase = .signedOut
                 return
             }
@@ -116,6 +127,7 @@ final class PetAccountController: ObservableObject {
                 try await verify(candidate, attempt: attempt)
             } catch PetAccountAuthError.unauthorized where !didRefresh {
                 guard isCurrent(attempt) else { return }
+                onCredentialInvalidated?()
                 // A revoked/expired access token can still have a valid refresh
                 // token. Retry exactly once, never an unbounded refresh loop.
                 candidate = try await service.refresh(candidate)
@@ -166,13 +178,14 @@ final class PetAccountController: ObservableObject {
         guard case .authorizing = phase else { return }
         revision &+= 1
         browser.cancel()
+        onCredentialInvalidated?()
         // A code exchange may already have produced a stored session while its
         // getUser call is in flight. Clearing it is part of cancelling sign-in.
         do {
             try store.clear()
             session = nil
             phase = .signedOut
-            message = "로그인을 취소했습니다."
+            message = PetL10n.text("Sign-in cancelled.", korean: "로그인을 취소했습니다.")
         } catch {
             phase = .unavailable
             message = message(for: PetAccountAuthError.storageUnavailable)
@@ -182,25 +195,28 @@ final class PetAccountController: ObservableObject {
     func signOut() async {
         guard !stopped, phase != .signingOut else { return }
         let previous = session
+        // Lock locally and clear the service grant before awaiting sign-out or
+        // attempting Keychain deletion, which can itself fail.
+        onCredentialInvalidated?()
         let attempt = begin(.signingOut)
         browser.cancel()
         do {
             try store.clear()
         } catch {
             phase = .unavailable
-            message = "로그인 정보를 지우지 못했습니다. macOS 키체인 접근을 확인하고 다시 로그아웃해주세요."
+            message = PetL10n.text("Unable to clear sign-in information. Check macOS Keychain access and try signing out again.", korean: "로그인 정보를 지우지 못했습니다. macOS 키체인 접근을 확인하고 다시 로그아웃해주세요.")
             return
         }
         session = nil
         phase = .signedOut
-        message = "이 기기에서 로그아웃했습니다."
+        message = PetL10n.text("Signed out on this device.", korean: "이 기기에서 로그아웃했습니다.")
         // Local deletion does not depend on connectivity. Only revoke the
         // captured session; a later login belongs to a different session.
         if let previous {
             do { try await service.signOut(accessToken: previous.accessToken) }
             catch {
                 if isCurrent(attempt) {
-                    message = "이 기기에서 로그아웃했습니다. 서버의 세션 종료는 확인하지 못했습니다."
+                    message = PetL10n.text("Signed out on this device. Server session termination could not be confirmed.", korean: "이 기기에서 로그아웃했습니다. 서버의 세션 종료는 확인하지 못했습니다.")
                 }
             }
         }
@@ -214,6 +230,8 @@ final class PetAccountController: ObservableObject {
         browser.cancel()
         onSignInCompleted = nil
         onPhaseChanged = nil
+        onVerifiedCredential = nil
+        onCredentialInvalidated = nil
         errorDiagnostics = nil
     }
 
@@ -245,7 +263,9 @@ final class PetAccountController: ObservableObject {
             expiresAt: candidate.expiresAt, user: user
         )
         try persist(verified, expectedID: candidate.user.id)
+        guard let userID = UUID(uuidString: user.id) else { throw PetAccountAuthError.unauthorized }
         phase = .signedIn(user)
+        onVerifiedCredential?(.init(userID: userID, accessToken: verified.accessToken, expiresAt: verified.expiresAt))
         message = ""
         retryDelay = 30
         scheduleRefresh(after: max(1, candidate.expiresAt.timeIntervalSince(now()) - 60))
@@ -254,16 +274,18 @@ final class PetAccountController: ObservableObject {
     private func handle(_ error: any Error, attempt: UInt64) {
         guard isCurrent(attempt) else { return }
         if error as? PetAccountAuthError == .unauthorized {
+            onCredentialInvalidated?()
             do {
                 try store.clear()
                 session = nil
                 phase = .signedOut
-                message = "로그인이 만료되었습니다. 다시 로그인해주세요."
+                message = PetL10n.text("Your sign-in expired. Please sign in again.", korean: "로그인이 만료되었습니다. 다시 로그인해주세요.")
             } catch {
                 phase = .unavailable
                 message = message(for: PetAccountAuthError.storageUnavailable)
             }
         } else {
+            if error as? PetAccountAuthError == .storageUnavailable { onCredentialInvalidated?() }
             phase = .unavailable
             message = message(for: error)
             if session != nil, error as? PetAccountAuthError != .storageUnavailable {
@@ -304,13 +326,13 @@ final class PetAccountController: ObservableObject {
 
     private func message(for error: any Error) -> String {
         switch error as? PetAccountAuthError {
-        case .cancelled: "로그인이 취소되었거나 시간이 초과되었습니다. 다시 시도해주세요."
-        case .invalidCallback: "앱으로 돌아온 로그인 정보를 확인하지 못했습니다. 앱에서 다시 로그인해주세요."
-        case .unauthorized: "로그인이 만료되었습니다. 다시 로그인해주세요."
-        case .rateLimited: "로그인 요청이 많습니다. 잠시 후 다시 시도해주세요."
-        case .storageUnavailable: "로그인 정보를 저장하거나 읽지 못했습니다. macOS 키체인 접근을 확인하고 다시 시도해주세요."
-        case .providerUnavailable: "선택한 로그인을 사용할 수 없습니다. 잠시 후 다시 시도해주세요."
-        default: "계정에 연결하지 못했습니다. 인터넷 연결을 확인하고 다시 시도해주세요."
+        case .cancelled: PetL10n.text("Sign-in was cancelled or timed out. Please try again.", korean: "로그인이 취소되었거나 시간이 초과되었습니다. 다시 시도해주세요.")
+        case .invalidCallback: PetL10n.text("Unable to verify the sign-in information returned to the app. Start sign-in again from the app.", korean: "앱으로 돌아온 로그인 정보를 확인하지 못했습니다. 앱에서 다시 로그인해주세요.")
+        case .unauthorized: PetL10n.text("Your sign-in expired. Please sign in again.", korean: "로그인이 만료되었습니다. 다시 로그인해주세요.")
+        case .rateLimited: PetL10n.text("Too many sign-in requests. Try again shortly.", korean: "로그인 요청이 많습니다. 잠시 후 다시 시도해주세요.")
+        case .storageUnavailable: PetL10n.text("Unable to save or read sign-in information. Check macOS Keychain access and try again.", korean: "로그인 정보를 저장하거나 읽지 못했습니다. macOS 키체인 접근을 확인하고 다시 시도해주세요.")
+        case .providerUnavailable: PetL10n.text("The selected sign-in method is unavailable. Try again shortly.", korean: "선택한 로그인을 사용할 수 없습니다. 잠시 후 다시 시도해주세요.")
+        default: PetL10n.text("Unable to connect to your account. Check your internet connection and try again.", korean: "계정에 연결하지 못했습니다. 인터넷 연결을 확인하고 다시 시도해주세요.")
         }
     }
 }

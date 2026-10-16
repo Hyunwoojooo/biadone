@@ -43,7 +43,7 @@ private final class AppUpdateTestOnboardingAdapter: PetOnboardingAdapting {
     func disableProject(at path: String) throws { Issue.record("Update settings must not change projects") }
 }
 
-@Suite("Pet app update view model")
+@Suite("Pet app update view model", .petLanguage(.korean))
 struct PetAppUpdateViewModelTests {
     @Test("Opening settings is local and repeated menu actions request the update section")
     @MainActor

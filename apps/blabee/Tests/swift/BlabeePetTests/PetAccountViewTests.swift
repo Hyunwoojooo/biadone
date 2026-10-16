@@ -3,8 +3,10 @@ import SwiftUI
 import Testing
 @testable import BlabeeCoordinator
 
-@Suite("Pet account view")
+@Suite("Pet account view", .petLanguage(.korean))
 struct PetAccountViewTests {
+    init() throws { try PetTypographyTestResources.register() }
+
     @Test("Account states render at normal and narrow widths in both appearances")
     @MainActor
     func rendersAccountStates() throws {

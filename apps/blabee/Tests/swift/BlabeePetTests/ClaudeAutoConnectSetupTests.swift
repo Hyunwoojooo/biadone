@@ -33,9 +33,14 @@ private struct ClaudeShellFixture: Sendable {
         try FileManager.default.createSymbolicLink(at: claude, withDestinationURL: firstVersion)
     }
 
-    func manager(environment: [String: String] = [:], beforeStartupReplace: (@Sendable () throws -> Void)? = nil) -> ClaudeAutoConnectSetup {
+    func manager(environment: [String: String] = [:], requiresInstalledRuntime: Bool = false,
+                 loginShell: String? = "/bin/zsh",
+                 claudeCandidates: (@Sendable () -> [URL])? = nil,
+                 beforeStartupReplace: (@Sendable () throws -> Void)? = nil) -> ClaudeAutoConnectSetup {
         ClaudeAutoConnectSetup(homeURL: home, environment: environment, coordinatorExecutable: coordinator,
-                               claudeExecutable: claude, beforeStartupReplace: beforeStartupReplace)
+                               claudeExecutable: claude, requiresInstalledRuntime: requiresInstalledRuntime,
+                               loginShell: loginShell, claudeCandidates: claudeCandidates,
+                               beforeStartupReplace: beforeStartupReplace)
     }
     func remove() { try? FileManager.default.removeItem(at: home) }
     static func executable(_ path: URL, body: String) throws {
@@ -67,7 +72,7 @@ private func claudeShellFields(_ data: Data) -> [String] {
 }
 private func claudeShellQuote(_ value: String) -> String { "'" + value.replacingOccurrences(of: "'", with: "'\\''") + "'" }
 
-@Suite("Claude automatic shell setup")
+@Suite("Claude automatic shell setup", .petLanguage(.korean))
 struct ClaudeAutoConnectSetupTests {
     @Test("Inspect is read only; enable and disable preserve exact startup bytes", arguments: ["# no newline", "# with newline\n", ""])
     func reversibleStartup(_ source: String) async throws {
@@ -79,6 +84,11 @@ struct ClaudeAutoConnectSetupTests {
         let enabled = await manager.enable()
         #expect(enabled.isEnabled, "\(enabled.detail)")
         #expect(enabled.canDisable)
+        #expect(enabled.canLaunch)
+        #expect(enabled.shellName == "zsh")
+        #expect(enabled.automaticConnectionReady && enabled.savedExecutableAvailable && enabled.issue == nil)
+        #expect(enabled.detail.contains("설정이 저장되었습니다"))
+        #expect(enabled.detail.contains("연결 여부는 별도로 확인"))
         #expect(try FileManager.default.destinationOfSymbolicLink(atPath: fixture.claude.path) == fixture.firstVersion.path)
         let startup = try Data(contentsOf: fixture.startup)
         #expect(startup == Data((source + ClaudeAutoConnectSetup.managedBlock(binPath: fixture.shim.deletingLastPathComponent().path)).utf8))
@@ -87,6 +97,7 @@ struct ClaudeAutoConnectSetupTests {
         #expect(try fixture.backups().count == 1)
         let disabled = await manager.disable()
         #expect(!disabled.isEnabled && disabled.canEnable)
+        #expect(!disabled.automaticConnectionReady)
         #expect(try Data(contentsOf: fixture.startup) == Data(source.utf8))
         #expect(!FileManager.default.fileExists(atPath: fixture.shim.path))
         #expect(!(await manager.disable()).isEnabled)
@@ -238,7 +249,10 @@ struct ClaudeAutoConnectSetupTests {
         let bytes = try Data(contentsOf: fixture.startup)
         let result = await fixture.manager(environment: environment).enable()
         #expect(!result.isEnabled && !result.canEnable && !result.canDisable)
-        #expect(result.detail == ClaudeAutoConnectSetup.manualReviewDetail)
+        #expect(result.canLaunch)
+        #expect(!result.automaticConnectionReady && result.issue == .manualReview)
+        #expect(result.detail.hasPrefix(ClaudeAutoConnectSetup.manualReviewDetail))
+        #expect(result.detail.contains("새 Claude 세션을 열 수 있습니다"))
         #expect(try Data(contentsOf: fixture.startup) == bytes)
     }
 
@@ -265,7 +279,10 @@ struct ClaudeAutoConnectSetupTests {
         default: try FileManager.default.linkItem(at: fixture.shim, to: fixture.directory.appendingPathComponent("shim-link"))
         }
         let startup = try Data(contentsOf: fixture.startup), shim = try Data(contentsOf: fixture.shim)
-        #expect((await manager.disable()).detail == ClaudeAutoConnectSetup.manualReviewDetail)
+        #expect((await manager.disable()).detail.hasPrefix(ClaudeAutoConnectSetup.manualReviewDetail))
+        let otherShell = fixture.manager(environment: ["SHELL": "/bin/bash"])
+        #expect(!(await otherShell.inspect()).canDisable)
+        #expect((await otherShell.disable()).detail.hasPrefix(ClaudeAutoConnectSetup.manualReviewDetail))
         #expect(try Data(contentsOf: fixture.startup) == startup)
         #expect(try Data(contentsOf: fixture.shim) == shim)
     }
@@ -276,7 +293,7 @@ struct ClaudeAutoConnectSetupTests {
         defer { fixture.remove() }
         let updated = Data("# concurrently saved user settings\n".utf8)
         let manager = fixture.manager(beforeStartupReplace: { try updated.write(to: fixture.startup, options: .atomic) })
-        #expect((await manager.enable()).detail == ClaudeAutoConnectSetup.manualReviewDetail)
+        #expect((await manager.enable()).detail.hasPrefix(ClaudeAutoConnectSetup.manualReviewDetail))
         #expect(try Data(contentsOf: fixture.startup) == updated)
         #expect(!FileManager.default.fileExists(atPath: fixture.shim.path))
         #expect((await fixture.manager().inspect()).canEnable)
@@ -295,5 +312,159 @@ struct ClaudeAutoConnectSetupTests {
         #expect(try fixture.backups().count == 1)
         #expect((await first.disable()).canEnable)
         #expect(try Data(contentsOf: fixture.startup) == fixture.original)
+    }
+
+    @Test("Other and unknown shells keep startup untouched while allowing direct launch", arguments: [
+        "/bin/bash", "/opt/homebrew/bin/fish", "zsh", "", "/bin/zsh\n",
+    ])
+    func unsupportedShellCanLaunch(_ shell: String) async throws {
+        let fixture = try ClaudeShellFixture()
+        defer { fixture.remove() }
+        let manager = fixture.manager(environment: ["SHELL": shell])
+        for result in [await manager.inspect(), await manager.enable(), await manager.disable()] {
+            #expect(!result.isEnabled && !result.canEnable && !result.canDisable)
+            #expect(result.canLaunch)
+            #expect(!result.automaticConnectionReady && result.issue == .unsupportedShell)
+            #expect(result.detail.contains("새 Claude 세션을 열 수 있습니다"))
+        }
+        #expect(try Data(contentsOf: fixture.startup) == fixture.original)
+        #expect(!FileManager.default.fileExists(atPath: fixture.directory.path))
+    }
+
+    @Test("Changing the account shell preserves exact-owned setup and explicit cleanup", arguments: ["/bin/bash", ""])
+    func changedShellPreservesCleanup(_ shell: String) async throws {
+        let fixture = try ClaudeShellFixture()
+        defer { fixture.remove() }
+        #expect((await fixture.manager().enable()).isEnabled)
+        let startup = try Data(contentsOf: fixture.startup), shim = try Data(contentsOf: fixture.shim)
+        let manager = fixture.manager(environment: ["SHELL": shell])
+        for inspection in [await manager.inspect(), await manager.enable()] {
+            #expect(inspection.isEnabled && inspection.canDisable && !inspection.canEnable)
+            #expect(inspection.canLaunch)
+            #expect(!inspection.automaticConnectionReady && inspection.issue == .unsupportedShell)
+            #expect(inspection.detail.contains("저장된 설정은 zsh용"))
+        }
+        #expect(try Data(contentsOf: fixture.startup) == startup)
+        #expect(try Data(contentsOf: fixture.shim) == shim)
+        let disabled = await manager.disable()
+        #expect(!disabled.isEnabled && !disabled.canDisable && !disabled.canEnable && disabled.canLaunch)
+        #expect(try Data(contentsOf: fixture.startup) == fixture.original)
+        #expect(!FileManager.default.fileExists(atPath: fixture.shim.path))
+    }
+
+    @Test("Missing GUI shell uses an injected account shell without reading the real account")
+    func accountShellFallback() async throws {
+        let fixture = try ClaudeShellFixture()
+        defer { fixture.remove() }
+        let supported = await fixture.manager(loginShell: "/bin/zsh").inspect()
+        #expect(supported.canEnable && supported.canLaunch && supported.shellName == "zsh")
+        let other = await fixture.manager(loginShell: "/bin/bash").inspect()
+        #expect(!other.canEnable && other.canLaunch && other.shellName == "bash")
+        let unknown = await fixture.manager(loginShell: nil).inspect()
+        #expect(!unknown.canEnable && unknown.canLaunch && unknown.shellName == "알 수 없는 셸")
+        let explicit = await fixture.manager(environment: ["SHELL": "/bin/bash"], loginShell: "/bin/zsh").inspect()
+        #expect(!explicit.canEnable && explicit.shellName == "bash")
+        #expect(!FileManager.default.fileExists(atPath: fixture.directory.path))
+    }
+
+    @Test("An unavailable installed runtime is rejected before saving shell configuration")
+    func unavailableInstalledRuntime() async throws {
+        let fixture = try ClaudeShellFixture()
+        defer { fixture.remove() }
+        let manager = fixture.manager(requiresInstalledRuntime: true)
+        let inspection = await manager.inspect()
+        #expect(!inspection.isEnabled && !inspection.canEnable && !inspection.canLaunch)
+        #expect(!inspection.automaticConnectionReady && inspection.issue == .installedRuntimeUnavailable)
+        let result = await manager.enable()
+        #expect(!result.isEnabled && !result.canEnable && !result.canLaunch)
+        #expect(try Data(contentsOf: fixture.startup) == fixture.original)
+        #expect(!FileManager.default.fileExists(atPath: fixture.directory.path))
+    }
+
+    @Test("Saved setup does not hide an unavailable runtime or executable", arguments: ["runtime", "coordinator", "claude"])
+    func savedSetupRevalidatesLaunch(_ missing: String) async throws {
+        let fixture = try ClaudeShellFixture()
+        defer { fixture.remove() }
+        #expect((await fixture.manager().enable()).isEnabled)
+        let startup = try Data(contentsOf: fixture.startup)
+        if missing == "coordinator" { try FileManager.default.removeItem(at: fixture.coordinator) }
+        if missing == "claude" { try FileManager.default.removeItem(at: fixture.firstVersion) }
+        let manager = fixture.manager(requiresInstalledRuntime: missing == "runtime")
+        let result = await manager.inspect()
+        #expect(result.isEnabled && result.canDisable && !result.canEnable && !result.canLaunch)
+        #expect(!result.automaticConnectionReady)
+        #expect(result.issue == (missing == "runtime" ? .installedRuntimeUnavailable : .executableUnavailable))
+        #expect(try Data(contentsOf: fixture.startup) == startup)
+        let disabled = await manager.disable()
+        #expect(!disabled.isEnabled && !disabled.canEnable && !disabled.canLaunch)
+        #expect(try Data(contentsOf: fixture.startup) == fixture.original)
+    }
+
+    @Test("A newly discovered CLI can launch even when the saved shim points at an old missing CLI")
+    func savedExecutableDiffersFromDiscoveredCLI() async throws {
+        let fixture = try ClaudeShellFixture()
+        defer { fixture.remove() }
+        #expect((await fixture.manager().enable()).isEnabled)
+        let startup = try Data(contentsOf: fixture.startup), shim = try Data(contentsOf: fixture.shim)
+        try FileManager.default.removeItem(at: fixture.firstVersion)
+        let newClaude = fixture.home.appendingPathComponent("new-claude")
+        try ClaudeShellFixture.executable(newClaude, body: "exit 0\n")
+        let manager = ClaudeAutoConnectSetup(homeURL: fixture.home, coordinatorExecutable: fixture.coordinator,
+            claudeExecutable: newClaude)
+        let result = await manager.inspect()
+        #expect(result.isEnabled && result.canDisable && result.canLaunch)
+        #expect(!result.savedExecutableAvailable && !result.automaticConnectionReady)
+        #expect(result.issue == .savedExecutableUnavailable)
+        #expect(result.detail.contains("이전에 설정한 Claude 실행 파일"))
+        #expect(!(await manager.enable()).automaticConnectionReady)
+        #expect(try Data(contentsOf: fixture.startup) == startup)
+        #expect(try Data(contentsOf: fixture.shim) == shim)
+    }
+
+    @Test("The same setup actor discovers a newly installed CLI and preserves its public symlink", arguments: [true, false])
+    func refreshAfterInstallation(_ inspectBeforeEnable: Bool) async throws {
+        let fixture = try ClaudeShellFixture()
+        defer { fixture.remove() }
+        try FileManager.default.removeItem(at: fixture.firstVersion)
+        let newPublicPath = fixture.home.appendingPathComponent("other-bin/claude")
+        let newTarget = fixture.home.appendingPathComponent("releases/new-claude")
+        let manager = fixture.manager(claudeCandidates: { [fixture.claude, newPublicPath] })
+        let missing = await manager.inspect()
+        #expect(!missing.canLaunch && !missing.canEnable)
+        #expect(!missing.automaticConnectionReady && missing.issue == .executableUnavailable)
+        #expect(!FileManager.default.fileExists(atPath: fixture.directory.path))
+        try FileManager.default.createDirectory(at: newPublicPath.deletingLastPathComponent(),
+            withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        try ClaudeShellFixture.executable(newTarget, body: "exit 0\n")
+        try FileManager.default.createSymbolicLink(at: newPublicPath, withDestinationURL: newTarget)
+        if inspectBeforeEnable {
+            let refreshed = await manager.inspect()
+            #expect(refreshed.canLaunch && refreshed.canEnable && !refreshed.isEnabled)
+            #expect(!FileManager.default.fileExists(atPath: fixture.directory.path))
+        }
+        let enabled = await manager.enable()
+        #expect(enabled.isEnabled && enabled.canLaunch)
+        #expect(enabled.automaticConnectionReady && enabled.issue == nil)
+        #expect(try Data(contentsOf: fixture.shim) == ClaudeAutoConnectSetup.shimBytes(
+            coordinator: fixture.coordinator.path, claude: newPublicPath.path,
+            startup: fixture.startup.path, originallyMissing: false))
+        #expect(try FileManager.default.destinationOfSymbolicLink(atPath: newPublicPath.path) == newTarget.path)
+        #expect((await manager.disable()).canEnable)
+        #expect(try Data(contentsOf: fixture.startup) == fixture.original)
+    }
+
+    @Test("A cancelled caller cannot create automatic shell setup when its actor call starts")
+    func cancelledBeforeEnable() async throws {
+        let fixture = try ClaudeShellFixture()
+        defer { fixture.remove() }
+        let manager = fixture.manager()
+        let task = Task {
+            withUnsafeCurrentTask { $0?.cancel() }
+            return await manager.enable()
+        }
+        let result = await task.value
+        #expect(!result.isEnabled && result.canEnable && !result.automaticConnectionReady)
+        #expect(try Data(contentsOf: fixture.startup) == fixture.original)
+        #expect(!FileManager.default.fileExists(atPath: fixture.directory.path))
     }
 }

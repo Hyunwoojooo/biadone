@@ -40,6 +40,7 @@ enum ClaudeRuntimePayload {
         "auto-connect-client.mjs", "auto-connect-hook.mjs", "auto-connect-mcp.mjs",
         "session-v2-client.mjs", "session-v2-context.mjs", "session-v2-hook.mjs", "session-v2-mcp.mjs",
         "session-v2-tools.mjs", "session-v2-lifecycle.mjs", "session-v2-channel-poller.mjs",
+        "session-v2-waiter.mjs",
         "product-context.mjs", "product-tools.mjs", "native-session-client.mjs", "product-core-client.mjs",
     ]
     static let packageNames: Set<String> = [
@@ -278,16 +279,15 @@ enum ClaudeRuntimePayload {
         let object = try StrictJSONTransport.object(from: data, limits: .init(maximumBytes: maximumManifestBytes, maximumDepth: 8))
         guard try StrictJSONTransport.data(forJSONObject: object) + Data([10]) == data else { throw invalid() }
         let keys: Set<String> = ["schema_version", "bridge_version", "node_version", "node_arch", "mcp_sdk_version",
-            "mcp_protocol_negotiation", "channel_mode", "channel_source", "channel_selector", "contract_versions", "files", "payload_digest"]
+            "mcp_protocol_negotiation", "delivery_mode", "contract_versions", "files", "payload_digest"]
         guard Set(object.keys) == keys,
-              object["schema_version"] as? String == "blabee.claude-runtime.v1",
+              object["schema_version"] as? String == "blabee.claude-runtime.v2",
               object["bridge_version"] as? String == "0.1.0", object["node_version"] as? String == supportedNodeVersion,
               let architecture = object["node_arch"] as? String, ["arm64", "x64"].contains(architecture), architecture == expectedArchitecture,
               object["mcp_sdk_version"] as? String == "1.30.0", object["mcp_protocol_negotiation"] as? String == "legacy",
-              object["channel_mode"] as? String == "development-preview", object["channel_source"] as? String == "blabee-claude",
-              object["channel_selector"] as? String == "server:blabee-claude",
+              object["delivery_mode"] as? String == "mcp-hook-v1",
               let contracts = object["contract_versions"] as? [String: String],
-              contracts == ["owner": "blabee.claude-owner.v1", "session": "blabee.claude-session.v2", "pet": "blabee.pet-provider.v1"],
+              contracts == ["owner": "blabee.claude-owner.v1", "session": "blabee.claude-session.v3", "pet": "blabee.pet-provider.v1"],
               let rawFiles = object["files"] as? [[String: Any]], !rawFiles.isEmpty, rawFiles.count <= maximumFileCount,
               let digest = object["payload_digest"] as? String, validDigest(digest) else { throw invalid() }
         var files: [FileEntry] = [], total: Int64 = 0, previous: String?

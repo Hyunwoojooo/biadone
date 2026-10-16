@@ -25,7 +25,7 @@ private func petPermissionWaitSnapshotObject(
     return object
 }
 
-@Test("BlabeePet accepts optional approval time independently of native child binding",
+@Test("BlabeePet accepts optional approval time independently of native child binding", .petLanguage(.korean),
       arguments: [false, true])
 func blabeePetPermissionWaitOptionalParsing(nativeSubagent: Bool) throws {
     let oldObject = try petPermissionWaitSnapshotObject(nativeSubagent: nativeSubagent)
@@ -47,7 +47,7 @@ func blabeePetPermissionWaitOptionalParsing(nativeSubagent: Bool) throws {
     }
 }
 
-@Test("BlabeePet rejects malformed approval time and keeps exact optional keys",
+@Test("BlabeePet rejects malformed approval time and keeps exact optional keys", .petLanguage(.korean),
       arguments: [false, true])
 func blabeePetPermissionWaitRejectsInvalidValues(nativeSubagent: Bool) throws {
     let invalidValues: [Any] = [true, false, -1, 300_001, 1.5, "1000", NSNull(), [], [:]]
@@ -74,7 +74,7 @@ func blabeePetPermissionWaitRejectsInvalidValues(nativeSubagent: Bool) throws {
     }
 }
 
-@Test("BlabeePet approval time rounds up to a compact remaining duration",
+@Test("BlabeePet approval time rounds up to a compact remaining duration", .petLanguage(.korean),
       arguments: [300_000, 299_000, 1_000, 1, 0])
 func blabeePetPermissionWaitMessageBoundaries(remaining: Int) throws {
     let object = try petPermissionWaitSnapshotObject(remaining: remaining)
@@ -90,7 +90,7 @@ func blabeePetPermissionWaitMessageBoundaries(remaining: Int) throws {
     #expect(request.approvalWaitMessage == "남은 시간 \(duration) · 시간이 지나면 Codex에서 직접 선택")
 }
 
-@Test("BlabeePet hides approval time after a selection is awaiting delivery",
+@Test("BlabeePet hides approval time after a selection is awaiting delivery", .petLanguage(.korean),
       arguments: [false, true])
 func blabeePetPermissionWaitHidesDuringDelivery(nativeSubagent: Bool) throws {
     let object = try petPermissionWaitSnapshotObject(
@@ -102,7 +102,7 @@ func blabeePetPermissionWaitHidesDuringDelivery(nativeSubagent: Bool) throws {
     #expect(request.approvalWaitMessage == nil)
 }
 
-@Test("BlabeePet updates approval time without invalidating the displayed selection")
+@Test("BlabeePet updates approval time without invalidating the displayed selection", .petLanguage(.korean))
 @MainActor
 func blabeePetPermissionWaitRefreshPreservesSelection() async throws {
     let before = try PetSnapshot.parse(petTestData(petPermissionWaitSnapshotObject(remaining: 300_000)))

@@ -1,10 +1,92 @@
 # CP-08 실제 연결 수용
 
+## 현재 제품 검사 — 일반 MCP·Stop Hook
+
+2026-10-03 소스 기준. [PUBLIC_MCP_HOOK](PUBLIC_MCP_HOOK.md)의 제품 경로는
+`blabee.claude-session.v3`이며 개발 Channels를 사용하지 않는다. 설치 앱이 이 경로를
+포함하는지는 별도로 확인한다. 아래 과거 후보의 Channel 대기 프롬프트와 섞어 사용하지 않는다.
+테스트·빌드·설치·실제 사용자 클릭의 결과를 각각 기록한다.
+
+### 연결 확인 프롬프트
+
+```text
+Blabee 연결만 확인해 줘.
+현재 세션에 check_connection_v1과 ack_readiness_probe_v1이 있는지 확인하고,
+없으면 누락된 이름을 보고한 뒤 중단해 줘.
+check_connection_v1을 한 번 호출하고, 같은 서버의 성공 응답에 있는
+probe_id와 nonce를 ack_readiness_probe_v1에 그대로 한 번 전달해 줘.
+nonce가 없으면 다른 버전일 수 있으니 응답 필드 이름만 보고하고 중단해 줘.
+이전 값을 사용하거나 추측하지 마. Channel 메시지를 기다리지 마.
+result.acknowledged가 true일 때만 연결 확인 완료라고 보고해 줘.
+오류가 있으면 코드만 보고하고 자동 재시도하지 마.
+nonce·인증정보 노출, 파일·설정 변경, 셸 명령, 제안 생성은 하지 마.
+```
+
+### 선택·실행·완료 프롬프트
+
+같은 Claude 대화에서 연결 확인 후 입력한다. 카드 표시와 클릭은 사용자가 직접 확인한다.
+
+```text
+Blabee A/B 선택 테스트를 진행해 줘.
+check_connection_v1, ack_readiness_probe_v1, emit_decision_v1,
+claim_selection_v1, complete_selection_v1과 현재 Hook boundary_id를 확인해 줘.
+없으면 중단하고 누락 항목만 보고해 줘.
+새 check_connection_v1 응답의 probe_id와 nonce로 ACK를 한 번 하고,
+result.acknowledged가 true일 때만 emit_decision_v1을 한 번 호출해 줘.
+Channel을 기다리거나 이전 참조를 재사용하지 마.
+
+A: 현재 작업 폴더의 절대 경로 확인.
+B: 현재 작업 폴더의 최상위 파일·폴더 이름만 조회. 파일 내용은 읽지 않기.
+
+실제 스키마의 필수 필드와 각 선택의 task, constraints, done_when을 모두 작성해 줘.
+outcome은 partial, 요약은 “Blabee A/B 선택 테스트 · 선택 전 작업 미실행”으로 해 줘.
+저장 후 packet_id와 revision을 보고하고 응답을 마쳐 사용자 선택을 기다려 줘.
+저장 성공만으로 화면 표시를 단정하지 마. 선택 전 셸 명령이나 A/B 실행은 하지 마.
+
+같은 세션의 Blabee Stop Hook이 선택 참조를 알리면 그 참조로 claim_selection_v1을
+한 번 호출해 줘. 성공 응답의 action.task, constraints, done_when을 확인하고
+이번 A/B 범위의 선택된 작업 하나만 읽기 전용으로 실행해 줘.
+실제 결과를 원래 claim의 selection_id로 complete_selection_v1에 한 번 보고해 줘.
+성공한 실행만 completed, 실패는 failed로 기록하고 실제 결과와 recorded 값을 보고해 줘.
+오류·불명확한 결과는 자동 재시도하지 말고 코드와 실패 단계를 보고해 줘.
+파일·설정 변경, 추가 제안, nonce·인증정보·delivery_token 노출은 하지 마.
+```
+
+합격 증거는 새 MCP ACK, 제안 저장, 실제 카드 표시, 사용자 클릭, Stop Hook 알림,
+성공한 claim, 선택된 작업의 실제 결과, `recorded:true`를 구분해서 남긴다.
+대기 중 추가 사용자 입력은 기존 선택을 무효화할 수 있으므로 테스트 중간에 보내지 않는다.
+
+## 2026-09-21~22 개발 Channels 후보 기록
+
+이하의 Channel 관련 안내와 프롬프트는 당시 후보의 검증 기록이다.
+현재 일반 MCP·Stop Hook 제품에는 위의 프롬프트를 사용한다.
+
 2026-09-21. 실제 설치·Claude 모델·사용자 클릭을 검증하는 단계다. 현재 결과는
 [TASK_STATUS](TASK_STATUS.md)에 기록하며, 자동 시험과 실제 사용을 구분한다.
 현재 자동 연결 후보(r63) 검사는 `build/claude-tests/auto-connect/`에 둔다. r62 통합 후보
 검사는 `cp08-unified-app/`, 초기 서명 검사는 `cp08/`에 있다. 폐기된 별도 제품 검사
 `cp08-preview-isolation/`을 포함해 과거 결과와 현재 후보를 구분한다.
+
+**새 연결 화면은 소스 변경만 완료했다.** 빌드·Swift 테스트 실행·앱 실행·설치는 하지 않았다.
+r63의 이전 검사로 새 화면을 검증했다고 해석하지 않는다. 후속 후보에 이 변경이 포함되면
+아래 연결 화면 확인을 먼저 진행하고, 일반 터미널/재개 및 선택 왕복을 이어서 확인한다.
+
+## 새 연결 화면 수용 — 실행 전
+
+- **설정 → 연결 → Claude 연결** 한 번과 작업 폴더 선택으로 연결된 새 창이 열리는지 확인한다.
+  서비스가 꺼져 있으면 시작하되, 기존 활성/실패 서비스를 임의로 재시작하지 않아야 한다.
+- Ghostty 1.3+ 실행 중이면 추천하며 Terminal로 변경할 수도 있어야 한다. 두 경로 모두 공백·작은따옴표가
+  포함된 작업 폴더를 처리하고 기존 창의 입력·작업을 보존해야 한다.
+- Claude/macOS의 기본 허용 요청을 확인한다. 새 빈 대화에서 최초 Channel → 모델 ACK → Stop까지
+  readiness가 유지되는지 확인한다. 설정 저장 또는 창 열기만으로 완료 표시가 나면 실패다.
+- 다른 Claude가 이미 연결되어 있어도 새로 연 대화의 응답 전에는 완료로 표시하지 않아야 한다.
+  이전에 선택한 Claude가 종료됐거나 projection 오류여도 새 연결을 열고 확인할 수 있어야 한다.
+- 창 열기 응답이 불명확하면 자동 재실행하지 않는다. 실제 창이 열렸다면 같은 UUID의 ACK로 완료한다.
+  창이 안 열렸다면 앱 제어 승인/지원 버전/터미널 선택을 확인한 뒤 사용자가 명시적으로 다시 시작한다.
+- 연결 성공 후 조회 실패·ACK 만료·서비스 교체 때 완료 표시가 사라져야 하며 복구 버튼이 영구히 잠기면 실패다.
+- 지원하지 않는 셸/변경된 관리 파일에서는 설정을 덮어쓰지 않는다. 앱에서 새 대화 연결 가능 여부를 따로 표시한다.
+- 앱을 켜둔 상태에서 Claude 설치 위치가 바뀌면 **사용 환경 다시 확인**으로 다시 찾는지 확인한다.
+  **터미널 자동 연결 끄기**는 기존 대화를 종료하지 않고, 다른 사용자 설정을 보존해야 한다.
 
 현재 방향은 [하나의 Blabee 앱과 DMG](UNIFIED_DISTRIBUTION.md)다. 하나의 앱에
 Codex와 Claude를 함께 담고 기존 제품의 identity를 유지한다. 설치하면 기존
@@ -110,6 +192,19 @@ acknowledged: true를 받았는지 보고해 줘.
 혼동하지 않으며 MCP의 `result.acknowledged`와 실제 Pet 상태를 각각 확인한다.
 도구 등록/heartbeat/알림 전송만으로 합격하지 않는다. nonce와 토큰은 공개 QA 기록에
 복사하지 않는다. 시작 시 자동 probe와 명시적 확인 probe는 서로 구별한다.
+
+### 실행 중 입력이 겹친 연결 확인 — 2026-09-22 소스 수정 후 수용
+
+후속 후보에서 새 대화의 최초 자동 probe를 처리하는 동안 **프롬프트 1**을 입력한다.
+기본 왕복 수용과 별개로 검사하며, 추가 입력이 실제 `absorbed_mid_turn` 경로를 탔는지
+비밀값을 제외한 이벤트 순서로 확인한다. 두 prompt가 같은 native ID로 관측되면 현재
+작업 관측은 여전히 폐기될 수 있다. 그 뒤 명시적 check가 만든 새 probe는 늦은 Stop 때문에
+사라지지 않아야 하며, 실제 새 Channel의 정확한 참조로 `acknowledged: true`를 받아야 한다.
+
+이 ACK로 이전 카드나 선택을 복구하면 실패다. 다음 A/B 검사는 응답이 끝난 뒤 별도 입력으로
+보내고 새로운 Hook boundary가 제공됐는지 확인한다. 이 사례의 소스·회귀 테스트 추가는
+설치 앱 합격을 뜻하지 않는다. 현재 빌드·Swift 테스트·실제 모델 재검증은 미실행이다.
+세부 조건과 남은 추가 입력 지원 범위는 [세션 수명 관측](SESSION_LIFECYCLE.md)에 기록한다.
 
 ### 프롬프트 2 — A/B 제안과 선택 후 실행
 

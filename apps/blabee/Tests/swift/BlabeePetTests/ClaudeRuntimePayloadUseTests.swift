@@ -14,9 +14,13 @@ struct ClaudeRuntimePayloadUseTests {
         let fixture = try ClaudeRuntimePayloadFixture()
         defer { fixture.cleanup() }
         #expect(ClaudeRuntimePayloadUse.inspect(storeRootURL: fixture.storeRoot) == .clear)
+        #expect(ClaudeRuntimePayloadUse.inspectForUpdate(storeRootURL: fixture.storeRoot) ==
+            .init(status: .clear, outstandingUseCount: 0, referencedRuntimeIdentities: []))
         #expect(!FileManager.default.fileExists(atPath: fixture.storeRoot.path))
         let guardToken = try ClaudeRuntimePayloadUse.acquireInstallationGuard(storeRootURL: fixture.storeRoot)
         #expect(ClaudeRuntimePayloadUse.inspect(storeRootURL: fixture.storeRoot) == .unavailable)
+        #expect(ClaudeRuntimePayloadUse.inspectForUpdate(storeRootURL: fixture.storeRoot) ==
+            .init(status: .unavailable, outstandingUseCount: nil, referencedRuntimeIdentities: []))
         #expect(throws: CoordinatorError("claude_runtime_unavailable")) {
             try ClaudeRuntimePayloadUse.acquireInstallationGuard(storeRootURL: fixture.storeRoot)
         }
@@ -42,6 +46,35 @@ struct ClaudeRuntimePayloadUseTests {
         }
         #expect(FileManager.default.fileExists(atPath: prepared.nodeExecutable.path))
         #expect(try FileManager.default.contentsOfDirectory(atPath: fixture.storeRoot.appendingPathComponent("uses").path).count == 1)
+    }
+
+    @Test("Update inspection retains every referenced generation and counts unreleased evidence, not processes")
+    func updateInspectionRetainsGenerations() throws {
+        let fixture = try ClaudeRuntimePayloadFixture()
+        defer { fixture.cleanup() }
+        let prepared = try fixture.prepare()
+        let newerIdentity = "sha256:" + String(repeating: "b", count: 64)
+        let first = try ClaudeRuntimePayloadUse.begin(prepared: prepared, runtimeIdentity: identity,
+                                                      storeRootURL: fixture.storeRoot)
+        let second = try ClaudeRuntimePayloadUse.begin(prepared: prepared, runtimeIdentity: newerIdentity,
+                                                       storeRootURL: fixture.storeRoot)
+        var unknown: ClaudeRuntimePayloadUse? = try ClaudeRuntimePayloadUse.begin(prepared: prepared,
+            runtimeIdentity: identity, storeRootURL: fixture.storeRoot)
+        #expect(unknown != nil)
+        unknown = nil
+        let inspection = ClaudeRuntimePayloadUse.inspectForUpdate(storeRootURL: fixture.storeRoot)
+        #expect(inspection.status == .inUse)
+        #expect(inspection.outstandingUseCount == 3)
+        #expect(inspection.referencedRuntimeIdentities == [identity, newerIdentity])
+        #expect(throws: CoordinatorError("claude_runtime_in_use")) {
+            try ClaudeRuntimePayloadUse.acquireInstallationGuard(storeRootURL: fixture.storeRoot)
+        }
+        try first.complete()
+        try second.complete()
+        // Losing the owner object is no evidence of child exit, including
+        // after its native executable has moved to the detached runtime store.
+        #expect(ClaudeRuntimePayloadUse.inspectForUpdate(storeRootURL: fixture.storeRoot) ==
+            .init(status: .inUse, outstandingUseCount: 1, referencedRuntimeIdentities: [identity]))
     }
 
     @Test("A normally reaped/no-spawn completion leaves the payload and permits installation")
@@ -91,6 +124,12 @@ struct ClaudeRuntimePayloadUseTests {
             #expect(chmod(path.path, 0o600) == 0)
         }
         #expect(ClaudeRuntimePayloadUse.inspect(storeRootURL: fixture.storeRoot) == (kind == "rebound" ? .inUse : .unavailable))
+        if kind != "rebound" {
+            let inspection = ClaudeRuntimePayloadUse.inspectForUpdate(storeRootURL: fixture.storeRoot)
+            #expect(inspection.status == .unavailable)
+            #expect(inspection.outstandingUseCount == nil)
+            #expect(inspection.referencedRuntimeIdentities.isEmpty)
+        }
         #expect(throws: (any Error).self) { try ClaudeRuntimePayloadUse.acquireInstallationGuard(storeRootURL: fixture.storeRoot) }
         #expect(throws: (any Error).self) { try use.complete() }
         #expect(FileManager.default.fileExists(atPath: path.path))

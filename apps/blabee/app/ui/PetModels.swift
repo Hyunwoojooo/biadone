@@ -210,9 +210,9 @@ enum PetPermissionDecision: String, Sendable, Equatable, CaseIterable {
 
     var displayTitle: String {
         switch self {
-        case .allowOnce: "이번만 승인"
-        case .deny: "거절"
-        case .deferToCodex: "Codex에서 직접 선택"
+        case .allowOnce: PetL10n.text("Allow Once", korean: "이번만 승인")
+        case .deny: PetL10n.text("Deny", korean: "거절")
+        case .deferToCodex: PetL10n.text("Choose in Codex", korean: "Codex에서 직접 선택")
         }
     }
 
@@ -243,9 +243,9 @@ enum PetManagedCommandApprovalDecision: String, Sendable, Equatable, CaseIterabl
 
     var displayTitle: String {
         switch self {
-        case .acceptOnce: "이번만 승인"
-        case .decline: "거절"
-        case .decideInCodex: "Codex에서 직접 선택"
+        case .acceptOnce: PetL10n.text("Allow Once", korean: "이번만 승인")
+        case .decline: PetL10n.text("Deny", korean: "거절")
+        case .decideInCodex: PetL10n.text("Choose in Codex", korean: "Codex에서 직접 선택")
         }
     }
 }
@@ -496,7 +496,7 @@ struct PetPermissionRequest: Sendable, Equatable, Identifiable {
         let seconds = (remainingMilliseconds + 999) / 1_000
         let minutes = seconds / 60
         let secondComponent = String(format: "%02d", Int(seconds % 60))
-        return "남은 시간 \(minutes):\(secondComponent) · 시간이 지나면 Codex에서 직접 선택"
+        return PetL10n.text("Time left \(minutes):\(secondComponent) · Choose in Codex after this expires", korean: "남은 시간 \(minutes):\(secondComponent) · 시간이 지나면 Codex에서 직접 선택")
     }
 
     var displaySummary: String {
@@ -726,10 +726,10 @@ struct PetChoice: Sendable, Equatable, Identifiable {
     var displayTitle: String {
         if let action { return action.title }
         switch kind {
-        case "pause": return "보류"
-        case "rollback": return "롤백"
-        case "alternative_action": return "대안 없음"
-        default: return "사용할 수 없음"
+        case "pause": return PetL10n.text("Defer", korean: "보류")
+        case "rollback": return PetL10n.text("Rollback", korean: "롤백")
+        case "alternative_action": return PetL10n.text("No alternative", korean: "대안 없음")
+        default: return PetL10n.text("Unavailable", korean: "사용할 수 없음")
         }
     }
 
@@ -919,6 +919,8 @@ struct PetInteraction: Sendable, Equatable, Identifiable {
     let state: State
     let cwd: String
     let summary: String
+    // Model-supplied display classification, not provenance or execution authority.
+    let suggestionKind: BlabeeSuggestionKind?
     let outcome: PetOutcome?
     let reportedSideEffects: [PetReportedSideEffect]
     let sealedAt: String
@@ -935,6 +937,14 @@ struct PetInteraction: Sendable, Equatable, Identifiable {
     var id: PetInteractionIdentity { identity }
     var isExpired: Bool { millisecondsUntilExpiry == 0 }
     var isSelectionReady: Bool { state == .waiting && !isExpired }
+
+    var suggestionKindLabel: String {
+        switch suggestionKind {
+        case .currentTask: PetL10n.text("Next steps for this task", korean: "현재 작업의 다음 선택")
+        case .newSuggestion: PetL10n.text("New suggestion", korean: "새로운 제안")
+        case nil: PetL10n.text("Next choices", korean: "다음 선택")
+        }
+    }
 
     func choice(slot: Int) -> PetChoice? {
         choices.first(where: { $0.slot == slot })
@@ -965,11 +975,12 @@ struct PetInteraction: Sendable, Equatable, Identifiable {
         let fallbackKeys = interactionKeys.subtracting(["cwd"])
         let detailedKeys = interactionKeys.union(["outcome", "reported_side_effects"])
         let detailedFallbackKeys = detailedKeys.subtracting(["cwd"])
+        let providedKeys = Set(jsonObject.keys).subtracting(["suggestion_kind"])
         try petRequire(
-            Set(jsonObject.keys) == interactionKeys
-                || Set(jsonObject.keys) == fallbackKeys
-                || Set(jsonObject.keys) == detailedKeys
-                || Set(jsonObject.keys) == detailedFallbackKeys,
+            providedKeys == interactionKeys
+                || providedKeys == fallbackKeys
+                || providedKeys == detailedKeys
+                || providedKeys == detailedFallbackKeys,
             "interaction"
         )
         identity = try PetInteractionIdentity(jsonObject: jsonObject)
@@ -987,6 +998,14 @@ struct PetInteraction: Sendable, Equatable, Identifiable {
         try petRequire(rawCWD.hasPrefix("/"), "interaction.cwd")
         cwd = URL(fileURLWithPath: rawCWD, isDirectory: true).standardizedFileURL.path
         summary = try petString(jsonObject, "summary")
+        if let rawSuggestionKind = jsonObject["suggestion_kind"] {
+            guard let rawValue = rawSuggestionKind as? String,
+                  let parsedKind = BlabeeSuggestionKind(rawValue: rawValue)
+            else { throw PetModelError.invalid("interaction.suggestion_kind") }
+            suggestionKind = parsedKind
+        } else {
+            suggestionKind = nil
+        }
         if let rawOutcome = jsonObject["outcome"] as? [String: Any],
            let rawSideEffects = jsonObject["reported_side_effects"] as? [[String: Any]],
            rawSideEffects.count <= 128
@@ -1073,6 +1092,23 @@ struct PetSnapshot: Sendable, Equatable {
     var providerSessions: [PetProviderSession] = []
     var providerContext: PetProviderContext? = nil
     var providerDiagnostic: String? = nil
+    var providerDirectory: PetProviderDirectoryStatus? = nil
+    var providerInbox: PetProviderInbox? = nil
+
+    /// The product router can retain a disabled Claude card after its directory
+    /// read fails. Such a local fallback is not a fresh service response.
+    var hasVerifiedServiceResponse: Bool {
+        providerContext?.provider != .claude || providerDirectory != nil
+    }
+
+    /// Settings use the current Codex projection even while a Claude card is
+    /// displayed. A failed background read is unknown, not an empty project set.
+    var codexSettingsEvidence: PetCodexSettingsEvidence? {
+        if let providerInbox { return providerInbox.codexSettings }
+        guard providerContext?.provider != .claude,
+              providerStatus?.provider != .claude else { return nil }
+        return PetCodexSettingsEvidence(snapshot: self)
+    }
 
     static func == (lhs: Self, rhs: Self) -> Bool {
         lhs.projects == rhs.projects
@@ -1091,6 +1127,8 @@ struct PetSnapshot: Sendable, Equatable {
             && lhs.providerSessions == rhs.providerSessions
             && lhs.providerContext == rhs.providerContext
             && lhs.providerDiagnostic == rhs.providerDiagnostic
+            && lhs.providerDirectory == rhs.providerDirectory
+            && lhs.providerInbox == rhs.providerInbox
     }
 
     static func parse(_ data: Data) throws -> PetSnapshot {

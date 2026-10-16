@@ -25,6 +25,18 @@ test('v2 startup and compact preserve observed identity and only actual prompt I
   assert.deepEqual(normalizeSessionV2Hook({ ...changed, hook_event_name: 'SessionEnd' }), observation(changed, { event: 'SessionEnd' }));
 });
 
+test('main-agent type metadata is ignored without relaxing native identity validation', () => {
+  const input = { ...common(), hook_event_name: 'SessionStart', source: 'startup' };
+  for (const agent_type of ['code-reviewer', '', null, 42, { unexpected: 'metadata' }]) {
+    assert.deepEqual(normalizeSessionV2Hook({ ...input, agent_type }),
+      observation(input, { event: 'SessionStart', source: 'startup' }));
+    assert.throws(() => normalizeSessionV2Hook({ ...input, agent_type, session_id: 'invalid' }),
+      { code: 'session_v2_hook_invalid_identity' });
+    assert.throws(() => normalizeSessionV2Hook({ ...input, agent_type, cwd: 'relative' }),
+      { code: 'session_v2_hook_invalid_identity' });
+  }
+});
+
 test('v2 hashes original UTF-8 prompt and rejects unavailable observations without raw content', () => {
   const input = { ...common(), hook_event_name: 'UserPromptSubmit', prompt_id: randomUUID(), prompt: '원문 e\u0301\n🦭' };
   assert.deepEqual(normalizeSessionV2Hook(input), observation(input, { event: 'UserPromptSubmit', prompt_id: input.prompt_id,
@@ -95,7 +107,8 @@ test('unsupported source and unknown lifecycle become safe DTOs, while unidentif
     { ...input, cwd: '/private/tmp/../tmp' }, { ...input, cwd: '/private/tmp\0bad' }]) {
     assert.throws(() => normalizeSessionV2Hook(changed), /^Error: session_v2_hook_invalid_/);
   }
-  for (const field of ['agent_id', 'agent_type']) {
-    assert.throws(() => normalizeSessionV2Hook({ ...input, [field]: '' }), { code: 'session_v2_hook_subagent' });
+  for (const agent_id of ['child', '', null, undefined, 42, {}]) {
+    assert.throws(() => normalizeSessionV2Hook({ ...input, agent_id, agent_type: 'code-reviewer' }),
+      { code: 'session_v2_hook_subagent' });
   }
 });

@@ -8,6 +8,25 @@ import Foundation
 /// Runs in the same signed executable as the common service. It retains the
 /// private owner socket and renews its lease while one interactive child lives.
 enum ClaudeInstalledLauncher {
+    enum TerminalApplication: String, CaseIterable, Sendable {
+        case terminal
+        case ghostty
+
+        var label: String {
+            switch self {
+            case .terminal: "Terminal"
+            case .ghostty: "Ghostty"
+            }
+        }
+
+        var bundleID: String {
+            switch self {
+            case .terminal: "com.apple.Terminal"
+            case .ghostty: "com.mitchellh.ghostty"
+            }
+        }
+    }
+
     /// The automatic command may invoke the original CLI once only when no
     /// Claude spawn has been attempted. Nothing after that point is replayed.
     struct PreSpawnFailure: Error {}
@@ -95,7 +114,7 @@ enum ClaudeInstalledLauncher {
             if ownedChild == nil || ownedChild?.isReaped == true {
                 do { try payloadUse?.complete() }
                 catch {
-                    FileHandle.standardError.write(Data("Blabee 실행 파일 사용 종료를 확인하지 못했습니다. 다음 업데이트가 보류될 수 있습니다.\n".utf8))
+                    FileHandle.standardError.write(Data(PetL10n.text("Unable to confirm that the Blabee executable is no longer in use. The next update may be deferred.\n", korean: "Blabee 실행 파일 사용 종료를 확인하지 못했습니다. 다음 업데이트가 보류될 수 있습니다.\n").utf8))
                 }
             }
         }
@@ -212,10 +231,12 @@ enum ClaudeInstalledLauncher {
     typealias TerminalRunner = (URL, [String], [String: String]) throws -> ManagedCodexVersionProbeResult
 
     static func openInTerminal(_ options: Options, coordinatorExecutable: URL,
+                               terminal: TerminalApplication = .terminal,
                                runner: TerminalRunner = terminalRunner) throws {
         let executable = try ClaudeInstalledLaunchConfiguration.canonicalFile(coordinatorExecutable, executable: true)
         let options = try validated(options)
-        let arguments = ["-e", ClaudeInstalledLaunchConfiguration.terminalScript, "--"]
+        let arguments = ["-e", terminalScript(for: terminal), "--"]
+            + (terminal == .ghostty ? [options.cwd.path] : [])
             + terminalArguments(options, coordinatorExecutable: executable)
         let environment = ClaudeInstalledLaunchConfiguration.cleanEnvironment(ProcessInfo.processInfo.environment)
         let result: ManagedCodexVersionProbeResult
@@ -224,6 +245,35 @@ enum ClaudeInstalledLauncher {
         guard result.exitCode == 0, result.terminationSignal == nil else { throw failure("terminal_open_unconfirmed") }
         // One attempt only: failure/timeout can still mean a window was opened.
     }
+
+    static func terminalScript(for terminal: TerminalApplication) -> String {
+        switch terminal {
+        case .terminal: ClaudeInstalledLaunchConfiguration.terminalScript
+        case .ghostty: ghosttyScript
+        }
+    }
+
+    // Ghostty 1.3+ exposes a surface configuration/new-window AppleScript API.
+    // Do not use `open -e`: macOS may also interpret its executable argv as a
+    // file-open event. Each argument stays data until `quoted form` below.
+    private static let ghosttyScript = """
+    on run argv
+        if (count of argv) < 3 then error "Invalid Claude launcher arguments"
+        set launchDirectory to item 1 of argv
+        set commandText to ""
+        repeat with argumentValue in items 2 thru -1 of argv
+            if commandText is not "" then set commandText to commandText & " "
+            set commandText to commandText & quoted form of (contents of argumentValue)
+        end repeat
+        tell application id "com.mitchellh.ghostty"
+            set launchConfiguration to new surface configuration
+            set initial working directory of launchConfiguration to launchDirectory
+            set command of launchConfiguration to "shell:" & commandText
+            new window with configuration launchConfiguration
+            activate
+        end tell
+    end run
+    """
 
     static func terminalArguments(_ options: Options, coordinatorExecutable: URL) -> [String] {
         var values = [coordinatorExecutable.path, "claude-installed-launcher", "--owner-socket", options.ownerSocketPath,
@@ -478,7 +528,7 @@ private final class ClaudeInstalledTerminal {
         // its own foreground child is running. Defer notices while another job
         // owns the terminal; never change the user's termios flags.
         try? Self.withTTOUBlocked {
-            FileHandle.standardError.write(Data("Blabee 연결이 종료됐습니다. Claude 작업은 계속 사용할 수 있습니다.\n".utf8))
+            FileHandle.standardError.write(Data(PetL10n.text("The Blabee connection ended. You can continue working in Claude.\n", korean: "Blabee 연결이 종료됐습니다. Claude 작업은 계속 사용할 수 있습니다.\n").utf8))
         }
     }
     func handOff(to pid: pid_t, restoring saved: termios? = nil) throws {

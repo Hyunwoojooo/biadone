@@ -3,7 +3,7 @@ import SwiftUI
 import Testing
 @testable import BlabeeCoordinator
 
-@Suite("Pet settings status indicators")
+@Suite("Pet settings status indicators", .petLanguage(.korean))
 struct PetSettingsStatusIndicatorTests {
     @Test("The same status palette is used by dots, badges, and the legend")
     func statusPalette() {

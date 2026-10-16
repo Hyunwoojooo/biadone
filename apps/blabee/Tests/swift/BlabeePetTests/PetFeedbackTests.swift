@@ -90,7 +90,7 @@ private final class FeedbackFixture {
     }
 }
 
-@Suite("Manual feedback validation")
+@Suite("Manual feedback validation", .petLanguage(.korean))
 struct PetFeedbackValidationTests {
     @Test("empty content and invalid reasons are rejected")
     func emptyAndInvalidReason() {
@@ -148,7 +148,7 @@ struct PetFeedbackValidationTests {
     }
 }
 
-@Suite("Manual feedback controller") @MainActor
+@Suite("Manual feedback controller", .petLanguage(.korean)) @MainActor
 struct PetFeedbackControllerTests {
     @Test("raw text needs redacted preview then a fresh content checkbox")
     func previewAndConsentSequence() async throws {
@@ -400,7 +400,7 @@ struct PetFeedbackControllerTests {
     }
 }
 
-@Suite("Manual feedback HTTP service") @MainActor
+@Suite("Manual feedback HTTP service", .petLanguage(.korean)) @MainActor
 struct PetFeedbackServiceTests {
     @Test("submit sends only the reviewed fields and public environment")
     func requestShape() async throws {

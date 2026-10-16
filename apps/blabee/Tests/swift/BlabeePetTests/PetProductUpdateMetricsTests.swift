@@ -330,7 +330,8 @@ struct PetProductUpdateMetricsTests {
         let fixture = ProductUpdateMetricsFixture()
         defer { fixture.analytics.stop() }
         let unusedRoot = URL(fileURLWithPath: "/private/tmp/blabee-product-update-test-" + UUID().uuidString)
-        let controller = AppUpdateTransactionController(store: .init(rootURL: unusedRoot), requireClaudeInactive: {})
+        let controller = AppUpdateTransactionController(store: .init(rootURL: unusedRoot),
+            safePointWaiter: .init(requireReady: { _ in }))
         controller.productMetrics = fixture.metrics
         let release = PetAppUpdateRelease(version: ProductUpdateValues.target,
             releaseURL: URL(string: "https://github.com/test/Blabee/releases/tag/blabee-v0.1.0+build.55")!)

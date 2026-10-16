@@ -290,7 +290,7 @@ struct PetErrorDiagnosticsTransportTests {
         #expect(environment.appVersion == value)
         #expect(environment.appBuild == value)
         #expect(environment.osVersion == value)
-        #expect(PetErrorCode.allCases.count == 13)
+        #expect(PetErrorCode.allCases.contains(.connectionFailed))
     }
 
     @Test("HTTP status policy acknowledges false and only retries transient responses", arguments: [400, 401, 403, 408, 429, 500, 503, 302])
@@ -414,6 +414,149 @@ private enum ErrorValues {
     }
     static func response(_ request: URLRequest, status: Int = 200) -> HTTPURLResponse {
         HTTPURLResponse(url: request.url!, statusCode: status, httpVersion: nil, headerFields: nil)!
+    }
+}
+
+@Suite("Connection error diagnostics")
+@MainActor
+struct PetConnectionDiagnosticsTests {
+    @Test("Codex recheck failures flow through the real ViewModel with version and no raw evidence")
+    func codexRecheckIntegration() async throws {
+        let fixture = ErrorFixture()
+        defer { fixture.recorder.stop() }
+        let model = PetViewModel(transport: ConnectionDiagnosticUnusedTransport(),
+            externalApplicationOpener: PetFakeApplicationOpener(),
+            codexPluginSetupManager: ConnectionDiagnosticCodex(), errorDiagnostics: fixture.recorder)
+        await model.recheckCodexNativeExecutable()
+        await settleErrorTasks { fixture.service.calls.count == 1 }
+        let sent = try #require(fixture.service.calls.first?.event)
+        #expect(sent.connection == .init(provider: .codex, stage: .nativeExecutable,
+                                         reason: .executableUnsafe, toolVersion: "0.156.1"))
+        #expect(!String(decoding: try JSONEncoder().encode(sent), as: UTF8.self).contains("private-path"))
+    }
+
+    @Test("Claude terminal launch failures and handshake delays retain their own stage")
+    func claudeLaunchAndTimeout() async throws {
+        let fixture = ErrorFixture()
+        defer { fixture.recorder.stop() }
+        let ready = ClaudeAutoConnectSetup.Inspection(isEnabled: true, canEnable: false,
+            canDisable: true, detail: "ready", canLaunch: true)
+        let controller = PetClaudeConnectionController(inspect: { ready }, enable: { ready }, disable: { ready },
+                                                       waitNoticeNanoseconds: 1_000_000)
+        controller.errorDiagnostics = fixture.recorder
+        await controller.connect(terminal: .terminal, prepareService: { .init(generation: 1, incarnation: "fixture") },
+                                 launch: { _, _ in throw URLError(.cannotFindHost) })
+        await settleErrorTasks { fixture.service.calls.count == 1 }
+        #expect(fixture.service.calls.first?.event.connection?.stage == .terminalLaunch)
+        await controller.connect(terminal: .terminal, prepareService: { .init(generation: 1, incarnation: "fixture") },
+                                 launch: { id, terminal in
+            .init(nativeSessionID: id, project: URL(fileURLWithPath: "/tmp/private-path"), terminal: terminal)
+        })
+        try await Task.sleep(for: .milliseconds(20))
+        await settleErrorTasks { fixture.service.calls.count == 2 }
+        #expect(fixture.service.calls.last?.event.connection?.reason == .handshakeTimeout)
+        #expect(controller.delayed)
+    }
+    @Test("Codex and Claude failures are distinct, repeat samples are bounded, and revocation drops late results")
+    func providersAndConsent() async throws {
+        let fixture = ErrorFixture()
+        defer { fixture.recorder.stop() }
+        let context = try #require(fixture.recorder.captureContext())
+        fixture.state.auth = nil
+        fixture.recorder.accountStateChanged()
+        let codex = PetConnectionDiagnostic(provider: .codex, stage: .inspection, reason: .executableMissing)
+        let claude = PetConnectionDiagnostic(provider: .claude, stage: .inspection, reason: .executableMissing)
+        fixture.recorder.record(connection: codex, context: context)
+        fixture.recorder.record(connection: claude, context: context)
+        fixture.recorder.record(connection: codex, context: context)
+        #expect(fixture.store.events.map(\.connection) == [codex, claude])
+        #expect(fixture.recorder.pendingEventCount == 2)
+        #expect(fixture.recorder.lastRecordedEventID == fixture.store.events.last?.eventID)
+        let bytes = try JSONEncoder().encode(fixture.store.events)
+        #expect(try JSONDecoder().decode([PetErrorEvent].self, from: bytes) == fixture.store.events)
+        fixture.recorder.setEnabled(false)
+        fixture.recorder.setEnabled(true)
+        fixture.recorder.record(connection: claude, context: context)
+        #expect(fixture.store.events.isEmpty)
+        #expect(fixture.recorder.pendingEventCount == 0)
+        #expect(fixture.recorder.lastRecordedEventID == nil)
+    }
+
+    @Test("Connection RPC has only allowlisted context and legacy outbox records still decode")
+    func connectionPayload() async throws {
+        var request: URLRequest?
+        let service = PetSupabaseErrorService(configuration: ErrorValues.configuration, transport: { input in
+            request = input
+            return (Data("true".utf8), ErrorValues.response(input))
+        }, now: { ErrorValues.now })
+        var event = PetErrorEvent(userID: ErrorValues.user, eventID: UUID(), code: .connectionFailed,
+                                  occurredAt: ErrorValues.now, environment: ErrorValues.environment)
+        event.connection = .init(provider: .codex, stage: .nativeExecutable,
+                                 reason: .executableUnsafe, toolVersion: "/Users/private/token")
+        #expect(try await service.send(event, authorization: ErrorValues.authorization()) == .accepted)
+        let sent = try #require(request)
+        #expect(sent.url?.path == "/rest/v1/rpc/record_blabee_connection_error")
+        let bytes = try #require(sent.httpBody)
+        let body = try #require(JSONSerialization.jsonObject(with: bytes) as? [String: String])
+        #expect(Set(body.keys) == ["p_event_id", "p_occurred_at", "p_app_version", "p_app_build", "p_os_version",
+                                   "p_provider", "p_stage", "p_reason", "p_tool_version"])
+        #expect(body["p_provider"] == "codex")
+        #expect(body["p_reason"] == "executable_unsafe")
+        #expect(body["p_tool_version"] == "unknown")
+        #expect(!String(decoding: bytes, as: UTF8.self).contains("private"))
+        let legacy = ErrorValues.event()
+        let legacyBytes = try JSONEncoder().encode(legacy)
+        #expect(try JSONDecoder().decode(PetErrorEvent.self, from: legacyBytes) == legacy)
+        // A forged code/context combination must never enter either RPC.
+        event.connection = nil
+        request = nil
+        #expect(try await service.send(event, authorization: ErrorValues.authorization()) == .discard)
+        #expect(request == nil)
+    }
+
+    @Test("Provider mapping cannot transmit free-form messages and distinguishes ordinary missing setup")
+    func safeMappings() {
+        #expect(PetConnectionDiagnostic.codex(.notInstalled, stage: .inspection) == nil)
+        #expect(PetConnectionDiagnostic.codex(.notInstalled, stage: .configuration)?.reason == .pluginMissing)
+        #expect(PetConnectionDiagnostic.codex(.error(code: "codex_native_path_unsafe"), stage: .nativeExecutable)?.reason == .executableUnsafe)
+        #expect(PetConnectionDiagnostic.codex(.error(code: "/Users/private/secret"), stage: .inspection)?.reason == .pluginCheckFailed)
+        let inspection = ClaudeAutoConnectSetup.Inspection(isEnabled: false, canEnable: false,
+            canDisable: false, detail: "secret raw output", issue: .manualReview)
+        #expect(PetConnectionDiagnostic.claude(inspection, stage: .configuration)?.reason == .settingsConflict)
+    }
+
+    @Test("A real Claude inspection records the initial consent and excludes later opt-in")
+    func claudeInspectionConsent() async throws {
+        let fixture = ErrorFixture()
+        defer { fixture.recorder.stop() }
+        let inspection = ClaudeAutoConnectSetup.Inspection(isEnabled: false, canEnable: false,
+            canDisable: false, detail: "private path", issue: .executableUnavailable)
+        let controller = PetClaudeConnectionController(inspect: { inspection }, enable: { inspection }, disable: { inspection })
+        controller.errorDiagnostics = fixture.recorder
+        await controller.refresh()
+        await settleErrorTasks { fixture.service.calls.count == 1 }
+        #expect(fixture.service.calls.first?.event.connection?.provider == .claude)
+        #expect(fixture.service.calls.first?.event.connection?.reason == .executableMissing)
+        fixture.recorder.setEnabled(false)
+        await controller.refresh()
+        fixture.recorder.setEnabled(true)
+        await drainErrorTasks()
+        #expect(fixture.service.calls.count == 1)
+    }
+}
+
+private struct ConnectionDiagnosticUnusedTransport: PetCoordinatorTransport {
+    func request(type: String, payload: Data) async throws -> Data { throw URLError(.unsupportedURL) }
+}
+
+private actor ConnectionDiagnosticCodex: CodexPluginSetupManaging {
+    func inspect() -> CodexPluginSetupState { .error(code: "codex_native_path_unsafe") }
+    func connect() -> CodexPluginSetupState { inspect() }
+    func disconnect() -> CodexPluginSetupState { inspect() }
+    func migrateLegacyInstallation(confirmation: CodexPluginSetupLegacyMigrationConfirmation) -> CodexPluginSetupState { inspect() }
+    func recheckNativeExecutableWithReport() -> CodexPluginCheckResult {
+        .init(state: inspect(), evidence: .init(stage: .nativeExecutable, sourcePath: "/tmp/private-path",
+                                              codexVersion: "0.156.1", errorCode: "codex_native_path_unsafe"))
     }
 }
 

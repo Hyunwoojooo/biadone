@@ -13,6 +13,7 @@ extension PetSettingsStatusTone {
 
 /// Always pair the decorative dot with a visible status label or description.
 struct PetSettingsStatusDot: View {
+    @ObservedObject private var localization = PetLocalization.shared
     let tone: PetSettingsStatusTone
 
     var body: some View {
@@ -25,6 +26,7 @@ struct PetSettingsStatusDot: View {
 }
 
 struct PetSettingsStatusBadge: View {
+    @ObservedObject private var localization = PetLocalization.shared
     let tone: PetSettingsStatusTone
     let title: String
 
@@ -32,7 +34,7 @@ struct PetSettingsStatusBadge: View {
         HStack(spacing: 6) {
             PetSettingsStatusDot(tone: tone)
             Text(title)
-                .font(.caption2.weight(.semibold))
+                .font(.blabee(.caption2, weight: .semibold))
                 .foregroundStyle(.primary)
         }
         .padding(.horizontal, 9)
@@ -44,6 +46,7 @@ struct PetSettingsStatusBadge: View {
 }
 
 struct PetSettingsStatusLegend: View {
+    @ObservedObject private var localization = PetLocalization.shared
     private var items: some View {
         Group {
             item(.confirmed)
@@ -67,7 +70,7 @@ struct PetSettingsStatusLegend: View {
         HStack(spacing: 5) {
             PetSettingsStatusDot(tone: tone)
             Text(tone.label)
-                .font(.caption2)
+                .font(.blabee(.caption2))
                 .foregroundStyle(.secondary)
                 .fixedSize()
         }

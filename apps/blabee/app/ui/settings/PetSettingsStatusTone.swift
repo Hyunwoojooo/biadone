@@ -4,10 +4,10 @@ enum PetSettingsStatusTone: Equatable, Sendable {
 
     var label: String {
         switch self {
-        case .confirmed: "확인 완료"
-        case .actionNeeded: "조치 필요"
-        case .error: "오류"
-        case .neutral: "미확인·미사용"
+        case .confirmed: PetL10n.text("Verified", korean: "확인 완료")
+        case .actionNeeded: PetL10n.text("Action needed", korean: "조치 필요")
+        case .error: PetL10n.text("Error", korean: "오류")
+        case .neutral: PetL10n.text("Unverified or unused", korean: "미확인·미사용")
         }
     }
 
@@ -52,6 +52,13 @@ enum PetSettingsStatusTone: Equatable, Sendable {
         case .needsAttention:
             readiness.checks.contains { $0.state == .failed } ? .error : .actionNeeded
         }
+    }
+
+    /// Global settings describe the shared service. Codex setup attention belongs
+    /// to its own section and does not mark a working Claude connection as broken.
+    static func commonService(_ readiness: PetConnectionReadiness) -> Self {
+        readiness.checks.first(where: { $0.id == "service" })
+            .map { .check($0.state) } ?? .neutral
     }
 
     static func hookTrust(_ state: PetHookReadinessState) -> Self {

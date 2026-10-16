@@ -12,7 +12,7 @@ enum AppUpdateRuntimeCopy {
         guard let executable = Bundle.main.executableURL,
               let current = OperationalRuntimeIdentity.resolveSnapshot(executableURL: executable),
               AppRuntimeUseLease.packagedExecutable(executable) != nil
-        else { throw failure("관리 도우미는 설치된 Blabee 앱에서 시작해야 합니다.") }
+        else { throw failure(PetL10n.text("The managed helper must start from the installed Blabee app.", korean: "관리 도우미는 설치된 Blabee 앱에서 시작해야 합니다.")) }
         let source = executable.deletingLastPathComponent().deletingLastPathComponent()
             .deletingLastPathComponent()
         return try prepare(
@@ -35,23 +35,23 @@ enum AppUpdateRuntimeCopy {
               sourceURL.lastPathComponent == "Blabee.app",
               sourceURL.path.hasPrefix("/"), parentURL.path.hasPrefix("/"),
               !parentURL.path.hasPrefix(sourceURL.path + "/")
-        else { throw failure("관리 도우미의 원본이나 저장 위치가 올바르지 않습니다.") }
+        else { throw failure(PetL10n.text("The managed helper's source or destination is invalid.", korean: "관리 도우미의 원본이나 저장 위치가 올바르지 않습니다.")) }
         let source = try physicalDirectory(sourceURL)
         let parent = try physicalDirectory(parentURL)
         // Parent directories must have been created by the owning subsystem.
         // A symlink anywhere in this path cannot redirect our helper copy.
         guard parent.path == parentURL.path, source.path == sourceURL.path
-        else { throw failure("관리 도우미 경로에 심볼릭 링크가 있습니다.") }
+        else { throw failure(PetL10n.text("The managed helper path contains a symbolic link.", korean: "관리 도우미 경로에 심볼릭 링크가 있습니다.")) }
         let parentIdentity = try privateDirectoryIdentity(parent)
         let sourceIdentity = try directoryIdentity(source)
         try inspectTree(source)
         guard validator(source) == expectedIdentity else {
-            throw failure("현재 앱의 서명을 다시 확인하지 못했습니다.")
+            throw failure(PetL10n.text("Unable to reverify the current app's signature.", korean: "현재 앱의 서명을 다시 확인하지 못했습니다."))
         }
         let destination = parent.appendingPathComponent("Blabee.app", isDirectory: true)
         var existing = stat()
         guard lstat(destination.path, &existing) != 0, errno == ENOENT else {
-            throw failure("관리 도우미 저장 위치가 이미 사용 중입니다.")
+            throw failure(PetL10n.text("The managed helper destination is already in use.", korean: "관리 도우미 저장 위치가 이미 사용 중입니다."))
         }
         // copyItem never overwrites a pre-existing destination and preserves
         // the app's code-signature resources and quarantine attributes.
@@ -60,7 +60,7 @@ enum AppUpdateRuntimeCopy {
         guard try privateDirectoryIdentity(parent) == parentIdentity,
               try directoryIdentity(source) == sourceIdentity,
               try directoryIdentity(destination) == copiedIdentity
-        else { throw failure("관리 도우미를 복사하는 동안 파일이 바뀌었습니다.") }
+        else { throw failure(PetL10n.text("Files changed while copying the managed helper.", korean: "관리 도우미를 복사하는 동안 파일이 바뀌었습니다.")) }
         try inspectTree(destination)
         let sourceExecutable = source.appendingPathComponent(AppRuntimeUseLease.executablePath)
         let copiedExecutable = destination.appendingPathComponent(AppRuntimeUseLease.executablePath)
@@ -74,7 +74,7 @@ enum AppUpdateRuntimeCopy {
               validator(destination) == expectedIdentity,
               try privateDirectoryIdentity(parent) == parentIdentity,
               try directoryIdentity(destination) == copiedIdentity
-        else { throw failure("복사한 관리 도우미의 서명이나 실행 파일을 확인하지 못했습니다.") }
+        else { throw failure(PetL10n.text("Unable to verify the copied helper's signature or executable.", korean: "복사한 관리 도우미의 서명이나 실행 파일을 확인하지 못했습니다.")) }
         return destination
     }
 
@@ -82,7 +82,7 @@ enum AppUpdateRuntimeCopy {
         // Foundation can fold /private/var and /private/tmp back into symlink
         // aliases, which is unsuitable for a no-symlink identity comparison.
         guard let path = physicalPath(url) else {
-            throw failure("관리 도우미의 실제 저장 경로를 확인하지 못했습니다.")
+            throw failure(PetL10n.text("Unable to verify the managed helper's actual storage path.", korean: "관리 도우미의 실제 저장 경로를 확인하지 못했습니다."))
         }
         return URL(fileURLWithPath: path, isDirectory: true)
     }
@@ -104,14 +104,14 @@ enum AppUpdateRuntimeCopy {
         var info = stat()
         guard lstat(url.path, &info) == 0,
               info.st_mode & mode_t(S_IFMT) == mode_t(S_IFDIR)
-        else { throw failure("관리 도우미의 폴더를 확인하지 못했습니다.") }
+        else { throw failure(PetL10n.text("Unable to verify the managed helper folder.", korean: "관리 도우미의 폴더를 확인하지 못했습니다.")) }
         return DirectoryIdentity(device: info.st_dev, inode: info.st_ino, uid: info.st_uid, mode: info.st_mode)
     }
 
     private static func privateDirectoryIdentity(_ url: URL) throws -> DirectoryIdentity {
         let identity = try directoryIdentity(url)
         guard identity.uid == geteuid(), identity.mode & 0o077 == 0 else {
-            throw failure("관리 도우미 폴더의 소유권과 접근 권한을 확인해 주세요.")
+            throw failure(PetL10n.text("Check the managed helper folder's ownership and permissions.", korean: "관리 도우미 폴더의 소유권과 접근 권한을 확인해 주세요."))
         }
         return identity
     }
@@ -125,7 +125,7 @@ enum AppUpdateRuntimeCopy {
             var info = stat()
             guard count <= maximumEntries, depth <= 64, Date() < deadline,
                   lstat(url.path, &info) == 0
-            else { throw failure("관리 도우미 파일이 자동 복사 범위를 벗어났습니다.") }
+            else { throw failure(PetL10n.text("Managed helper files exceed automatic copy limits.", korean: "관리 도우미 파일이 자동 복사 범위를 벗어났습니다.")) }
             switch info.st_mode & mode_t(S_IFMT) {
             case mode_t(S_IFDIR):
                 for child in try FileManager.default.contentsOfDirectory(at: url, includingPropertiesForKeys: nil) {
@@ -133,11 +133,11 @@ enum AppUpdateRuntimeCopy {
                 }
             case mode_t(S_IFREG):
                 guard info.st_size >= 0, Int64(info.st_size) <= maximumBytes - bytes else {
-                    throw failure("관리 도우미 파일이 자동 복사 범위를 벗어났습니다.")
+                    throw failure(PetL10n.text("Managed helper files exceed automatic copy limits.", korean: "관리 도우미 파일이 자동 복사 범위를 벗어났습니다."))
                 }
                 bytes += Int64(info.st_size)
             default:
-                throw failure("관리 도우미에 지원하지 않는 링크나 특수 파일이 있습니다.")
+                throw failure(PetL10n.text("The managed helper contains an unsupported link or special file.", korean: "관리 도우미에 지원하지 않는 링크나 특수 파일이 있습니다."))
             }
         }
         try walk(root, depth: 0)

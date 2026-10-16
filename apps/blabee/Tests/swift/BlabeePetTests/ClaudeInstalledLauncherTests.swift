@@ -7,7 +7,7 @@ import Foundation
 import Testing
 @testable import BlabeeCoordinator
 
-@Suite("Installed Claude launcher", .serialized)
+@Suite("Installed Claude launcher", .petLanguage(.korean), .serialized)
 struct ClaudeInstalledLauncherTests {
     @Test("Observed enrollment preserves the native conversation while creating fresh authorities")
     func observedEnrollment() throws {
@@ -39,10 +39,12 @@ struct ClaudeInstalledLauncherTests {
         let documents = try ClaudeInstalledLaunchConfiguration.documents(nodeExecutable: root.appendingPathComponent("node"),
             payloadRoot: root, observeSession: true)
         let hooks = try #require(StrictJSONTransport.object(from: documents.settings)["hooks"] as? [String: [[String: Any]]])
-        for groups in hooks.values {
+        for (event, groups) in hooks {
             let command = try #require((groups.first?["hooks"] as? [[String: Any]])?.first)
             #expect(command["args"] as? [String] == [root.appendingPathComponent("src/auto-connect-hook.mjs").path])
-            #expect(command["timeout"] as? Int == 12)
+            #expect(command["timeout"] as? Int == (event == "Stop" ? 660 : 12))
+            #expect(command["asyncRewake"] as? Bool == (event == "Stop" ? true : nil))
+            #expect(command["async"] == nil)
         }
         let servers = try #require(StrictJSONTransport.object(from: documents.mcp)["mcpServers"] as? [String: [String: Any]])
         let server = try #require(servers["blabee-claude"])
@@ -58,9 +60,10 @@ struct ClaudeInstalledLauncherTests {
                 mcp: root.appendingPathComponent("mcp"), claudeArguments: forwarded)
             #expect(!args.contains("--session-id"))
             #expect(!args.contains("--fork-session"))
-            #expect(Array(args.dropFirst(6)) == forwarded)
-            #expect(Array(args.prefix(6)) == ["--dangerously-load-development-channels", "server:blabee-claude",
-                "--mcp-config", root.appendingPathComponent("mcp").path, "--settings", root.appendingPathComponent("settings").path])
+            #expect(Array(args.dropFirst(4)) == forwarded)
+            #expect(Array(args.prefix(4)) == ["--mcp-config", root.appendingPathComponent("mcp").path,
+                "--settings", root.appendingPathComponent("settings").path])
+            #expect(!args.contains("--dangerously-load-development-channels"))
         }
     }
 
@@ -147,12 +150,15 @@ struct ClaudeInstalledLauncherTests {
         let settings = try StrictJSONTransport.object(from: documents.settings)
         let hooks = try #require(settings["hooks"] as? [String: Any])
         #expect(Set(hooks.keys) == ["SessionStart", "UserPromptSubmit", "Stop", "StopFailure", "SessionEnd"])
-        for value in hooks.values {
+        for (event, value) in hooks {
             let groups = try #require(value as? [[String: Any]])
             let commands = try #require(groups.first?["hooks"] as? [[String: Any]])
             #expect(commands.first?["command"] as? String == node.path)
             #expect(commands.first?["args"] as? [String] == [root.appendingPathComponent("src/session-v2-hook.mjs").path,
                 "--expected-session-id", session.uuidString.lowercased()])
+            #expect(commands.first?["timeout"] as? Int == (event == "Stop" ? 660 : 5))
+            #expect(commands.first?["asyncRewake"] as? Bool == (event == "Stop" ? true : nil))
+            #expect(commands.first?["async"] == nil)
         }
         let mcp = try StrictJSONTransport.object(from: documents.mcp)
         let servers = try #require(mcp["mcpServers"] as? [String: [String: Any]])
@@ -168,7 +174,9 @@ struct ClaudeInstalledLauncherTests {
             settings: root.appendingPathComponent("settings.json"), mcp: root.appendingPathComponent("mcp.json"))
         #expect(!arguments.contains("--strict-mcp-config"))
         #expect(!arguments.contains("--permission-mode"))
-        #expect(arguments.suffix(2) == ["--dangerously-load-development-channels", "server:blabee-claude"])
+        #expect(arguments == ["--session-id", session.uuidString.lowercased(), "--mcp-config", root.appendingPathComponent("mcp.json").path,
+            "--settings", root.appendingPathComponent("settings.json").path])
+        #expect(!arguments.contains("--dangerously-load-development-channels"))
         #expect(!String(decoding: documents.mcp, as: UTF8.self).contains("OWNER_TOKEN"))
     }
 
@@ -184,10 +192,10 @@ struct ClaudeInstalledLauncherTests {
 
     @Test("Compatibility gates reject old, malformed and unexpected major versions")
     func versionGates() {
-        for text in ["2.1.248 (Claude Code)\n", "2.1.276\n", "2.2.0"] {
+        for text in ["2.1.282 (Claude Code)\n", "2.1.283\n", "2.2.0"] {
             #expect(ClaudeInstalledLaunchConfiguration.supportsVersion(Data(text.utf8)))
         }
-        for text in ["2.1.247", "3.0.0", "1.99.999", "2.1.276\nextra", "x2.1.276", "2.1.276-preview"] {
+        for text in ["2.1.247", "2.1.248", "2.1.276", "2.1.281", "3.0.0", "1.99.999", "2.1.282\nextra", "x2.1.282", "2.1.282-preview"] {
             #expect(!ClaudeInstalledLaunchConfiguration.supportsVersion(Data(text.utf8)))
         }
         for text in ["v22.0.0\n", "v24.4.1"] { #expect(ClaudeInstalledLaunchConfiguration.supportsNodeVersion(Data(text.utf8))) }
@@ -325,6 +333,74 @@ struct ClaudeInstalledLauncherTests {
         #expect(!ClaudeInstalledLaunchConfiguration.terminalScript.contains(path.path))
         #expect(ClaudeInstalledLaunchConfiguration.terminalScript.contains("quoted form of"))
         #expect(!ClaudeInstalledLaunchConfiguration.terminalScript.contains("set commandText to \"exec\""))
+    }
+
+    @Test("Selected terminal receives only argv data and never consumes an existing window",
+           arguments: ClaudeInstalledLauncher.TerminalApplication.allCases)
+    func selectedTerminalTransport(terminal: ClaudeInstalledLauncher.TerminalApplication) throws {
+        let root = try installedTestDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let source = root.appendingPathComponent("payload/src")
+        try FileManager.default.createDirectory(at: source, withIntermediateDirectories: true)
+        for name in ["session-v2-hook.mjs", "session-v2-mcp.mjs", "auto-connect-hook.mjs", "auto-connect-mcp.mjs"] {
+            try Data().write(to: source.appendingPathComponent(name))
+        }
+        let executable = URL(fileURLWithPath: "/usr/bin/true")
+        let nativeSessionID = UUID().uuidString.lowercased()
+        let options = ClaudeInstalledLauncher.Options(ownerSocketPath: root.appendingPathComponent("owner.sock").path,
+            sessionSocketPath: root.appendingPathComponent("session.sock").path,
+            runtimeIdentity: "sha256:" + String(repeating: "a", count: 64), cwd: root,
+            claudeExecutable: executable, nodeExecutable: executable, payloadRoot: source.deletingLastPathComponent(),
+            observeSession: true, claudeArguments: ["--session-id", nativeSessionID])
+        var calls = 0
+        try ClaudeInstalledLauncher.openInTerminal(options, coordinatorExecutable: executable, terminal: terminal,
+            runner: { command, arguments, _ in
+                calls += 1
+                #expect(command.path == "/usr/bin/osascript")
+                #expect(arguments[0] == "-e" && arguments[2] == "--")
+                #expect(arguments[1].contains("quoted form of"))
+                #expect(!arguments[1].contains(root.path))
+                #expect(Array(arguments.suffix(4)) == ["--observe-session", "--", "--session-id", nativeSessionID])
+                if terminal == .ghostty {
+                    #expect(arguments[3] == root.path)
+                    #expect(arguments[1].contains("new surface configuration"))
+                    #expect(arguments[1].contains("new window with configuration"))
+                    #expect(!arguments[1].contains("do script"))
+                } else {
+                    #expect(arguments[1] == ClaudeInstalledLaunchConfiguration.terminalScript)
+                    #expect(!arguments[1].contains("in selected tab"))
+                }
+                return .init(exitCode: 0, stdout: Data(), stderr: Data())
+            })
+        #expect(calls == 1)
+    }
+
+    @Test("Denied or uncertain terminal opens are never retried or redirected",
+           arguments: ClaudeInstalledLauncher.TerminalApplication.allCases, ["denied", "timeout", "throw"])
+    func unconfirmedTerminalOpen(terminal: ClaudeInstalledLauncher.TerminalApplication, outcome: String) throws {
+        let root = try installedTestDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let source = root.appendingPathComponent("payload/src")
+        try FileManager.default.createDirectory(at: source, withIntermediateDirectories: true)
+        for name in ["session-v2-hook.mjs", "session-v2-mcp.mjs"] {
+            try Data().write(to: source.appendingPathComponent(name))
+        }
+        let executable = URL(fileURLWithPath: "/usr/bin/true")
+        let options = ClaudeInstalledLauncher.Options(ownerSocketPath: root.appendingPathComponent("owner.sock").path,
+            sessionSocketPath: root.appendingPathComponent("session.sock").path,
+            runtimeIdentity: "sha256:" + String(repeating: "a", count: 64), cwd: root,
+            claudeExecutable: executable, nodeExecutable: executable, payloadRoot: source.deletingLastPathComponent())
+        var calls = 0
+        #expect(throws: CoordinatorError("claude_installed_terminal_open_unconfirmed")) {
+            try ClaudeInstalledLauncher.openInTerminal(options, coordinatorExecutable: executable, terminal: terminal,
+                runner: { _, _, _ in
+                    calls += 1
+                    if outcome == "throw" { throw installedTestFailure() }
+                    return .init(exitCode: outcome == "denied" ? 1 : 0, stdout: Data(), stderr: Data(),
+                                 terminationSignal: outcome == "timeout" ? SIGTERM : nil)
+                })
+        }
+        #expect(calls == 1)
     }
 
     @Test("Owned child closes unrelated descriptors and preserves literal argv, then is reaped")

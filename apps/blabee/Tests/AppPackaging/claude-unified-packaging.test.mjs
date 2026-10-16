@@ -64,7 +64,7 @@ test("the existing fresh internal CLI requires the complete Claude capability tr
   }
   assert.equal(Object.hasOwn(freshInternalDMGTesting.parseCLIArguments(base), "internalClaudeSigning"), false);
   await assert.rejects(buildInternalDMG({ ...parsed, releaseSigning: signing }), /public release cannot include/u);
-  await assert.rejects(buildInternalDMG({ claudeRuntimeDirectory: "/runtime" }), /requires both/u);
+  await assert.rejects(buildInternalDMG({ claudeRuntimeDirectory: "/runtime" }), /requires explicit Developer ID/u);
   await assert.rejects(buildInternalDMG({ internalClaudeSigning: signing }), /requires both/u);
 });
 
@@ -96,7 +96,7 @@ test("unified publish recovery retains its original schema and rejects retired p
 test("both unified assembler modes reject the retired compiled profile before signing or publication", {
   skip: process.platform !== "darwin" ? "assembler requires macOS" : false,
 }, async t => {
-  const fixture = await makeClaudeRuntimeFixture(t);
+  const fixture = await makeClaudeRuntimeFixture(t, { legacy: true });
   const binary = join(fixture.root, "obsolete-binary");
   await writeFile(binary, `#!/bin/sh\nif [ "$1" = distribution-profile ]; then\n  printf '%s\\n' '${profileJSON("claude-preview", "com.biadone.blabee.claude-preview").trim()}'\nelse\n  printf 'blabee.runtime-use-lease.v1\\n'\nfi\n`, { mode: 0o755 });
   for (const includesClaude of [false, true]) {

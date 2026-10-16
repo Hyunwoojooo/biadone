@@ -98,14 +98,18 @@ final class CodexNativeFailureGuard: @unchecked Sendable {
         executable: URL,
         retry: Bool = false,
         waitTimeoutMilliseconds: Int = 2_000,
+        onCachedFailure: @Sendable () -> Void = {},
+        onExecutableIdentity: @Sendable (String) -> Void = { _ in },
         operation: () throws -> T
     ) throws -> T {
         try withStorage(waitTimeoutMilliseconds: waitTimeoutMilliseconds) { directory in
             let identity = try executableIdentity(executable)
+            onExecutableIdentity(identity.digest)
             let memoryKey = self.memoryKey(for: identity)
             guard Self.uncertaintyOverflowNamespace == nil else { throw Self.unavailable() }
             if let uncertain = Self.uncertainIdentities[memoryKey] {
                 if uncertain == identity.digest, !retry {
+                    onCachedFailure()
                     throw CoordinatorError(Self.uncertainCode)
                 }
                 if uncertain != identity.digest {
@@ -117,6 +121,7 @@ final class CodexNativeFailureGuard: @unchecked Sendable {
             if let existing = slot.record,
                existing.identity == identity.digest, !retry
             {
+                onCachedFailure()
                 throw CoordinatorError(existing.code)
             }
 
@@ -282,16 +287,24 @@ final class CodexNativeFailureGuard: @unchecked Sendable {
 
     private func executableIdentity(_ executable: URL) throws -> Identity {
         guard executable.isFileURL, !executable.path.utf8.contains(0) else {
-            throw Self.unavailable()
+            throw sourceIdentityFailure(.invalidPath, executable: executable)
         }
         let canonical = executable.resolvingSymlinksInPath().standardizedFileURL.path
         let descriptor = open(canonical, O_RDONLY | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK)
-        guard descriptor >= 0 else { throw Self.unavailable() }
+        // This is a candidate inspection failure, not a failure of the durable
+        // guard store. Discovery may inspect another candidate; this candidate
+        // still cannot enter the callback or acquire execution authority.
+        guard descriptor >= 0 else {
+            throw sourceIdentityFailure(.inspectionUnavailable, executable: executable)
+        }
         defer { close(descriptor) }
         var info = stat()
-        guard fstat(descriptor, &info) == 0,
-              info.st_mode & mode_t(S_IFMT) == mode_t(S_IFREG)
-        else { throw Self.unavailable() }
+        guard fstat(descriptor, &info) == 0 else {
+            throw sourceIdentityFailure(.inspectionUnavailable, executable: executable)
+        }
+        guard info.st_mode & mode_t(S_IFMT) == mode_t(S_IFREG) else {
+            throw sourceIdentityFailure(.unsupportedFileType, executable: executable)
+        }
         let fields = [
             canonical, String(info.st_dev), String(info.st_ino), String(info.st_mode),
             String(info.st_uid), String(info.st_gid), String(info.st_size),
@@ -303,6 +316,13 @@ final class CodexNativeFailureGuard: @unchecked Sendable {
         let keyMaterial = [canonical, policyRevision]
             .map { "\($0.utf8.count):\($0)" }.joined()
         return Identity(key: Self.digest(keyMaterial), digest: Self.digest(material))
+    }
+
+    private func sourceIdentityFailure(
+        _ issue: CodexRuntimePathIssue, executable: URL
+    ) -> CodexRuntimeTrustError {
+        .invalidSource("source identity cannot be inspected",
+            diagnostic: .init(issue: issue, role: .source, path: executable.path))
     }
 
     private static func digest(_ value: String) -> String {

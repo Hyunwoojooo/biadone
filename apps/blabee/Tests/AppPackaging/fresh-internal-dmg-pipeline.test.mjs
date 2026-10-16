@@ -3,6 +3,7 @@ import { execFile as execFileCallback } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
   chmod,
+  copyFile,
   lstat,
   mkdir,
   mkdtemp,
@@ -96,6 +97,28 @@ test("root Swift manifest remains a regular authenticated input", async (t) => {
   await assert.rejects(fingerprintReleaseInputs(fixture.root), /regular file.*symlink/u);
   const workRoot = await makeExternalWorkRoot(t, "manifest-symlink");
   await assert.rejects(snapshotReleaseInputs(fixture.root, join(workRoot, "source")), /regular file.*symlink/u);
+});
+
+test("release snapshot preserves the font and license independently of later source edits", async (t) => {
+  const fixture = await makeSourceFixture(t);
+  const fontDirectory = join("Packaging", "macos", "Resources", "Fonts", "Pretendard");
+  await mkdir(join(fixture.root, fontDirectory), { recursive: true });
+  const fontNames = ["PretendardVariable.ttf", "LICENSE.txt"];
+  for (const name of fontNames) {
+    await copyFile(join(repositoryRoot, fontDirectory, name), join(fixture.root, fontDirectory, name));
+  }
+  const before = await fingerprintReleaseInputs(fixture.root);
+  const workRoot = await makeExternalWorkRoot(t, "font-snapshot");
+  const snapshot = await snapshotReleaseInputs(fixture.root, join(workRoot, "source"));
+  assert.deepEqual(await fingerprintReleaseInputs(snapshot), before);
+  for (const name of fontNames) {
+    const path = join(fontDirectory, name);
+    assert.deepEqual(await readFile(join(snapshot, path)), await readFile(join(repositoryRoot, path)));
+    assert.equal((await lstat(join(snapshot, path))).isFile(), true);
+  }
+  await writeFile(join(fixture.root, fontDirectory, "PretendardVariable.ttf"), "changed source font\n");
+  assert.notEqual((await fingerprintReleaseInputs(fixture.root)).sha256, before.sha256);
+  assert.deepEqual(await fingerprintReleaseInputs(snapshot), before);
 });
 
 test("separated Swift trees reject symlinks in their provider ancestors", async (t) => {

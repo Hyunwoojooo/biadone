@@ -7,8 +7,10 @@ struct ClaudeAutoConnectCommandTests {
         for args in [[], ["--resume"], ["--resume", "a conversation name"], ["--continue"],
                      ["--resume", "00000000-0000-4000-8000-000000000001"],
                      ["--resume", "--fork-session"], ["-r"], ["-c"],
+                     ["--resume", "daemon"], ["--resume=purge"], ["-r", "self-hosted-runner"],
                      ["--model", "sonnet", "a prompt with $HOME and `backticks`"],
-                     ["--", "--settings", "literal prompt"], ["--", "--background", "--cloud"]] {
+                     ["--", "--settings", "literal prompt"], ["--", "--background", "--cloud"],
+                     ["--", "daemon"], ["--", "purge"], ["--", "self-hosted-runner"], ["--", "--desktop"]] {
             let parsed = try ClaudeAutoConnectCommand.Arguments(["--claude-bin", "/tmp/Claude path/claude", "--"] + args)
             #expect(parsed.forwarded == args)
             #expect(ClaudeAutoConnectCommand.disposition(arguments: args, isTerminal: true) == .connect)
@@ -24,6 +26,20 @@ struct ClaudeAutoConnectCommandTests {
         #expect(ClaudeAutoConnectCommand.disposition(arguments: ["--resume"], isTerminal: false) == .direct)
         #expect(ClaudeAutoConnectCommand.disposition(arguments: [], isTerminal: true,
             environment: ["CLAUDECODE": "1"]) == .direct)
+    }
+
+    @Test func currentManagementCommandsAndDesktopKeepTheirExactArguments() throws {
+        for args in [["daemon", "status"],
+                     ["--dangerously-skip-permissions", "daemon", "status"],
+                     ["--allow-dangerously-skip-permissions", "daemon", "logs"],
+                     ["purge"], ["purge", "/tmp/project with spaces"],
+                     ["purge", "/tmp/project with $HOME and `backticks`", "--dry-run"],
+                     ["self-hosted-runner", "doctor"], ["--desktop"],
+                     ["--desktop", "--resume", "00000000-0000-4000-8000-000000000001"]] {
+            let parsed = try ClaudeAutoConnectCommand.Arguments(["--claude-bin", "/tmp/Claude path/claude", "--"] + args)
+            #expect(parsed.forwarded == args)
+            #expect(ClaudeAutoConnectCommand.disposition(arguments: parsed.forwarded, isTerminal: true) == .direct)
+        }
     }
 
     @Test func explicitConfigurationIsNotOverwritten() {
@@ -86,6 +102,43 @@ struct ClaudeAutoConnectCommandTests {
         })
         #expect(exitStatus == 17)
         #expect(passthroughs == 1)
+    }
+
+    @Test func detachedLauncherPreservesExactlyOnceFallbackAndResumeArguments() throws {
+        let root = URL(fileURLWithPath: "/private/tmp/detached-claude-test")
+        let forwarded = ["--resume", "conversation name", "--", "literal --payload-root $(unchanged)"]
+        let options = ClaudeInstalledLauncher.Options(ownerSocketPath: root.appendingPathComponent("owner.sock").path,
+            sessionSocketPath: root.appendingPathComponent("session.sock").path,
+            runtimeIdentity: "sha256:" + String(repeating: "a", count: 64), cwd: root,
+            claudeExecutable: root.appendingPathComponent("original/claude"),
+            nodeExecutable: root.appendingPathComponent("copied/node"), payloadRoot: root.appendingPathComponent("payload"),
+            observeSession: true, claudeArguments: forwarded)
+        var launches = 0, fallbacks = 0
+        let result = try ClaudeAutoConnectCommand.runAfterRuntimeHandoff(options, launch: { actual in
+            launches += 1
+            #expect(actual.ownerSocketPath == options.ownerSocketPath)
+            #expect(actual.runtimeIdentity == options.runtimeIdentity)
+            #expect(actual.claudeArguments == forwarded)
+            throw ClaudeInstalledLauncher.PreSpawnFailure()
+        }, passthrough: { actual in
+            fallbacks += 1
+            #expect(actual.executable == options.claudeExecutable)
+            #expect(actual.forwarded == forwarded)
+            return 23
+        })
+        #expect(result == 23)
+        #expect(launches == 1 && fallbacks == 1)
+
+        enum Failure: Error { case uncertain }
+        #expect(throws: Failure.self) {
+            try ClaudeAutoConnectCommand.runAfterRuntimeHandoff(options, launch: { _ in
+                throw Failure.uncertain
+            }, passthrough: { _ in
+                fallbacks += 1
+                return 0
+            })
+        }
+        #expect(fallbacks == 1)
     }
 
     @Test func unknownLaunchAndPassthroughFailuresAreNeverRetried() {

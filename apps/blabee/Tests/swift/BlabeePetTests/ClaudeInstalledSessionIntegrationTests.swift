@@ -45,7 +45,7 @@ private final class CP05EnrollmentCounter: @unchecked Sendable {
     func increment() { lock.withLock { value += 1 } }
 }
 
-@Suite("Installed session actual IPC", .serialized)
+@Suite("Installed session actual IPC", .petLanguage(.korean), .serialized)
 struct ClaudeInstalledSessionIntegrationTests {
     private var publicArguments: [String] {
         ["--owner-socket", "/private/tmp/owner.sock", "--session-socket", "/private/tmp/session.sock",
@@ -325,7 +325,7 @@ struct ClaudeInstalledSessionIntegrationTests {
     }
 }
 
-@Suite("Automatic Claude session actual IPC", .serialized)
+@Suite("Automatic Claude session actual IPC", .petLanguage(.korean), .serialized)
 struct ClaudeAutoConnectIntegrationTests {
     @Test("A real PTY child picks its native session before Hook/MCP authority exists",
           arguments: ["startup", "resume", "picker-cancel", "preflight-cancel"])
@@ -336,7 +336,7 @@ struct ClaudeAutoConnectIntegrationTests {
     }
 }
 
-@Suite("Packaged Claude runtime actual IPC", .serialized)
+@Suite("Packaged Claude runtime actual IPC", .petLanguage(.korean), .serialized)
 struct ClaudeInstalledPackagedIntegrationTests {
     @Test("Copied Node and SDK run Hooks and MCP without checkout or user Node in PATH")
     func actualPackagedHookAndMCP() async throws {

@@ -31,6 +31,7 @@ private final class FixtureClock: CoordinatorContinuousClock, @unchecked Sendabl
     private var value: UInt64 = 0
     func nowNanoseconds() -> UInt64 { lock.withLock { value } }
     func advance(seconds: UInt64) { lock.withLock { value += seconds * 1_000_000_000 } }
+    func set(seconds: UInt64) { lock.withLock { value = seconds * 1_000_000_000 } }
 }
 
 /// Failure injection still commits to the real SQLiteJournal. It does not
@@ -39,11 +40,17 @@ private final class FaultPort: CoordinatorSemanticJournalPort, @unchecked Sendab
     let sqlite: SQLiteJournal
     private let lock = NSLock()
     private var fault: (type: String, afterCommit: Bool)?
+    private var nextLoad: (@Sendable () -> Void)?
     init(_ sqlite: SQLiteJournal) { self.sqlite = sqlite }
     func failNext(_ type: String, afterCommit: Bool = false) {
         lock.withLock { fault = (type, afterCommit) }
     }
-    func load() throws -> JournalSnapshot { try sqlite.load() }
+    func beforeNextLoad(_ body: @escaping @Sendable () -> Void) { lock.withLock { nextLoad = body } }
+    func load() throws -> JournalSnapshot {
+        let body = lock.withLock { let body = nextLoad; nextLoad = nil; return body }
+        body?()
+        return try sqlite.load()
+    }
     func append(expectedSequence: Int64, events: [Data], documents: [Data], verificationRecords: [Data]) throws -> JournalAppendResult {
         let eventTypes = try events.map { try StrictJSONTransport.object(from: $0)["event_type"] as? String }
         let matching = lock.withLock { () -> (type: String, afterCommit: Bool)? in
@@ -163,6 +170,86 @@ private func completeFields(_ suffix: String = "a", outcome: String = "completed
 }
 
 private func canonical(_ value: Any) throws -> Data { try StrictJSONTransport.data(forJSONObject: value) }
+
+private func dismissalFields(_ activation: [String: Any], suffix: String = "a") throws -> [String: Any] {
+    let packet = try #require(activation["packet"] as? [String: Any])
+    return ["binding": binding(suffix), "interaction_id": packet["interaction_id"]!,
+            "packet_id": packet["packet_id"]!, "revision": packet["revision"]!]
+}
+
+@Test("Claude dismissal closes the exact ranked card without selection or continuation and retries only its receipt")
+func dismissalClosesWithoutExecutionAndRetriesExactCard() throws {
+    let f = try Fixture(), activated = try activate(f)
+    let fields = try dismissalFields(activated)
+    let result = try success(f.adapter, "dismiss_interaction", fields)
+    #expect(result["dismissed"] as? Bool == true)
+    #expect(result["interaction_id"] as? String == fields["interaction_id"] as? String)
+    let current = try #require(f.state().boundary(for: CoordinatorBinding(jsonObject: binding())))
+    #expect(current.closed && current.closeReason == "user_dismissed")
+    #expect(current.selection == nil)
+    #expect(try f.state().continuations.isEmpty)
+    #expect((try success(f.adapter, "snapshot")["cards"] as? [Any])?.isEmpty == true)
+    let after = try f.sqlite.load().events.count
+    #expect(try canonical(success(f.adapter, "dismiss_interaction", fields)) == canonical(result))
+    #expect(try f.sqlite.load().events.count == after)
+    try rejected(f.adapter, "claim", ["binding": binding(), "selection_id": "never-created"], code: "invalid_claim")
+
+    _ = try activate(f, "b")
+    _ = try success(f.adapter, "dismiss_interaction", fields)
+    #expect(try f.state().boundary(for: CoordinatorBinding(jsonObject: binding("b")))?.isPendingInteraction == true)
+    #expect(try f.state().continuations.isEmpty)
+}
+
+@Test("Claude dismissal rejects stale card, revision and session bindings", arguments: ["interaction_id", "packet_id", "revision", "session_id", "source_prompt_id"])
+func dismissalRejectsStaleIdentity(_ field: String) throws {
+    let f = try Fixture(), activated = try activate(f)
+    var fields = try dismissalFields(activated)
+    if field == "session_id" || field == "source_prompt_id" {
+        var different = binding(); different[field] = "another-identity"; fields["binding"] = different
+    } else { fields[field] = field == "revision" ? 2 : "another-card" }
+    let before = try f.sqlite.load().events.count
+    try rejected(f.adapter, "dismiss_interaction", fields)
+    #expect(try f.sqlite.load().events.count == before)
+    #expect(try f.state().boundary(for: CoordinatorBinding(jsonObject: binding()))?.isPendingInteraction == true)
+    #expect(try f.state().continuations.isEmpty)
+}
+
+@Test("Claude dismissal rechecks monotonic expiry after a previously ready projection")
+func dismissalRejectsExpiredCard() throws {
+    let f = try Fixture(), activated = try activate(f)
+    let fields = try dismissalFields(activated)
+    #expect((try success(f.adapter, "snapshot")["cards"] as? [Any])?.count == 1)
+    f.clock.advance(seconds: CoordinatorRoutingApplication.expiryAfterNanoseconds / 1_000_000_000)
+    try rejected(f.adapter, "dismiss_interaction", fields, code: "interaction_not_waiting")
+    #expect(try f.state().boundary(for: CoordinatorBinding(jsonObject: binding()))?.closeReason != "user_dismissed")
+    #expect(try f.state().continuations.isEmpty)
+}
+
+@Test("Provider dismissal defers expiry writes and latches replay-time clock regression until scheduler cleanup", arguments: ["expiry", "regression"])
+func dismissalDelayedValidationDefersDueWrites(_ kind: String) throws {
+    let f = try Fixture(), activated = try activate(f)
+    let fields = try dismissalFields(activated)
+    f.clock.set(seconds: kind == "expiry" ? 596 : 8)
+    _ = try success(f.adapter, "snapshot")
+    if kind == "regression" { f.clock.set(seconds: 10) }
+    let before = try f.sqlite.load().events.count
+    f.port.beforeNextLoad { [clock = f.clock] in clock.set(seconds: kind == "expiry" ? 600 : 9) }
+    try rejected(f.adapter, "dismiss_interaction", fields, code: "interaction_not_waiting")
+    #expect(try f.sqlite.load().events.count == before)
+    // Recover above the admission sample without running the scheduler first.
+    // Clock recovery must not restore the rejected card's dismissal authority.
+    f.clock.set(seconds: kind == "expiry" ? 601 : 11)
+    try rejected(f.adapter, "dismiss_interaction", fields, code: "interaction_not_waiting")
+    #expect(try f.sqlite.load().events.count == before)
+    #expect(f.adapter.millisecondsUntilNextDeadline() == 0)
+    let snapshot = try success(f.adapter, "snapshot")
+    #expect((snapshot["cards"] as? [Any])?.isEmpty == true)
+    let state = try f.state()
+    let closed = try #require(state.boundary(for: CoordinatorBinding(jsonObject: binding())))
+    #expect(closed.expired && closed.selection == nil)
+    #expect(state.continuations.isEmpty)
+    #expect(try f.sqlite.load().events.count > before)
+}
 
 @Test("Real SQLite roundtrip preserves original proposal and one-time core action identity")
 func roundtrip() throws {

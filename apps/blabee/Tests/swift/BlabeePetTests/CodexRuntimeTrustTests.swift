@@ -1111,6 +1111,7 @@ struct CodexRuntimeTrustTests {
                 versionReader: { versions.read($0) }
             )
         )
+        #expect(try provider.qualifiedVersion() == "0.150.1")
         let first = try provider.next()
         let signatureProbe = RuntimeSignatureValidationProbe()
         try ManagedCodexRuntimeBundleInspector.withSignatureValidationHook(
@@ -1122,6 +1123,7 @@ struct CodexRuntimeTrustTests {
             #expect(second == first)
             #expect(third == first)
             #expect(fourth == first)
+            #expect(try provider.qualifiedVersion() == "0.150.1")
         }
         #expect(signatureProbe.callCount == 0)
         #expect(versions.callCount == 1)
@@ -1148,6 +1150,7 @@ struct CodexRuntimeTrustTests {
             URL(fileURLWithPath: "/usr/bin/false")
         )
         #expect(try provider.next() == pinned)
+        #expect(try provider.qualifiedVersion() == "0.150.1")
         try replaceNativeExecutable(
             at: pinned,
             from: URL(fileURLWithPath: "/bin/echo")
@@ -1158,6 +1161,9 @@ struct CodexRuntimeTrustTests {
             Issue.record("drifted private pin unexpectedly requalified")
         } catch let error as CodexRuntimeTrustError {
             #expect(error == .approvalDrift)
+        }
+        #expect(throws: CodexRuntimeTrustError.approvalDrift) {
+            _ = try provider.qualifiedVersion()
         }
         #expect(versions.callCount == 1)
     }
@@ -1358,6 +1364,76 @@ struct CodexRuntimeTrustTests {
                 versionReader: { versions.read($0) }
             )
         }
+        #expect(versions.callCount == 0)
+    }
+
+    @Test("Unmonitored writable ancestry identifies the exact ancestor and role")
+    func writableAncestorHasSpecificDiagnostic() throws {
+        let fixture = try RuntimeTrustFixture(groupWritableAncestors: true)
+        defer { fixture.remove() }
+        let failure = try captureRuntimeTrustFailure {
+            try fixture.gate(monitored: false).inspect(sourceURL: fixture.source)
+        }
+        #expect(failure.pathDiagnostic == .init(
+            issue: .groupWritable, role: .sourceAncestor,
+            path: fixture.source.deletingLastPathComponent().path
+        ))
+        #expect(CodexNativeDiagnostic.normalize(failure).code == "codex_native_path_unsafe")
+    }
+
+    @Test("Target permissions are diagnosed before a version reader runs", arguments: [0o775, 0o777, 0o644])
+    func targetPermissionsHaveSpecificDiagnostic(mode: Int) throws {
+        let fixture = try RuntimeTrustFixture(groupWritableAncestors: false)
+        defer { fixture.remove() }
+        try FileManager.default.setAttributes([.posixPermissions: mode], ofItemAtPath: fixture.target.path)
+        let versions = RuntimeTrustVersionProbe(["0.150.1"])
+        let failure = try captureRuntimeTrustFailure {
+            try fixture.gate(monitored: false).qualify(
+                sourceURL: fixture.source, versionReader: { versions.read($0) }
+            )
+        }
+        let issue: CodexRuntimePathIssue = mode == 0o775 ? .groupWritable
+            : mode == 0o777 ? .worldWritable : .notExecutable
+        #expect(failure.pathDiagnostic == .init(issue: issue, role: .target, path: fixture.target.path))
+        #expect(versions.callCount == 0)
+    }
+
+    @Test("ACL permission grants retain a specific failure without leaking the ACL entry")
+    func targetACLHasSpecificDiagnostic() throws {
+        let fixture = try RuntimeTrustFixture(groupWritableAncestors: false)
+        defer { fixture.remove() }
+        try addRuntimeTrustACL(at: fixture.target)
+        let failure = try captureRuntimeTrustFailure {
+            try fixture.gate(monitored: false).inspect(sourceURL: fixture.source)
+        }
+        #expect(failure.pathDiagnostic == .init(
+            issue: .aclGrantsAccess, role: .target, path: fixture.target.path
+        ))
+    }
+
+    @Test("Dangling executable links and linked ancestors have different diagnostics", arguments: [false, true])
+    func linksHaveSpecificDiagnostic(linkedAncestor: Bool) throws {
+        let fixture = try RuntimeTrustFixture(groupWritableAncestors: false)
+        defer { fixture.remove() }
+        let parent = fixture.source.deletingLastPathComponent()
+        if linkedAncestor {
+            let movedParent = fixture.prefix.appendingPathComponent("actual-bin", isDirectory: true)
+            try FileManager.default.moveItem(at: parent, to: movedParent)
+            try FileManager.default.createSymbolicLink(at: parent, withDestinationURL: movedParent)
+        } else {
+            try FileManager.default.removeItem(at: fixture.target)
+        }
+        let versions = RuntimeTrustVersionProbe(["0.150.1"])
+        let failure = try captureRuntimeTrustFailure {
+            try fixture.gate(monitored: false).qualify(
+                sourceURL: fixture.source, versionReader: { versions.read($0) }
+            )
+        }
+        #expect(failure.pathDiagnostic == .init(
+            issue: linkedAncestor ? .symbolicLinkAncestor : .linkUnresolved,
+            role: linkedAncestor ? .sourceAncestor : .source,
+            path: linkedAncestor ? parent.path : fixture.source.path
+        ))
         #expect(versions.callCount == 0)
     }
 
@@ -1864,6 +1940,21 @@ struct CodexRuntimeTrustTests {
             "0.151.0": "3519a4614dbea34f15941b0886e29aa4c9a961b5b40bab942a3f38f61cc8eef9",
             "0.155.0": "115a008c1ab06a4070b7078954189b192c8e1278cf8b49ba5d80920ec5dc6095",
             "0.155.1": "91948415ab606b4e7272b60b8f7d53cc10b5eef2d931591ae93e3a27c969856a",
+            "0.156.0": "d0306e399bfd8310d8b8b07006c5ba3ec05c81491ebd510177d3676ddf1d2b52",
+            "0.156.1": "f38f13051ab45aa8d4d58b4e05d642dd29522e071d605d14778271004f3354bc",
+            "0.157.0": "888c03595317eb339c789e91f658a55046cbbf3688bb6b78f7c5e7f85c241c90",
+            "0.157.1": "3b555cccb72141df5e2cd847dba0f97a2bf28fda54b7c4347a00a6ba1e96ab2a",
+            "0.158.0": "c1d34a32761e1c6e6548c009a8af242ce91b60695e9a6f347db3ae61b87d490c",
+            "0.159.0": "ee1402b1cd2d00c734557bb02422fe0c80518a978bee481e9313ea5faa5ca77c",
+            "0.159.1": "2daa378b3bbe94aeaf45c389d4ec68328b3793502689c2702cf9e6c4de0df4d2",
+            "0.159.2": "5ceec30c6abdef67db6df3faca91915574fccb89f6569e37afecb33289a1a05d",
+            "0.159.3": "6decf4a44bcdc6affc04398edcfc778605d3264dea29f4f387a06fb2b7b0b4f2",
+            "0.160.0": "4f6a4a3db956806862596c026345284181337cf60e3168ce549cf864f1c596bf",
+            "0.160.1": "0230997d8fc2c3950e2fe28f07548942b4662666958dd5079eb581922c35f8ee",
+            "0.161.0": "26d0cccbb01790e6646f836c0c53afb73e6081626d254984b280a41c06d04652",
+            "0.162.0": "5b0eedbe2ec32aa0e61e6ed4956b0a1c42db696613bdf004c55d3050581f4993",
+            "0.162.1": "37d07b6af6cd84ff0953704fcd1b8c933b79c360a94d4ceeef5eb07ef77c6961",
+            "0.163.0": "8455dbc0e6ca06359af0b7bf675767273c063ed92fa7a881380efc34771836b8",
         ]
         #expect(ManagedCodexRuntimeBundleQualificationCatalog
             .fingerprintForTesting(inspection)
@@ -1873,8 +1964,12 @@ struct CodexRuntimeTrustTests {
         )
     }
 
-    @Test("catalog-pinned voice JSON loses executable permission only in the private copy")
-    func pinnedVoiceJSONIsDataDuringPrivateCustody() throws {
+    @Test("catalog-pinned voice JSON loses executable permission only in the private copy",
+          arguments: [
+              "0.155.1", "0.156.0", "0.156.1", "0.157.0", "0.157.1",
+              "0.158.0", "0.159.0", "0.159.1", "0.159.2", "0.159.3", "0.160.0", "0.160.1", "0.161.0", "0.162.0", "0.162.1", "0.163.0",
+          ])
+    func pinnedVoiceJSONIsDataDuringPrivateCustody(version: String) throws {
         let fixture = try RuntimeTrustFixture(groupWritableAncestors: false)
         defer { fixture.remove() }
         try fixture.replaceTargetWithNativeExecutable()
@@ -1886,11 +1981,11 @@ struct CodexRuntimeTrustTests {
         let artifact = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent().deletingLastPathComponent()
             .deletingLastPathComponent().deletingLastPathComponent()
-            .appendingPathComponent("Fixtures/codex/0.155.1/voice-runtime.json")
+            .appendingPathComponent("Fixtures/codex/\(version)/voice-runtime.json")
         let data = try Data(contentsOf: artifact)
         try data.write(to: source)
         try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: source.path)
-        try fixture.writeManifest(version: "0.155.1", resourcesDir: "codex-resources")
+        try fixture.writeManifest(version: version, resourcesDir: "codex-resources")
         let inspection = try ManagedCodexRuntimeBundleInspector.inspect(
             executableURL: fixture.target, executableVerification: .trustedTestFixture
         )
@@ -1907,15 +2002,19 @@ struct CodexRuntimeTrustTests {
         let copyMode = try FileManager.default.attributesOfItem(atPath: copy.path)[.posixPermissions] as? Int
         #expect(sourceMode == 0o755)
         #expect(copyMode == 0o400)
-        _ = try pin.revalidate(qualifiedVersion: "0.155.1")
+        _ = try pin.revalidate(qualifiedVersion: version)
     }
 
-    @Test("unreviewed executable JSON remains rejected even at the voice resource path")
-    func executableDataExceptionRequiresExactPathAndDigest() throws {
+    @Test("unreviewed executable JSON remains rejected even at the voice resource path",
+          arguments: [
+              "0.155.1", "0.156.0", "0.156.1", "0.157.0", "0.157.1",
+              "0.158.0", "0.159.0", "0.159.1", "0.159.2", "0.159.3", "0.160.0", "0.160.1", "0.161.0", "0.162.0", "0.162.1", "0.163.0",
+          ])
+    func executableDataExceptionRequiresExactPathAndDigest(version: String) throws {
         let artifact = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent().deletingLastPathComponent()
             .deletingLastPathComponent().deletingLastPathComponent()
-            .appendingPathComponent("Fixtures/codex/0.155.1/voice-runtime.json")
+            .appendingPathComponent("Fixtures/codex/\(version)/voice-runtime.json")
         let approvedBytes = try Data(contentsOf: artifact)
         for (name, data) in [
             ("runtime.json", approvedBytes + Data("\n".utf8)),
@@ -1932,7 +2031,7 @@ struct CodexRuntimeTrustTests {
             )
             try data.write(to: path)
             try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: path.path)
-            try fixture.writeManifest(version: "0.155.1", resourcesDir: "codex-resources")
+            try fixture.writeManifest(version: version, resourcesDir: "codex-resources")
             #expect(throws: ManagedCodexRuntimeBundleError.self) {
                 _ = try ManagedCodexRuntimeBundleInspector.inspect(
                     executableURL: fixture.target, executableVerification: .trustedTestFixture
@@ -2138,6 +2237,142 @@ struct CodexRuntimeTrustTests {
                     executableVerification: .trustedTestFixture
                 )
             }
+        }
+    }
+
+    @Test(
+        "unrelated ancestor siblings do not invalidate managed qualification",
+        arguments: [
+            "unchanged", "source-file", "source-directory",
+            "private-file", "private-directory",
+        ]
+    )
+    func unrelatedAncestorSiblingsPreserveQualification(_ scenario: String) throws {
+        let fixture = try RuntimeTrustFixture(groupWritableAncestors: false)
+        defer { fixture.remove() }
+        try fixture.replaceTargetWithNativeExecutable()
+        let pinParent = fixture.root.appendingPathComponent(
+            "private-pins",
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(
+            at: pinParent,
+            withIntermediateDirectories: false,
+            attributes: [.posixPermissions: 0o700]
+        )
+        let gate = fixture.gate(monitored: false)
+        let before = try gate.inspect(sourceURL: fixture.source)
+        let versions = RuntimeTrustVersionProbe(["0.150.1"])
+        let provider = ManagedCodexApprovedExecutableProvider(
+            resolver: ManagedCodexTrustResolver(
+                candidateURLs: [fixture.source],
+                monitoredEntries: [],
+                runtimeExecutableVerification: .trustedTestFixture,
+                pinParentURL: pinParent,
+                versionReader: { versions.read($0) }
+            )
+        )
+        let probe = RuntimeSignatureValidationProbe()
+        let selected = try ManagedCodexRuntimeBundleInspector
+            .withSignatureValidationHook({ label, path in
+                guard label == "bin/codex" else { return }
+                let privateInspection = scenario.hasPrefix("private-")
+                let matches = privateInspection
+                    ? path.hasPrefix(pinParent.path + "/blabee-managed-codex.staging.")
+                    : URL(fileURLWithPath: path).standardizedFileURL
+                        == fixture.target.standardizedFileURL
+                guard matches, probe.recordFirst() else { return }
+                guard scenario != "unchanged" else { return }
+                // Both locations are outside the inspected runtime subtree.
+                let parent = privateInspection ? pinParent : fixture.prefix
+                let sibling = parent.appendingPathComponent("unrelated-peer")
+                if scenario.hasSuffix("-directory") {
+                    try FileManager.default.createDirectory(
+                        at: sibling,
+                        withIntermediateDirectories: false,
+                        attributes: [.posixPermissions: 0o700]
+                    )
+                } else {
+                    try Data("unrelated sibling".utf8).write(
+                        to: sibling,
+                        options: [.withoutOverwriting]
+                    )
+                }
+                try FileManager.default.removeItem(at: sibling)
+            }) {
+                try provider.next()
+            }
+
+        #expect(probe.callCount == 1)
+        #expect(selected.path.hasPrefix(pinParent.path + "/blabee-managed-codex."))
+        #expect(try provider.next() == selected)
+        #expect(versions.callCount == 1)
+        #expect(try gate.inspect(sourceURL: fixture.source) == before)
+    }
+
+    @Test(
+        "ancestor replacement and rename, mode, and ACL ABA fail closed",
+        arguments: [
+            "outside-rename", "bin-rename", "outside-symlink",
+            "outside-replacement", "outside-mode", "outside-acl",
+        ]
+    )
+    func ancestorChangesDuringSignatureValidationFailClosed(_ scenario: String) throws {
+        let fixture = try RuntimeTrustFixture(groupWritableAncestors: false)
+        defer { fixture.remove() }
+        try fixture.replaceTargetWithNativeExecutable()
+        let ancestor = scenario == "bin-rename"
+            ? fixture.target.deletingLastPathComponent()
+            : fixture.prefix
+        let probe = RuntimeSignatureValidationProbe()
+        _ = try ManagedCodexRuntimeBundleInspector.withSignatureValidationHook(
+            { label, path in
+                guard label == "bin/codex",
+                      URL(fileURLWithPath: path).standardizedFileURL
+                        == fixture.target.standardizedFileURL,
+                      probe.recordFirst()
+                else { return }
+                if scenario == "outside-mode" {
+                    let originalMode = try runtimeMode(ancestor)
+                    try #require(chmod(ancestor.path, mode_t(0o777)) == 0)
+                    try #require(chmod(ancestor.path, mode_t(originalMode)) == 0)
+                } else if scenario == "outside-acl" {
+                    let rule = "user:\(NSUserName()) allow read"
+                    try addRuntimeTrustACL(at: ancestor, rule: rule)
+                    try changeRuntimeTrustACL(at: ancestor, rule: rule, adding: false)
+                } else {
+                    let backup = ancestor.appendingPathExtension("original")
+                    try FileManager.default.moveItem(at: ancestor, to: backup)
+                    if scenario == "outside-symlink" {
+                        try FileManager.default.createSymbolicLink(
+                            at: ancestor,
+                            withDestinationURL: backup
+                        )
+                    } else {
+                        try FileManager.default.copyItem(at: backup, to: ancestor)
+                    }
+                    if scenario != "outside-replacement" {
+                        try FileManager.default.removeItem(at: ancestor)
+                        try FileManager.default.moveItem(at: backup, to: ancestor)
+                    }
+                }
+            }
+        ) {
+            #expect(throws: ManagedCodexRuntimeBundleError.changed) {
+                _ = try ManagedCodexRuntimeBundleInspector.inspect(
+                    executableURL: fixture.target,
+                    executableVerification: .trustedTestFixture
+                )
+            }
+        }
+        #expect(probe.callCount == 1)
+        // For ABA cases the final files and names are valid again. Rejection
+        // above must retain the intervening change, not just final metadata.
+        if scenario != "outside-replacement" {
+            _ = try ManagedCodexRuntimeBundleInspector.inspect(
+                executableURL: fixture.target,
+                executableVerification: .trustedTestFixture
+            )
         }
     }
 
@@ -2377,6 +2612,13 @@ private func replacePublishedPlanWithPartial(in stagingURL: URL) throws {
     )
 }
 
+private func captureRuntimeTrustFailure<T>(_ operation: () throws -> T) throws -> CodexRuntimeTrustError {
+    var failure: CodexRuntimeTrustError?
+    do { _ = try operation() }
+    catch { failure = error as? CodexRuntimeTrustError }
+    return try #require(failure)
+}
+
 private final class RuntimeTrustFixture: @unchecked Sendable {
     let root: URL
     let prefix: URL
@@ -2604,6 +2846,14 @@ private final class RuntimeSignatureValidationProbe: @unchecked Sendable {
     func record() {
         lock.withLock { calls += 1 }
     }
+
+    func recordFirst() -> Bool {
+        lock.withLock {
+            guard calls == 0 else { return false }
+            calls += 1
+            return true
+        }
+    }
 }
 
 private func replaceNativeExecutable(at target: URL, from source: URL) throws {
@@ -2711,9 +2961,17 @@ private func addRuntimeTrustACL(
     at url: URL,
     rule: String = "user:\(NSUserName()) allow read"
 ) throws {
+    try changeRuntimeTrustACL(at: url, rule: rule, adding: true)
+}
+
+private func changeRuntimeTrustACL(
+    at url: URL,
+    rule: String,
+    adding: Bool
+) throws {
     let process = Process()
     process.executableURL = URL(fileURLWithPath: "/bin/chmod")
-    process.arguments = ["+a", rule, url.path]
+    process.arguments = [adding ? "+a" : "-a", rule, url.path]
     process.standardOutput = Pipe()
     let error = Pipe()
     process.standardError = error

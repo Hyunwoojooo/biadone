@@ -135,9 +135,9 @@ final class AppRuntimeUseLease: @unchecked Sendable {
             try lease.verify(at: executable)
             return lease
         } catch AppRuntimeUseLeaseError.busy {
-            throw CoordinatorError("app_runtime_installation_in_progress", "Blabee를 교체하고 있습니다. 잠시 후 다시 열어 주세요.")
+            throw CoordinatorError("app_runtime_installation_in_progress", PetL10n.text("Blabee is being replaced. Open it again shortly.", korean: "Blabee를 교체하고 있습니다. 잠시 후 다시 열어 주세요."))
         } catch {
-            throw CoordinatorError("app_runtime_use_lease_unverified", "Blabee 실행 파일을 안전하게 확인하지 못했습니다. 설치된 앱을 다시 열어 주세요.")
+            throw CoordinatorError("app_runtime_use_lease_unverified", PetL10n.text("Unable to safely verify the Blabee executable. Reopen the installed app.", korean: "Blabee 실행 파일을 안전하게 확인하지 못했습니다. 설치된 앱을 다시 열어 주세요."))
         }
     }
 }

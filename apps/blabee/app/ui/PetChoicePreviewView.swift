@@ -2,6 +2,7 @@ import SwiftUI
 
 /// Read-only content: opening a preview never submits or confirms a choice.
 struct PetChoicePreviewView: View {
+    @ObservedObject private var localization = PetLocalization.shared
     @Environment(\.colorScheme) private var colorScheme
     let preview: PetChoicePreview
 
@@ -11,33 +12,33 @@ struct PetChoicePreviewView: View {
                 HStack(spacing: 8) {
                     Image(systemName: "text.magnifyingglass")
                         .accessibilityHidden(true)
-                    Text("미리보기")
-                    Text("\(preview.choice.slot)번 선택지")
+                    Text(PetL10n.text("Preview", korean: "미리보기"))
+                    Text(PetL10n.text("Choice \(preview.choice.slot)", korean: "\(preview.choice.slot)번 선택지"))
                         .foregroundStyle(PetAirPalette.secondary(for: colorScheme))
                 }
-                .font(.callout.weight(.semibold))
+                .font(.blabee(.callout, weight: .semibold))
                 .foregroundStyle(PetAirPalette.accent(for: colorScheme))
 
-                Text("\(preview.shortcutPreset.holdKeyName) 키를 떼면 닫힙니다")
-                    .font(.system(size: 13))
+                Text(PetL10n.text("Release \(preview.shortcutPreset.holdKeyName) to close", korean: "\(preview.shortcutPreset.holdKeyName) 키를 떼면 닫힙니다"))
+                    .font(.blabee(size: 13))
                     .foregroundStyle(PetAirPalette.secondary(for: colorScheme))
             }
 
             Text(verbatim: preview.choice.displayTitle)
-                .font(.system(size: 23, weight: .semibold))
+                .font(.blabee(size: 23, weight: .semibold))
                 .fixedSize(horizontal: false, vertical: true)
                 .accessibilityAddTraits(.isHeader)
 
             if let action = preview.choice.action {
-                section(title: "할 일") {
+                section(title: PetL10n.text("Task", korean: "할 일")) {
                     bodyText(action.objective)
                 }
                 if !action.constraints.isEmpty {
-                    section(title: "지킬 조건") {
+                    section(title: PetL10n.text("Constraints", korean: "지킬 조건")) {
                         textList(action.constraints)
                     }
                 }
-                section(title: "완료 기준") {
+                section(title: PetL10n.text("Completion criteria", korean: "완료 기준")) {
                     textList(action.doneWhen)
                 }
             }
@@ -56,7 +57,7 @@ struct PetChoicePreviewView: View {
     ) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             Text(verbatim: title)
-                .font(.system(size: 13, weight: .semibold))
+                .font(.blabee(size: 13, weight: .semibold))
                 .foregroundStyle(PetAirPalette.secondary(for: colorScheme))
                 .accessibilityAddTraits(.isHeader)
             content()
@@ -68,7 +69,7 @@ struct PetChoicePreviewView: View {
 
     private func bodyText(_ text: String) -> some View {
         Text(verbatim: text)
-            .font(.system(size: 16))
+            .font(.blabee(size: 16))
             .lineSpacing(4)
             .fixedSize(horizontal: false, vertical: true)
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -79,7 +80,7 @@ struct PetChoicePreviewView: View {
             ForEach(Array(items.enumerated()), id: \.offset) { _, text in
                 HStack(alignment: .top, spacing: 10) {
                     Text("•")
-                        .font(.system(size: 16))
+                        .font(.blabee(size: 16))
                         .foregroundStyle(PetAirPalette.secondary(for: colorScheme))
                         .accessibilityHidden(true)
                     bodyText(text)

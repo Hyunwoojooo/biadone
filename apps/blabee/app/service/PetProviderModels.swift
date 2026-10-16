@@ -56,6 +56,15 @@ struct PetProviderSession: Equatable, Sendable, Identifiable {
     let cwd: String
     let state: String
     let title: String
+    /// Public correlation only. Authority still comes from the current context
+    /// and the app-owned service capability.
+    let nativeSessionID: String?
+
+    init(id: String, context: PetProviderContext, projectID: String, sessionID: String,
+         cwd: String, state: String, title: String, nativeSessionID: String? = nil) {
+        self.id = id; self.context = context; self.projectID = projectID; self.sessionID = sessionID
+        self.cwd = cwd; self.state = state; self.title = title; self.nativeSessionID = nativeSessionID
+    }
 }
 
 /// The capability is available only while the exact app-owned child is alive
@@ -63,6 +72,13 @@ struct PetProviderSession: Equatable, Sendable, Identifiable {
 struct PetProviderServiceAccess: Sendable, Equatable {
     let generation: UInt64
     let credential: String
+}
+
+/// In-process evidence from a fresh authenticated directory response. Unlike
+/// providerDiagnostic, it is independent of the currently selected projection.
+struct PetProviderDirectoryStatus: Sendable, Equatable {
+    let serviceGeneration: UInt64
+    let serviceIncarnation: String
 }
 
 enum PetProviderDirectoryCodec {

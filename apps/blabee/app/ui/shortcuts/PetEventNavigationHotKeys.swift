@@ -164,8 +164,8 @@ final class PetEventNavigationHotKeys {
             }
         }
         guard !unavailable.isEmpty else { return nil }
-        return "이벤트 이동 단축키를 등록하지 못했습니다: " + unavailable.map(\.label).joined(separator: ", ")
-            + ". 이전·다음 버튼을 클릭해 주세요."
+        return PetL10n.text("Unable to register event navigation shortcuts: ", korean: "이벤트 이동 단축키를 등록하지 못했습니다: ") + unavailable.map(\.label).joined(separator: ", ")
+            + PetL10n.text(". Click the Previous or Next button.", korean: ". 이전·다음 버튼을 클릭해 주세요.")
     }
 
     private func unregisterBindings() {

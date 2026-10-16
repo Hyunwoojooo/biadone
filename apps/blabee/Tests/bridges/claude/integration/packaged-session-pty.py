@@ -21,9 +21,10 @@ def main():
 import json, os, subprocess, sys, time
 from pathlib import Path
 if sys.argv[1:] == ['--version']:
-    print('2.1.276 (Claude Code)')
+    print('2.1.282 (Claude Code)')
     sys.exit(0)
 args = sys.argv[1:]
+assert '--dangerously-load-development-channels' not in args
 settings_path = args[args.index('--settings') + 1]
 mcp_path = args[args.index('--mcp-config') + 1]
 mcp = json.loads(Path(mcp_path).read_text())['mcpServers']['blabee-claude']

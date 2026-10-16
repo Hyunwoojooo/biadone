@@ -195,18 +195,27 @@ private final class ManagedCodexDeliveryTrackingDecider: @unchecked Sendable,
 {
     private let lock = NSLock()
     private var selections: [ManagedCodexApprovalSelection]
+    private var selectedRequestIDs: [CodexAppServerRequestID] = []
     private var acknowledgedDeliveries: [ManagedCodexApprovalDelivery] = []
+    private let blockSelection: Bool
+    private let ignoreSelectionCancellation: Bool
     private let blockAcknowledgement: Bool
     private let acknowledgementFailure: ManagedCodexTestError?
+    let selectionStarted = DispatchSemaphore(value: 0)
+    let selectionRelease = DispatchSemaphore(value: 0)
     let acknowledgementStarted = DispatchSemaphore(value: 0)
     let acknowledgementRelease = DispatchSemaphore(value: 0)
 
     init(
         _ selections: [ManagedCodexApprovalSelection],
+        blockSelection: Bool = false,
+        ignoreSelectionCancellation: Bool = false,
         blockAcknowledgement: Bool = false,
         acknowledgementFailure: ManagedCodexTestError? = nil
     ) {
         self.selections = selections
+        self.blockSelection = blockSelection
+        self.ignoreSelectionCancellation = ignoreSelectionCancellation
         self.blockAcknowledgement = blockAcknowledgement
         self.acknowledgementFailure = acknowledgementFailure
     }
@@ -230,11 +239,25 @@ private final class ManagedCodexDeliveryTrackingDecider: @unchecked Sendable,
     ) throws -> ManagedCodexApprovalSelection {
         try cancellation.check()
         lock.lock()
-        defer { lock.unlock() }
         guard !selections.isEmpty else {
+            lock.unlock()
             throw ManagedCodexTestError.failed("selection")
         }
-        return selections.removeFirst()
+        selectedRequestIDs.append(request.requestID)
+        let selection = selections.removeFirst()
+        lock.unlock()
+        selectionStarted.signal()
+        if blockSelection {
+            let deadline = DispatchTime.now() + .seconds(2)
+            while selectionRelease.wait(timeout: .now() + .milliseconds(10)) != .success {
+                if !ignoreSelectionCancellation { try cancellation.check() }
+                guard DispatchTime.now() < deadline else {
+                    throw ManagedCodexTestError.failed("selection release timeout")
+                }
+            }
+        }
+        if !ignoreSelectionCancellation { try cancellation.check() }
+        return selection
     }
 
     func acknowledgeDelivery(_ delivery: ManagedCodexApprovalDelivery) throws {
@@ -252,6 +275,12 @@ private final class ManagedCodexDeliveryTrackingDecider: @unchecked Sendable,
         lock.lock()
         defer { lock.unlock() }
         return acknowledgedDeliveries
+    }
+
+    var requestIDs: [CodexAppServerRequestID] {
+        lock.lock()
+        defer { lock.unlock() }
+        return selectedRequestIDs
     }
 }
 
@@ -1319,6 +1348,177 @@ func managedCodexWebSocketHandshakeDeadlineIsAbsolute() throws {
     _ = writerFinished.wait(timeout: .now() + .seconds(1))
 }
 
+@Test("Managed WebSocket close keeps an active reader's descriptor allocated", arguments: [false, true])
+func managedCodexWebSocketCloseWaitsForReaderOwnership(
+    _ closeFromReader: Bool
+) throws {
+    var descriptors = [Int32](repeating: -1, count: 2)
+    try #require(socketpair(AF_UNIX, SOCK_STREAM, 0, &descriptors) == 0)
+    let server = descriptors[0]
+    let client = descriptors[1]
+    let connection = ManagedCodexWebSocketConnection(
+        descriptor: server,
+        connectionID: "reader-lifetime"
+    )
+    let readerEntered = DispatchSemaphore(value: 0)
+    let releaseReader = DispatchSemaphore(value: 0)
+    let finished = DispatchGroup()
+    let result = ManagedCodexBridgeTestResult()
+    defer {
+        connection.close()
+        releaseReader.signal()
+        _ = finished.wait(timeout: .now() + .seconds(2))
+        Darwin.close(client)
+    }
+    finished.enter()
+    DispatchQueue.global(qos: .userInitiated).async {
+        defer { finished.leave() }
+        do {
+            try connection.readMessages { _ in
+                if closeFromReader { connection.close() }
+                readerEntered.signal()
+                #expect(releaseReader.wait(timeout: .now() + .seconds(5)) == .success)
+            }
+        } catch { result.record(error) }
+    }
+    try managedCodexTestWrite(
+        managedCodexClientFrame(opcode: 0x1, payload: Data("message".utf8)),
+        descriptor: client
+    )
+    try #require(readerEntered.wait(timeout: .now() + .seconds(2)) == .success)
+
+    connection.close()
+    connection.close()
+    // The reader is deliberately paused after receiving a frame. Shutdown must
+    // return, but its descriptor must remain reserved until that reader exits.
+    #expect(fcntl(server, F_GETFD) >= 0)
+    #expect(throws: ManagedCodexWebSocketError.connectionClosed) {
+        try connection.sendText(Data("late message".utf8))
+    }
+    releaseReader.signal()
+    try #require(finished.wait(timeout: .now() + .seconds(2)) == .success)
+    #expect(result.error == nil)
+    let descriptorState = fcntl(server, F_GETFD)
+    let descriptorError = errno
+    #expect(descriptorState == -1)
+    #expect(descriptorError == EBADF)
+}
+
+@Test("Managed WebSocket closes unused connections without requiring a reader", arguments: [false, true])
+func managedCodexWebSocketClosesWithoutReader(_ explicitClose: Bool) throws {
+    var descriptors = [Int32](repeating: -1, count: 2)
+    try #require(socketpair(AF_UNIX, SOCK_STREAM, 0, &descriptors) == 0)
+    let server = descriptors[0]
+    defer { Darwin.close(descriptors[1]) }
+    var connection: ManagedCodexWebSocketConnection? = ManagedCodexWebSocketConnection(
+        descriptor: server,
+        connectionID: "unused-connection"
+    )
+    if explicitClose {
+        connection?.close()
+        connection?.close()
+        try connection?.readMessages { _ in
+            Issue.record("a reader started after close")
+        }
+    }
+    // Also covers unwinding after a bridge constructor fails before readMessages.
+    connection = nil
+    let descriptorState = fcntl(server, F_GETFD)
+    let descriptorError = errno
+    #expect(descriptorState == -1)
+    #expect(descriptorError == EBADF)
+}
+
+@Test("Managed WebSocket releases reader ownership on parser and handler errors", arguments: [false, true])
+func managedCodexWebSocketReaderErrorReleasesDescriptor(
+    _ invalidFrame: Bool
+) throws {
+    var descriptors = [Int32](repeating: -1, count: 2)
+    try #require(socketpair(AF_UNIX, SOCK_STREAM, 0, &descriptors) == 0)
+    let server = descriptors[0]
+    let connection = ManagedCodexWebSocketConnection(
+        descriptor: server,
+        connectionID: "reader-error"
+    )
+    defer {
+        connection.close()
+        Darwin.close(descriptors[1])
+    }
+    let payload = Data("message".utf8)
+    let frame: Data
+    if invalidFrame {
+        frame = try ManagedCodexWebSocketFrameEncoder.serverFrame(
+            opcode: 0x1, payload: payload
+        )
+    } else {
+        frame = managedCodexClientFrame(opcode: 0x1, payload: payload)
+    }
+    try managedCodexTestWrite(frame, descriptor: descriptors[1])
+    // Even a parser regression that accepts the invalid frame must reach EOF
+    // rather than leaving this test blocked in its next read.
+    try #require(shutdown(descriptors[1], SHUT_WR) == 0)
+    if invalidFrame {
+        #expect(throws: ManagedCodexWebSocketError.invalidFrame) {
+            try connection.readMessages { _ in
+                Issue.record("an invalid frame reached the handler")
+            }
+        }
+    } else {
+        #expect(throws: ManagedCodexTestError.failed("handler")) {
+            try connection.readMessages { _ in
+                throw ManagedCodexTestError.failed("handler")
+            }
+        }
+    }
+    connection.close()
+    let descriptorState = fcntl(server, F_GETFD)
+    let descriptorError = errno
+    #expect(descriptorState == -1)
+    #expect(descriptorError == EBADF)
+}
+
+@Test("Managed WebSocket close releases a stalled writer without waiting for its deadline")
+func managedCodexWebSocketCloseInterruptsWriter() throws {
+    var descriptors = [Int32](repeating: -1, count: 2)
+    try #require(socketpair(AF_UNIX, SOCK_STREAM, 0, &descriptors) == 0)
+    let server = descriptors[0]
+    let client = descriptors[1]
+    let connection = ManagedCodexWebSocketConnection(
+        descriptor: server,
+        connectionID: "writer-lifetime"
+    )
+    let finished = DispatchGroup()
+    let result = ManagedCodexBridgeTestResult()
+    defer {
+        connection.close()
+        _ = finished.wait(timeout: .now() + .seconds(2))
+        Darwin.close(client)
+    }
+    var smallBuffer: Int32 = 1_024
+    try #require(setsockopt(
+        server, SOL_SOCKET, SO_SNDBUF, &smallBuffer,
+        socklen_t(MemoryLayout<Int32>.size)
+    ) == 0)
+    finished.enter()
+    DispatchQueue.global(qos: .userInitiated).async {
+        defer { finished.leave() }
+        do { try connection.sendText(Data(repeating: 0x61, count: 1_048_576)) }
+        catch { result.record(error) }
+    }
+    var readable = pollfd(fd: client, events: Int16(POLLIN), revents: 0)
+    try #require(Darwin.poll(&readable, 1, 2_000) > 0)
+    try #require(readable.revents & Int16(POLLIN) != 0)
+    #expect(finished.wait(timeout: .now()) == .timedOut)
+
+    connection.close()
+    try #require(finished.wait(timeout: .now() + .seconds(2)) == .success)
+    #expect(result.error != nil)
+    let descriptorState = fcntl(server, F_GETFD)
+    let descriptorError = errno
+    #expect(descriptorState == -1)
+    #expect(descriptorError == EBADF)
+}
+
 @Test("Managed WebSocket parser accepts masked fragmented text and ping")
 func managedCodexWebSocketParserHandlesClientFrames() throws {
     var parser = ManagedCodexWebSocketFrameParser()
@@ -1447,6 +1647,121 @@ func managedCodexLauncherArgumentsAreBounded() throws {
     }
 }
 
+@Test("Qualified server-owned workspace overrides keep native TOML and ordering on the server")
+func managedCodexLauncherRoutesNativeWorkspaceOverrides() throws {
+    let table = "sandbox_workspace_write = { writable_roots = ['../shared'], network_access = true }"
+    let roots = "sandbox_workspace_write.writable_roots=[\"../other=dir\"]"
+    let network = "sandbox_workspace_write.network_access=false"
+    let exclude = "sandbox_workspace_write.exclude_tmpdir_env_var=true"
+    let original = [
+        "--cd", "nested/project", "--config", table,
+        "-cmodel_reasoning_effort=high", "resume", "thread-1",
+        "--config=\(roots)", "-c\(network)", "-c=\(exclude)",
+        "--no-alt-screen", "-c", "model=example-model",
+    ]
+    for version in ["0.156.0", "0.156.1", "0.157.0", "0.157.1", "0.158.0", "0.159.0", "0.159.1", "0.159.2", "0.159.3", "0.160.0", "0.160.1", "0.161.0", "0.162.0", "0.162.1", "0.163.0"] {
+        let parsed = try ManagedCodexLauncherArguments(
+            ["--"] + original,
+            qualifiedVersion: version
+        )
+        #expect(parsed.tuiArguments == original)
+        #expect(parsed.remoteTUIArguments == [
+            "--cd", "nested/project", "-cmodel_reasoning_effort=high",
+            "resume", "thread-1", "--no-alt-screen", "-c", "model=example-model",
+        ])
+        #expect(parsed.appServerArguments == [
+            "app-server", "--listen", "stdio://",
+            "--config", table, "--config", roots,
+            "--config", network, "--config", exclude,
+        ])
+    }
+}
+
+@Test("Older Codex clients retain their workspace arguments and native root ownership")
+func managedCodexLauncherPreservesOlderWorkspaceArguments() throws {
+    let original = [
+        "--add-dir", "../shared", "--add-dir=/tmp/extra", "--profile", "work",
+        "-c", "sandbox_workspace_write.writable_roots=['../configured']",
+    ]
+    for version in [nil, "0.149.1", "0.150.1", "0.151.0", "0.155.0", "0.155.1"] as [String?] {
+        let parsed = try ManagedCodexLauncherArguments(
+            ["--"] + original,
+            qualifiedVersion: version
+        )
+        #expect(parsed.tuiArguments == original)
+        #expect(parsed.remoteTUIArguments == original)
+        #expect(parsed.appServerArguments == ["app-server", "--listen", "stdio://"])
+    }
+}
+
+@Test("Managed argument routing respects literal native operands and separators", arguments: ["0.156.0", "0.156.1", "0.157.0", "0.157.1", "0.158.0", "0.159.0", "0.159.1", "0.159.2", "0.159.3", "0.160.0", "0.160.1", "0.161.0", "0.162.0", "0.162.1", "0.163.0"])
+func managedCodexLauncherPreservesLiteralNativeArguments(_ version: String) throws {
+    for original in [
+        ["--", "--remote", "--no-daemon", "--add-dir", "-csandbox_workspace_write={}"],
+        ["resume", "thread-1", "--", "--remote-auth-token-env=EXAMPLE"],
+        ["--model", "--no-daemon"],
+        ["--model", "--add-dir=example"],
+        ["--config", "model='--remote'"],
+        ["--model", "example-model", "explain --add-dir and --no-daemon"],
+    ] {
+        let parsed = try ManagedCodexLauncherArguments(
+            ["--"] + original,
+            qualifiedVersion: version
+        )
+        #expect(parsed.tuiArguments == original)
+        #expect(parsed.remoteTUIArguments == original)
+        #expect(parsed.appServerArguments == ["app-server", "--listen", "stdio://"])
+    }
+}
+
+@Test("Managed workspace overrides reject client-only profile scope before launch", arguments: ["0.156.0", "0.156.1", "0.157.0", "0.157.1", "0.158.0", "0.159.0", "0.159.1", "0.159.2", "0.159.3", "0.160.0", "0.160.1", "0.161.0", "0.162.0", "0.162.1", "0.163.0"])
+func managedCodexLauncherRejectsWorkspaceProfileScopeMismatch(_ version: String) throws {
+    for profile in [["--profile", "work"], ["--profile=work"], ["-p", "work"], ["-pwork"]] {
+        for original in [
+            profile + ["-c", "sandbox_workspace_write.writable_roots=['../shared']"],
+            ["-c", "sandbox_workspace_write={network_access=true}"] + profile,
+        ] {
+            do {
+                _ = try ManagedCodexLauncherArguments(
+                    ["--"] + original,
+                    qualifiedVersion: version
+                )
+                Issue.record("expected workspace profile scope rejection")
+            } catch let error as CoordinatorError {
+                #expect(error.code == "managed_codex_arguments_invalid")
+            }
+        }
+    }
+    let profileOnly = try ManagedCodexLauncherArguments(
+        ["--", "--profile", "work", "--no-alt-screen"],
+        qualifiedVersion: version
+    )
+    #expect(profileOnly.remoteTUIArguments == ["--profile", "work", "--no-alt-screen"])
+}
+
+@Test("Incompatible managed flags never start a child or discover an executable", arguments: ["0.156.0", "0.156.1", "0.157.0", "0.157.1", "0.158.0", "0.159.0", "0.159.1", "0.159.2", "0.159.3", "0.160.0", "0.160.1", "0.161.0", "0.162.0", "0.162.1", "0.163.0"])
+func managedCodexLauncherRejectsIncompatibleFlagsBeforeChildren(_ version: String) throws {
+    for flags in [
+        ["--add-dir", "../shared"], ["--add-dir=../shared"],
+        ["--no-daemon"], ["resume", "thread-1", "--no-daemon"],
+    ] {
+        let provider = ManagedCodexExecutableSequence<CoordinatorError>([
+            .success(URL(fileURLWithPath: "/usr/bin/false")),
+        ])
+        do {
+            _ = try ManagedCodexLauncher().run(
+                arguments: ["--"] + flags,
+                qualifiedVersion: version,
+                approvedExecutableProvider: provider.next
+            )
+            Issue.record("expected incompatible managed flags rejection")
+        } catch let error as CoordinatorError {
+            #expect(error.code == "managed_codex_arguments_invalid")
+        }
+        #expect(provider.callCount == 0)
+    }
+}
+
 @Test("Managed App Server diagnostics drain stderr with a strict byte cap")
 func managedCodexAppServerDiagnosticsAreBounded() throws {
     let capture = ManagedCodexDiagnosticCapture()
@@ -1491,6 +1806,8 @@ func managedCodexLauncherChecksApprovalBeforeAppServer() {
         .success(resolvedExecutable),
         .success(resolvedExecutable),
     ])
+    let diagnostics = ManagedCodexAppServerDiagnostics(recorder: { _ in })
+    defer { diagnostics.closeParentWriter() }
 
     do {
         _ = try ManagedCodexLauncher().run(
@@ -1499,7 +1816,8 @@ func managedCodexLauncherChecksApprovalBeforeAppServer() {
                 "--",
             ],
             environment: [:],
-            approvedExecutableProvider: provider.next
+            approvedExecutableProvider: provider.next,
+            appServerDiagnosticsFactory: { diagnostics }
         )
         Issue.record("expected a pre-child managed launch failure")
     } catch let failure as ManagedCodexLaunchFailure {
@@ -1514,6 +1832,8 @@ func managedCodexLauncherChecksApprovalBeforeAppServer() {
         Issue.record("unexpected error: \(error)")
     }
     #expect(provider.callCount == 2)
+    #expect(diagnostics.waitUntilDrained(timeout: .now() + .seconds(2)))
+    #expect(diagnostics.childPipe.fileHandleForReading.readabilityHandler == nil)
 }
 
 @Test("Managed launcher does not invent a native fallback before resolution")
@@ -1542,6 +1862,8 @@ func managedCodexLauncherRevalidatesImmediatelyBeforeAppServer() throws {
         .success(fixture.executable),
         .failure(.approvalDrift),
     ])
+    let diagnostics = ManagedCodexAppServerDiagnostics(recorder: { _ in })
+    defer { diagnostics.closeParentWriter() }
 
     do {
         _ = try ManagedCodexLauncher().run(
@@ -1553,7 +1875,8 @@ func managedCodexLauncherRevalidatesImmediatelyBeforeAppServer() throws {
                 "BLABEE_TEST_MARKER_FILE": fixture.markerFile.path,
                 "BLABEE_TEST_PID_FILE": fixture.pidFile.path,
             ],
-            approvedExecutableProvider: provider.next
+            approvedExecutableProvider: provider.next,
+            appServerDiagnosticsFactory: { diagnostics }
         )
         Issue.record("expected a pre-child revalidation failure")
     } catch let failure as ManagedCodexLaunchFailure {
@@ -1568,6 +1891,42 @@ func managedCodexLauncherRevalidatesImmediatelyBeforeAppServer() throws {
     #expect(provider.callCount == 2)
     #expect(!FileManager.default.fileExists(atPath: fixture.markerFile.path))
     #expect(!FileManager.default.fileExists(atPath: fixture.pidFile.path))
+    #expect(diagnostics.waitUntilDrained(timeout: .now() + .seconds(2)))
+    #expect(diagnostics.childPipe.fileHandleForReading.readabilityHandler == nil)
+}
+
+@Test("Managed launcher drains diagnostics after rejecting a pre-spawn environment")
+func managedCodexLauncherClosesDiagnosticsForUnsafeEnvironment() throws {
+    let fixture = try managedCodexLauncherExecutableFixture()
+    defer { try? FileManager.default.removeItem(at: fixture.directory) }
+    let provider = ManagedCodexExecutableSequence<CodexRuntimeTrustError>([
+        .success(fixture.executable),
+    ])
+    let diagnostics = ManagedCodexAppServerDiagnostics(recorder: { _ in })
+    defer { diagnostics.closeParentWriter() }
+
+    do {
+        _ = try ManagedCodexLauncher().run(
+            arguments: [
+                "--coordinator-socket", "/tmp/blabee-managed-unsafe-env.sock",
+                "--",
+            ],
+            environment: ["DYLD_INSERT_LIBRARIES": "/tmp/untrusted.dylib"],
+            approvedExecutableProvider: provider.next,
+            appServerDiagnosticsFactory: { diagnostics }
+        )
+        Issue.record("expected an unsafe environment failure")
+    } catch let failure as ManagedCodexLaunchFailure {
+        #expect(failure.childStartState == .notStarted)
+        #expect(
+            (failure.underlyingError as? CoordinatorError)?.code
+                == "managed_codex_environment_unsafe"
+        )
+    }
+    #expect(provider.callCount == 1)
+    #expect(!FileManager.default.fileExists(atPath: fixture.pidFile.path))
+    #expect(diagnostics.waitUntilDrained(timeout: .now() + .seconds(2)))
+    #expect(diagnostics.childPipe.fileHandleForReading.readabilityHandler == nil)
 }
 
 @Test("Managed launcher revalidates before TUI and cleans up App Server on failure")
@@ -1714,10 +2073,66 @@ func managedCodexLauncherRevalidatesAfterTUISpawnAndCleansUp() throws {
     }
 }
 
-@Test("Managed launcher accepts and reaps an isolated auxiliary App Server")
-func managedCodexAuxiliaryConnectionRoundTripAndCleanup() throws {
+@Test("Managed primary App Server receives routed workspace settings without changing fallback arguments", arguments: ["0.156.0", "0.156.1", "0.157.0", "0.157.1", "0.158.0", "0.159.0", "0.159.1", "0.159.2", "0.159.3", "0.160.0", "0.160.1", "0.161.0", "0.162.0", "0.162.1", "0.163.0"])
+func managedCodexLauncherPassesPrimaryWorkspaceArguments(_ version: String) throws {
+    let fixture = try managedCodexLauncherExecutableFixture()
+    defer { try? FileManager.default.removeItem(at: fixture.directory) }
+    let argumentsFile = fixture.directory.appendingPathComponent("app-server.arguments")
+    let original = [
+        "--cd", "nested/project", "-c",
+        "sandbox_workspace_write={writable_roots=['../shared'],network_access=true}",
+    ]
+    let provider = ManagedCodexExecutableSequence<CodexRuntimeTrustError>(
+        [
+            .success(fixture.executable),
+            .success(fixture.executable),
+            .failure(.approvalDrift),
+        ],
+        beforeOutcome: { call in
+            guard call == 3 else { return }
+            let deadline = DispatchTime.now().uptimeNanoseconds + 5_000_000_000
+            while !FileManager.default.fileExists(atPath: fixture.pidFile.path),
+                  DispatchTime.now().uptimeNanoseconds < deadline
+            {
+                usleep(10_000)
+            }
+        }
+    )
+    do {
+        _ = try ManagedCodexLauncher().run(
+            arguments: ["--"] + original,
+            environment: [
+                "BLABEE_TEST_MARKER_FILE": fixture.markerFile.path,
+                "BLABEE_TEST_PID_FILE": fixture.pidFile.path,
+                "BLABEE_TEST_ARGUMENTS_FILE": argumentsFile.path,
+            ],
+            qualifiedVersion: version,
+            approvedExecutableProvider: provider.next
+        )
+        Issue.record("expected revalidation to prevent TUI launch")
+    } catch let failure as ManagedCodexLaunchFailure {
+        #expect(failure.childStartState == .started)
+        #expect(failure.tuiArguments == original)
+        #expect(failure.underlyingError as? CodexRuntimeTrustError == .approvalDrift)
+    }
+    let arguments = try String(contentsOf: argumentsFile, encoding: .utf8)
+        .split(separator: "\n").map(String.init)
+    #expect(arguments == [
+        "app-server", "--listen", "stdio://", "--config", original[3],
+    ])
+    #expect(provider.callCount == 3)
+    #expect(!FileManager.default.fileExists(atPath: fixture.tuiPIDFile.path))
+}
+
+@Test("Managed launcher accepts and reaps an isolated auxiliary App Server", arguments: ["0.156.0", "0.156.1", "0.157.0", "0.157.1", "0.158.0", "0.159.0", "0.159.1", "0.159.2", "0.159.3", "0.160.0", "0.160.1", "0.161.0", "0.162.0", "0.162.1", "0.163.0"])
+func managedCodexAuxiliaryConnectionRoundTripAndCleanup(_ version: String) throws {
     let fixture = try managedCodexAuxiliaryExecutableFixture()
     defer { try? FileManager.default.removeItem(at: fixture.directory) }
+    let argumentsFile = fixture.directory.appendingPathComponent("app-server.arguments")
+    let workspaceArguments = try ManagedCodexLauncherArguments(
+        ["--", "-c", "sandbox_workspace_write.writable_roots=['../shared']"],
+        qualifiedVersion: version
+    ).appServerArguments
     let token = "auxiliary-token"
     let listener = try ManagedCodexWebSocketListener(expectedToken: token)
     let primaryClient = try managedCodexConnectClient(port: listener.port)
@@ -1748,12 +2163,14 @@ func managedCodexAuxiliaryConnectionRoundTripAndCleanup() throws {
         environment: [
             "BLABEE_TEST_PID_FILE": fixture.pidFile.path,
             "BLABEE_TEST_ENVIRONMENT_FILE": fixture.environmentFile.path,
+            "BLABEE_TEST_ARGUMENTS_FILE": argumentsFile.path,
             "BLABEE_TEST_STDERR_TEXT": diagnosticText,
             "CODEX_CODE_MODE_HOST_PATH": "/tmp/untrusted-code-mode-host",
             "PATH": "/usr/local/bin:/usr/bin",
         ],
         coordinatorSocketPath: "/tmp/blabee-managed-auxiliary.sock",
         brokerEpoch: "epoch-auxiliary-test",
+        appServerArguments: workspaceArguments,
         approvedExecutableProvider: provider.next,
         appServerDiagnosticsFactory: {
             ManagedCodexAppServerDiagnostics(
@@ -1799,6 +2216,10 @@ func managedCodexAuxiliaryConnectionRoundTripAndCleanup() throws {
     )
     #expect(provider.callCount == 2)
 
+    let childArguments = try String(contentsOf: argumentsFile, encoding: .utf8)
+        .split(separator: "\n").map(String.init)
+    #expect(childArguments == workspaceArguments)
+
     let childEnvironment = try String(
         contentsOf: fixture.environmentFile,
         encoding: .utf8
@@ -1840,8 +2261,10 @@ func managedCodexAuxiliaryConnectionRoundTripAndCleanup() throws {
     #expect(diagnosticCapture.data.contains(Data(diagnosticText.utf8)))
 }
 
-@Test("Managed auxiliary provider drift blocks spawn without retry")
-func managedCodexAuxiliaryProviderDriftBlocksSpawn() throws {
+@Test("Managed auxiliary pre-spawn rejection drains diagnostics without retry", arguments: [false, true])
+func managedCodexAuxiliaryProviderDriftBlocksSpawn(
+    _ unsafeEnvironment: Bool
+) throws {
     let fixture = try managedCodexAuxiliaryExecutableFixture()
     defer { try? FileManager.default.removeItem(at: fixture.directory) }
     let token = "auxiliary-drift-token"
@@ -1852,18 +2275,38 @@ func managedCodexAuxiliaryProviderDriftBlocksSpawn() throws {
         [.failure(.approvalDrift)],
         beforeOutcome: { _ in providerCalled.signal() }
     )
+    let diagnosticsCreated = DispatchSemaphore(value: 0)
+    let diagnostics = ManagedCodexAppServerDiagnostics(recorder: { _ in })
+    defer { diagnostics.closeParentWriter() }
+    var environment = [
+        "BLABEE_TEST_PID_FILE": fixture.pidFile.path,
+        "BLABEE_TEST_ENVIRONMENT_FILE": fixture.environmentFile.path,
+    ]
+    if unsafeEnvironment {
+        environment["DYLD_INSERT_LIBRARIES"] = "/tmp/untrusted.dylib"
+    }
     let broker = ManagedCodexAuxiliaryConnectionBroker(
         admission: admission,
         executable: fixture.executable,
-        environment: [
-            "BLABEE_TEST_PID_FILE": fixture.pidFile.path,
-            "BLABEE_TEST_ENVIRONMENT_FILE": fixture.environmentFile.path,
-        ],
+        environment: environment,
         coordinatorSocketPath: "/tmp/blabee-managed-auxiliary-drift.sock",
         brokerEpoch: "epoch-auxiliary-drift",
-        approvedExecutableProvider: provider.next
+        approvedExecutableProvider: provider.next,
+        appServerDiagnosticsFactory: {
+            diagnosticsCreated.signal()
+            return diagnostics
+        }
     )
     broker.start()
+    defer {
+        let stopped = DispatchGroup()
+        stopped.enter()
+        DispatchQueue.global(qos: .userInitiated).async {
+            broker.stopAndWait()
+            stopped.leave()
+        }
+        #expect(stopped.wait(timeout: .now() + .seconds(3)) == .success)
+    }
 
     let client = try managedCodexConnectClient(port: listener.port)
     defer { Darwin.close(client) }
@@ -1880,9 +2323,13 @@ func managedCodexAuxiliaryProviderDriftBlocksSpawn() throws {
         timeoutMilliseconds: 5_000
     )
 
-    #expect(providerCalled.wait(timeout: .now() + .seconds(2)) == .success)
-    broker.stopAndWait()
-    #expect(provider.callCount == 1)
+    #expect(diagnosticsCreated.wait(timeout: .now() + .seconds(2)) == .success)
+    if !unsafeEnvironment {
+        #expect(providerCalled.wait(timeout: .now() + .seconds(2)) == .success)
+    }
+    #expect(diagnostics.waitUntilDrained(timeout: .now() + .seconds(2)))
+    #expect(diagnostics.childPipe.fileHandleForReading.readabilityHandler == nil)
+    #expect(provider.callCount == (unsafeEnvironment ? 0 : 1))
     #expect(!FileManager.default.fileExists(atPath: fixture.pidFile.path))
     #expect(
         !FileManager.default.fileExists(atPath: fixture.environmentFile.path)
@@ -2377,6 +2824,208 @@ func managedCodexLateAllowFallsBackToNativeCodex() throws {
     #expect(try managedCodexTestReadServerText(descriptor: harness.client) == request)
 }
 
+@Test("Native resolution suppresses a late selection and expired fallback, preserving its sibling", arguments: [false, true])
+func managedCodexNativeResolutionSuppressesLateDelivery(expired: Bool) throws {
+    let decider = ManagedCodexDeliveryTrackingDecider([
+        ManagedCodexApprovalSelection(decision: .allowOnce, deliveryToken: "resolved_A_token"),
+        ManagedCodexApprovalSelection(decision: .allowOnce, deliveryToken: "live_B_token"),
+    ], blockSelection: true, ignoreSelectionCancellation: true)
+    let harness = try ManagedCodexBridgeHarness(
+        decider: decider,
+        approvalWaitNanoseconds: expired ? 500_000_000 : 30_000_000_000
+    )
+    defer {
+        decider.selectionRelease.signal()
+        decider.selectionRelease.signal()
+        harness.close()
+    }
+    harness.start()
+    try harness.sendFromAppServer(try managedCodexApprovalData(id: "resolved-A"))
+    try #require(decider.selectionStarted.wait(timeout: .now() + .seconds(1)) == .success)
+    let resolved = try managedCodexResolvedData(id: "resolved-A")
+    try harness.sendFromAppServer(resolved)
+    #expect(try managedCodexTestReadServerText(descriptor: harness.client) == resolved)
+    if expired { Thread.sleep(forTimeInterval: 0.6) }
+
+    try harness.sendFromAppServer(try managedCodexApprovalData(id: "live-B"))
+    decider.selectionRelease.signal() // Deliberately return A's stale allow/token.
+    try #require(decider.selectionStarted.wait(timeout: .now() + .seconds(1)) == .success)
+    // B entered the serial decider only after A's delivery/release path finished.
+    #expect(decider.requestIDs == [.string("resolved-A"), .string("live-B")])
+    #expect(decider.acknowledgements.isEmpty)
+    managedCodexExpectNoReadableBytes(harness.appServerResponseDescriptor)
+    managedCodexExpectNoReadableBytes(harness.client)
+
+    decider.selectionRelease.signal()
+    let response = try managedCodexTestReadLine(descriptor: harness.appServerResponseDescriptor)
+    #expect(try managedCodexResponseID(response) == "live-B")
+    try #require(decider.acknowledgementStarted.wait(timeout: .now() + .seconds(1)) == .success)
+    #expect(decider.acknowledgements.map(\.token) == ["live_B_token"])
+    #expect(harness.result.error == nil)
+}
+
+@Test("Native resolution preserves integer versus string request ID identity")
+func managedCodexNativeResolutionUsesTypedRequestID() throws {
+    let decider = ManagedCodexDeliveryTrackingDecider([
+        ManagedCodexApprovalSelection(decision: .allowOnce, deliveryToken: "integer_token"),
+        ManagedCodexApprovalSelection(decision: .allowOnce, deliveryToken: "string_token"),
+    ], blockSelection: true, ignoreSelectionCancellation: true)
+    let harness = try ManagedCodexBridgeHarness(decider: decider)
+    defer {
+        decider.selectionRelease.signal()
+        decider.selectionRelease.signal()
+        harness.close()
+    }
+    harness.start()
+    try harness.sendFromAppServer(try managedCodexApprovalData(id: 7))
+    try #require(decider.selectionStarted.wait(timeout: .now() + .seconds(1)) == .success)
+    try harness.sendFromAppServer(try managedCodexApprovalData(id: "7"))
+    let resolved = try managedCodexResolvedData(id: 7)
+    try harness.sendFromAppServer(resolved)
+    #expect(try managedCodexTestReadServerText(descriptor: harness.client) == resolved)
+    decider.selectionRelease.signal()
+    try #require(decider.selectionStarted.wait(timeout: .now() + .seconds(1)) == .success)
+    #expect(decider.requestIDs == [.integer(7), .string("7")])
+    managedCodexExpectNoReadableBytes(harness.appServerResponseDescriptor)
+    #expect(decider.acknowledgements.isEmpty)
+    decider.selectionRelease.signal()
+    let response = try managedCodexTestReadLine(descriptor: harness.appServerResponseDescriptor)
+    #expect(try managedCodexResponseID(response) == "7")
+    try #require(decider.acknowledgementStarted.wait(timeout: .now() + .seconds(1)) == .success)
+    #expect(decider.acknowledgements.map(\.request.requestID) == [.string("7")])
+}
+
+@Test("Mismatched or malformed native resolution cannot cancel a pending approval")
+func managedCodexNativeResolutionRequiresExactNotificationIdentity() throws {
+    let decider = ManagedCodexDeliveryTrackingDecider([
+        ManagedCodexApprovalSelection(decision: .allowOnce, deliveryToken: "unresolved_token"),
+    ], blockSelection: true)
+    let harness = try ManagedCodexBridgeHarness(decider: decider)
+    defer {
+        decider.selectionRelease.signal()
+        harness.close()
+    }
+    harness.start()
+    let threadID = "thread-\u{E9}"
+    try harness.sendFromAppServer(try managedCodexApprovalData(id: 7, threadID: threadID))
+    try #require(decider.selectionStarted.wait(timeout: .now() + .seconds(1)) == .success)
+    var notifications = try [
+        managedCodexResolvedData(id: 7, threadID: "other-thread"),
+        managedCodexResolvedData(id: 7, threadID: "thread-e\u{301}"),
+        managedCodexResolvedData(id: "7", threadID: threadID),
+        managedCodexResolvedData(id: 8, threadID: threadID),
+        managedCodexResolvedData(id: true, threadID: threadID),
+        managedCodexResolvedData(id: 7.5, threadID: threadID),
+        managedCodexResolvedData(id: NSNull(), threadID: threadID),
+    ]
+    let invalidEnvelopes: [[String: Any]] = [["id": NSNull()], ["jsonrpc": "1.0"]]
+    for extra in invalidEnvelopes {
+        var object: [String: Any] = ["method": "serverRequest/resolved",
+            "params": ["requestId": 7, "threadId": threadID]]
+        object.merge(extra) { _, new in new }
+        notifications.append(try JSONSerialization.data(withJSONObject: object))
+    }
+    notifications.append(Data(#"{"method":"serverRequest/resolved","params":{"requestId":7,"requestId":8,"threadId":"thread-é"}}"#.utf8))
+    for notification in notifications {
+        try harness.sendFromAppServer(notification)
+        #expect(try managedCodexTestReadServerText(descriptor: harness.client) == notification)
+    }
+    decider.selectionRelease.signal()
+    let response = try managedCodexTestReadLine(descriptor: harness.appServerResponseDescriptor)
+    let object = try #require(JSONSerialization.jsonObject(with: response) as? [String: Any])
+    #expect(ExactJSONInteger.int64(object["id"]) == 7)
+    try #require(decider.acknowledgementStarted.wait(timeout: .now() + .seconds(1)) == .success)
+    #expect(decider.acknowledgements.count == 1)
+}
+
+@Test("A native-resolved queued approval is skipped while the following approval progresses")
+func managedCodexNativeResolutionSkipsQueuedApproval() throws {
+    let decider = ManagedCodexDeliveryTrackingDecider([
+        ManagedCodexApprovalSelection(decision: .allowOnce, deliveryToken: "blocking_token"),
+        ManagedCodexApprovalSelection(decision: .allowOnce, deliveryToken: "following_token"),
+    ], blockSelection: true)
+    let harness = try ManagedCodexBridgeHarness(decider: decider, maximumPendingApprovals: 3)
+    defer {
+        decider.selectionRelease.signal()
+        decider.selectionRelease.signal()
+        harness.close()
+    }
+    harness.start()
+    try harness.sendFromAppServer(try managedCodexApprovalData(id: "blocking"))
+    try #require(decider.selectionStarted.wait(timeout: .now() + .seconds(1)) == .success)
+    try harness.sendFromAppServer(try managedCodexApprovalData(id: "queued-A"))
+    try harness.sendFromAppServer(try managedCodexApprovalData(id: "following-B"))
+    let resolved = try managedCodexResolvedData(id: "queued-A")
+    try harness.sendFromAppServer(resolved)
+    #expect(try managedCodexTestReadServerText(descriptor: harness.client) == resolved)
+    decider.selectionRelease.signal()
+    let first = try managedCodexTestReadLine(descriptor: harness.appServerResponseDescriptor)
+    #expect(try managedCodexResponseID(first) == "blocking")
+    try #require(decider.acknowledgementStarted.wait(timeout: .now() + .seconds(1)) == .success)
+    try #require(decider.selectionStarted.wait(timeout: .now() + .seconds(1)) == .success)
+    #expect(decider.requestIDs == [.string("blocking"), .string("following-B")])
+    decider.selectionRelease.signal()
+    let second = try managedCodexTestReadLine(descriptor: harness.appServerResponseDescriptor)
+    #expect(try managedCodexResponseID(second) == "following-B")
+    try #require(decider.acknowledgementStarted.wait(timeout: .now() + .seconds(1)) == .success)
+    #expect(decider.acknowledgements.map(\.token) == ["blocking_token", "following_token"])
+    managedCodexExpectNoReadableBytes(harness.client)
+}
+
+@Test("Successful delivery keeps its ACK while native resolution and unrelated traffic are forwarded")
+func managedCodexDeliveredApprovalResolutionKeepsAckAndReadLoop() throws {
+    let decider = ManagedCodexDeliveryTrackingDecider([
+        ManagedCodexApprovalSelection(decision: .allowOnce, deliveryToken: "already_delivered_token"),
+    ], blockAcknowledgement: true)
+    let harness = try ManagedCodexBridgeHarness(decider: decider)
+    defer {
+        decider.acknowledgementRelease.signal()
+        harness.close()
+    }
+    harness.start()
+    try harness.sendFromAppServer(try managedCodexApprovalData(id: "already-delivered"))
+    try #require(decider.acknowledgementStarted.wait(timeout: .now() + .seconds(1)) == .success)
+    let response = try managedCodexTestReadLine(descriptor: harness.appServerResponseDescriptor)
+    #expect(try managedCodexResponseID(response) == "already-delivered")
+    let resolved = try managedCodexResolvedData(id: "already-delivered")
+    let unrelated = Data(#"{"method":"thread/started","params":{"threadId":"still-live"}}"#.utf8)
+    for notification in [resolved, unrelated] {
+        try harness.sendFromAppServer(notification)
+        #expect(try managedCodexTestReadServerText(
+            descriptor: harness.client, timeoutMilliseconds: 250
+        ) == notification)
+    }
+    #expect(decider.acknowledgements.map(\.token) == ["already_delivered_token"])
+    managedCodexExpectNoReadableBytes(harness.appServerResponseDescriptor)
+}
+
+@Test("Duplicate native resolution and repeated stop release approvals exactly once")
+func managedCodexNativeResolutionAndStopAreIdempotent() throws {
+    let decider = ManagedCodexDeliveryTrackingDecider([
+        ManagedCodexApprovalSelection(decision: .allowOnce, deliveryToken: "cancelled_token"),
+    ], blockSelection: true)
+    let harness = try ManagedCodexBridgeHarness(decider: decider)
+    defer {
+        decider.selectionRelease.signal()
+        harness.close()
+    }
+    harness.start()
+    try harness.sendFromAppServer(try managedCodexApprovalData(id: "cancelled"))
+    try #require(decider.selectionStarted.wait(timeout: .now() + .seconds(1)) == .success)
+    let resolved = try managedCodexResolvedData(id: "cancelled")
+    for _ in 0..<2 {
+        try harness.sendFromAppServer(resolved)
+        #expect(try managedCodexTestReadServerText(descriptor: harness.client) == resolved)
+    }
+    harness.stopBridge()
+    harness.stopBridge()
+    #expect(harness.finished.wait(timeout: .now() + .seconds(2)) == .success)
+    #expect(decider.acknowledgements.isEmpty)
+    #expect(harness.result.error == nil)
+    harness.close()
+    harness.close()
+}
+
 @Test("Managed bridge terminates a connection on duplicate approval request IDs")
 func managedCodexDuplicateApprovalIDIsNotRoutedTwice() throws {
     let decider = ManagedCodexBlockingDecider()
@@ -2792,6 +3441,9 @@ private func managedCodexAuxiliaryExecutableFixture(
     let script = #"""
     #!/bin/sh
     if [ "$1" = "app-server" ]; then
+      if [ -n "$BLABEE_TEST_ARGUMENTS_FILE" ]; then
+        printf '%s\n' "$@" > "$BLABEE_TEST_ARGUMENTS_FILE"
+      fi
       printf '%s\n' "$$" > "$BLABEE_TEST_PID_FILE"
       if [ -n "$BLABEE_TEST_ENVIRONMENT_FILE" ]; then
         printf '%s\n%s\n%s\n' \
@@ -2859,6 +3511,9 @@ private func managedCodexLauncherExecutableFixture(
     let script = #"""
     #!/bin/sh
     if [ "$1" = "app-server" ]; then
+      if [ -n "$BLABEE_TEST_ARGUMENTS_FILE" ]; then
+        printf '%s\n' "$@" > "$BLABEE_TEST_ARGUMENTS_FILE"
+      fi
       printf 'app-server\t%s\t%s\n' \
         "$0" "$CODEX_CODE_MODE_HOST_PATH" \
         >> "$BLABEE_TEST_MARKER_FILE"
@@ -2892,6 +3547,7 @@ private func managedCodexLauncherExecutableFixture(
 
 private func managedCodexApprovalData(
     id: Any,
+    threadID: String = "thread-1",
     approvalID: String? = "approval-1",
     kind: String? = nil,
     hasHiddenPermissions: Bool = false,
@@ -2899,7 +3555,7 @@ private func managedCodexApprovalData(
     futureMetadataDepth: Int = 0
 ) throws -> Data {
     var params: [String: Any] = [
-        "threadId": "thread-1",
+        "threadId": threadID,
         "turnId": "turn-1",
         "itemId": "item-1",
         "environmentId": NSNull(),
@@ -2930,6 +3586,18 @@ private func managedCodexApprovalData(
         "method": CodexAppServerApprovalAdapter.commandApprovalMethod,
         "params": params,
     ], options: [.sortedKeys, .withoutEscapingSlashes])
+}
+
+private func managedCodexResolvedData(id: Any, threadID: String = "thread-1") throws -> Data {
+    try JSONSerialization.data(withJSONObject: [
+        "method": "serverRequest/resolved",
+        "params": ["requestId": id, "threadId": threadID],
+    ], options: [.sortedKeys, .withoutEscapingSlashes])
+}
+
+private func managedCodexExpectNoReadableBytes(_ descriptor: Int32) {
+    var readable = pollfd(fd: descriptor, events: Int16(POLLIN), revents: 0)
+    #expect(Darwin.poll(&readable, 1, 0) == 0)
 }
 
 private func managedCodexResponseID(_ data: Data) throws -> String {

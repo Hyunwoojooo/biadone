@@ -4,11 +4,13 @@ import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
 import { buildFreshInternalDMG } from "./build-fresh-internal-dmg.mjs";
+import { validateReleaseLegalDocumentsAtSourceRoot } from "./build-macos-app.mjs";
 import {
   requireInternalBuildNumber,
   requireInternalDMGOutputBuildSuffix,
 } from "./internal-build-number.mjs";
 import { normalizeReleaseSigning } from "./release-signing.mjs";
+import { verifyPublicClaudeRuntimeDirectory } from "./prepare-claude-runtime.mjs";
 
 const maximumCompatiblePreviousApps = 2;
 
@@ -23,17 +25,24 @@ export async function buildReleaseDMG({
   sourceRoot,
   platform = process.platform,
 } = {}, dependencies = {}) {
-  if (claudeRuntimeDirectory !== undefined || internalClaudeSigning !== undefined) {
-    throw new Error("public release cannot include development Channels or internal Claude signing");
+  if (internalClaudeSigning !== undefined) {
+    throw new Error("public release cannot include internal Claude signing");
   }
   // Release builds always require an explicit certificate and team, even when
   // the caller accidentally omits every signing option.
   const releaseSigning = normalizeReleaseSigning({ identity, teamID });
+  const previousApps = Array.isArray(compatiblePreviousApps)
+    ? [...compatiblePreviousApps] : compatiblePreviousApps;
+  if (claudeRuntimeDirectory !== undefined) await verifyPublicClaudeRuntimeDirectory(claudeRuntimeDirectory);
+  // Fail before the Swift build or signing prompts. The assembler validates
+  // the private staged copy again immediately before Developer ID signing.
+  await validateReleaseLegalDocumentsAtSourceRoot(sourceRoot);
   return buildFreshInternalDMG({
     outputPath,
     buildNumber,
-    compatiblePreviousApps,
+    compatiblePreviousApps: previousApps,
     releaseSigning,
+    ...(claudeRuntimeDirectory === undefined ? {} : { claudeRuntimeDirectory }),
     sourceRoot,
     platform,
   }, dependencies);
@@ -46,6 +55,7 @@ function parseCLIArguments(values) {
     ["--team-id", "teamID"],
     ["--output", "outputPath"],
     ["--build-number", "buildNumber"],
+    ["--claude-runtime-directory", "claudeRuntimeDirectory"],
   ]);
   for (let index = 0; index < values.length; index += 1) {
     const flag = values[index];
@@ -74,7 +84,7 @@ function parseCLIArguments(values) {
   }
   if (!options.help) {
     for (const [flag, name] of names) {
-      if (options[name] === undefined) throw new Error(`${flag} is required`);
+      if (name !== "claudeRuntimeDirectory" && options[name] === undefined) throw new Error(`${flag} is required`);
     }
     normalizeReleaseSigning({ identity: options.identity, teamID: options.teamID });
     options.buildNumber = requireInternalBuildNumber(options.buildNumber, "--build-number");
@@ -91,6 +101,9 @@ function usage() {
     "Builds current Swift source in a private snapshot using a full Xcode toolchain.",
     "Signs the app with Developer ID, Hardened Runtime, and a secure timestamp, then signs its DMG.",
     "An explicit Developer ID Application certificate and matching Team ID are required.",
+    "Use --claude-runtime-directory /absolute/mcp-hook-runtime to bundle the verified ordinary MCP/Hook runtime; development Channels are rejected.",
+    "Packaging/macos/Info.plist must contain published HTTPS BlabeeTermsURL and BlabeePrivacyURL plus a non-placeholder BlabeeLegalDocumentVersion, or explicitly set BlabeeLegalDocumentsDeferred=true with all three document keys absent.",
+    "Deferred documents show optional data-sharing settings without recording legal acceptance; this is not a legal-readiness check.",
     "No ad-hoc signing fallback is used. Prebuilt --binary inputs are unsupported.",
     "The required build number is a canonical integer from 1 through 9999 matching the output -rN.dmg suffix.",
     "The signed DMG must still pass notarize:dmg before public distribution.",

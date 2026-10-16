@@ -71,7 +71,7 @@ private final class InstallationLegacyConfirmationRecorder: @unchecked Sendable 
     var values: [Bool] { lock.withLock { confirmations } }
 }
 
-@Test("an installed matching app is not described as missing") @MainActor
+@Test("an installed matching app is not described as missing", .petLanguage(.korean)) @MainActor
 func appInstallationExistingAppHasAccurateTitle() async throws {
     let fixture = try InstallationFlowFixture(existingBuild: "19")
     defer { fixture.remove() }
@@ -85,7 +85,7 @@ func appInstallationExistingAppHasAccurateTitle() async throws {
     #expect(model.primaryTitle == "설치된 Blabee 열기")
 }
 
-@Test("unexpected location and early exit enter Finder recovery without repeating launch or copy",
+@Test("unexpected location and early exit enter Finder recovery without repeating launch or copy", .petLanguage(.korean),
       arguments: [AppInstallationPlatformError.launchedApplicationMismatch, .launchedProcessExited, .launchFailed, .launchTimedOut])
 @MainActor
 func appInstallationLaunchFailureUsesFinderRecovery(_ failure: AppInstallationPlatformError) async throws {
@@ -125,7 +125,7 @@ func appInstallationLaunchFailureUsesFinderRecovery(_ failure: AppInstallationPl
     }
 }
 
-@Test("installed-only launch rejects translocation, aliases, extra arguments and identity mismatch")
+@Test("installed-only launch rejects translocation, aliases, extra arguments and identity mismatch", .petLanguage(.korean))
 func appInstallationInstalledEntryIsStrict() throws {
     let app = URL(fileURLWithPath: "/Applications/Blabee.app", isDirectory: true)
     func environment(_ app: URL) -> ProductInvocationEnvironment {
@@ -156,7 +156,7 @@ func appInstallationInstalledEntryIsStrict() throws {
     }
 }
 
-@Test("installation primary policy never automatically downgrades or replaces an unknown version")
+@Test("installation primary policy never automatically downgrades or replaces an unknown version", .petLanguage(.korean))
 func appInstallationPrimaryPolicy() {
     #expect(AppInstallationPrimaryAction.forComparison(.freshInstall) == .install)
     #expect(AppInstallationPrimaryAction.forComparison(.upgrade) == .confirmReplacement)
@@ -166,7 +166,53 @@ func appInstallationPrimaryPolicy() {
     }
 }
 
-@Test("inspection and cancellation never copy or launch an app") @MainActor
+@Test("DMG replacement uses the same bounded readiness checks and preserves the precise blocker", .petLanguage(.korean))
+@MainActor
+func appInstallationReadinessBlocksBeforeCopy() async throws {
+    let fixture = try InstallationFlowFixture(existingBuild: "18")
+    defer { fixture.remove() }
+    let service = fixture.service, source = fixture.source
+    let installs = InstallationFlowCounter()
+    let reason = "이전 연결의 종료를 확인한 뒤 다시 시도해 주세요."
+    let model = AppInstallationViewModel(sourceURL: source, inspect: { try service.inspect(source: source) },
+        install: { _, _, _ in installs.increment(); throw AppInstallationError(.copyFailed) },
+        openInstalled: { _, _ in Issue.record("Blocked readiness must not open an app") },
+        safePointWaiter: .init(requireReady: { _ in
+            throw AppUpdateTransactionError.transitionBlocked(reason)
+        }, isTransient: { _ in false }))
+    await model.refresh()
+    await model.performPrimary()
+    await model.confirmReplacement()
+    #expect(model.phase == .failed && model.message == reason)
+    #expect(installs.value == 0 && model.receipt == nil && model.plan == nil)
+    #expect(!model.canConfirmLegacyQuit)
+}
+
+@Test("DMG safe-point retry finishes before the single replacement", .petLanguage(.korean))
+@MainActor
+func appInstallationWaitsForRequestCompletion() async throws {
+    let fixture = try InstallationFlowFixture(existingBuild: "18")
+    defer { fixture.remove() }
+    let service = fixture.service, source = fixture.source
+    let installs = InstallationFlowCounter()
+    var inspections = 0
+    var clock: TimeInterval = 0
+    let model = AppInstallationViewModel(sourceURL: source, inspect: { try service.inspect(source: source) },
+        install: { plan, approved, legacy in
+            installs.increment()
+            return try service.install(plan, replacementApproved: approved, legacyQuitConfirmed: legacy)
+        }, openInstalled: { _, _ in },
+        safePointWaiter: .init(requireReady: { _ in
+            inspections += 1
+            if inspections == 1 { throw AppUpdateAdmissionError.busy }
+        }, isTransient: { _ in true }, uptime: { clock }, sleep: { _ in clock += 0.5 }))
+    await model.refresh()
+    await model.performPrimary()
+    await model.confirmReplacement()
+    #expect(inspections == 2 && installs.value == 1 && model.phase == .launched)
+}
+
+@Test("inspection and cancellation never copy or launch an app", .petLanguage(.korean)) @MainActor
 func appInstallationInspectionHasNoImplicitEffects() async throws {
     let fixture = try InstallationFlowFixture(existingBuild: "18")
     defer { fixture.remove() }
@@ -192,7 +238,7 @@ func appInstallationInspectionHasNoImplicitEffects() async throws {
     #expect(installs.value == 0 && opens == 0)
 }
 
-@Test("confirmed replacement remains valid after SwiftUI dismisses the binding") @MainActor
+@Test("confirmed replacement remains valid after SwiftUI dismisses the binding", .petLanguage(.korean)) @MainActor
 func appInstallationConfirmationBindingOrder() async throws {
     let fixture = try InstallationFlowFixture(existingBuild: "18")
     defer { fixture.remove() }
@@ -216,7 +262,7 @@ func appInstallationConfirmationBindingOrder() async throws {
     #expect(installs.value == 1)
 }
 
-@Test("launch failure retains the installed receipt and retry opens without reinstalling") @MainActor
+@Test("launch failure retains the installed receipt and retry opens without reinstalling", .petLanguage(.korean)) @MainActor
 func appInstallationOpenFailureRetriesOnlyLaunch() async throws {
     let fixture = try InstallationFlowFixture()
     defer { fixture.remove() }
@@ -244,7 +290,7 @@ func appInstallationOpenFailureRetriesOnlyLaunch() async throws {
     #expect(installs.value == 1 && opens == 2 && model.phase == .launched)
 }
 
-@Test("failed copy clears the stale plan and cannot retry without inspection") @MainActor
+@Test("failed copy clears the stale plan and cannot retry without inspection", .petLanguage(.korean)) @MainActor
 func appInstallationFailedCopyRequiresRefresh() async throws {
     let fixture = try InstallationFlowFixture()
     defer { fixture.remove() }
@@ -262,7 +308,7 @@ func appInstallationFailedCopyRequiresRefresh() async throws {
     #expect(model.phase == .ready)
 }
 
-@Test("same installed build is opened without copying or requesting replacement") @MainActor
+@Test("same installed build is opened without copying or requesting replacement", .petLanguage(.korean)) @MainActor
 func appInstallationExistingBuildIsReused() async throws {
     let fixture = try InstallationFlowFixture(existingBuild: "19")
     defer { fixture.remove() }
@@ -281,7 +327,7 @@ func appInstallationExistingBuildIsReused() async throws {
     #expect(installs.value == 0 && opens == 1 && !model.showsReplacementConfirmation)
 }
 
-@Test("repeated clicks cannot begin a second installation while the first is busy") @MainActor
+@Test("repeated clicks cannot begin a second installation while the first is busy", .petLanguage(.korean)) @MainActor
 func appInstallationBusyPreventsDuplicateSubmission() async throws {
     let fixture = try InstallationFlowFixture()
     defer { fixture.remove() }
@@ -314,7 +360,7 @@ func appInstallationBusyPreventsDuplicateSubmission() async throws {
     #expect(model.phase == .launched && installs.value == 1)
 }
 
-@Test("legacy recovery is unavailable for active apps, enumeration failures, copy failures and fresh installs",
+@Test("legacy recovery is unavailable for active apps, enumeration failures, copy failures and fresh installs", .petLanguage(.korean),
       arguments: ["active", "enumeration", "copy", "fresh"]) @MainActor
 func appInstallationLegacyRecoveryEligibility(reason: String) async throws {
     let fixture = try InstallationFlowFixture(existingBuild: reason == "fresh" ? nil : "18")
@@ -343,7 +389,7 @@ func appInstallationLegacyRecoveryEligibility(reason: String) async throws {
     #expect(installs.value == 1 && !model.showsLegacyQuitConfirmation)
 }
 
-@Test("legacy recovery reinspects and requires one explicit confirmation even after binding dismissal") @MainActor
+@Test("legacy recovery reinspects and requires one explicit confirmation even after binding dismissal", .petLanguage(.korean)) @MainActor
 func appInstallationLegacyRecoveryConfirmation() async throws {
     let fixture = try InstallationFlowFixture(existingBuild: "18")
     defer { fixture.remove() }
@@ -383,7 +429,7 @@ func appInstallationLegacyRecoveryConfirmation() async throws {
     #expect(confirmations.values == [false, true] && opens == 1)
 }
 
-@Test("cancellation, refresh and a failed legacy retry clear one-use confirmation",
+@Test("cancellation, refresh and a failed legacy retry clear one-use confirmation", .petLanguage(.korean),
       arguments: ["cancel", "refresh", "failure"]) @MainActor
 func appInstallationLegacyRecoveryConsentDoesNotPersist(reset: String) async throws {
     let fixture = try InstallationFlowFixture(existingBuild: "18")
@@ -419,7 +465,7 @@ func appInstallationLegacyRecoveryConsentDoesNotPersist(reset: String) async thr
     #expect(confirmations.values == expected + [false])
 }
 
-@Test("fresh recovery inspection rejects a changed comparison or absent destination",
+@Test("fresh recovery inspection rejects a changed comparison or absent destination", .petLanguage(.korean),
       arguments: ["19", "20", "preview", "absent"]) @MainActor
 func appInstallationLegacyRecoveryRechecksComparison(build: String) async throws {
     let fixture = try InstallationFlowFixture(existingBuild: "18")

@@ -3,9 +3,74 @@ import SwiftUI
 import Testing
 @testable import BlabeeCoordinator
 
-@Suite("First-run onboarding views")
+@Suite("First-run onboarding views", .petLanguage(.korean))
 @MainActor
 struct PetFirstRunViewTests {
+    init() throws { try PetTypographyTestResources.register() }
+
+    @Test("Deferred onboarding presents optional preferences and account-gated continue actions")
+    func deferredPreferencesPresentation() throws {
+        let suite = "blabee-first-run-deferred-view-\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let preferences = PetFirstRunPreferences(defaults: defaults, loginItem: FirstRunRenderLoginItem(), applyTheme: { _ in })
+        let model = PetViewModel(transport: PetFakeTransport(), externalApplicationOpener: PetFakeApplicationOpener())
+        let store = FirstRunRenderStore()
+        let controller = PetFirstRunController(store: store, legalDocuments: .deferred)
+        let view = PetFirstRunView(controller: controller, viewModel: model, preferences: preferences,
+                                  onFinish: { _ in }, onClose: {})
+        controller.skipTutorial()
+        #expect(view.thirdStepTitle == "데이터 공유")
+        #expect(!view.showsLegalAgreement)
+        #expect(view.continueTitle == "계속")
+        #expect(!view.canContinue)
+        controller.synchronizeAccount(id: "verified-account", email: nil)
+        #expect(view.canContinue)
+        #expect(controller.continueAfterSignIn())
+        #expect(controller.step == .terms)
+        #expect(view.continueTitle == "설정 저장하고 계속")
+        #expect(!controller.acceptsTerms)
+        #expect(view.canContinue)
+        #expect(!view.canDeferConnection)
+        controller.synchronizeAccount(id: nil, email: nil, isVerifying: true)
+        #expect(controller.step == .terms)
+        #expect(!view.canContinue)
+        controller.synchronizeAccount(id: "verified-account", email: nil)
+        #expect(controller.saveDataSharingPreferences())
+        #expect(view.canDeferConnection)
+        #expect(store.state?.consentReceipt == nil)
+    }
+
+    @Test("Published and invalid document configurations retain mandatory agreement gating")
+    func legalAgreementPresentation() throws {
+        let suite = "blabee-first-run-legal-view-\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let preferences = PetFirstRunPreferences(defaults: defaults, loginItem: FirstRunRenderLoginItem(), applyTheme: { _ in })
+        let model = PetViewModel(transport: PetFakeTransport(), externalApplicationOpener: PetFakeApplicationOpener())
+        let published = PetFirstRunLegalDocuments.configured(info: [
+            "BlabeeTermsURL": "https://example.test/terms",
+            "BlabeePrivacyURL": "https://example.test/privacy",
+            "BlabeeLegalDocumentVersion": "v1",
+        ])
+        for documents in [published, .placeholder, nil] {
+            let controller = PetFirstRunController(store: FirstRunRenderStore(), legalDocuments: documents)
+            let view = PetFirstRunView(controller: controller, viewModel: model, preferences: preferences,
+                                      onFinish: { _ in }, onClose: {})
+            controller.skipTutorial()
+            #expect(view.thirdStepTitle == "약관")
+            #expect(view.showsLegalAgreement)
+            #expect(view.continueTitle == "약관 확인하기")
+            controller.synchronizeAccount(id: "verified-account", email: nil)
+            #expect(controller.continueAfterSignIn())
+            #expect(view.continueTitle == "동의하고 계속")
+            #expect(!view.canContinue)
+            controller.acceptsTerms = true
+            #expect(view.canContinue == (documents != nil))
+            #expect(!view.canDeferConnection)
+        }
+    }
+
     @Test("Tutorial example requires a valid choice and cannot deliver twice")
     func isolatedTutorialState() {
         var example = PetFirstRunTutorialExampleState()
@@ -64,6 +129,90 @@ struct PetFirstRunViewTests {
         controller.synchronizeAccount(id: userID, email: "tester@example.test")
         #expect(view.canDeferConnection)
         #expect(!controller.isComplete)
+    }
+
+    @Test("Claude-only setup can finish and an explicitly selected incomplete provider still blocks completion")
+    func providerAwareSetupCompletion() async throws {
+        let suite = "blabee-first-run-provider-gates-\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let preferences = PetFirstRunPreferences(defaults: defaults, loginItem: FirstRunRenderLoginItem(), applyTheme: { _ in })
+        let model = PetViewModel(transport: PetFakeTransport(), externalApplicationOpener: PetFakeApplicationOpener())
+        defer { model.stopPolling() }
+        try model.receiveSnapshotDataForTesting(petTestSnapshotData(cards: []))
+        let inspection = PetConnectionSetupInspection(serviceReady: true, providers: [
+            .codex: .init(status: .needsInstall, detail: "설치 필요"),
+            .claude: .init(status: .configured, detail: "설정 완료", sessionEvidence: .waitingForSession)
+        ])
+        let connection = PetConnectionSetupController(
+            store: PetConnectionSetupMemorySelectionStore(selectedProviders: [.claude]),
+            inspect: { inspection },
+            prepare: { Issue.record("Completion must not prepare a service") },
+            configure: { _ in Issue.record("Completion must not change provider settings") }
+        )
+        model.connectionSetup = connection
+        await connection.refresh()
+        let controller = readyFirstRunController()
+        let view = PetFirstRunView(controller: controller, viewModel: model, preferences: preferences,
+                                  onFinish: { _ in }, onClose: {})
+        #expect(view.canContinue)
+        #expect(connection.state(for: .claude).sessionEvidence != .ready)
+        model.setConnectionProviderSelected(.codex, selected: true)
+        #expect(!view.canContinue)
+        #expect(view.canDeferConnection)
+        model.setConnectionProviderSelected(.codex, selected: false)
+        #expect(view.canContinue)
+        #expect(!controller.isComplete)
+    }
+
+    @Test("Setup refresh blocks completion and defer until the current operation returns")
+    func setupOperationBlocksNavigation() async throws {
+        let suite = "blabee-first-run-busy-gates-\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let preferences = PetFirstRunPreferences(defaults: defaults, loginItem: FirstRunRenderLoginItem(), applyTheme: { _ in })
+        let model = PetViewModel(transport: PetFakeTransport(), externalApplicationOpener: PetFakeApplicationOpener())
+        defer { model.stopPolling() }
+        try model.receiveSnapshotDataForTesting(petTestSnapshotData(cards: []))
+        let inspection = PetConnectionSetupInspection(serviceReady: true, providers: [
+            .claude: .init(status: .configured, detail: "설정 완료", sessionEvidence: .waitingForSession)
+        ])
+        var pending: CheckedContinuation<PetConnectionSetupInspection, any Error>?
+        let connection = PetConnectionSetupController(
+            store: PetConnectionSetupMemorySelectionStore(selectedProviders: [.claude]),
+            inspect: { try await withCheckedThrowingContinuation { pending = $0 } },
+            prepare: { Issue.record("Read-only refresh must not prepare a service") },
+            configure: { _ in Issue.record("Read-only refresh must not configure a provider") }
+        )
+        model.connectionSetup = connection
+        connection.receiveObservation(inspection)
+        let view = PetFirstRunView(controller: readyFirstRunController(), viewModel: model, preferences: preferences,
+                                  onFinish: { _ in }, onClose: {})
+        #expect(view.canContinue)
+        let operation = Task { await connection.refresh() }
+        for _ in 0..<100 where pending == nil { await Task.yield() }
+        let waiter = try #require(pending)
+        #expect(connection.isWorking)
+        #expect(!view.canContinue)
+        #expect(!view.canDeferConnection)
+        connection.cancel()
+        #expect(!view.canDeferConnection)
+        waiter.resume(returning: inspection)
+        pending = nil
+        await operation.value
+        #expect(!connection.isWorking)
+        #expect(!view.canContinue)
+        #expect(view.canDeferConnection)
+    }
+
+    private func readyFirstRunController() -> PetFirstRunController {
+        let controller = PetFirstRunController(store: FirstRunRenderStore(), legalDocuments: .placeholder)
+        controller.skipTutorial()
+        controller.synchronizeAccount(id: "11111111-1111-4111-8111-111111111111", email: "tester@example.test")
+        _ = controller.continueAfterSignIn()
+        controller.acceptsTerms = true
+        _ = controller.acceptTerms()
+        return controller
     }
 
     @Test("Four stages render at standard and narrow sizes without finishing or selecting real work")

@@ -31,7 +31,7 @@ final class PetFirstRunWindowController: NSWindowController, NSWindowDelegate {
                 styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
                 backing: .buffered, defer: false
             )
-            window.title = "Blabee 시작하기"
+            window.title = PetL10n.text("Get Started with Blabee", korean: "Blabee 시작하기")
             window.titleVisibility = .hidden
             window.titlebarAppearsTransparent = true
             window.isReleasedWhenClosed = false

@@ -6,7 +6,7 @@ import { assembleMacOSApp } from "../../scripts/build-macos-app.mjs";
 import { macOSAppAssemblyTestSupport } from "../../scripts/build-macos-app.mjs";
 const parseInternalArguments = macOSAppAssemblyTestSupport.parseCLIArguments;
 import { CLAUDE_NODE_ENTITLEMENTS, verifyClaudeRuntimeDirectory } from "../../scripts/prepare-claude-runtime.mjs";
-import { signClaudeRuntimeInternal } from "../../scripts/sign-claude-runtime.mjs";
+import { signClaudeRuntimeInternal, signClaudeRuntimeRelease } from "../../scripts/sign-claude-runtime.mjs";
 import { claudeNodeIdentifier, signInternalClaudeApp, signReleaseApp,
   verifyDeveloperIDSignature, verifyEmbeddedSigningEntitlements } from "../../scripts/release-signing.mjs";
 import { fixtureFile, makeClaudeRuntimeFixture } from "./claude-runtime-fixtures.mjs";
@@ -20,8 +20,8 @@ const signatureDisplay = (identifier, changes = {}) => {
     ...Object.entries(values).filter(([key, value]) => key !== "flags" && value !== null).map(([key, value]) => `${key}=${value}`)].join("\n");
 };
 
-async function makePreviewApp(t) {
-  const fixture = await makeClaudeRuntimeFixture(t);
+async function makePreviewApp(t, { legacy = true } = {}) {
+  const fixture = await makeClaudeRuntimeFixture(t, { legacy });
   const app = join(fixture.root, "Blabee.app");
   const runtime = join(app, "Contents", "Resources", "claude");
   const main = join(app, "Contents", "MacOS", "blabee-coordinator");
@@ -95,7 +95,7 @@ test("internal Node signing uses Developer ID, verifies chain/identity/runtime/t
 test("internal app signer verifies the exact Node first and keeps general release nested-code rejection", async t => {
   const fixture = await makePreviewApp(t);
   const captured = await mockSigner(fixture);
-  await assert.rejects(signReleaseApp(fixture.app, signing, { ...captured, internalClaude: true }), /unsupported executable code|public release/u);
+  await assert.rejects(signReleaseApp(fixture.app, signing, { ...captured, internalClaude: true }), /public distribution.*development Channels/u);
   assert.equal(captured.calls.length, 0);
   await signClaudeRuntimeInternal(fixture.runtime, signing, captured);
   const signedDigest = (await verifyClaudeRuntimeDirectory(fixture.runtime)).payload_digest;
@@ -109,6 +109,42 @@ test("internal app signer verifies the exact Node first and keeps general releas
   assert.equal(captured.calls[enclosing].args.includes("--deep"), false);
   assert.equal(captured.calls.at(-1).args.at(-1), fixture.app);
   assert.equal((await verifyClaudeRuntimeDirectory(fixture.runtime)).payload_digest, signedDigest);
+});
+
+test("public MCP/Hook signing verifies nested Developer ID Node before enclosing app and keeps delivery mode", async t => {
+  const fixture = await makePreviewApp(t, { legacy: false });
+  const captured = await mockSigner(fixture);
+  const signed = await signClaudeRuntimeRelease(fixture.runtime, signing, captured);
+  assert.equal(signed.schema_version, "blabee.claude-runtime.v2");
+  assert.equal(signed.delivery_mode, "mcp-hook-v1");
+  assert.equal(signed.channel_mode, undefined);
+  const signedDigest = signed.payload_digest;
+  captured.calls.length = 0;
+  await signReleaseApp(fixture.app, signing, captured);
+  assert.equal(captured.calls[0].args.at(-1), fixture.node);
+  assert.equal(captured.calls.findIndex(call => call.args.includes("--sign")), 3);
+  assert.equal(captured.calls.filter(call => call.args.includes("--sign")).length, 1);
+  assert.equal(captured.calls.find(call => call.args.includes("--sign")).args.at(-1), fixture.app);
+  assert.equal((await verifyClaudeRuntimeDirectory(fixture.runtime)).payload_digest, signedDigest);
+});
+
+test("public signing rejects legacy Channels, untrusted Node, expanded entitlements, and signing failure without fallback", async t => {
+  for (const variant of ["legacy", "foreign-team", "expanded-entitlements", "signing-failure"]) await t.test(variant, async subtest => {
+    const fixture = await makePreviewApp(subtest, { legacy: variant === "legacy" });
+    const captured = await mockSigner({ ...fixture,
+      ...(variant === "foreign-team" ? { nodeDisplay: { TeamIdentifier: "ZZZZZZZZZZ" } } : {}),
+      ...(variant === "expanded-entitlements" ? { nodeEntitlements: CLAUDE_NODE_ENTITLEMENTS.replace("</dict>", "<key>extra</key><true/></dict>") } : {}),
+      ...(variant === "signing-failure" ? { signingFailure: new Error("User interaction is not allowed.") } : {}),
+    });
+    if (variant === "legacy" || variant === "signing-failure") {
+      await assert.rejects(signClaudeRuntimeRelease(fixture.runtime, signing, captured), /development Channels|User interaction/u);
+      assert.equal(captured.calls.filter(call => call.args.includes("--sign")).length, variant === "legacy" ? 0 : 1);
+    } else {
+      await assert.rejects(signReleaseApp(fixture.app, signing, captured), /Team ID|must contain only/u);
+      assert.equal(captured.calls.some(call => call.args.includes("--sign")), false);
+    }
+    assert.equal(captured.calls.some(call => call.args.includes("--timestamp=none")), false);
+  });
 });
 
 for (const [name, changes, expected] of [

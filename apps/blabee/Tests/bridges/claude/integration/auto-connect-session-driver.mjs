@@ -87,7 +87,7 @@ try {
   });
   const initialized = await request('initialize', { protocolVersion: '2025-11-25', capabilities: {},
     clientInfo: { name: 'blabee-auto-connect-fixture', version: '1' } });
-  assert.ok(initialized.capabilities.experimental['claude/channel']);
+  assert.equal(initialized.capabilities.experimental, undefined);
   send({ method: 'notifications/initialized' });
   const listed = await request('tools/list', {});
   assert.equal(listed.tools.length, 5);
@@ -114,17 +114,14 @@ try {
     await delay(400);
     phase = 'readiness';
     const probe = await tool('check_connection_v1');
-    const notification = await waitFor(() => notifications.find(value => value.method === 'notifications/claude/channel'
-      && value.params?.meta?.probe_id === probe.probe_id));
-    const values = JSON.parse(notification.params.content.split('\n').at(-1));
-    const wrapper = `<channel source="blabee-claude" kind="readiness_probe" probe_id="${probe.probe_id}">\n${notification.params.content}\n</channel>`;
-    const observed = hook('UserPromptSubmit', { prompt_id: randomUUID(), prompt: wrapper });
-    assert.ok(observed.hookSpecificOutput.additionalContext.includes(`boundary_id=${boundary}`));
-    assert.equal((await tool('ack_readiness_probe_v1', values)).acknowledged, true);
+    assert.match(probe.nonce, /^[a-f0-9]{64}$/);
+    assert.equal((await tool('ack_readiness_probe_v1', { probe_id: probe.probe_id, nonce: probe.nonce })).acknowledged, true);
+    assert.equal(notifications.some(value => value.method === 'notifications/claude/channel'), false);
     phase = 'end';
     hook('SessionEnd');
     process.stdout.write(JSON.stringify({ source, mcpInitializedWhilePending: true,
-      nativeIdentityPreserved: true, channelAcknowledged: true, freshBoundary: true, realModel: false }) + '\n');
+      nativeIdentityPreserved: true, channelAcknowledged: true, mcpAcknowledged: true,
+      channelNotifications: false, freshBoundary: true, realModel: false }) + '\n');
   }
 } catch {
   process.stderr.write(`[auto-connect-fixture] failed:${phase}\n`);

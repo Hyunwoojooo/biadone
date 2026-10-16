@@ -14,7 +14,7 @@ actor ClaudePetTransport: PetCoordinatorTransport {
     private let selectionToken: String
     private let handle: @Sendable (Data) throws -> Data
     private var snapshotReceipts: [(id: String, digest: Data)] = []
-    private var selectionInFlight = false
+    private var mutationInFlight = false
     private var attemptedIdentity: PetInteractionIdentity?
     private var selectionReceipt: SelectionReceipt?
 
@@ -27,7 +27,7 @@ actor ClaudePetTransport: PetCoordinatorTransport {
     // Fixed-size client state, not historical replay authority. The service's
     // scoped consumed state/tombstones remain responsible for old selection IDs.
     var retainedSelectionStateCounts: (attempts: Int, receipts: Int, inFlight: Int) {
-        (attemptedIdentity == nil ? 0 : 1, selectionReceipt == nil ? 0 : 1, selectionInFlight ? 1 : 0)
+        (attemptedIdentity == nil ? 0 : 1, selectionReceipt == nil ? 0 : 1, mutationInFlight ? 1 : 0)
     }
 
     init(scopeID: String, projectID: String, sessionID: String, cwd: String,
@@ -81,9 +81,9 @@ actor ClaudePetTransport: PetCoordinatorTransport {
                 optionID: Self.text(object, "option_id", maximum: 512))
             // Actor methods can reenter while the fresh read is suspended.
             // Reserve the only mutation slot before the first await.
-            guard !selectionInFlight else { throw PetModelError.invalid("claude_selection_in_flight") }
-            selectionInFlight = true
-            defer { selectionInFlight = false }
+            guard !mutationInFlight else { throw PetModelError.invalid("claude_selection_in_flight") }
+            mutationInFlight = true
+            defer { mutationInFlight = false }
             let snapshot = try await freshSnapshot()
             let interaction = try requireCurrent(identity, in: snapshot)
             guard interaction.choices.contains(where: { $0.optionID == request.optionID && $0.enabled && $0.isAction }) else {
@@ -103,6 +103,26 @@ actor ClaudePetTransport: PetCoordinatorTransport {
             try requireSelectionResult(result(response, requestID: requestID), request: request)
             selectionReceipt = SelectionReceipt(request: request, requestID: requestID, digest: Self.digest(response))
             return response
+        case "dismiss_interaction":
+            let identity = try requestIdentity(object, kind: "blabee_pet_dismiss_request", extraKeys: [])
+            // A possibly delivered selection must never be converted to a
+            // dismissal. Reserve before the fresh read, just like selection.
+            guard !mutationInFlight, attemptedIdentity != identity else {
+                throw PetModelError.invalid("claude_selection_in_flight")
+            }
+            mutationInFlight = true
+            defer { mutationInFlight = false }
+            let snapshot = try await freshSnapshot()
+            let interaction = try requireCurrent(identity, in: snapshot)
+            guard interaction.usesRankedNextActions else { throw PetModelError.invalid("claude_dismiss_not_ranked") }
+            let response = try await nativeRequest("dismiss_interaction", fields: [
+                "boundary_id": identity.binding.decisionBoundaryID, "interaction_id": identity.interactionID,
+                "packet_id": identity.packetID, "revision": identity.revision,
+            ])
+            let requestID = try Self.text(Self.object(response), "request_id", maximum: 36)
+            let receipt = try StrictJSONTransport.data(forJSONObject: result(response, requestID: requestID))
+            try PetDismissRequest(identity: identity).requireDismissed(receipt)
+            return receipt
         default:
             throw PetModelError.invalid("claude_request_type")
         }

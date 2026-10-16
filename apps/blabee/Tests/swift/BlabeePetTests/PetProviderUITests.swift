@@ -1,3 +1,5 @@
+import Carbon
+import CoordinatorSwift
 import Foundation
 import Testing
 @testable import BlabeeCoordinator
@@ -27,6 +29,54 @@ private func providerUISnapshot(
     return snapshot
 }
 
+@MainActor
+private func providerUIFocusSnapshot(
+    _ session: PetProviderSession, card: PetTestCard, eventFocus: Bool,
+    acknowledged: Bool = false, identityOverrides: [String: Any] = [:]
+) throws -> PetSnapshot {
+    // Keep a changed identity consistent in routing, interactions and session
+    // metadata. These are fixture-only values, never a live service snapshot.
+    func replacingIdentityFields(_ value: Any) -> Any {
+        if let object = value as? [String: Any] {
+            return object.reduce(into: [String: Any]()) { result, entry in
+                result[entry.key] = identityOverrides[entry.key] ?? replacingIdentityFields(entry.value)
+            }
+        }
+        if let array = value as? [Any] { return array.map(replacingIdentityFields) }
+        return value
+    }
+    let object = replacingIdentityFields(petTestSnapshotObject(cards: [card], foregroundSuffix: card.suffix))
+    var snapshot = try PetSnapshot.parse(petTestData(object))
+    snapshot.providerSessions = [session]
+    snapshot.providerContext = session.context
+    if eventFocus {
+        let events = snapshot.queuedEvents
+        let focused = acknowledged ? events.first?.reference : nil
+        snapshot.eventNavigation = try PetEventNavigationSnapshot(jsonObject: [
+            "events": events.map { $0.reference.jsonObject },
+            "focused": focused?.jsonObject as Any? ?? NSNull(),
+            "revision": 1, "delivery_pending": false,
+        ], availableEvents: events)
+    }
+    return snapshot
+}
+
+@MainActor
+private final class ProviderSettingsOnboarding: PetOnboardingAdapting {
+    let paths: [String]?
+    init(paths: [String]?) { self.paths = paths }
+    func serviceRegistrationState() -> PetServiceRegistrationState { .notRegistered }
+    func configuredProjectPaths() throws -> [String] {
+        guard let paths else { throw PetTestError.injected("configuration_unavailable") }
+        return paths
+    }
+    func registerService() throws {}
+    func unregisterService() async throws {}
+    func openSystemSettingsLoginItems() {}
+    func enableProject(at path: String) throws {}
+    func disableProject(at path: String) throws {}
+}
+
 /// Deliberately returns late successes without reinterpreting their context.
 /// The view model must reject these even without an AppService generation.
 private actor ProviderUITransport: PetProviderControlling {
@@ -42,6 +92,8 @@ private actor ProviderUITransport: PetProviderControlling {
     private var blocked: Set<String> = []
     private var waiters: [String: [CheckedContinuation<Void, any Error>]] = [:]
     private var rejectNextSnapshot = false
+    private var nextSelectionFailure: CoordinatorError?
+    private var rejectedFocusScopes: Set<String> = []
 
     init(snapshots: [PetSnapshot]) {
         self.snapshots = Dictionary(uniqueKeysWithValues: snapshots.map { ($0.providerContext!.scopeID, $0) })
@@ -49,6 +101,8 @@ private actor ProviderUITransport: PetProviderControlling {
     }
     func setSnapshot(_ snapshot: PetSnapshot) { snapshots[snapshot.providerContext!.scopeID] = snapshot }
     func failNextSnapshot() { rejectNextSnapshot = true }
+    func failNextSelection(_ failure: CoordinatorError) { nextSelectionFailure = failure }
+    func failNextFocus(context: PetProviderContext) { rejectedFocusScopes.insert(context.scopeID) }
     func key(_ type: String, _ context: PetProviderContext) -> String { type + ":" + context.scopeID }
     func block(_ type: String, context: PetProviderContext) { blocked.insert(key(type, context)) }
     func isWaiting(_ type: String, context: PetProviderContext) -> Bool {
@@ -83,7 +137,21 @@ private actor ProviderUITransport: PetProviderControlling {
         }
         guard expectedContext != nil else { throw PetTestError.injected("missing_provider_context") }
         try await suspendIfNeeded(type, context: expectedContext)
-        if type == "focus_interaction" { return try petTestFocusResponse() }
+        if type == "select", let failure = nextSelectionFailure {
+            nextSelectionFailure = nil
+            throw failure
+        }
+        if type == "focus_interaction" || type == "focus_event" {
+            if let context = expectedContext, rejectedFocusScopes.remove(context.scopeID) != nil {
+                throw PetTestError.injected("response_timeout")
+            }
+            return try petTestFocusResponse()
+        }
+        if type == "dismiss_interaction" {
+            let identity = try PetInteractionIdentity(jsonObject: petTestObject(payload))
+            return try petTestData(["dismissed": true, "interaction_id": identity.interactionID,
+                "packet_id": identity.packetID, "revision": identity.revision])
+        }
         return Data("{}".utf8)
     }
     func decodeSnapshot(_ data: Data) async throws -> PetSnapshot {
@@ -120,9 +188,140 @@ private func providerUIWait(
     return await transport.isWaiting(type, context: context)
 }
 
-@Suite("Common Pet provider controls and action isolation")
+private actor ProviderUIDeliveryRecheck: CodexPluginSetupManaging {
+    private(set) var checks = 0
+    func inspect() async -> CodexPluginSetupState { .installedNeedsHookReview(version: "0.1.3") }
+    func recheckNativeExecutable() async -> CodexPluginSetupState {
+        checks += 1
+        return .installedNeedsHookReview(version: "0.1.3")
+    }
+    func connect() async -> CodexPluginSetupState { await inspect() }
+    func disconnect() async -> CodexPluginSetupState { .notInstalled }
+    func migrateLegacyInstallation(confirmation: CodexPluginSetupLegacyMigrationConfirmation) async -> CodexPluginSetupState {
+        await inspect()
+    }
+}
+
+@MainActor
+private func providerUIDeliveryFailure(_ provider: PetProvider) async throws -> (
+    model: PetViewModel, transport: ProviderUITransport, session: PetProviderSession,
+    notice: PetSelectionDeliveryNotice, recheck: ProviderUIDeliveryRecheck
+) {
+    let session = providerUISession(provider, suffix: "delivery_snapshot_recovery")
+    let card = PetTestCard(suffix: "delivery_snapshot_recovery", rankedActionCount: 2)
+    let initial = try providerUISnapshot(session, sessions: [session], card: card)
+    let transport = ProviderUITransport(snapshots: [initial])
+    let recheck = ProviderUIDeliveryRecheck()
+    let model = PetViewModel(transport: transport, externalApplicationOpener: PetFakeApplicationOpener(),
+        codexPluginSetupManager: recheck)
+    model.applySnapshotForTesting(initial)
+    await model.focus(try #require(model.displayInteraction?.identity))
+    let failure = CoordinatorNextTurnDispatchFailure(code: "codex_native_probe_timeout",
+        stage: .qualification, commandInvocationAttempted: false, elapsedMilliseconds: 1_500,
+        cachedFailure: true)
+    await transport.failNextSelection(CoordinatorError(failure.code, dispatchFailure: failure))
+    await transport.setSnapshot(try providerUISnapshot(session, sessions: [session]))
+    await model.requestPanelSelection(1)
+    let notice = try #require(model.selectionDeliveryNotice)
+    return (model, transport, session, notice, recheck)
+}
+
+@Suite("Common Pet provider controls and action isolation", .petLanguage(.korean))
 @MainActor
 struct PetProviderUITests {
+    @Test("Same-context snapshot recovery retains delivery failure without restoring selection authority",
+          arguments: [PetProvider.codex, .claude])
+    func deliveryNoticeSurvivesTransientProviderReads(_ provider: PetProvider) async throws {
+        let h = try await providerUIDeliveryFailure(provider)
+        for _ in 0..<2 {
+            await h.transport.failNextSnapshot()
+            await h.model.refresh()
+            #expect(h.model.selectionDeliveryNotice == h.notice)
+            #expect(h.model.localForegroundIdentity == nil)
+        }
+        await h.model.refresh()
+        #expect(h.model.selectedProviderContext == h.session.context)
+        #expect(h.model.selectionDeliveryNotice == h.notice)
+        #expect(h.model.selectionSubmission == nil && h.model.localForegroundIdentity == nil)
+        #expect(await h.transport.count("select") == 1)
+        await h.model.recheckSelectionDeliveryCodex(noticeID: h.notice.id)
+        #expect(await h.recheck.checks == (provider == .codex ? 1 : 0))
+        #expect(h.model.selectionDeliveryNotice?.nativeRecheckSucceeded == (provider == .codex))
+        #expect(await h.transport.count("select") == 1)
+    }
+
+    @Test("A recovered snapshot with a changed authority context retires the old delivery notice",
+          arguments: ["provider", "scope", "service", "session", "authority", "ui"])
+    func changedProviderRecoveryDropsDeliveryNotice(_ changed: String) async throws {
+        let h = try await providerUIDeliveryFailure(.claude)
+        await h.transport.failNextSnapshot()
+        await h.model.refresh()
+        #expect(h.model.selectionDeliveryNotice == h.notice)
+        let old = h.session.context
+        let provider: PetProvider = changed == "provider" ? .codex : .claude
+        let context = PetProviderContext(provider: provider,
+            scopeID: changed == "scope" ? UUID().uuidString.lowercased() : old.scopeID,
+            serviceIncarnation: changed == "service" ? UUID().uuidString.lowercased() : old.serviceIncarnation,
+            sessionIncarnation: changed == "session" ? UUID().uuidString.lowercased() : old.sessionIncarnation,
+            authorityEpoch: provider == .codex ? nil
+                : changed == "authority" ? UUID().uuidString.lowercased() : old.authorityEpoch,
+            uiGeneration: changed == "ui" ? old.uiGeneration + 1 : old.uiGeneration)
+        let replacement = PetProviderSession(id: h.session.id, context: context,
+            projectID: h.session.projectID, sessionID: h.session.sessionID, cwd: h.session.cwd,
+            state: "ready", title: h.session.title)
+        await h.transport.setSnapshot(try providerUISnapshot(replacement, sessions: [replacement]))
+        try await h.transport.selectSession(replacement)
+        await h.model.refresh()
+        #expect(h.model.selectedProviderContext == context)
+        #expect(h.model.selectionDeliveryNotice == nil)
+        #expect(h.model.localForegroundIdentity == nil)
+        await h.model.recheckSelectionDeliveryCodex(noticeID: h.notice.id)
+        #expect(await h.recheck.checks == 0)
+        #expect(await h.transport.count("select") == 1)
+    }
+
+    @Test("Closing an outage notice prevents the recovered snapshot from recreating it")
+    func dismissedDeliveryNoticeDoesNotReturnAfterSnapshotRecovery() async throws {
+        let h = try await providerUIDeliveryFailure(.codex)
+        await h.transport.failNextSnapshot()
+        await h.model.refresh()
+        h.model.dismissSelectionDeliveryNotice(noticeID: h.notice.id)
+        await h.model.refresh()
+        #expect(h.model.selectedProviderContext == h.session.context)
+        #expect(h.model.selectionDeliveryNotice == nil)
+        #expect(await h.transport.count("select") == 1)
+    }
+
+    @Test("Same-context read recovery still fences late selection and outcome responses",
+          arguments: [PetProvider.codex, .claude], ["select", "outcome"])
+    func lateSelectionRemainsFencedAfterSnapshotRecovery(_ provider: PetProvider, _ stage: String) async throws {
+        let session = providerUISession(provider, suffix: "late_selection_recovery")
+        let initial = try providerUISnapshot(session, sessions: [session],
+            card: PetTestCard(suffix: "late_selection_recovery", rankedActionCount: 2))
+        let transport = ProviderUITransport(snapshots: [initial])
+        let opener = PetFakeApplicationOpener()
+        let model = PetViewModel(transport: transport, externalApplicationOpener: opener)
+        model.applySnapshotForTesting(initial)
+        await model.focus(try #require(model.displayInteraction?.identity))
+        var accepted = 0
+        model.onUsageAccepted = { _ in accepted += 1 }
+        await transport.block(stage, context: session.context)
+        let selection = Task { await model.requestPanelSelection(1) }
+        #expect(await providerUIWait(stage, context: session.context, transport: transport))
+        await transport.setSnapshot(try providerUISnapshot(session, sessions: [session]))
+        await transport.failNextSnapshot()
+        await model.refresh()
+        await model.refresh()
+        let reads = await transport.count("get_state")
+        await transport.release(stage, context: session.context)
+        await selection.value
+        #expect(accepted == 0 && opener.opened.isEmpty)
+        #expect(model.selectionDeliveryNotice == nil && model.selectionSubmission == nil)
+        #expect(model.localForegroundIdentity == nil)
+        #expect(await transport.count("get_state") == reads)
+        #expect(await transport.count("select") == 1)
+    }
+
     @Test("Codex pool and multiple Claude sessions keep app settings and exact connection controls")
     func controlsAndSettings() async throws {
         let sessions = [providerUISession(.codex, suffix: "codex"),
@@ -136,7 +335,7 @@ struct PetProviderUITests {
         #expect(model.provider == .codex && model.supportsProductSettings && model.canStartClaude)
         await model.selectProviderSession(sessions[1])
         #expect(model.provider == .claude && model.supportsProductSettings)
-        #expect(!model.supportsDecisionDismissal && model.providerSessions.count == 3)
+        #expect(model.supportsDecisionDismissal && model.providerSessions.count == 3)
         await model.checkClaudeConnection()
         await model.disconnectClaudeSession()
         let controls = await transport.controls
@@ -196,8 +395,102 @@ struct PetProviderUITests {
         #expect(model.focusedInteraction?.identity == identity)
     }
 
-    @Test("Late selection and outcome success never publish acceptance after switching providers", arguments: ["select", "outcome"])
-    func lateSelection(_ blockedStage: String) async throws {
+    @Test("Snapshot failure and recovery cannot duplicate a slow physical focus request", arguments: [PetProvider.codex, .claude])
+    func snapshotRecoveryKeepsFocusReservation(_ provider: PetProvider) async throws {
+        let session = providerUISession(provider, suffix: "slow_recovery")
+        let card = PetTestCard(suffix: "same_physical_focus", rankedActionCount: 2)
+        let snapshot = try providerUISnapshot(session, sessions: [session], card: card)
+        let transport = ProviderUITransport(snapshots: [snapshot])
+        let clock = PetTestFocusClock()
+        let model = PetViewModel(transport: transport, externalApplicationOpener: PetFakeApplicationOpener(),
+                                 focusRetryNow: { clock.now })
+        model.applySnapshotForTesting(snapshot)
+        let identity = try #require(model.displayInteraction?.identity)
+        await transport.block("focus_interaction", context: session.context)
+        let old = Task { await model.focus(identity) }
+        let started = await providerUIWait("focus_interaction", context: session.context, transport: transport)
+        #expect(started)
+        guard started else { await transport.release("focus_interaction", context: session.context); await old.value; return }
+        await transport.failNextSnapshot()
+        await model.refresh()
+        #expect(model.localForegroundIdentity == nil)
+        clock.advance(nanoseconds: 30_000_000_000)
+        for _ in 0..<4 { await model.refresh() }
+        #expect(await transport.count("focus_interaction") == 1)
+        #expect(model.localForegroundIdentity == nil)
+        await transport.release("focus_interaction", context: session.context)
+        await old.value
+        #expect(model.localForegroundIdentity == nil)
+        await model.refresh()
+        #expect(await transport.count("focus_interaction") == 2)
+        #expect(model.localForegroundIdentity == identity)
+        #expect(await transport.count("select") == 0)
+    }
+
+    @Test("Restoring the same provider snapshot does not erase its retained focus failure cooldown")
+    func snapshotRecoveryKeepsFocusFailureBudget() async throws {
+        let session = providerUISession(.codex, suffix: "cooldown_recovery")
+        let snapshot = try providerUISnapshot(session, sessions: [session],
+            card: PetTestCard(suffix: "retained_cooldown", rankedActionCount: 2))
+        let transport = ProviderUITransport(snapshots: [snapshot])
+        let clock = PetTestFocusClock()
+        let model = PetViewModel(transport: transport, externalApplicationOpener: PetFakeApplicationOpener(),
+                                 focusRetryNow: { clock.now })
+        model.applySnapshotForTesting(snapshot)
+        let identity = try #require(model.displayInteraction?.identity)
+        await transport.block("focus_interaction", context: session.context)
+        let focus = Task { await model.focus(identity) }
+        let started = await providerUIWait("focus_interaction", context: session.context, transport: transport)
+        #expect(started)
+        guard started else { await transport.release("focus_interaction", context: session.context); await focus.value; return }
+        await transport.release("focus_interaction", context: session.context, fails: true)
+        await focus.value
+        #expect(model.localForegroundIdentity == nil)
+        await transport.failNextSnapshot()
+        await model.refresh()
+        await model.refresh()
+        #expect(model.snapshot?.providerContext == session.context)
+        #expect(await transport.count("focus_interaction") == 1)
+        #expect(model.localForegroundIdentity == nil)
+        clock.advance(nanoseconds: 2_000_000_000)
+        await model.refresh()
+        #expect(await transport.count("focus_interaction") == 2)
+        #expect(model.localForegroundIdentity == identity)
+    }
+
+    @Test("A provider A B A round trip fences the old response and retains its I/O reservation", arguments: [false, true])
+    func lateFocusAfterProviderRoundTrip(_ fails: Bool) async throws {
+        let sessions = [providerUISession(.claude, suffix: "round_a"), providerUISession(.claude, suffix: "round_b")]
+        let snapshots = [try providerUISnapshot(sessions[0], sessions: sessions,
+            card: PetTestCard(suffix: "round_trip_identity", rankedActionCount: 2)),
+                         try providerUISnapshot(sessions[1], sessions: sessions)]
+        let transport = ProviderUITransport(snapshots: snapshots)
+        let model = PetViewModel(transport: transport, externalApplicationOpener: PetFakeApplicationOpener())
+        model.applySnapshotForTesting(snapshots[0])
+        let identity = try #require(model.displayInteraction?.identity)
+        await transport.block("focus_interaction", context: sessions[0].context)
+        let old = Task { await model.focus(identity) }
+        let started = await providerUIWait("focus_interaction", context: sessions[0].context, transport: transport)
+        #expect(started)
+        guard started else { await transport.release("focus_interaction", context: sessions[0].context); await old.value; return }
+        await model.selectProviderSession(sessions[1])
+        await model.selectProviderSession(sessions[0])
+        await model.focus(identity)
+        #expect(await transport.count("focus_interaction") == 1)
+        #expect(model.localForegroundIdentity == nil)
+        await transport.release("focus_interaction", context: sessions[0].context, fails: fails)
+        await old.value
+        #expect(model.selectedProviderContext == sessions[0].context)
+        #expect(model.localForegroundIdentity == nil && model.lastError == nil)
+        await model.focus(identity)
+        #expect(model.localForegroundIdentity == identity)
+        #expect(await transport.count("focus_interaction") == 2)
+        #expect(await transport.count("select") == 0)
+    }
+
+    @Test("Late selection and outcome responses never publish acceptance or failure after switching providers",
+          arguments: ["select", "outcome"], [false, true])
+    func lateSelection(_ blockedStage: String, _ fails: Bool) async throws {
         let sessions = [providerUISession(.claude, suffix: "a"), providerUISession(.codex, suffix: "codex")]
         let card = PetTestCard(suffix: "identical", rankedActionCount: 2)
         let snapshots = try sessions.map { try providerUISnapshot($0, sessions: sessions, card: card) }
@@ -213,9 +506,10 @@ struct PetProviderUITests {
         #expect(await providerUIWait(blockedStage, context: sessions[0].context, transport: transport))
         await model.selectProviderSession(sessions[1])
         let reads = await transport.count("get_state")
-        await transport.release(blockedStage, context: sessions[0].context)
+        await transport.release(blockedStage, context: sessions[0].context, fails: fails)
         await old.value
         #expect(accepted == 0 && opener.opened.isEmpty && model.lastError == nil)
+        #expect(model.selectionDeliveryNotice == nil)
         #expect(model.provider == .codex && model.selectionSubmission == nil)
         #expect(await transport.count("get_state") == reads)
         let selection = try #require(await transport.requests.first { $0.type == "select" })
@@ -225,6 +519,45 @@ struct PetProviderUITests {
             let outcome = try #require(await transport.requests.first { $0.type == "outcome" })
             #expect(outcome.context == selection.context)
         } else { #expect(await transport.count("outcome") == 0) }
+    }
+
+    @Test("Late Claude dismissal never refreshes or changes a newer card or provider context",
+          arguments: ["card", "session", "round_trip"], [false, true])
+    func lateDismissal(_ change: String, _ fails: Bool) async throws {
+        let sessions = [providerUISession(.claude, suffix: "skip_a"), providerUISession(.claude, suffix: "skip_b")]
+        let first = try providerUISnapshot(sessions[0], sessions: sessions,
+            card: PetTestCard(suffix: "skip_a", rankedActionCount: 2))
+        let other = try providerUISnapshot(sessions[1], sessions: sessions,
+            card: PetTestCard(suffix: "skip_b", rankedActionCount: 2))
+        let transport = ProviderUITransport(snapshots: [first, other])
+        let model = PetViewModel(transport: transport, externalApplicationOpener: PetFakeApplicationOpener())
+        model.applySnapshotForTesting(first)
+        let identity = try #require(model.displayInteraction?.identity)
+        #expect(model.canSkipDecision(identity))
+        await transport.block("dismiss_interaction", context: sessions[0].context)
+        let pending = Task { await model.skipDecision(for: identity) }
+        #expect(await providerUIWait("dismiss_interaction", context: sessions[0].context, transport: transport))
+        await model.skipDecision(for: identity)
+        #expect(await transport.count("dismiss_interaction") == 1)
+        if change == "card" {
+            // Keep the fake server's old snapshot to detect any stale receipt
+            // triggering an extra refresh that replaces this newer card.
+            model.applySnapshotForTesting(try providerUISnapshot(sessions[0], sessions: sessions,
+                card: PetTestCard(suffix: "skip_successor", rankedActionCount: 2)))
+        } else {
+            await model.selectProviderSession(sessions[1])
+            if change == "round_trip" { await model.selectProviderSession(sessions[0]) }
+        }
+        let current = try #require(model.displayInteraction?.identity)
+        let reads = await transport.count("get_state")
+        await transport.release("dismiss_interaction", context: sessions[0].context, fails: fails)
+        await pending.value
+
+        #expect(model.displayInteraction?.identity == current)
+        #expect(model.lastError == nil && model.lastTerminalPresentation == nil)
+        #expect(model.inFlightDismissalIdentity == nil && model.canSkipDecision(current))
+        #expect(await transport.count("get_state") == reads)
+        #expect(await transport.count("select") == 0)
     }
 
     @Test("A new authority or UI generation invalidates queued keys with identical card identities")
@@ -342,5 +675,528 @@ struct PetProviderUITests {
             : "Claude 시작 요청을 확인하지 못했어요."))
         #expect(!model.isStartingClaude && model.canStartClaude)
         #expect(await transport.count("get_state") == 0)
+    }
+}
+
+@Suite("Pet focus endpoint identity", .petLanguage(.korean))
+@MainActor
+struct PetFocusEndpointIdentityTests {
+    @Test("Changing focus endpoints cannot duplicate the same held request or accept its late reply",
+          arguments: [(false, false), (false, true), (true, false), (true, true)])
+    func focusEndpointChangeKeepsPhysicalReservation(_ scenario: (Bool, Bool)) async throws {
+        let (startsWithEvent, lateFailure) = scenario
+        let firstType = startsWithEvent ? "focus_event" : "focus_interaction"
+        let nextType = startsWithEvent ? "focus_interaction" : "focus_event"
+        let session = providerUISession(.codex, suffix: "endpoint_reservation")
+        let card = PetTestCard(suffix: "same_card", rankedActionCount: 2)
+        let initial = try providerUIFocusSnapshot(session, card: card, eventFocus: startsWithEvent)
+        let restored = try providerUIFocusSnapshot(session, card: card, eventFocus: !startsWithEvent)
+        let acknowledged = try providerUIFocusSnapshot(session, card: card,
+            eventFocus: !startsWithEvent, acknowledged: true)
+        let transport = ProviderUITransport(snapshots: [initial])
+        let clock = PetTestFocusClock()
+        let model = PetViewModel(transport: transport, externalApplicationOpener: PetFakeApplicationOpener(),
+                                 focusRetryNow: { clock.now })
+        model.applySnapshotForTesting(initial)
+        let identity = try #require(model.displayInteraction?.identity)
+        await transport.block(firstType, context: session.context)
+        let old = Task { await model.focus(identity) }
+        let started = await providerUIWait(firstType, context: session.context, transport: transport)
+        #expect(started)
+        guard started else { await transport.release(firstType, context: session.context); await old.value; return }
+
+        await transport.failNextSnapshot()
+        await model.refresh()
+        #expect(model.snapshot == nil && model.localForegroundIdentity == nil)
+        await transport.setSnapshot(restored)
+        clock.advance(nanoseconds: 30_000_000_000) // Beyond cooldown; only the I/O reservation can stop this.
+        for _ in 0..<5 { await model.refresh() }
+        await model.focus(identity) // A manual request also cannot duplicate outstanding I/O.
+        #expect(await transport.count(firstType) == 1)
+        #expect(await transport.count(nextType) == 0)
+        #expect(model.localForegroundIdentity == nil)
+        let reads = await transport.count("get_state")
+        await transport.release(firstType, context: session.context, fails: lateFailure)
+        await old.value
+        #expect(model.localForegroundIdentity == nil && model.lastError == nil)
+        #expect(await transport.count("get_state") == reads)
+
+        await transport.setSnapshot(acknowledged)
+        await model.refresh()
+        #expect(await transport.count(firstType) == 1)
+        #expect(await transport.count(nextType) == 1)
+        #expect(model.focusedInteraction?.identity == identity)
+        let requests = await transport.requests
+        #expect(requests.allSatisfy { ["get_state", "focus_interaction", "focus_event"].contains($0.type) })
+    }
+
+    @Test("Endpoint changes share failure backoff and either endpoint clears it after acknowledgment", arguments: [false, true])
+    func focusEndpointChangeKeepsFailureBudget(_ startsWithEvent: Bool) async throws {
+        let firstType = startsWithEvent ? "focus_event" : "focus_interaction"
+        let nextType = startsWithEvent ? "focus_interaction" : "focus_event"
+        let session = providerUISession(.codex, suffix: "endpoint_budget")
+        let card = PetTestCard(suffix: "same_budget", rankedActionCount: 2)
+        let initial = try providerUIFocusSnapshot(session, card: card, eventFocus: startsWithEvent)
+        let switched = try providerUIFocusSnapshot(session, card: card, eventFocus: !startsWithEvent)
+        let firstACK = try providerUIFocusSnapshot(session, card: card, eventFocus: startsWithEvent, acknowledged: true)
+        let nextACK = try providerUIFocusSnapshot(session, card: card, eventFocus: !startsWithEvent, acknowledged: true)
+        let transport = ProviderUITransport(snapshots: [initial])
+        let clock = PetTestFocusClock()
+        let model = PetViewModel(transport: transport, externalApplicationOpener: PetFakeApplicationOpener(),
+                                 focusRetryNow: { clock.now })
+        model.applySnapshotForTesting(initial)
+        let identity = try #require(model.displayInteraction?.identity)
+        await transport.failNextFocus(context: session.context)
+        await model.focus(identity)
+        await transport.setSnapshot(switched)
+        for _ in 0..<5 { await model.refresh() }
+        clock.advance(nanoseconds: 1_999_999_999)
+        await model.refresh()
+        #expect(await transport.count(firstType) == 1)
+        #expect(await transport.count(nextType) == 0)
+        #expect(model.localForegroundIdentity == nil)
+
+        await transport.failNextFocus(context: session.context)
+        clock.advance(nanoseconds: 1)
+        await model.refresh()
+        #expect(await transport.count(nextType) == 1)
+        // A failure through the other endpoint is attempt 2, so its delay is
+        // four seconds even if the next snapshot switches back to the first.
+        await transport.setSnapshot(initial)
+        for _ in 0..<5 { await model.refresh() }
+        clock.advance(nanoseconds: 3_999_999_999)
+        await model.refresh()
+        #expect(await transport.count(firstType) == 1)
+        #expect(await transport.count(nextType) == 1)
+        await transport.setSnapshot(firstACK)
+        clock.advance(nanoseconds: 1)
+        await model.refresh()
+        #expect(await transport.count(firstType) == 2)
+        #expect(model.focusedInteraction?.identity == identity)
+
+        // Drop only the presentation, then fail through the other endpoint.
+        // A prior successful ACK must reset the shared streak to two seconds.
+        model.applySnapshotForTesting(try providerUISnapshot(session, sessions: [session]))
+        await transport.setSnapshot(switched)
+        await transport.failNextFocus(context: session.context)
+        await model.refresh()
+        #expect(await transport.count(nextType) == 2)
+        clock.advance(nanoseconds: 1_999_999_999)
+        await model.refresh()
+        #expect(await transport.count(nextType) == 2 && model.localForegroundIdentity == nil)
+        await transport.setSnapshot(nextACK)
+        clock.advance(nanoseconds: 1)
+        await model.refresh()
+        #expect(await transport.count(nextType) == 3)
+        #expect(model.focusedInteraction?.identity == identity)
+        let requests = await transport.requests
+        #expect(requests.allSatisfy { ["get_state", "focus_interaction", "focus_event"].contains($0.type) })
+    }
+
+    @Test("A shared interaction ID does not merge different packet revision or prompt bindings",
+          arguments: ["packet_id", "revision", "source_prompt_id"])
+    func focusEndpointKeyRetainsFullDecisionIdentity(_ changedField: String) async throws {
+        let session = providerUISession(.codex, suffix: "endpoint_distinct")
+        let card = PetTestCard(suffix: "reused_id", rankedActionCount: 2)
+        let initial = try providerUIFocusSnapshot(session, card: card, eventFocus: false)
+        let changedValue: Any
+        if changedField == "revision" { changedValue = Int64(2) }
+        else { changedValue = "new_" + changedField }
+        let overrides = [changedField: changedValue]
+        let replacement = try providerUIFocusSnapshot(session, card: card, eventFocus: true,
+            identityOverrides: overrides)
+        let acknowledged = try providerUIFocusSnapshot(session, card: card, eventFocus: true,
+            acknowledged: true, identityOverrides: overrides)
+        let transport = ProviderUITransport(snapshots: [initial])
+        let model = PetViewModel(transport: transport, externalApplicationOpener: PetFakeApplicationOpener())
+        model.applySnapshotForTesting(initial)
+        let oldIdentity = try #require(model.displayInteraction?.identity)
+        await transport.block("focus_interaction", context: session.context)
+        let old = Task { await model.focus(oldIdentity) }
+        let started = await providerUIWait("focus_interaction", context: session.context, transport: transport)
+        #expect(started)
+        guard started else { await transport.release("focus_interaction", context: session.context); await old.value; return }
+        await transport.failNextSnapshot()
+        await model.refresh()
+        model.applySnapshotForTesting(replacement)
+        let newIdentity = try #require(model.displayInteraction?.identity)
+        #expect(newIdentity.interactionID == oldIdentity.interactionID && newIdentity != oldIdentity)
+        await transport.setSnapshot(acknowledged)
+        await model.focus(newIdentity)
+        #expect(await transport.count("focus_event") == 1)
+        #expect(model.focusedInteraction?.identity == newIdentity)
+        let reads = await transport.count("get_state")
+        await transport.release("focus_interaction", context: session.context)
+        await old.value
+        #expect(model.focusedInteraction?.identity == newIdentity)
+        #expect(await transport.count("get_state") == reads)
+        let requests = await transport.requests
+        #expect(requests.allSatisfy { ["get_state", "focus_interaction", "focus_event"].contains($0.type) })
+    }
+}
+
+@MainActor
+private func unifiedUISnapshots(_ sessions: [PetProviderSession], sameCardIDs: Bool = false,
+                                removed: Set<String> = []) throws -> [PetSnapshot] {
+    var snapshots = try sessions.map { session in
+        try providerUISnapshot(session, sessions: sessions, card: removed.contains(session.id) ? nil
+            : PetTestCard(suffix: sameCardIDs ? "shared" : session.id, rankedActionCount: 2))
+    }
+    var entries: [PetProviderInboxEntry] = []
+    for index in snapshots.indices {
+        var value = snapshots[index]
+        if sessions[index].context.provider == .codex {
+            let events = value.queuedEvents
+            value.eventNavigation = try PetEventNavigationSnapshot(jsonObject: [
+                "events": events.map { $0.reference.jsonObject },
+                "focused": events.first?.reference.jsonObject as Any? ?? NSNull(),
+                "revision": 1, "delivery_pending": false,
+            ], availableEvents: events)
+        }
+        value.providerDirectory = .init(serviceGeneration: 1, serviceIncarnation: sessions[index].context.serviceIncarnation)
+        entries += try value.queuedEvents.map { try PetProviderInboxEntry(session: sessions[index], event: $0,
+                                                                        arrivalSequence: UInt64(index + 1)) }
+        snapshots[index] = value
+    }
+    let inbox = PetProviderInbox(entries: entries, sessions: snapshots.enumerated().map { index, value in
+        PetProviderInboxSession(session: sessions[index], status: value.providerStatus, diagnostic: nil)
+    }, arrivalOrderComplete: true, codexSettings: snapshots.first {
+        $0.providerContext?.provider == .codex
+    }.map { PetCodexSettingsEvidence(snapshot: $0) })
+    return snapshots.map { value in var copy = value; copy.providerInbox = inbox; return copy }
+}
+
+/// Unlike the cross-provider fixture, this has multiple cards in one Codex
+/// projection, so a failed move can retain A's display while the inbox wants B.
+@MainActor
+private func unifiedCodexDecisionSnapshot(
+    _ session: PetProviderSession, cards: [PetTestCard], focusedSuffix: String
+) throws -> PetSnapshot {
+    var snapshot = try PetSnapshot.parse(petTestSnapshotData(cards: cards, foregroundSuffix: focusedSuffix))
+    snapshot.providerSessions = [session]
+    snapshot.providerContext = session.context
+    let events = snapshot.queuedEvents
+    snapshot.eventNavigation = try PetEventNavigationSnapshot(jsonObject: [
+        "events": events.map { $0.reference.jsonObject },
+        "focused": PetEventReference(kind: .decision, eventID: "interaction_" + focusedSuffix).jsonObject,
+        "revision": 1, "delivery_pending": false,
+    ], availableEvents: events)
+    snapshot.providerDirectory = .init(serviceGeneration: 1, serviceIncarnation: session.context.serviceIncarnation)
+    snapshot.providerInbox = PetProviderInbox(entries: try events.enumerated().map { index, event in
+        try PetProviderInboxEntry(session: session, event: event, arrivalSequence: UInt64(index + 1))
+    }, sessions: [PetProviderInboxSession(session: session, status: nil, diagnostic: nil)],
+       arrivalOrderComplete: true, codexSettings: PetCodexSettingsEvidence(snapshot: snapshot))
+    return snapshot
+}
+
+@Suite("Unified provider inbox navigation", .petLanguage(.korean))
+@MainActor
+struct PetUnifiedInboxNavigationTests {
+    @Test("A failed same-provider inbox move retains the 2 4 8 second automatic focus budget")
+    func failedInboxMoveKeepsAutomaticFocusBudget() async throws {
+        let session = providerUISession(.codex, suffix: "inbox_retry")
+        let cards = ["shown", "wanted"].map { PetTestCard(suffix: $0, rankedActionCount: 2) }
+        let shown = try unifiedCodexDecisionSnapshot(session, cards: cards, focusedSuffix: "shown")
+        let wanted = try unifiedCodexDecisionSnapshot(session, cards: cards, focusedSuffix: "wanted")
+        let transport = ProviderUITransport(snapshots: [shown])
+        let clock = PetTestFocusClock()
+        let model = PetViewModel(transport: transport, externalApplicationOpener: PetFakeApplicationOpener(),
+                                 focusRetryNow: { clock.now })
+        await model.refresh()
+        #expect(model.canActOnDisplayedEvent && model.displayedEventQueuePosition == 1)
+        #expect(await transport.count("focus_event") == 1)
+        await transport.failNextFocus(context: session.context)
+        await model.navigateToNextEvent()
+        #expect(await transport.count("focus_event") == 2)
+        #expect(model.displayedEventQueuePosition == 1 && model.pendingInboxIdentity == nil)
+
+        var focusCount = 2
+        let delays: [UInt64] = [2_000_000_000, 4_000_000_000, 8_000_000_000]
+        for delay in delays {
+            for _ in 0..<5 { await model.refresh() }
+            #expect(model.hasVerifiedServiceConnection)
+            #expect(await transport.count("focus_event") == focusCount)
+            #expect(!model.canActOnDisplayedEvent && model.localForegroundIdentity == nil)
+            #expect(model.pendingInboxIdentity == nil)
+            clock.advance(nanoseconds: delay - 1)
+            await model.refresh()
+            #expect(await transport.count("focus_event") == focusCount)
+            clock.advance(nanoseconds: 1)
+            if delay == 8_000_000_000 {
+                await transport.setSnapshot(wanted)
+            } else {
+                await transport.failNextFocus(context: session.context)
+            }
+            await model.refresh()
+            focusCount += 1
+            #expect(await transport.count("focus_event") == focusCount)
+        }
+        #expect(model.canActOnDisplayedEvent && model.displayedEventQueuePosition == 2)
+        #expect(model.localForegroundIdentity?.interactionID == "interaction_wanted")
+        for _ in 0..<3 { await model.refresh() }
+        #expect(await transport.count("focus_event") == focusCount)
+        let requests = await transport.requests
+        #expect(requests.allSatisfy { ["get_state", "focus_event"].contains($0.type) })
+        let focuses = requests.filter { $0.type == "focus_event" }
+        #expect(focuses.allSatisfy { $0.context == session.context })
+        let targets = try focuses.dropFirst().map { try petTestObject($0.payload)["target"] as? [String: Any] }
+        #expect(targets.allSatisfy { $0?["interaction_id"] as? String == "interaction_wanted" })
+    }
+
+    @Test("Overlapping refresh attempts cannot duplicate a slow automatic inbox retry")
+    func slowAutomaticInboxRetryDoesNotAccumulate() async throws {
+        let session = providerUISession(.codex, suffix: "inbox_slow")
+        let cards = ["shown", "wanted"].map { PetTestCard(suffix: $0, rankedActionCount: 2) }
+        let shown = try unifiedCodexDecisionSnapshot(session, cards: cards, focusedSuffix: "shown")
+        let wanted = try unifiedCodexDecisionSnapshot(session, cards: cards, focusedSuffix: "wanted")
+        let transport = ProviderUITransport(snapshots: [shown])
+        let clock = PetTestFocusClock()
+        let model = PetViewModel(transport: transport, externalApplicationOpener: PetFakeApplicationOpener(),
+                                 focusRetryNow: { clock.now })
+        await model.refresh()
+        await transport.failNextFocus(context: session.context)
+        await model.navigateToNextEvent()
+        clock.advance(nanoseconds: 2_000_000_000)
+        await transport.block("focus_event", context: session.context)
+        let retry = Task { await model.refresh() }
+        let started = await providerUIWait("focus_event", context: session.context, transport: transport)
+        #expect(started)
+        guard started else { await transport.release("focus_event", context: session.context); await retry.value; return }
+        clock.advance(nanoseconds: 30_000_000_000)
+        let reads = await transport.count("get_state")
+        for _ in 0..<5 { await model.refresh() }
+        // The automatic retry still owns refresh(); overlapping polls must
+        // neither start another snapshot read nor issue another focus request.
+        #expect(await transport.count("get_state") == reads)
+        #expect(await transport.count("focus_event") == 3)
+        #expect(model.pendingInboxIdentity != nil && !model.canActOnDisplayedEvent)
+        #expect(model.localForegroundIdentity == nil)
+        await transport.setSnapshot(wanted)
+        await transport.release("focus_event", context: session.context)
+        await retry.value
+        #expect(model.pendingInboxIdentity == nil && model.canActOnDisplayedEvent)
+        #expect(model.displayedEventQueuePosition == 2)
+        let requests = await transport.requests
+        #expect(requests.allSatisfy { ["get_state", "focus_event"].contains($0.type) })
+    }
+
+    @Test("Explicit inbox navigation can retry during cooldown but still requires focus acknowledgment")
+    func explicitInboxRetryStillRequiresAcknowledgment() async throws {
+        let session = providerUISession(.codex, suffix: "inbox_explicit")
+        let cards = ["shown", "wanted"].map { PetTestCard(suffix: $0, rankedActionCount: 2) }
+        let shown = try unifiedCodexDecisionSnapshot(session, cards: cards, focusedSuffix: "shown")
+        let wanted = try unifiedCodexDecisionSnapshot(session, cards: cards, focusedSuffix: "wanted")
+        let transport = ProviderUITransport(snapshots: [shown])
+        let clock = PetTestFocusClock()
+        let model = PetViewModel(transport: transport, externalApplicationOpener: PetFakeApplicationOpener(),
+                                 focusRetryNow: { clock.now })
+        await model.refresh()
+        await transport.failNextFocus(context: session.context)
+        await model.navigateToNextEvent()
+        #expect(model.canNavigateEvents && !model.canActOnDisplayedEvent)
+        // No clock advance: a new user gesture must not inherit the poll delay.
+        await transport.block("focus_event", context: session.context)
+        let explicit = Task { await model.navigateToNextEvent() }
+        let started = await providerUIWait("focus_event", context: session.context, transport: transport)
+        #expect(started)
+        guard started else { await transport.release("focus_event", context: session.context); await explicit.value; return }
+        #expect(await transport.count("focus_event") == 3)
+        await transport.setSnapshot(wanted)
+        let reads = await transport.count("get_state")
+        for _ in 0..<5 { await model.refresh() }
+        #expect(await transport.count("get_state") == reads + 5)
+        #expect(!model.canActOnDisplayedEvent && model.localForegroundIdentity == nil)
+        #expect(await transport.count("focus_event") == 3)
+        await transport.release("focus_event", context: session.context)
+        await explicit.value
+        #expect(model.canActOnDisplayedEvent && model.displayedEventQueuePosition == 2)
+        let requests = await transport.requests
+        #expect(requests.allSatisfy { ["get_state", "focus_event"].contains($0.type) })
+    }
+
+    @Test("Cached Claude presentation cannot confirm shared service health; a fresh directory can")
+    func cachedPresentationIsNotServiceEvidence() async throws {
+        let session = providerUISession(.claude, suffix: "cached")
+        var snapshot = try providerUISnapshot(session, sessions: [session])
+        snapshot.providerStatus = PetProviderStatus(provider: .claude, scopeID: session.context.scopeID,
+            sessionID: session.sessionID, cwd: session.cwd, bridgeConnected: false,
+            ready: false, selectionEnabled: false, latestOutcome: nil)
+        let directory = PetProviderDirectoryStatus(serviceGeneration: 1,
+            serviceIncarnation: session.context.serviceIncarnation)
+        snapshot.providerDirectory = directory
+        let transport = ProviderUITransport(snapshots: [snapshot])
+        let model = PetViewModel(transport: transport, externalApplicationOpener: PetFakeApplicationOpener())
+        await model.refresh()
+        #expect(model.hasVerifiedServiceConnection)
+        #expect(PetSettingsStatusTone.commonService(model.connectionReadiness) == .confirmed)
+
+        snapshot.providerDirectory = nil
+        await transport.setSnapshot(snapshot)
+        await model.refresh()
+        #expect(!model.hasVerifiedServiceConnection)
+        #expect(PetSettingsStatusTone.commonService(model.connectionReadiness) != .confirmed)
+
+        snapshot.providerDirectory = directory
+        await transport.setSnapshot(snapshot)
+        await model.refresh()
+        #expect(model.hasVerifiedServiceConnection && model.coordinatorTransportError == nil)
+    }
+
+    @Test("Claude navigation never changes Codex projects, Hook targets or card reception evidence",
+          arguments: [("claude", true), ("a", true), ("claude", false), ("a", false)])
+    func codexSettingsStayScoped(_ configuration: (String, Bool)) async throws {
+        let (claudeCard, configurationAvailable) = configuration
+        let sessions = [providerUISession(.codex, suffix: "codex"), providerUISession(.claude, suffix: "claude")]
+        let codex = try PetSnapshot.parse(petTestSnapshotData(
+            cards: [.init(suffix: "a"), .init(suffix: "b")], foregroundSuffix: "a"))
+        let noCodexCard = PetSnapshot(projects: codex.projects, sessions: codex.sessions, routing: codex.routing,
+            interactions: [], permissionRequests: [], permissionNoticeCount: 0,
+            managedCommandApprovals: [], managedCommandApprovalNoticeCount: 0)
+        var claude = try providerUISnapshot(sessions[1], sessions: sessions, card: .init(suffix: claudeCard))
+        func inbox(_ evidence: PetCodexSettingsEvidence?) -> PetProviderInbox {
+            PetProviderInbox(entries: [], sessions: [], arrivalOrderComplete: true, codexSettings: evidence)
+        }
+        claude.providerInbox = inbox(PetCodexSettingsEvidence(snapshot: noCodexCard))
+        let active: Set<String> = ["/tmp/blabee-pet-a", "/tmp/blabee-pet-b"]
+        let model = PetViewModel(transport: PetFakeTransport(), externalApplicationOpener: PetFakeApplicationOpener(),
+            onboardingAdapter: ProviderSettingsOnboarding(paths: configurationAvailable ? active.sorted() : nil))
+        await model.refreshOnboarding()
+        model.applySnapshotForTesting(claude)
+        #expect(model.activeProjectPaths == active)
+        #expect(model.hookReadinessProjectPaths == active.sorted())
+        #expect(!model.projectSettingsNeedRestart && model.activeOnlyProjectPaths.isEmpty)
+        #expect(model.connectionReceivedCardProjectPaths.isEmpty)
+
+        // Background Codex cards count even while the same Claude card is visible.
+        claude.providerInbox = inbox(PetCodexSettingsEvidence(snapshot: codex))
+        model.applySnapshotForTesting(claude)
+        #expect(model.connectionReceivedCardProjectPaths == active)
+        claude.providerInbox = inbox(PetCodexSettingsEvidence(snapshot: noCodexCard))
+        model.applySnapshotForTesting(claude)
+        #expect(model.connectionReceivedCardProjectPaths == active)
+
+        // A failed Codex read is unknown; Claude must not supply replacement paths.
+        claude.providerInbox = inbox(nil)
+        model.applySnapshotForTesting(claude)
+        #expect(model.activeProjectPaths.isEmpty && !model.projectSettingsNeedRestart)
+        #expect(model.hookReadinessProjectPaths == (configurationAvailable ? active.sorted() : []))
+        #expect(model.connectionReadiness.checks.first { $0.id == "projects" }?.state == .pending)
+
+        claude.providerInbox = nil
+        model.applySnapshotForTesting(claude)
+        #expect(model.activeProjectPaths.isEmpty)
+    }
+
+    @Test("Option arrows stay registered on Claude cards and held or stale keys cannot skip a new source")
+    func crossProviderNavigationHotKeys() async throws {
+        let sessions = [providerUISession(.claude, suffix: "first"), providerUISession(.codex, suffix: "middle"),
+                        providerUISession(.claude, suffix: "last")]
+        let transport = ProviderUITransport(snapshots: try unifiedUISnapshots(sessions, sameCardIDs: true))
+        let backend = PetFakeHotKeyBackend()
+        var held: Set<UInt32> = []
+        let registry = try PetHotKeyRegistry(backend: backend, configuration: .defaults,
+            eventNavigationKeyIsPressed: { held.contains($0) },
+            eventNavigationModifiers: { UInt32(optionKey) }) { _ in }
+        let model = PetViewModel(transport: transport, externalApplicationOpener: PetFakeApplicationOpener())
+        model.attachHotKeyRegistry(registry)
+        model.setPanelVisible(true)
+        defer { model.stopPolling() }
+        await model.refresh()
+        func rightEvent() throws -> PetHotKeyEvent {
+            try #require(backend.registrations.values.first {
+                $0.event.signature == PetEventNavigationHotKeys.signature && $0.shortcut == PetEventNavigationDirection.next.shortcut
+            }?.event)
+        }
+        #expect(model.provider == .claude)
+        #expect(registry.eventNavigationShortcutLabel(for: .next) == "⌥→")
+        let original = try rightEvent()
+        held.insert(PetEventNavigationDirection.next.shortcut.keyCode)
+        backend.emit(original)
+        let deadline = ContinuousClock.now.advanced(by: .seconds(2))
+        while model.displayedEventQueuePosition != 2 && ContinuousClock.now < deadline { await Task.yield() }
+        #expect(model.provider == .codex && model.displayedEventQueuePosition == 2)
+        while model.pendingInboxIdentity != nil && ContinuousClock.now < deadline { await Task.yield() }
+        backend.emit(original)
+        backend.emit(try rightEvent())
+        for _ in 0..<30 { await Task.yield() }
+        #expect(model.displayedEventQueuePosition == 2)
+        held.removeAll(); registry.pollEventNavigationKeyRelease()
+        backend.emit(try rightEvent())
+        let finalDeadline = ContinuousClock.now.advanced(by: .seconds(2))
+        while model.displayedEventQueuePosition != 3 && ContinuousClock.now < finalDeadline { await Task.yield() }
+        while model.pendingInboxIdentity != nil && ContinuousClock.now < finalDeadline { await Task.yield() }
+        #expect(model.provider == .claude && model.displayedEventQueuePosition == 3)
+        #expect(registry.eventNavigationShortcutLabel(for: .next) == "⌥→")
+        #expect(await transport.count("select") == 0)
+    }
+
+    @Test("Claude Codex Claude cards follow arrival order and dispatch only to the displayed source", arguments: [false, true])
+    func arrivalOrderAndExactSelection(_ sameCardIDs: Bool) async throws {
+        let sessions = [providerUISession(.claude, suffix: "first"), providerUISession(.codex, suffix: "middle"),
+                        providerUISession(.claude, suffix: "last")]
+        let snapshots = try unifiedUISnapshots(sessions, sameCardIDs: sameCardIDs)
+        let transport = ProviderUITransport(snapshots: [snapshots[1], snapshots[0], snapshots[2]])
+        let model = PetViewModel(transport: transport, externalApplicationOpener: PetFakeApplicationOpener())
+        await model.refresh()
+        #expect(model.selectedProviderContext == sessions[0].context)
+        #expect(model.displayedEventQueuePosition == 1 && model.eventQueueCount == 3)
+        #expect(model.canActOnDisplayedEvent && model.canNavigateEvents)
+        await model.navigateToNextEvent()
+        #expect(model.selectedProviderContext == sessions[1].context && model.displayedEventQueuePosition == 2)
+        #expect(model.canActOnDisplayedEvent)
+        await model.navigateToNextEvent()
+        #expect(model.selectedProviderContext == sessions[2].context && model.displayedEventQueuePosition == 3)
+        #expect(model.canActOnDisplayedEvent)
+        #expect(await transport.count("select") == 0)
+        await model.requestPanelSelection(1)
+        let selections = await transport.requests.filter { $0.type == "select" }
+        #expect(selections.count == 1)
+        #expect(selections.first?.context == sessions[2].context)
+        #expect(try selections.first.map { try petTestObject($0.payload)["packet_id"] as? String }
+            == snapshots[2].interactions.first?.identity.packetID)
+    }
+
+    @Test("New arrivals and scoped connection checks preserve the viewed card; removal advances safely")
+    func preservesViewedCard() async throws {
+        let sessions = [providerUISession(.claude, suffix: "first"), providerUISession(.codex, suffix: "middle"),
+                        providerUISession(.claude, suffix: "last")]
+        let snapshots = try unifiedUISnapshots(sessions)
+        let transport = ProviderUITransport(snapshots: snapshots)
+        let model = PetViewModel(transport: transport, externalApplicationOpener: PetFakeApplicationOpener())
+        await model.refresh()
+        await model.navigateToPreviousEvent()
+        #expect(model.displayedEventQueuePosition == 3)
+        let captured = model.captureProviderActionContext()
+        let more = sessions + [providerUISession(.codex, suffix: "new")]
+        for snapshot in try unifiedUISnapshots(more) { await transport.setSnapshot(snapshot) }
+        await model.refresh()
+        #expect(model.selectedProviderContext == sessions[2].context && model.eventQueueCount == 4)
+        await model.checkClaudeConnection(session: sessions[0])
+        #expect(model.selectedProviderContext == sessions[2].context)
+        #expect(await transport.controls.last?.1 == sessions[0].context)
+        for snapshot in try unifiedUISnapshots(more, removed: [sessions[2].id]) { await transport.setSnapshot(snapshot) }
+        await model.refresh()
+        #expect(model.selectedProviderContext == sessions[0].context && model.displayedEventQueuePosition == 1)
+        #expect(!model.acceptsProviderAction(captured))
+        #expect(await transport.count("select") == 0)
+    }
+
+    @Test("A disappearing navigation target cannot gain selection authority from a late focus reply")
+    func lateNavigationTarget() async throws {
+        let sessions = [providerUISession(.claude, suffix: "first"), providerUISession(.claude, suffix: "last")]
+        let transport = ProviderUITransport(snapshots: try unifiedUISnapshots(sessions))
+        let model = PetViewModel(transport: transport, externalApplicationOpener: PetFakeApplicationOpener())
+        await model.refresh()
+        await transport.block("focus_interaction", context: sessions[1].context)
+        let navigation = Task { await model.navigateToNextEvent() }
+        #expect(await providerUIWait("focus_interaction", context: sessions[1].context, transport: transport))
+        #expect(!model.canActOnDisplayedEvent && !model.canNavigateEvents)
+        for snapshot in try unifiedUISnapshots(sessions, removed: [sessions[1].id]) { await transport.setSnapshot(snapshot) }
+        await transport.release("focus_interaction", context: sessions[1].context)
+        await navigation.value
+        await model.refresh()
+        #expect(model.selectedProviderContext == sessions[0].context)
+        #expect(model.displayedEventQueuePosition == 1 && model.eventQueueCount == 1)
+        #expect(await transport.count("select") == 0)
     }
 }

@@ -98,7 +98,7 @@ public struct ClaudeProductNativeConfiguration: Sendable {
 }
 
 /// The first real SessionStart observed by the authenticated product launcher.
-/// This is an in-process initialization value, not a session-v2 Hook payload or
+/// This is an in-process initialization value, not a session-v3 Hook payload or
 /// proof of authority. In particular, a resumed conversation is not rewritten
 /// to startup and cannot restore a previous Blabee boundary or readiness.
 public struct ClaudeProductInitialStart: Sendable {
@@ -114,7 +114,7 @@ public struct ClaudeProductInitialStart: Sendable {
     }
 }
 
-/// Native observations and transient Channel references over the shared core.
+/// Native observations and transient delivery references over the shared core.
 /// Task/selection/result truth remains in the core journal. No native execution
 /// authority is reconstructed after failure or restart. Calls are serialized.
 public final class ClaudeNativeSession: @unchecked Sendable {
@@ -124,9 +124,12 @@ public final class ClaudeNativeSession: @unchecked Sendable {
     public static let readinessLifetime: TimeInterval = 300
 
     private struct Card {
+        let accessGeneration: UInt64
+        let interactionID: String
         let packetID: String
         let revision: Int64
         let optionIDs: Set<String>
+        let expiresNanoseconds: UInt64?
     }
     private struct Boundary {
         let binding: CoordinatorBinding
@@ -159,8 +162,20 @@ public final class ClaudeNativeSession: @unchecked Sendable {
         let bridgeID: String
         let content: String
         let expiresNanoseconds: UInt64?
+        var waiterGeneration: String?
         var delivered = false
         var nativePromptID: String?
+        var nativePromptDigest: String?
+        var accessGeneration: UInt64 = 0
+    }
+    private struct HookWaiter {
+        let generation: String
+        let promptID: String
+        let binding: CoordinatorBinding
+        let bridgeID: String
+        let expiresNanoseconds: UInt64
+        let issuedNanoseconds: UInt64
+        var lastPollNanoseconds: UInt64?
     }
     private struct RateWindow {
         var anchor: UInt64
@@ -189,11 +204,11 @@ public final class ClaudeNativeSession: @unchecked Sendable {
     private let productClock: (any CoordinatorContinuousClock)?
     private let productCodec: ClaudeProductWireCodec?
     private let replayPort: (any ClaudeNativeReplayPort)?
+    private let productAccessCheck: @Sendable () throws -> UInt64
     private let ingress: ClaudeBridgeIngress
     private let secretCorpus: RuntimeSecretCorpus
-    // These are Channel confirmation references, NOT scope credentials or core
-    // continuation tokens. Keep them out of the global response guard so only
-    // bridge.poll can intentionally deliver them. Never persist them.
+    // These transient confirmation references are not scope credentials or
+    // core continuation tokens. Only their named delivery slots may expose them.
     private let channelReferences = RuntimeSecretCorpus()
     private let now: @Sendable () -> Date
     private let lock = NSLock()
@@ -212,6 +227,7 @@ public final class ClaudeNativeSession: @unchecked Sendable {
     private var initialProductProbeRequested = false
     private var initialProductProbeAttempted = false
     private var pending: Delivery?
+    private var hookWaiter: HookWaiter?
     private var claims: [String: CoordinatorBinding] = [:]
     private var seenSelectionIDs: Set<String> = []
     private var bridgeCount = 0
@@ -223,6 +239,7 @@ public final class ClaudeNativeSession: @unchecked Sendable {
     private var readyReference: String?
     private var deliverySequence: UInt64 = 0
     private var pollWindow: RateWindow?
+    private var hookPollWindow: RateWindow?
     private var probeWindow: RateWindow?
     private var productBackground: BackgroundObservation = .unknown
     private var productObservation = "starting"
@@ -251,6 +268,7 @@ public final class ClaudeNativeSession: @unchecked Sendable {
         self.productClock = nil
         self.productCodec = nil
         self.replayPort = nil
+        self.productAccessCheck = { 0 }
         self.secretCorpus = secretCorpus
         self.now = now
         self.ingress = try ClaudeBridgeIngress(scopes: [grant.scope], adapters: [grant.scope.scopeID: adapter],
@@ -268,7 +286,8 @@ public final class ClaudeNativeSession: @unchecked Sendable {
                 wallNow: @escaping @Sendable () -> Date = { Date() },
                 replayPort: any ClaudeNativeReplayPort,
                 withCoreMutation: @escaping ClaudeBridgeIngress.ProductCoreMutation,
-                initialStart: ClaudeProductInitialStart? = nil) throws {
+                initialStart: ClaudeProductInitialStart? = nil,
+                productAccessCheck: @escaping @Sendable () throws -> UInt64 = { 0 }) throws {
         guard authority.identity == productConfiguration.identity else {
             throw Self.error("configuration_invalid")
         }
@@ -292,6 +311,7 @@ public final class ClaudeNativeSession: @unchecked Sendable {
         self.productClock = clock
         self.productCodec = ClaudeProductWireCodec(credentialCorpus: secretCorpus)
         self.replayPort = replayPort
+        self.productAccessCheck = productAccessCheck
         self.secretCorpus = secretCorpus
         self.now = wallNow
         self.ingress = try ClaudeBridgeIngress(productConfiguration: productConfiguration, authority: authority,
@@ -337,7 +357,7 @@ public final class ClaudeNativeSession: @unchecked Sendable {
               let requestID = request["request_id"] as? String, Self.isUUID(requestID),
               let operation = request["operation"] as? String else { throw Self.error("invalid_request") }
         let operations: [String: Set<String>] = [
-            "hook": ["hook"], "selector": ["select", "snapshot", "pet.snapshot"], "control": ["snapshot", "session.end"],
+            "hook": ["hook"], "selector": ["select", "dismiss_interaction", "snapshot", "pet.snapshot"], "control": ["snapshot", "session.end"],
             "bridge": ["bridge.open", "bridge.close", "bridge.poll", "readiness.begin", "readiness.ack",
                        "proposal.emit", "selection.claim", "selection.complete"],
         ]
@@ -366,7 +386,7 @@ public final class ClaudeNativeSession: @unchecked Sendable {
         return encoded
     }
 
-    /// The registry dispatches only an explicitly decoded session-v2 envelope.
+    /// The registry dispatches only an explicitly decoded session-v3 envelope.
     /// Parsing does not prove authentication: this port rechecks the current
     /// registration, role capability and shared authority before any observation.
     public func handleProduct(request: ClaudeProductWireCodec.Envelope, credential: String) throws -> Data {
@@ -392,6 +412,11 @@ public final class ClaudeNativeSession: @unchecked Sendable {
             inner["schema_version"] = "1.0"
             inner["request_id"] = checked.requestID.uuidString.lowercased()
             inner["operation"] = checked.operation
+            if ["hook.poll", "hook.cancel"].contains(checked.operation) {
+                guard payload["native_session_id"] as? String == nativeSessionID,
+                      let observedCWD = payload["cwd"] as? String,
+                      observedCWD.utf8.elementsEqual(cwd.utf8) else { throw Self.error("hook_mismatch") }
+            }
             if checked.operation == "hook" {
                 guard payload["native_session_id"] as? String == nativeSessionID,
                       let observedCWD = payload["cwd"] as? String,
@@ -431,13 +456,18 @@ public final class ClaudeNativeSession: @unchecked Sendable {
                 inner["proposal"] = value
             }
             try assertSafeRequest(inner, operation: checked.operation)
+            if ["proposal.emit", "selection.claim"].contains(checked.operation) {
+                _ = try productAccessCheck()
+            }
             try admitProductReplay(inner, operation: checked.operation)
             let instant = now()
-            if checked.operation != "bridge.poll" { try expireObservations(at: instant) }
+            if !["bridge.poll", "hook.poll", "hook.cancel"].contains(checked.operation) {
+                try expireObservations(at: instant)
+            }
             let result = try dispatch(checked.operation, request: inner, at: instant)
             ended = checked.operation == "hook" && payload["event"] as? String == "SessionEnd"
             let projected = try projectProductResult(result, operation: checked.operation, payload: payload)
-            try assertPublic(projected, includeReferences: checked.operation != "bridge.poll")
+            try assertPublic(projected, includeReferences: !["readiness.begin", "hook.poll"].contains(checked.operation))
             response["ok"] = true
             response["result"] = projected
         } catch {
@@ -455,7 +485,7 @@ public final class ClaudeNativeSession: @unchecked Sendable {
     }
 
     /// Private service-side selector port.
-    /// No session-v2 selector operation or model-visible selector capability.
+    /// No session-v3 selector operation or model-visible selector capability.
     public func productSnapshot(identity: ClaudeSessionAuthority.Identity, credential: String) throws -> Data {
         try lock.withLock {
             let ticket = try authorizeProduct(identity: identity, role: "selector", credential: credential)
@@ -514,8 +544,8 @@ public final class ClaudeNativeSession: @unchecked Sendable {
     }
 
     /// The installed registry calls this after successful startup/open input.
-    /// Standalone/v1 callers do not acquire automatic model wakeups. A failed,
-    /// delivered or expired initial probe is never automatically repeated.
+    /// It queues one probe for the next ordinary MCP connection check. Neither
+    /// the selector nor the initial startup path receives or delivers its nonce.
     public func beginInitialProductReadiness(identity: ClaudeSessionAuthority.Identity, credential: String) throws -> Data? {
         try lock.withLock {
             let ticket = try authorizeProduct(identity: identity, role: "selector", credential: credential)
@@ -531,8 +561,14 @@ public final class ClaudeNativeSession: @unchecked Sendable {
         var request = Self.internalRequest("readiness.begin")
         request["bridge_id"] = bridgeID
         try expireObservations(at: now())
+        let previousReadiness = isReady(at: now()) ? (readyUntil, readyUntilNanoseconds, readyReference) : nil
         let result = try dispatch("readiness.begin", request: request, at: now())
-        let projection = try projectProductResult(result, operation: "readiness.begin", payload: [:])
+        // A selector cannot make an idle model ACK a newly queued probe.
+        // Preserve an existing verified connection until its original expiry.
+        if let previousReadiness {
+            (readyUntil, readyUntilNanoseconds, readyReference) = previousReadiness
+        }
+        let projection = try projectProductResult(result, operation: "readiness.begin", payload: [:], includeProbeNonce: false)
         try assertPublic(projection, includeReferences: true)
         return try StrictJSONTransport.data(forJSONObject: projection)
     }
@@ -587,12 +623,34 @@ public final class ClaudeNativeSession: @unchecked Sendable {
                 "revision": revision, "option_id": optionID,
                 "selection_id": selectionID.uuidString.lowercased()]) { _, next in next }
             try assertSafeRequest(request, operation: "select")
+            _ = try productAccessCheck()
             try consumeReplay(.selection, id: selectionID.uuidString.lowercased(), request: request)
             let instant = now()
             try expireObservations(at: instant)
             let value = try dispatch("select", request: request, at: instant)
             try assertPublic(value, includeReferences: true)
             return try finishProduct(ticket, result: StrictJSONTransport.data(forJSONObject: value))
+        }
+    }
+
+    /// Selector-only card retirement. This path never allocates a selection or
+    /// sends a Hook selection event, and releases its receipt under the same authority.
+    public func productDismiss(identity: ClaudeSessionAuthority.Identity, credential: String,
+                               binding: CoordinatorBinding, interactionID: String,
+                               packetID: String, revision: Int64) throws -> Data {
+        try lock.withLock {
+            let ticket = try authorizeProduct(identity: identity, role: "selector", credential: credential)
+            guard productStarted else { throw Self.error("native_start_required") }
+            guard boundary?.binding == binding else { throw Self.error("boundary_mismatch") }
+            var request = Self.internalRequest("dismiss_interaction")
+            request.merge(["boundary_id": binding.decisionBoundaryID, "interaction_id": interactionID,
+                "packet_id": packetID, "revision": revision]) { _, next in next }
+            try assertSafeRequest(request, operation: "dismiss_interaction")
+            let instant = now()
+            try expireObservations(at: instant)
+            let result = try dispatch("dismiss_interaction", request: request, at: instant)
+            try assertPublic(result, includeReferences: true)
+            return try finishProduct(ticket, result: StrictJSONTransport.data(forJSONObject: result))
         }
     }
 
@@ -671,7 +729,8 @@ public final class ClaudeNativeSession: @unchecked Sendable {
         guard var result = productProjection else { throw Self.error("projection_unavailable") }
         let coreDue = productCoreDeadline.map { $0 <= productClock!.nowNanoseconds() } ?? false
         let lostObservation = productObservationRetirementPending || (heartbeat != nil && !isConnected(at: instant))
-        let liveCard = lostObservation ? nil : boundary?.card
+        let accessGeneration = try? productAccessCheck()
+        let liveCard = lostObservation || boundary?.card?.accessGeneration != accessGeneration ? nil : boundary?.card
         result["cards"] = (result["cards"] as? [[String: Any]] ?? []).filter {
             ($0["packet"] as? [String: Any])?["packet_id"] as? String == liveCard?.packetID && liveCard != nil
         }
@@ -679,7 +738,7 @@ public final class ClaudeNativeSession: @unchecked Sendable {
         result["ready"] = isReady(at: instant)
         result["bridge_connected"] = isConnected(at: instant)
         result["selection_enabled"] = !productProjectionDirty && !coreDue && isReady(at: instant)
-            && productBackground.isIdle && stoppedPromptID != nil && stoppedPromptID == latestPromptID && liveCard != nil
+            && productBackground.isIdle && productWaiterIsLive(at: instant) && liveCard != nil
         result["pending_report_count"] = claims.count
         result["native_observation"] = ["status": lostObservation ? "new_prompt_required" : productObservation,
             "background_state": lostObservation ? "unknown" : productBackground.name,
@@ -698,7 +757,9 @@ public final class ClaudeNativeSession: @unchecked Sendable {
         }
         if productProjection == nil || productProjectionDirty { return clock.nowNanoseconds() }
         var deadlines = [productCoreDeadline, probe?.expiresNanoseconds, readyUntil == nil ? nil : readyUntilNanoseconds,
-                         pending?.expiresNanoseconds].compactMap { $0 }
+                         pending?.expiresNanoseconds, hookWaiter?.expiresNanoseconds].compactMap { $0 }
+        if let waiter = hookWaiter, pending?.delivered != true,
+           let deadline = productWaiterPollDeadline(waiter) { deadlines.append(deadline) }
         if heartbeat != nil, let value = heartbeatNanoseconds {
             let (deadline, overflow) = value.addingReportingOverflow(5_000_000_000)
             if !overflow { deadlines.append(deadline) }
@@ -739,28 +800,25 @@ public final class ClaudeNativeSession: @unchecked Sendable {
     }
 
     private func projectProductResult(_ result: [String: Any], operation: String,
-                                      payload: [String: Any]) throws -> [String: Any] {
+                                      payload: [String: Any], includeProbeNonce: Bool = true) throws -> [String: Any] {
         switch operation {
         case "hook":
             let status = result["invalidated"] as? Bool == true ? "invalidated"
                 : (boundary == nil && payload["event"] as? String != "SessionEnd" ? "new_prompt_required" : "accepted")
             return ["observed": true, "boundary_id": boundary?.binding.decisionBoundaryID as Any? ?? NSNull(),
-                    "observation_status": status]
+                    "observation_status": status,
+                    "waiter": payload["event"] as? String == "Stop" ? productWaiterObject() : NSNull()]
         case "readiness.begin":
-            guard let expires = probe?.expiresNanoseconds else { throw Self.error("response_invalid") }
-            return ["probe_id": result["probe_id"]!, "expires_at_nanoseconds": String(expires), "status": "pending"]
+            guard var value = probe, let expires = value.expiresNanoseconds else { throw Self.error("response_invalid") }
+            var projected: [String: Any] = ["probe_id": value.id, "expires_at_nanoseconds": String(expires), "status": "pending"]
+            if includeProbeNonce {
+                value.delivered = true
+                probe = value
+                projected["nonce"] = value.nonce
+            }
+            return projected
         case "readiness.ack": return ["acknowledged": true]
-        case "bridge.poll":
-            guard let event = result["event"] as? [String: Any] else { return ["event": NSNull()] }
-            let kind = event["kind"] as? String
-            let expiry = kind == "readiness_probe" ? probe?.expiresNanoseconds : pending?.expiresNanoseconds
-            guard let expiry, let kind else { throw Self.error("response_invalid") }
-            guard let sequence = event["delivery_sequence"] as? String else { throw Self.error("response_invalid") }
-            var value: [String: Any] = ["kind": kind, "expires_at_nanoseconds": String(expiry), "channel_source": channelSource,
-                                        "delivery_sequence": sequence]
-            if kind == "readiness_probe" { value["probe_id"] = event["probe_id"]; value["nonce"] = event["nonce"] }
-            else { value["selection_id"] = event["selection_id"]; value["delivery_token"] = event["delivery_token"] }
-            return ["event": value]
+        case "bridge.poll": return ["event": NSNull()]
         case "selection.claim":
             guard let action = result["action"] as? [String: Any] else { throw Self.error("response_invalid") }
             var value = result
@@ -791,6 +849,7 @@ public final class ClaudeNativeSession: @unchecked Sendable {
     /// Product replies use the closed CP-01B vocabulary. Native/core error
     /// names remain internal; an uncertain result never implies safe replay.
     private func productErrorCode(_ error: Error) -> String {
+        if (error as? CoordinatorError)?.code.hasPrefix("product_access_") == true { return "forbidden" }
         if let authority = productAuthority, case .terminated(let reason) = authority.snapshot() {
             switch reason {
             case .expired: return "expired"
@@ -832,6 +891,7 @@ public final class ClaudeNativeSession: @unchecked Sendable {
     private func dispatch(_ operation: String, request: [String: Any], at instant: Date) throws -> [String: Any] {
         switch operation {
         case "hook": return try handleHook(request)
+        case "hook.poll", "hook.cancel": return try handleProductWaiter(operation, request: request, at: instant)
         case "bridge.open":
             try Self.fields(request, [])
             if productAuthority != nil, bridgeCount != 0 {
@@ -842,6 +902,7 @@ public final class ClaudeNativeSession: @unchecked Sendable {
             readyUntil = nil
             readyReference = nil
             probe = nil
+            hookWaiter = nil
             bridgeID = nil
             heartbeat = nil
             try revokeDelivery()
@@ -859,6 +920,7 @@ public final class ClaudeNativeSession: @unchecked Sendable {
             readyUntil = nil
             readyReference = nil
             probe = nil
+            hookWaiter = nil
             try revokeDelivery()
             return ["closed": true]
         case "bridge.poll":
@@ -873,6 +935,7 @@ public final class ClaudeNativeSession: @unchecked Sendable {
             if productAuthority != nil { observeProductPollExpiry(at: instant) }
             heartbeat = instant
             heartbeatNanoseconds = productClock?.nowNanoseconds()
+            if productAuthority != nil { return ["event": NSNull()] }
             if var value = probe, !value.delivered {
                 var event: [String: Any] = ["kind": "readiness_probe", "probe_id": value.id, "nonce": value.nonce,
                     "expires_at": Self.epochMilliseconds(value.expires), "content": value.content]
@@ -900,6 +963,10 @@ public final class ClaudeNativeSession: @unchecked Sendable {
                 guard probeCount < 128 else { throw Self.error("capacity") }
                 probeCount += 1
             }
+            if productAuthority != nil, let value = probe, value.bridgeID == bridgeID,
+               observationIsLive(expires: value.expires, continuous: value.expiresNanoseconds, at: instant) {
+                return ["probe_id": value.id, "status": "awaiting_ack"]
+            }
             readyUntil = nil
             readyReference = nil
             let id = Self.id(), nonce = Self.reference()
@@ -924,6 +991,7 @@ public final class ClaudeNativeSession: @unchecked Sendable {
             return ["ready": true, "expires_at": productAuthority == nil ? Self.epochMilliseconds(value.expires) : 0]
         case "proposal.emit": return try emit(request)
         case "select": return try select(request, at: instant)
+        case "dismiss_interaction": return try dismissInteraction(request, at: instant)
         case "selection.claim": return try claim(request, at: instant)
         case "selection.complete": return try complete(request)
         case "snapshot", "pet.snapshot":
@@ -940,7 +1008,7 @@ public final class ClaudeNativeSession: @unchecked Sendable {
             result["bridge_connected"] = isConnected(at: instant)
             result["selection_enabled"] = isReady(at: instant) && stoppedPromptID != nil
                 && stoppedPromptID == latestPromptID && boundary?.card != nil
-                && (productAuthority == nil || productBackground.isIdle)
+                && (productAuthority == nil || (productBackground.isIdle && productWaiterIsLive(at: instant)))
             return result
         case "session.end":
             try Self.fields(request, [])
@@ -1015,16 +1083,32 @@ public final class ClaudeNativeSession: @unchecked Sendable {
             guard promptID == latestPromptID else {
                 // An unobserved native prompt may have superseded the card.
                 // Refuse selection even when an earlier Stop was valid.
-                try retireUnusableObservation()
+                // After that observation was already retired, a late Stop
+                // cannot invalidate a new connection-only probe. It still
+                // cannot restore or stop a task observation.
+                if !canPreserveProbeAfterRetiredStop(at: now()) { try retireUnusableObservation() }
                 throw Self.error("hook_mismatch")
             }
             stoppedPromptID = promptID
             if productAuthority != nil {
+                // Every authenticated Stop supersedes the previous generation.
+                // A consumed/unclaimed selection cannot be inherited by it.
+                hookWaiter = nil
+                try revokeDelivery()
                 if let tasks = request["background_task_ids"] as? [String] {
                     productBackground = tasks.isEmpty ? .idle : .active(tasks.count)
                 } else { productBackground = .unknown }
                 productObservation = "stopped"
                 productFailure = nil
+                if productBackground.isIdle, let current = boundary, let card = current.card,
+                   let cardDeadline = card.expiresNanoseconds, let bridgeID, isConnected(at: now()),
+                   let authority = productAuthority, case .active(let lease) = authority.snapshot() {
+                    let deadline = min(cardDeadline, lease.deadlineNanoseconds)
+                    if productReferenceIsLive(deadline) {
+                        hookWaiter = HookWaiter(generation: Self.id(), promptID: promptID, binding: current.binding,
+                            bridgeID: bridgeID, expiresNanoseconds: deadline, issuedNanoseconds: productClock!.nowNanoseconds())
+                    }
+                }
             }
             return hookResult()
         }
@@ -1046,12 +1130,23 @@ public final class ClaudeNativeSession: @unchecked Sendable {
             throw Self.error("capacity")
         }
         let kind: PromptKind
-        if var value = probe, value.delivered, value.nativePromptID == nil,
+        if productAuthority != nil, var value = pending, value.delivered, value.nativePromptID == nil,
+           productWaiterIsLive(at: now()), value.waiterGeneration == hookWaiter?.generation,
+           value.binding == hookWaiter?.binding, productReferenceIsLive(value.expiresNanoseconds),
+           let expected = value.nativePromptDigest, ContinuationTokenMaterial.constantTimeEqual(digest, expected) {
+            // Claude 2.1.282 emits a real UserPromptSubmit for asyncRewake.
+            // Admit only this delivered selection's exact, observed full native
+            // wrapper once. Prefixes, copied bare notices and other user input
+            // retain ordinary new-input invalidation behavior.
+            value.nativePromptID = promptID
+            pending = value
+            kind = .selection(value.selectionID)
+        } else if productAuthority == nil, var value = probe, value.delivered, value.nativePromptID == nil,
            matchesChannel(digest: digest, content: value.content, wrapper: Self.probeWrapper(value, source: channelSource)) {
             value.nativePromptID = promptID
             probe = value
             kind = .probe(value.id)
-        } else if var value = pending, value.delivered, value.nativePromptID == nil,
+        } else if productAuthority == nil, var value = pending, value.delivered, value.nativePromptID == nil,
                   matchesChannel(digest: digest, content: value.content, wrapper: Self.selectionWrapper(value, source: channelSource)) {
             value.nativePromptID = promptID
             pending = value
@@ -1074,6 +1169,7 @@ public final class ClaudeNativeSession: @unchecked Sendable {
     }
 
     private func emit(_ request: [String: Any]) throws -> [String: Any] {
+        let accessGeneration = try productAccessCheck()
         try Self.fields(request, ["bridge_id", "boundary_id", "proposal"])
         try requireBridge(request)
         guard var value = boundary, request["boundary_id"] as? String == value.binding.decisionBoundaryID,
@@ -1086,13 +1182,16 @@ public final class ClaudeNativeSession: @unchecked Sendable {
         // or retried. New native input can retire this exact attempted boundary.
         value.attemptedActivation = true
         boundary = value
+        let cardDeadline = try productDeadline(after: CoordinatorRoutingApplication.expiryAfterNanoseconds)
         let result = try core("activate", fields: ["binding": value.binding.jsonObject, "proposal": request["proposal"]!])
         guard let packet = result["packet"] as? [String: Any], let packetID = packet["packet_id"] as? String,
+              let interactionID = packet["interaction_id"] as? String,
               let revision = ExactJSONInteger.int64(packet["revision"], minimum: 1),
               let options = result["option_bindings"] as? [[String: Any]] else { throw Self.error("response_invalid") }
         let optionIDs = Set(options.compactMap { $0["option_id"] as? String })
         guard optionIDs.count == options.count else { throw Self.error("response_invalid") }
-        value.card = Card(packetID: packetID, revision: revision, optionIDs: optionIDs)
+        value.card = Card(accessGeneration: accessGeneration, interactionID: interactionID, packetID: packetID, revision: revision,
+                          optionIDs: optionIDs, expiresNanoseconds: cardDeadline)
         boundary = value
         return ["packet_id": packetID, "revision": revision]
     }
@@ -1101,7 +1200,9 @@ public final class ClaudeNativeSession: @unchecked Sendable {
         try Self.fields(request, ["boundary_id", "packet_id", "revision", "option_id", "selection_id"])
         guard isReady(at: instant) else { throw Self.error("readiness_required") }
         guard latestPromptID != nil, stoppedPromptID == latestPromptID else { throw Self.error("stop_required") }
-        guard productAuthority == nil || productBackground.isIdle else { throw Self.error("stop_required") }
+        guard productAuthority == nil || (productBackground.isIdle && productWaiterIsLive(at: instant)) else {
+            throw Self.error("stop_required")
+        }
         let selectionID = try Self.uuid(request, "selection_id")
         _ = try refreshedSnapshot()
         guard var value = boundary, let card = value.card, pending == nil,
@@ -1111,16 +1212,55 @@ public final class ClaudeNativeSession: @unchecked Sendable {
               let optionID = request["option_id"] as? String, card.optionIDs.contains(optionID),
               productAuthority != nil || !seenSelectionIDs.contains(selectionID) else { throw Self.error("boundary_mismatch") }
         guard (productAuthority != nil || seenSelectionIDs.count < 128), claims.count < 32 else { throw Self.error("capacity") }
+        let accessGeneration = try productAccessCheck()
+        guard accessGeneration == card.accessGeneration else { throw Self.error("forbidden") }
         if productAuthority == nil { seenSelectionIDs.insert(selectionID) }
         value.card = nil
         boundary = value
-        let deliveryDeadline = try productDeadline(after: CoordinatorRoutingApplication.continuationValidityNanoseconds)
+        var deliveryDeadline = try productDeadline(after: CoordinatorRoutingApplication.continuationValidityNanoseconds)
+        if let waiter = hookWaiter, let deadline = deliveryDeadline { deliveryDeadline = min(deadline, waiter.expiresNanoseconds) }
         let result = try core("select", fields: ["binding": value.binding.jsonObject, "packet_id": card.packetID,
             "revision": card.revision, "option_id": optionID, "selection_id": selectionID], role: "selector")
         let reference = Self.reference()
         if productAuthority == nil { channelReferences.register(reference) }
         pending = Delivery(selectionID: selectionID, binding: value.binding, token: reference, bridgeID: bridgeID!,
-                           content: Self.selectionContent(id: selectionID, token: reference), expiresNanoseconds: deliveryDeadline)
+                           content: productAuthority == nil ? Self.selectionContent(id: selectionID, token: reference)
+                               : Self.productSelectionNotice(id: selectionID, token: reference),
+                           expiresNanoseconds: deliveryDeadline,
+                           waiterGeneration: hookWaiter?.generation, accessGeneration: accessGeneration)
+        return result
+    }
+
+    private func dismissInteraction(_ request: [String: Any], at instant: Date) throws -> [String: Any] {
+        try Self.fields(request, ["boundary_id", "interaction_id", "packet_id", "revision"])
+        guard isReady(at: instant) else { throw Self.error("readiness_required") }
+        guard latestPromptID != nil, stoppedPromptID == latestPromptID,
+              productAuthority == nil || (productBackground.isIdle && productWaiterIsLive(at: instant)) else {
+            throw Self.error("stop_required")
+        }
+        guard var value = boundary, let card = value.card, pending == nil,
+              request["boundary_id"] as? String == value.binding.decisionBoundaryID,
+              request["interaction_id"] as? String == card.interactionID,
+              request["packet_id"] as? String == card.packetID,
+              ExactJSONInteger.int64(request["revision"], minimum: 1) == card.revision else {
+            throw Self.error("boundary_mismatch")
+        }
+        // Reject a stale UI identity before any core read marks the product
+        // projection dirty. Still refresh and recheck to detect durable expiry
+        // or another writer closing this otherwise exact live card.
+        _ = try refreshedSnapshot()
+        guard boundary?.binding == value.binding,
+              let current = boundary?.card, current.interactionID == card.interactionID,
+              current.packetID == card.packetID, current.revision == card.revision else {
+            throw Self.error("boundary_mismatch")
+        }
+        let result = try core("dismiss_interaction", fields: ["binding": value.binding.jsonObject,
+            "interaction_id": card.interactionID, "packet_id": card.packetID, "revision": card.revision], role: "selector")
+        // Keep the observation boundary until the next native prompt, with no
+        // card or delivery. A delayed retry cannot dismiss its replacement.
+        value.card = nil
+        boundary = value
+        hookWaiter = nil
         return result
     }
 
@@ -1135,15 +1275,35 @@ public final class ClaudeNativeSession: @unchecked Sendable {
             throw Self.error("invalid_claim")
         }
         guard claims.count < 32 else { throw Self.error("capacity") }
+        let accessGeneration = try productAccessCheck()
+        guard accessGeneration == value.accessGeneration else { throw CoordinatorError("product_access_changed") }
+        if productAuthority != nil {
+            guard productWaiterIsLive(at: instant), let waiter = hookWaiter,
+                  value.waiterGeneration == waiter.generation, value.binding == waiter.binding,
+                  value.binding == boundary?.binding, value.nativePromptID == promptID,
+                  currentProductPrompt?.id == promptID,
+                  currentProductPrompt?.value.kind == .selection(value.selectionID),
+                  value.binding.sourcePromptID == waiter.promptID else { throw Self.error("invalid_claim") }
+        }
         // Consume before any core call. An ambiguous response can never return
         // the action again, even if an outer transport retries this exact call.
         pending = nil
+        hookWaiter = nil
         let result = try core("claim", fields: ["binding": value.binding.jsonObject, "selection_id": value.selectionID])
         guard let action = result["action"] as? [String: Any] else { throw Self.error("response_invalid") }
         claims[value.selectionID] = value.binding
         if productAuthority != nil { productClaimReferences[value.selectionID] = value.token; productBackground = .unknown }
         boundary = try freshBoundary(promptID: promptID, episode: value.binding)
         stoppedPromptID = nil
+        // Core consumption can finish after the shorter Stop/card deadline.
+        // Keep the consumed report binding, but never release an action whose
+        // delivery authority expired while the durable claim was in progress.
+        if productAuthority != nil {
+            guard isConnected(at: now()), productReferenceIsLive(value.expiresNanoseconds) else {
+                throw Self.error("invalid_claim")
+            }
+        }
+        guard try productAccessCheck() == accessGeneration else { throw CoordinatorError("product_access_changed") }
         return ["selection_id": value.selectionID, "boundary_id": boundary!.binding.decisionBoundaryID,
                 "prompt_id": promptID, "action": action]
     }
@@ -1170,6 +1330,100 @@ public final class ClaudeNativeSession: @unchecked Sendable {
         return ["recorded": true, "reported_by": "model"]
     }
 
+    private func productWaiterObject() -> Any {
+        guard let waiter = hookWaiter else { return NSNull() }
+        return ["generation": waiter.generation, "prompt_id": waiter.promptID,
+                "boundary_id": waiter.binding.decisionBoundaryID,
+                "expires_at_nanoseconds": String(waiter.expiresNanoseconds)]
+    }
+
+    private func productWaiterIsLive(at instant: Date) -> Bool {
+        guard let waiter = hookWaiter else { return false }
+        return !productObservationRetirementPending && !productDeliveryRevocationPending
+            && isConnected(at: instant) && productReferenceIsLive(waiter.expiresNanoseconds)
+            && waiter.bridgeID == bridgeID && waiter.binding == boundary?.binding
+            && productWaiterPromptMatches(waiter)
+            && (pending?.delivered == true || (waiter.lastPollNanoseconds != nil && productWaiterPollIsLive(waiter)))
+    }
+
+    private func productWaiterPromptMatches(_ waiter: HookWaiter) -> Bool {
+        if waiter.promptID == latestPromptID && waiter.promptID == stoppedPromptID { return true }
+        guard let value = pending, value.delivered, value.waiterGeneration == waiter.generation,
+              value.binding == waiter.binding, let promptID = value.nativePromptID else { return false }
+        return promptID == latestPromptID && currentProductPrompt?.id == promptID
+            && currentProductPrompt?.value.kind == .selection(value.selectionID)
+    }
+
+    private func productWaiterPollDeadline(_ waiter: HookWaiter) -> UInt64? {
+        let (deadline, overflow) = (waiter.lastPollNanoseconds ?? waiter.issuedNanoseconds).addingReportingOverflow(5_000_000_000)
+        return overflow ? nil : min(deadline, waiter.expiresNanoseconds)
+    }
+
+    private func productWaiterPollIsLive(_ waiter: HookWaiter) -> Bool {
+        guard let clock = productClock, let deadline = productWaiterPollDeadline(waiter) else { return false }
+        let instant = clock.nowNanoseconds()
+        return instant >= (waiter.lastPollNanoseconds ?? waiter.issuedNanoseconds) && instant < deadline
+    }
+
+    /// Poll/cancel consume only process-local delivery state. Durable retirement
+    /// is deferred to the serial mutation/scheduler path, never a polling loop.
+    private func cancelProductWaiterInMemory() {
+        if hookWaiter != nil { productProjectionDirty = true }
+        hookWaiter = nil
+        if pending != nil {
+            productDeliveryRevocationPending = true
+            productProjectionDirty = true
+        }
+    }
+
+    private func handleProductWaiter(_ operation: String, request: [String: Any], at instant: Date) throws -> [String: Any] {
+        guard let clock = productClock else { throw Self.error("forbidden") }
+        try Self.fields(request, ["native_session_id", "cwd", "prompt_id", "waiter_generation"])
+        if operation == "hook.poll" {
+            try Self.admitRate(&hookPollWindow, at: clock.nowNanoseconds(), period: 1_000_000_000, maximum: 8)
+        }
+        observeProductPollExpiry(at: instant)
+        let closed: [String: Any] = ["status": "closed", "event": NSNull()]
+        guard var waiter = hookWaiter, request["waiter_generation"] as? String == waiter.generation,
+              request["prompt_id"] as? String == waiter.promptID else {
+            return operation == "hook.cancel" ? ["cancelled": false] : closed
+        }
+        if operation == "hook.cancel" {
+            cancelProductWaiterInMemory()
+            return ["cancelled": true]
+        }
+        guard let accessGeneration = try? productAccessCheck(),
+              pending == nil || pending?.accessGeneration == accessGeneration,
+              boundary?.card == nil || boundary?.card?.accessGeneration == accessGeneration else {
+            cancelProductWaiterInMemory()
+            return closed
+        }
+        if pending?.delivered != true {
+            // The first exact poll proves receipt of the Stop descriptor. An
+            // expired generation was already latched closed above and cannot
+            // be rearmed by a delayed request from a stopped Hook process.
+            waiter.lastPollNanoseconds = clock.nowNanoseconds()
+            hookWaiter = waiter
+        }
+        guard productWaiterIsLive(at: instant) else { cancelProductWaiterInMemory(); return closed }
+        guard var value = pending else {
+            guard boundary?.card != nil else { cancelProductWaiterInMemory(); return closed }
+            return ["status": "waiting", "event": NSNull()]
+        }
+        guard value.waiterGeneration == waiter.generation, value.binding == waiter.binding,
+              value.bridgeID == waiter.bridgeID, let expires = value.expiresNanoseconds,
+              productReferenceIsLive(expires) else { cancelProductWaiterInMemory(); return closed }
+        guard !value.delivered else { return closed }
+        // Consume before encoding or writing. Unknown delivery results are not
+        // retried and cannot cause the same Hook notification to be reissued.
+        value.delivered = true
+        value.nativePromptDigest = Self.promptDigest(Self.productHookWrapper(value.content))
+        pending = value
+        return ["status": "delivered", "event": ["kind": "selection", "selection_id": value.selectionID,
+            "delivery_token": value.token, "delivery_sequence": try nextDeliverySequence(),
+            "expires_at_nanoseconds": String(expires)]]
+    }
+
     /// Poll latches loss before advancing its heartbeat, but never enters the
     /// core/metadata path. A later fresh ACK cannot erase this retirement debt.
     private func observeProductPollExpiry(at instant: Date) {
@@ -1179,6 +1433,7 @@ public final class ClaudeNativeSession: @unchecked Sendable {
             readyUntil = nil
             readyReference = nil
             probe = nil
+            cancelProductWaiterInMemory()
         }
         if let value = probe, !observationIsLive(expires: value.expires, continuous: value.expiresNanoseconds, at: instant) {
             probe = nil
@@ -1188,8 +1443,13 @@ public final class ClaudeNativeSession: @unchecked Sendable {
             readyReference = nil
         }
         if let value = pending, !productReferenceIsLive(value.expiresNanoseconds) {
-            productDeliveryRevocationPending = true
-            productProjectionDirty = true
+            cancelProductWaiterInMemory()
+        }
+        if let waiter = hookWaiter, !productReferenceIsLive(waiter.expiresNanoseconds) {
+            cancelProductWaiterInMemory()
+        }
+        if let waiter = hookWaiter, pending?.delivered != true, !productWaiterPollIsLive(waiter) {
+            cancelProductWaiterInMemory()
         }
     }
 
@@ -1219,11 +1479,22 @@ public final class ClaudeNativeSession: @unchecked Sendable {
             readyReference = nil
         }
         if let delivery = pending, !productReferenceIsLive(delivery.expiresNanoseconds) { try revokeDelivery() }
+        if let waiter = hookWaiter, !productReferenceIsLive(waiter.expiresNanoseconds) {
+            hookWaiter = nil
+            productProjectionDirty = true
+            try revokeDelivery()
+        }
+        if let waiter = hookWaiter, pending?.delivered != true, !productWaiterPollIsLive(waiter) {
+            hookWaiter = nil
+            productProjectionDirty = true
+            try revokeDelivery()
+        }
     }
 
     private func revokeDelivery() throws {
         guard let value = pending else { return }
         pending = nil
+        hookWaiter = nil
         if boundary?.binding == value.binding { boundary?.card = nil }
         try invalidate(value.binding)
     }
@@ -1232,6 +1503,7 @@ public final class ClaudeNativeSession: @unchecked Sendable {
         let previous = boundary
         boundary?.card = nil
         stoppedPromptID = nil
+        hookWaiter = nil
         if productAuthority != nil { productProjectionDirty = true; productBackground = .unknown }
         try revokeDelivery()
         if let previous, previous.attemptedActivation { try invalidate(previous.binding) }
@@ -1251,6 +1523,17 @@ public final class ClaudeNativeSession: @unchecked Sendable {
         try retireCurrentUnclaimed()
     }
 
+    private func canPreserveProbeAfterRetiredStop(at instant: Date) -> Bool {
+        guard productAuthority != nil, productObservation == "new_prompt_required",
+              boundary == nil, latestPromptID == nil, stoppedPromptID == nil, currentProductPrompt == nil,
+              pending == nil, !productObservationRetirementPending, !productDeliveryRevocationPending,
+              readyUntil == nil, readyReference == nil,
+              let value = probe, value.nativePromptID == nil, value.bridgeID == bridgeID,
+              isConnected(at: instant),
+              observationIsLive(expires: value.expires, continuous: value.expiresNanoseconds, at: instant) else { return false }
+        return true
+    }
+
     private func invalidate(_ binding: CoordinatorBinding) throws {
         do { _ = try core("invalidate", fields: ["binding": binding.jsonObject]) }
         catch let error as CoordinatorError where ["unknown_decision_boundary", "decision_boundary_already_closed"].contains(error.code) {
@@ -1265,6 +1548,7 @@ public final class ClaudeNativeSession: @unchecked Sendable {
         heartbeat = nil
         bridgeID = nil
         pending = nil
+        hookWaiter = nil
         claims.removeAll()
         productClaimReferences.removeAll()
         currentProductPrompt = nil
@@ -1377,7 +1661,7 @@ public final class ClaudeNativeSession: @unchecked Sendable {
     private func assertSafeRequest(_ request: [String: Any], operation: String) throws {
         for (key, value) in request {
             if (operation == "readiness.ack" && key == "nonce") || (operation == "selection.claim" && key == "delivery_token") {
-                // Only this exact confirmation slot may carry a Channel ref.
+                // Only this exact confirmation slot may carry a transient ref.
                 try assertPublic(value, includeReferences: false)
             } else {
                 guard !Self.secretKeys.contains(key) else { throw Self.error("secret_reflection") }
@@ -1395,7 +1679,7 @@ public final class ClaudeNativeSession: @unchecked Sendable {
             for child in array { try assertPublic(child, includeReferences: includeReferences) }
         } else if let object = value as? [String: Any] {
             for (key, child) in object {
-                // Poll intentionally publishes only its own transient refs.
+                // Named delivery replies publish only their own transient refs.
                 guard !Self.secretKeys.contains(key) || (!includeReferences && ["nonce", "delivery_token"].contains(key)) else {
                     throw Self.error("secret_reflection")
                 }
@@ -1439,6 +1723,20 @@ public final class ClaudeNativeSession: @unchecked Sendable {
         "Blabee selection reference. Call claim_selection_v1 with these values; execute only the returned action after a successful claim.\n"
             + "{\"selection_id\":\"\(id)\",\"delivery_token\":\"\(token)\"}"
     }
+    private static func productSelectionNotice(id: String, token: String) -> String {
+        "Blabee Stop Hook selection reference. Call claim_selection_v1 with these values; execute only the returned action after a successful claim.\n"
+            + "{\"selection_id\":\"\(id)\",\"delivery_token\":\"\(token)\"}\n"
+    }
+    private static func productHookWrapper(_ notice: String) -> String {
+        // Exact UserPromptSubmit bytes observed in native Claude 2.1.282.
+        // The notice ends in LF; native adds a second LF before the closing
+        // reminder and no final LF. Format changes deliberately fail closed.
+        "<task-notification>\n<summary>Stop hook feedback</summary>\n</task-notification>\n<system-reminder>\n"
+            + "Stop hook blocking error from command \"Stop\": " + notice + "\n</system-reminder>"
+    }
+    private static func promptDigest(_ text: String) -> String {
+        SHA256.hash(data: Data(text.utf8)).map { String(format: "%02x", $0) }.joined()
+    }
     private static func probeWrapper(_ value: Probe, source: String) -> String {
         "<channel source=\"\(source)\" kind=\"readiness_probe\" probe_id=\"\(value.id)\">\n\(value.content)\n</channel>"
     }
@@ -1446,11 +1744,9 @@ public final class ClaudeNativeSession: @unchecked Sendable {
         "<channel source=\"\(source)\" selection_id=\"\(value.selectionID)\">\n\(value.content)\n</channel>"
     }
     private func matchesChannel(digest: String, content: String, wrapper: String) -> Bool {
-        // Product continuation binds the full native wrapper to the enrolled
-        // source. Bare copied content cannot preserve a product boundary. The
-        // old development v1 retains its narrow fixture compatibility.
-        let candidates = productAuthority == nil ? [content, wrapper] : [wrapper]
-        return candidates.contains { text in
+        // Legacy development v1 only. Product Hook continuation has a separate
+        // exact native wrapper and never accepts these channel candidates.
+        return [content, wrapper].contains { text in
             SHA256.hash(data: Data(text.utf8)).map { String(format: "%02x", $0) }.joined() == digest
         }
     }

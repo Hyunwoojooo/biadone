@@ -25,21 +25,21 @@ enum AppInstallationPlatformError: Error, Equatable, Sendable, LocalizedError {
         case .processInspectionUnavailable:
             return AppInstallationError(.activityInspectionUnavailable).userMessage
         case .invalidDestination:
-            return "설치된 앱의 위치를 확인할 수 없습니다. 응용 프로그램 폴더에서 Blabee를 확인하세요."
+            return PetL10n.text("Unable to verify the installed app's location. Check Blabee in Applications.", korean: "설치된 앱의 위치를 확인할 수 없습니다. 응용 프로그램 폴더에서 Blabee를 확인하세요.")
         case .identityMismatch:
-            return "설치된 앱의 무결성을 확인할 수 없습니다. 설치를 다시 확인하세요."
+            return PetL10n.text("Unable to verify the installed app's integrity. Check its installation.", korean: "설치된 앱의 무결성을 확인할 수 없습니다. 설치를 다시 확인하세요.")
         case .runningIdentityMismatch:
-            return "현재 실행 중인 Blabee를 확인할 수 없습니다. Blabee를 종료한 뒤 설치된 앱을 다시 열어 주세요."
+            return PetL10n.text("Unable to verify the running Blabee app. Close Blabee and reopen the installed app.", korean: "현재 실행 중인 Blabee를 확인할 수 없습니다. Blabee를 종료한 뒤 설치된 앱을 다시 열어 주세요.")
         case .launchFailed:
-            return "설치된 Blabee를 열지 못했습니다. 다시 시도하거나 Finder에서 직접 열어 주세요."
+            return PetL10n.text("Unable to open installed Blabee. Try again or open it directly in Finder.", korean: "설치된 Blabee를 열지 못했습니다. 다시 시도하거나 Finder에서 직접 열어 주세요.")
         case .launchTimedOut:
-            return "앱 실행 확인 시간이 초과되었습니다. 설치된 앱은 유지됩니다. macOS 확인 창을 확인하거나 Finder에서 직접 열어 주세요."
+            return PetL10n.text("App launch verification timed out. The installed app is preserved. Check macOS dialogs or open it directly in Finder.", korean: "앱 실행 확인 시간이 초과되었습니다. 설치된 앱은 유지됩니다. macOS 확인 창을 확인하거나 Finder에서 직접 열어 주세요.")
         case .launchedApplicationMismatch:
-            return "설치된 앱의 실행 위치를 확인하지 못했습니다. 아래 Finder 설치 복구 안내를 확인해 주세요."
+            return PetL10n.text("Unable to verify the installed app's launch location. Follow the Finder recovery instructions below.", korean: "설치된 앱의 실행 위치를 확인하지 못했습니다. 아래 Finder 설치 복구 안내를 확인해 주세요.")
         case .launchedProcessExited:
-            return "Blabee가 실행 확인 전에 종료되었습니다. 아래 설치 복구 안내와 macOS가 표시한 오류를 확인해 주세요."
+            return PetL10n.text("Blabee exited before launch verification. Check the recovery instructions below and any macOS errors.", korean: "Blabee가 실행 확인 전에 종료되었습니다. 아래 설치 복구 안내와 macOS가 표시한 오류를 확인해 주세요.")
         case .folderOpenFailed:
-            return "Finder에서 폴더를 열지 못했습니다. 응용 프로그램 폴더를 직접 열어 주세요."
+            return PetL10n.text("Unable to open the folder in Finder. Open Applications manually.", korean: "Finder에서 폴더를 열지 못했습니다. 응용 프로그램 폴더를 직접 열어 주세요.")
         }
     }
 

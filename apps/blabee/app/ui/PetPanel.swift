@@ -1,5 +1,6 @@
 import AppKit
 import BlabeeProductSupport
+import Combine
 import SwiftUI
 
 struct PetPanelPolicy {
@@ -25,6 +26,8 @@ struct PetPanelLayoutState: Sendable, Equatable {
     let hasPermissionNotice: Bool
     let hasStatusMessage: Bool
     var isShowingChoicePreview = false
+    var isProductAccessBlocked = false
+    var hasSelectionDeliveryNotice = false
 }
 
 enum PetPanelScreenMode: Sendable, Equatable {
@@ -65,16 +68,19 @@ enum PetPanelSizePolicy {
     static let fifoQueueHeight: CGFloat = 44
     static let permissionRequestHeight: CGFloat = 520
     static let statusMessageHeight: CGFloat = 48
+    static let selectionDeliveryNoticeExtraHeight: CGFloat = 96
     static let choicePreviewSize = CGSize(width: width, height: 640)
 
     static let compactSize = CGSize(width: width, height: compactHeight)
     static let expandedSize = CGSize(width: width, height: expandedHeight)
 
     static func preferredSize(for state: PetPanelLayoutState) -> CGSize {
+        if state.isProductAccessBlocked { return expandedSize }
         if state.hasPermissionNotice {
             let height = permissionRequestHeight
                 + (state.fifoQueueCount > 1 ? fifoQueueHeight : 0)
                 + (state.hasStatusMessage ? statusMessageHeight : 0)
+                + (state.hasSelectionDeliveryNotice ? selectionDeliveryNoticeExtraHeight : 0)
             return CGSize(width: width, height: min(height, expandedHeight))
         }
 
@@ -105,6 +111,9 @@ enum PetPanelSizePolicy {
 
         if state.hasStatusMessage {
             height += statusMessageHeight
+        }
+        if state.hasSelectionDeliveryNotice {
+            height += selectionDeliveryNoticeExtraHeight
         }
         return CGSize(width: width, height: min(height, expandedHeight))
     }
@@ -197,7 +206,10 @@ enum PetMenuBarInteractionAction: Sendable, Equatable {
 }
 
 enum PetMenuBarInteractionPolicy {
-    static let quitMenuTitle = BlabeeProductProfile.current.displayName + " 종료"
+    static var quitMenuTitle: String {
+        PetL10n.text("Quit \(BlabeeProductProfile.current.displayName)",
+                     korean: "\(BlabeeProductProfile.current.displayName) 종료")
+    }
 
     static func action(for eventType: NSEvent.EventType?) -> PetMenuBarInteractionAction {
         guard let eventType else { return .togglePanel }
@@ -482,7 +494,9 @@ final class PetPanelController: NSObject, NSWindowDelegate {
             fifoQueueCount: viewModel.eventQueueCount,
             hasPermissionNotice: viewModel.hasNewPermissionNotice,
             hasStatusMessage: viewModel.hasVisibleStatusMessage,
-            isShowingChoicePreview: viewModel.choicePreview != nil
+            isShowingChoicePreview: viewModel.choicePreview != nil,
+            isProductAccessBlocked: viewModel.isProductAccessBlocked,
+            hasSelectionDeliveryNotice: viewModel.selectionDeliveryNotice != nil
         )
     }
 
@@ -646,6 +660,7 @@ final class PetStatusItemPresenter {
     private let baseImage: NSImage?
     private let idleImage: NSImage
     private var appearanceObservation: NSKeyValueObservation?
+    private var languageObservation: AnyCancellable?
     private var appearanceRefresh: Task<Void, Never>?
     private var renderedAttention: Bool?
     private var renderedForeground: NSColor?
@@ -660,6 +675,9 @@ final class PetStatusItemPresenter {
             Task { @MainActor [weak self] in
                 self?.scheduleAppearanceRefresh()
             }
+        }
+        languageObservation = PetLocalization.shared.$language.dropFirst().sink { [weak self] _ in
+            self?.refreshAccessibilityText()
         }
     }
 
@@ -680,15 +698,22 @@ final class PetStatusItemPresenter {
             baseImage: baseImage, attention: true, foreground: foreground
         ) : idleImage
         if attentionChanged {
-            let name = BlabeeProductProfile.current.displayName
-            button.toolTip = attention ? name + " · 결정 필요" : name
-            button.setAccessibilityLabel(attention ? name + ", 결정 필요" : name + " 메뉴")
+            refreshAccessibilityText()
         }
+    }
+
+    private func refreshAccessibilityText() {
+        guard !stopped else { return }
+        let attention = renderedAttention == true
+        let name = BlabeeProductProfile.current.displayName
+        button.toolTip = attention ? name + PetL10n.text(" · Decision needed", korean: " · 결정 필요") : name
+        button.setAccessibilityLabel(attention ? name + PetL10n.text(", decision needed", korean: ", 결정 필요") : name + PetL10n.text(" menu", korean: " 메뉴"))
     }
 
     func stop() {
         stopped = true
         appearanceObservation = nil
+        languageObservation = nil
         appearanceRefresh?.cancel()
         appearanceRefresh = nil
     }
@@ -777,7 +802,7 @@ final class PetMenuBarController: NSObject {
             guard let event else { return }
             let menu = NSMenu()
             let updateItem = NSMenuItem(
-                title: "업데이트 확인…",
+                title: PetL10n.text("Check for Updates…", korean: "업데이트 확인…"),
                 action: #selector(checkForAppUpdates(_:)),
                 keyEquivalent: ""
             )
@@ -821,6 +846,7 @@ final class PetMenuBarController: NSObject {
     }
 
     private func presentForGenericAttention() {
+        guard viewModel.productAccessAllowsActions else { return }
         if !panelController.panel.isVisible {
             automaticPresentationOwner = .genericAttention
         }
@@ -828,6 +854,10 @@ final class PetMenuBarController: NSObject {
     }
 
     private func approvalHeadChanged(_ identity: PetApprovalHeadIdentity?) {
+        guard viewModel.productAccessAllowsActions else {
+            automaticPresentationOwner = nil
+            return
+        }
         let transition = PetApprovalPresentationPolicy.transition(
             panelIsVisible: panelController.panel.isVisible,
             automaticOwner: automaticPresentationOwner,
@@ -863,6 +893,10 @@ final class PetMenuBarController: NSObject {
 
     private func attentionChanged(_ attention: Bool) {
         statusItemPresenter?.update(attention: attention)
+        guard viewModel.productAccessAllowsActions else {
+            automaticPresentationOwner = nil
+            return
+        }
         guard !attention,
               automaticPresentationOwner != nil,
               !viewModel.isEditingShortcuts,

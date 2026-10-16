@@ -3,34 +3,38 @@ import SwiftUI
 /// Feedback is presentation-only; the release/error stays in the model after the label expires.
 struct PetAppUpdateCheckFeedback: Equatable {
     static let duration: TimeInterval = 3
-    private let resultTitle: String
+    private let updateAvailable: Bool
     let expiresAt: Date
 
     init?(state: PetAppUpdateState, now: Date = .now) {
         switch state {
-        case .available: resultTitle = "업데이트 가능"
-        case .upToDate: resultTitle = "최신 버전"
+        case .available: updateAvailable = true
+        case .upToDate: updateAvailable = false
         case .notChecked, .checking, .noPublishedRelease, .unavailable: return nil
         }
         expiresAt = now.addingTimeInterval(Self.duration)
     }
 
     func title(at now: Date = .now) -> String? {
-        now < expiresAt ? resultTitle : nil
+        guard now < expiresAt else { return nil }
+        return updateAvailable
+            ? PetL10n.text("Update Available", korean: "업데이트 가능")
+            : PetL10n.text("Up to Date", korean: "최신 버전")
     }
 }
 
 struct PetAppUpdateCheckButton: View {
+    @ObservedObject private var localization = PetLocalization.shared
     let state: PetAppUpdateState
     let checkForUpdates: () -> Void
     @State private var feedback: PetAppUpdateCheckFeedback?
 
     var body: some View {
         Button(action: checkForUpdates) {
-            Text(state.isChecking ? "확인 중…" : feedback?.title() ?? "업데이트 확인")
+            Text(state.isChecking ? PetL10n.text("Checking…", korean: "확인 중…") : feedback?.title() ?? PetL10n.text("Check for Updates", korean: "업데이트 확인"))
                 .frame(minWidth: 84)
         }
-            .font(.caption)
+            .font(.blabee(.caption))
             .buttonStyle(.bordered)
             .petCapsuleButtonBorder()
             .disabled(state.isChecking)
@@ -46,6 +50,7 @@ struct PetAppUpdateCheckButton: View {
 }
 
 struct PetAppUpdateView: View {
+    @ObservedObject private var localization = PetLocalization.shared
     @ObservedObject var viewModel: PetViewModel
     var showsCheckForUpdates = true
 
@@ -67,6 +72,7 @@ struct PetAppUpdateView: View {
 }
 
 struct PetAppUpdateStatusView: View {
+    @ObservedObject private var localization = PetLocalization.shared
     let state: PetAppUpdateState
     let currentVersion: String
     let checkForUpdates: () -> Void
@@ -76,10 +82,10 @@ struct PetAppUpdateStatusView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             VStack(alignment: .leading, spacing: 5) {
-                Text("앱 업데이트")
-                    .font(.body.weight(.semibold))
-                Text("현재 버전 \(currentVersion)")
-                    .font(.caption)
+                Text(PetL10n.text("App Update", korean: "앱 업데이트"))
+                    .font(.blabee(.body, weight: .semibold))
+                Text(PetL10n.text("Current version \(currentVersion)", korean: "현재 버전 \(currentVersion)"))
+                    .font(.blabee(.caption))
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -96,13 +102,13 @@ struct PetAppUpdateStatusView: View {
                 }
                 VStack(alignment: .leading, spacing: 7) {
                     Text(state.title)
-                        .font(.callout.weight(.semibold))
+                        .font(.blabee(.callout, weight: .semibold))
                     if let latestVersion = state.latestVersionDisplay {
-                        Text("업데이트 버전 \(latestVersion)")
-                            .font(.caption.weight(.medium))
+                        Text(PetL10n.text("Update version \(latestVersion)", korean: "업데이트 버전 \(latestVersion)"))
+                            .font(.blabee(.caption, weight: .medium))
                     }
                     Text(state.detail)
-                        .font(.caption)
+                        .font(.blabee(.caption))
                         .foregroundStyle(.secondary)
                 }
                 .fixedSize(horizontal: false, vertical: true)

@@ -73,6 +73,39 @@ struct CodexHookApprovalQualificationTests {
         }
     }
 
+    @Test("the latest CLI and independently updated daemon qualify only their reviewed signed identities")
+    func latestCodexCLIAndDaemonQualify() {
+        let reviewed = [
+            ("0.160.1", "f69ce2618e3876c26d787ae6fab77376dcc9c6fc"),
+            ("0.161.0", "59d668365cea9562058b3e42e3e2d4326db43b59"),
+            ("0.162.0", "5f410845b5189c21ca0aa20c2ef91293e3145b13"),
+            ("0.162.1", "9ddc61acceef79aa2aad437ba1fe94239f2e0423"),
+            ("0.163.0", "5a4eec85679683d4b137579cb2555fe0b42a02dd"),
+        ]
+        for (version, hash) in reviewed {
+            let expected = "codex-\(version)-arm64-\(hash)"
+            // The version on PATH is deliberately not an input. The daemon
+            // which actually spawned the Hook supplies the signed identity.
+            let fixture = HookQualificationFixture(shells: ["/bin/sh"])
+            fixture.signatures[fixture.codexID] = .init(
+                identifier: "codex", teamIdentifier: Gate.codexTeamIdentifier,
+                cdHash: hash, requirementSatisfied: true
+            )
+            #expect(fixture.evaluate() == expected)
+            #expect(HookPermissionPolicy.allowsOnce(qualification: expected))
+            for otherVersion in ["0.162.2", "0.163.1", "0.164.0", "0.162.1-alpha.1", "0.163.0-alpha.1"] {
+                #expect(!HookPermissionPolicy.allowsOnce(
+                    qualification: "codex-\(otherVersion)-arm64-\(hash)"
+                ))
+            }
+            for (otherVersion, _) in reviewed where otherVersion != version {
+                #expect(!HookPermissionPolicy.allowsOnce(
+                    qualification: "codex-\(otherVersion)-arm64-\(hash)"
+                ))
+            }
+        }
+    }
+
     @Test("persistent launcher sh and outer Codex shell are supported")
     func launcherShapedChainQualifies() {
         let fixture = HookQualificationFixture(shells: ["/bin/sh", "/bin/zsh"])

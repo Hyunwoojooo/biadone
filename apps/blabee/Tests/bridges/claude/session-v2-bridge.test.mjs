@@ -9,7 +9,8 @@ import { SESSION_V2_AUTHORITY_KEYS } from '../../../bridges/claude/src/session-v
 import { sessionV2Context } from '../../../bridges/claude/src/session-v2-context.mjs';
 import { handleSessionV2Hook, readSessionV2HookInput, runSessionV2Hook } from '../../../bridges/claude/src/session-v2-hook.mjs';
 import { createSessionV2BridgeSession, createSessionV2RequestQueue, runSessionV2MCP } from '../../../bridges/claude/src/session-v2-mcp.mjs';
-import { createSessionV2ToolHandler, sessionV2ChannelNotification } from '../../../bridges/claude/src/session-v2-tools.mjs';
+import { createSessionV2ToolHandler } from '../../../bridges/claude/src/session-v2-tools.mjs';
+import { sessionV2SelectionNotice } from '../../../bridges/claude/src/session-v2-waiter.mjs';
 
 const P = 'BLABEE_CLAUDE_SESSION_V2_';
 const until = async predicate => {
@@ -68,14 +69,13 @@ test('v2 Hook sends real mismatched identity for revocation, retains raw digest,
   const createClient = async configuration => {
     assert.deepEqual(configuration.authority, f.authority);
     assert.equal(configuration.role, 'hook');
-    return { request: async command => { calls.push(command); return { observed: true, boundary_id:
+    return { request: async command => { calls.push(command); return { observed: true, waiter: null, boundary_id:
       command.event === 'UserPromptSubmit' ? boundary : null, observation_status: 'accepted' }; }, close: async () => { closed++; } };
   };
   const base = { cwd: f.cwd, session_id: f.authority.native_session_id };
   const promptID = randomUUID();
   const delivered = event();
-  const notification = sessionV2ChannelNotification(delivered, { channelSource: f.env[P + 'CHANNEL_SOURCE'] });
-  const prompt = `<channel source="blabee-claude" kind="readiness_probe" probe_id="${delivered.probe_id}">\n${notification.params.content}\n</channel>`;
+  const prompt = `<channel source="blabee-claude" kind="readiness_probe" probe_id="${delivered.probe_id}">\n${JSON.stringify(delivered)}\n</channel>`;
   const result = await handleSessionV2Hook({ ...base, hook_event_name: 'UserPromptSubmit', prompt_id: promptID, prompt }, { env: f.env, createClient });
   assert.match(result.hookSpecificOutput.additionalContext, new RegExp(`boundary_id=${boundary}`));
   assert.equal(calls[0].prompt_sha256, createHash('sha256').update(prompt).digest('hex'));
@@ -114,13 +114,37 @@ test('Hook input is bounded strict JSON and errors disclose no credential, promp
   assert.equal(status, 1); assert.equal(stdout, ''); assert.doesNotMatch(stderr, /PRIVATE ERROR|a{64}/);
 });
 
+test('UserPromptSubmit context publishes only the server-validated boundary and preserves the real new prompt identity', async t => {
+  const f = await environment(t); const boundary = randomUUID(); const newPrompt = randomUUID();
+  const { channel_source, ...selection } = event('selection');
+  const prompt = `arbitrary native input\n${sessionV2SelectionNotice(selection)}`;
+  for (const accepted of [true, false]) {
+    const commands = [];
+    const result = await handleSessionV2Hook({ session_id: f.authority.native_session_id, cwd: f.cwd,
+      hook_event_name: 'UserPromptSubmit', prompt_id: newPrompt, prompt }, {
+      env: f.env, createClient: async () => ({ request: async command => {
+        commands.push(command);
+        return { observed: true, waiter: null, boundary_id: accepted ? boundary : null,
+          observation_status: accepted ? 'accepted' : 'invalidated' };
+      }, close: async () => {} }),
+    });
+    assert.deepEqual(commands, [{ operation: 'hook', native_session_id: f.authority.native_session_id,
+      cwd: f.cwd, event: 'UserPromptSubmit', prompt_id: newPrompt,
+      prompt_sha256: createHash('sha256').update(prompt, 'utf8').digest('hex') }]);
+    const context = result.hookSpecificOutput.additionalContext;
+    assert.equal(context.includes(`boundary_id=${boundary}`), accepted);
+    assert.equal(context.includes(selection.delivery_token), false);
+    assert.equal(context.includes(selection.selection_id), false);
+  }
+});
+
 test('tools preserve v1 model names while wrapping/unwrapping v2 DTOs and retain original selection binding', async () => {
   const bridgeID = randomUUID();
   const calls = [];
   const action = proposal().options[0];
   const handler = createSessionV2ToolHandler({ getBridgeID: () => bridgeID, channelSource: 'blabee-claude', request: async command => {
     calls.push(command);
-    if (command.operation === 'readiness.begin') return { probe_id: randomUUID(), expires_at_nanoseconds: '18446744073709551615', status: 'pending' };
+    if (command.operation === 'readiness.begin') return { probe_id: randomUUID(), nonce: 'c'.repeat(64), expires_at_nanoseconds: '18446744073709551615', status: 'pending' };
     if (command.operation === 'readiness.ack') return { acknowledged: true };
     if (command.operation === 'proposal.emit') return { packet_id: 'actual_packet', revision: 1 };
     if (command.operation === 'selection.claim') return { selection_id: command.selection_id, boundary_id: randomUUID(), prompt_id: randomUUID(),
@@ -130,7 +154,7 @@ test('tools preserve v1 model names while wrapping/unwrapping v2 DTOs and retain
   const check = valueOf(await handler('check_connection_v1', {}));
   assert.equal(check.result.status, 'pending');
   assert.equal(check.result.expires_at_nanoseconds, '18446744073709551615');
-  assert.equal(Object.hasOwn(check.result, 'nonce'), false);
+  assert.equal(check.result.nonce, 'c'.repeat(64));
   assert.equal(valueOf(await handler('ack_readiness_probe_v1', { probe_id: randomUUID(), nonce: 'd'.repeat(64) })).result.acknowledged, true);
   const actual = proposal();
   await handler('emit_decision_v1', { boundary_id: randomUUID(), proposal: actual });
@@ -146,27 +170,29 @@ test('tools preserve v1 model names while wrapping/unwrapping v2 DTOs and retain
   assert.equal(calls.length, 5);
 });
 
-test('exact source renderer never includes authority, expiry or sequence in model notifications', () => {
-  for (const source of ['blabee-claude', 'plugin:qualified:blabee-claude']) {
-    for (const kind of ['readiness_probe', 'selection']) {
-      const e = event(kind, source);
-      const note = sessionV2ChannelNotification(e, { channelSource: source });
-      assert.equal(note.method, 'notifications/claude/channel');
-      assert.equal(Object.keys(note.params).join(','), 'content,meta');
-      assert.doesNotMatch(JSON.stringify(note), /18446744073709551615|9007199254740993|authority|channel_source/);
-      assert.throws(() => sessionV2ChannelNotification(e, { channelSource: 'foreign-source' }), { code: 'session_v2_invalid_response' });
-    }
+test('Hook notice contains only a selection reference and no authority, waiter, expiry or Channel wrapper', () => {
+  const { channel_source, ...selection } = event('selection');
+  const text = sessionV2SelectionNotice(selection);
+  assert.match(text, /Blabee Stop Hook selection reference/);
+  assert.deepEqual(JSON.parse(text.trim().split('\n')[1]), {
+    selection_id: selection.selection_id, delivery_token: selection.delivery_token,
+  });
+  assert.doesNotMatch(text, /18446744073709551615|9007199254740993|authority|channel|generation|boundary|prompt_id/i);
+  for (const bad of [event(), { ...selection, channel_source }, { ...selection, content: 'PRIVATE BODY' }]) {
+    assert.throws(() => sessionV2SelectionNotice(bad), { code: 'session_v2_invalid_response' });
   }
 });
 
-test('FIFO bounds pending operations and never overlaps polls with tools', async () => {
+test('32 ordinary requests plus one poll stay bounded and never overlap', async () => {
   const calls = []; const resolvers = [];
   const queue = createSessionV2RequestQueue({ request: value => new Promise(resolve => { calls.push(value.operation); resolvers.push(resolve); }),
     exchange: value => new Promise(resolve => { calls.push(value.operation); resolvers.push(resolve); }) });
   const pending = [queue.exchange({ operation: 'bridge.poll' }), queue.request({ operation: 'proposal.emit' })];
-  for (let index = 2; index < 32; index++) pending.push(queue.request({ operation: 'readiness.begin' }));
+  for (let index = 2; index < 33; index++) pending.push(queue.request({ operation: 'readiness.begin' }));
   const settled = Promise.allSettled(pending);
+  assert.equal(queue.snapshot().pending, 33);
   await assert.rejects(queue.request({ operation: 'selection.claim' }), { code: 'session_v2_queue_full' });
+  await assert.rejects(queue.exchange({ operation: 'bridge.poll' }), { code: 'session_v2_queue_full' });
   await until(() => calls.length === 1);
   assert.deepEqual(calls, ['bridge.poll']);
   resolvers[0]({});
@@ -178,7 +204,7 @@ test('FIFO bounds pending operations and never overlaps polls with tools', async
   assert.equal(calls.length, 2);
 });
 
-test('notification failure is terminal for tools and the same logical bridge cannot reopen', async t => {
+test('an unexpected heartbeat event is terminal and never emitted or reopened', async t => {
   const f = await environment(t);
   const bridgeID = randomUUID(); const calls = []; const errors = []; let closed = 0; let notifications = 0;
   const session = createSessionV2BridgeSession({ authority: f.authority, channelSource: 'blabee-claude', pollIntervalMs: 20,
@@ -190,38 +216,29 @@ test('notification failure is terminal for tools and the same logical bridge can
   assert.equal((await session.handler('check_connection_v1', {})).isError, true);
   await assert.rejects(session.start(), { code: 'session_v2_bridge_reopen_forbidden' });
   await session.close();
-  assert.equal(notifications, 1); assert.equal(closed, 1);
+  assert.equal(notifications, 0); assert.equal(closed, 1);
   assert.deepEqual(calls, ['bridge.open', 'bridge.poll']);
-  assert.deepEqual(errors, ['session_v2_channel_notification_unknown']);
+  assert.deepEqual(errors, ['session_v2_channel_invalid_response']);
 });
 
-test('notification backpressure times out or cancels on shutdown without waiting for a late drain', async t => {
+test('shutdown drains a pending heartbeat and discards its late event', async t => {
   const f = await environment(t);
-  for (const shutdown of [false, true]) {
-    const bridgeID = randomUUID(); const calls = []; const errors = []; const retired = [];
-    let notifications = 0; let resolveWrite; let clientClosed = 0;
-    const session = createSessionV2BridgeSession({ authority: f.authority, channelSource: 'blabee-claude',
-      notificationTimeoutMs: shutdown ? 5000 : 20,
-      client: { request: async value => { calls.push(value.operation); return { bridge_id: bridgeID }; },
-        exchange: async request => { calls.push(request.operation); return pollResponse(request, event()); },
-        close: async () => { clientClosed++; } },
-      notify: () => { notifications++; return new Promise(resolve => { resolveWrite = resolve; }); },
-      onError: code => errors.push(code), closeRegistration: async id => { retired.push(id); } });
-    await session.start();
-    await until(() => notifications === 1);
-    if (!shutdown) await until(() => session.snapshot().closed);
-    let timeout;
-    try {
-      await Promise.race([session.close(), new Promise((_, reject) => { timeout = setTimeout(() => reject(new Error('blocked by backpressure')), 500); })]);
-    } finally { clearTimeout(timeout); }
-    assert.equal(clientClosed, 1); assert.deepEqual(retired, [bridgeID]);
-    assert.equal((await session.handler('check_connection_v1', {})).isError, true);
-    assert.deepEqual(errors, shutdown ? [] : ['session_v2_channel_notification_unknown']);
-    resolveWrite();
-    await new Promise(resolve => setImmediate(resolve));
-    assert.equal(notifications, 1);
-    assert.deepEqual(calls, ['bridge.open', 'bridge.poll']);
-  }
+  const bridgeID = randomUUID(); const calls = []; const errors = []; const retired = [];
+  let resolvePoll; let clientClosed = 0;
+  const session = createSessionV2BridgeSession({ authority: f.authority, channelSource: 'blabee-claude',
+    client: { request: async value => { calls.push(value.operation); return { bridge_id: bridgeID }; },
+      exchange: request => { calls.push(request.operation); return new Promise(resolve => { resolvePoll = () => resolve(pollResponse(request, event())); }); },
+      close: async () => { clientClosed++; } },
+    onError: code => errors.push(code), closeRegistration: async id => { retired.push(id); } });
+  await session.start();
+  await until(() => resolvePoll);
+  const closing = session.close();
+  resolvePoll();
+  await closing;
+  assert.equal(clientClosed, 1); assert.deepEqual(retired, [bridgeID]);
+  assert.equal((await session.handler('check_connection_v1', {})).isError, true);
+  assert.deepEqual(errors, []);
+  assert.deepEqual(calls, ['bridge.open', 'bridge.poll']);
 });
 
 test('dedicated MCP subprocess exits on stdin EOF with its actual stdout pipe backpressured', async t => {
@@ -233,8 +250,7 @@ test('dedicated MCP subprocess exits on stdin EOF with its actual stdout pipe ba
     const runtime=await runSessionV2MCP({args:[],createClient:async()=>({
       request:async value=>{if(value.operation==='bridge.close'){process.send({retired:true});return {closed:true}};return {bridge_id:bridgeID}},
       exchange:async request=>{if(!filled){filled=true;process.stdout.write('x'.repeat(1024*1024));process.send({blocked:process.stdout.writableLength>0})}
-        const {payload,...common}=request;return {...common,kind:'response',ok:true,result:{event:{kind:'readiness_probe',
-          delivery_sequence:'1',expires_at_nanoseconds:'18446744073709551615',channel_source:'blabee-claude',probe_id:randomUUID(),nonce:'c'.repeat(64)}}}},
+        const {payload,...common}=request;return {...common,kind:'response',ok:true,result:{event:null}}},
       close:async()=>{}
     })});
     while(!runtime.server.getClientVersion()) await new Promise(resolve=>setTimeout(resolve,5));
@@ -268,6 +284,86 @@ test('dedicated MCP subprocess exits on stdin EOF with its actual stdout pipe ba
   assert.equal(stderr, '');
 });
 
+test('SDK output errors during and after cleanup retire one bridge without replay or leaked listeners', async t => {
+  const moduleURL = new URL('../../../bridges/claude/src/session-v2-mcp.mjs', import.meta.url).href;
+  // A separate Node process must survive genuine Writable callback failures.
+  // Do not catch uncaughtException: the old cleanup crashes before retirement.
+  const source = `import assert from 'node:assert/strict';
+    import {randomUUID} from 'node:crypto';
+    import {PassThrough,Writable} from 'node:stream';
+    import {runSessionV2MCP} from ${JSON.stringify(moduleURL)};
+    const turn=()=>new Promise(resolve=>setImmediate(resolve));
+    const until=async predicate=>{for(let i=0;i<100;i++){if(predicate())return;await turn()}throw new Error('fixture timed out')};
+    const report=[];
+    for(const mode of ['during-drain','after-cleanup','output-first']){
+      const input=new PassThrough(); let writeDone,destroyDone,releasePoll,clientCloses=0;
+      const output=new Writable({autoDestroy:false,
+        write(_chunk,_encoding,done){writeDone=done},destroy(_error,done){destroyDone=done}});
+      const pollGate=new Promise(resolve=>{releasePoll=resolve});
+      const operations=[],diagnostics=[];
+      const before=['SIGINT','SIGTERM'].map(name=>process.listenerCount(name));
+      const bridgeID=randomUUID();
+      const authority=Object.fromEntries(['scope_id','native_session_id','session_incarnation',
+        'service_incarnation','owner_connection_id','authority_epoch'].map(key=>[key,randomUUID()]));
+      const runtime=await runSessionV2MCP({args:[],env:{},input,output,errorOutput:{write:text=>diagnostics.push(text)},
+        resolveContext:async()=>({configuration:{authority},channelSource:'blabee-claude'}),
+        createClient:async()=>({request:async command=>{
+          operations.push(command.operation);
+          if(command.operation==='bridge.open')return {bridge_id:bridgeID};
+          assert.equal(command.operation,'bridge.close');return {closed:true}
+        },exchange:async request=>{
+          operations.push(request.operation);await pollGate;
+          const {payload,...common}=request;return {...common,kind:'response',ok:true,result:{event:null}}
+        },close:async()=>{clientCloses++}})
+      });
+      input.write(JSON.stringify({jsonrpc:'2.0',id:1,method:'initialize',params:{protocolVersion:'2025-03-26',
+        capabilities:{},clientInfo:{name:'output-error-fixture',version:'1'}}})+'\\n');
+      await until(()=>writeDone);
+      input.write(JSON.stringify({jsonrpc:'2.0',method:'notifications/initialized'})+'\\n');
+      await until(()=>operations.includes('bridge.poll'));
+      const pipeError=()=>Object.assign(new Error('PRIVATE PIPE ERROR'),{code:'EPIPE'});
+      if(mode==='output-first')writeDone(pipeError());else input.end();
+      await until(()=>runtime.session.snapshot().closed);
+      if(mode==='during-drain')writeDone(pipeError());
+      await turn();
+      assert.deepEqual(operations,['bridge.open','bridge.poll']);
+      // Repeated errors during the drain must not restart cleanup or diagnose
+      // private error text. The first EPIPE above came from the write callback.
+      output.emit('error',pipeError());
+      releasePoll();
+      assert.equal(await runtime.closed,0);
+      assert.equal(await runtime.close(),0);
+      assert.deepEqual(operations,['bridge.open','bridge.poll','bridge.close']);
+      assert.equal(clientCloses,2);
+      assert.equal(typeof destroyDone,'function');
+      // Destruction can finish asynchronously after runtime.closed resolves.
+      destroyDone(mode==='after-cleanup'?pipeError():undefined);
+      await until(()=>output.closed && output.listenerCount('error')===0);
+      assert.equal(output.listenerCount('close'),0);
+      assert.equal(input.listenerCount('error'),0);
+      assert.deepEqual(['SIGINT','SIGTERM'].map(name=>process.listenerCount(name)),before);
+      assert.equal(diagnostics.length,mode==='output-first'?1:0);
+      assert.doesNotMatch(diagnostics.join(''),/PRIVATE PIPE ERROR/);
+      input.destroy();report.push(mode);
+    }
+    console.log(JSON.stringify(report));`;
+  const child = spawn(process.execPath, ['--input-type=module', '-e', source], { stdio: ['ignore', 'pipe', 'pipe'] });
+  let stdout = '', stderr = '';
+  child.stdout.on('data', value => { stdout += value.toString(); });
+  child.stderr.on('data', value => { stderr += value.toString(); });
+  const exit = new Promise(resolveExit => child.once('exit', (code, signal) => resolveExit({ code, signal })));
+  t.after(() => { if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL'); });
+  let timer;
+  try {
+    const status = await Promise.race([exit, new Promise((_, reject) => {
+      timer = setTimeout(() => reject(new Error('MCP output-error fixture did not exit')), 5000);
+    })]);
+    assert.deepEqual(status, { code: 0, signal: null }, stderr);
+  } finally { clearTimeout(timer); }
+  assert.deepEqual(JSON.parse(stdout), ['during-drain', 'after-cleanup', 'output-first']);
+  assert.equal(stderr, '');
+});
+
 test('tools after initialization await the same open and pending startup calls are bounded', async t => {
   const f = await environment(t);
   const bridgeID = randomUUID(); const calls = [];
@@ -276,7 +372,7 @@ test('tools after initialization await the same open and pending startup calls a
     client: { request: async value => {
       calls.push(value.operation);
       if (value.operation === 'bridge.open') return new Promise(resolve => { resolveOpen = resolve; });
-      return { probe_id: randomUUID(), expires_at_nanoseconds: '9007199254740993', status: 'pending' };
+      return { probe_id: randomUUID(), nonce: 'c'.repeat(64), expires_at_nanoseconds: '9007199254740993', status: 'pending' };
     }, exchange: async request => pollResponse(request), close: async () => {} }, notify: async () => {} });
   const started = session.start();
   const results = Array.from({ length: 32 }, () => session.handler('check_connection_v1', {}));
@@ -332,9 +428,10 @@ test('SDK initialize gates one bridge open, advertises v1 tools, serializes call
         try {
           if (value.operation === 'bridge.open') return { bridge_id: bridgeID };
           if (value.operation === 'bridge.close') return { closed: true };
-          if (value.operation === 'bridge.poll') return pollResponse(envelope, pendingEvent ?? null);
+          if (value.operation === 'bridge.poll') return pollResponse(envelope);
           if (value.operation === 'readiness.begin') { pendingEvent = event(); return { probe_id: pendingEvent.probe_id,
-            expires_at_nanoseconds: pendingEvent.expires_at_nanoseconds, status: 'pending' }; }
+            nonce: pendingEvent.nonce, expires_at_nanoseconds: pendingEvent.expires_at_nanoseconds, status: 'pending' }; }
+          if (value.operation === 'readiness.ack') return { acknowledged: true };
           throw new Error('unexpected operation');
         } finally { current--; }
       };
@@ -348,20 +445,23 @@ test('SDK initialize gates one bridge open, advertises v1 tools, serializes call
   assert.match((await reply(9)).result.content[0].text, /session_v2_bridge_not_registered/);
   assert.equal(calls.length, 0);
   send({ id: 1, method: 'initialize', params: { protocolVersion: '2025-03-26', capabilities: {}, clientInfo: { name: 'fixture', version: '1' } } });
-  assert.deepEqual((await reply(1)).result.capabilities.experimental, { 'claude/channel': {} });
+  assert.equal((await reply(1)).result.capabilities.experimental, undefined);
   send({ method: 'notifications/initialized' }); send({ method: 'notifications/initialized' });
   await until(() => bridge.session.snapshot().registered);
   send({ id: 2, method: 'tools/list', params: {} });
   assert.deepEqual((await reply(2)).result.tools.map(tool => tool.name),
     ['check_connection_v1', 'ack_readiness_probe_v1', 'emit_decision_v1', 'claim_selection_v1', 'complete_selection_v1']);
   send({ id: 3, method: 'tools/call', params: { name: 'check_connection_v1' } });
-  assert.equal(valueOf((await reply(3)).result).result.status, 'pending');
-  await until(() => messages.some(value => value.method === 'notifications/claude/channel'));
-  assert.deepEqual(messages.find(value => value.method === 'notifications/claude/channel').params,
-    sessionV2ChannelNotification(pendingEvent, { channelSource: 'blabee-claude' }).params);
+  const probe = valueOf((await reply(3)).result).result;
+  assert.equal(probe.status, 'pending');
+  assert.equal(probe.nonce, pendingEvent.nonce);
+  assert.equal(messages.some(value => value.method === 'notifications/claude/channel'), false);
   assert.equal(calls.filter(value => value === 'bridge.open').length, 1);
   assert.equal(calls.includes('readiness.ack'), false);
   assert.equal(calls.includes('selection.claim'), false);
+  send({ id: 4, method: 'tools/call', params: { name: 'ack_readiness_probe_v1', arguments: { probe_id: probe.probe_id, nonce: probe.nonce } } });
+  assert.equal(valueOf((await reply(4)).result).result.acknowledged, true);
+  assert.equal(calls.filter(value => value === 'readiness.ack').length, 1);
   assert.equal(max, 1);
   assert.doesNotMatch(stderr + JSON.stringify(messages), /a{64}|b{64}/);
   await bridge.close();

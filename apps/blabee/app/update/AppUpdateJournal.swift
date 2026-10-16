@@ -62,11 +62,16 @@ struct AppUpdateJournal: Codable, Equatable, Sendable {
     var helperStartTime: UInt64?
     var sessions: [Session]
     var backupURL: URL?
-    var detail: String = "업데이트 실행 준비 중입니다."
+    var detail: String = PetL10n.text("Preparing to run the update.", korean: "업데이트 실행 준비 중입니다.")
     var updatedAt: Date
 
+    /// Schema 1 records explicitly describe the old managed-session shutdown
+    /// flow. Schema 2 never grants authority to pause or restore a conversation.
+    var preservesConnections: Bool { schema == 2 }
+
     func requireValid(jobID expectedID: String? = nil, nonce expectedNonce: String? = nil) throws {
-        guard schema == 1, UUID(uuidString: jobID)?.uuidString.lowercased() == jobID,
+        guard [1, 2].contains(schema), !preservesConnections || sessions.isEmpty,
+              UUID(uuidString: jobID)?.uuidString.lowercased() == jobID,
               UUID(uuidString: nonce)?.uuidString.lowercased() == nonce,
               expectedID == nil || expectedID == jobID, expectedNonce == nil || expectedNonce == nonce,
               parentPID > 0, parentStartTime > 0, OperationalRuntimeIdentity.isValid(previousIdentity),
@@ -74,7 +79,8 @@ struct AppUpdateJournal: Codable, Equatable, Sendable {
               download.runtimeIdentity == candidateIdentity,
               sessions.count <= 100, Set(sessions.map { $0.value.id }).count == sessions.count,
               download.workRootURL.isFileURL, download.workRootURL.path.hasPrefix("/"),
-              helperApplicationURL.path == download.workRootURL.appendingPathComponent("helper-runtime/Blabee.app").path,
+              helperApplicationURL.path == download.workRootURL.appendingPathComponent(
+                preservesConnections ? "helper-runtime-\(jobID)/Blabee.app" : "helper-runtime/Blabee.app").path,
               detail.utf8.count <= 8_192
         else { throw AppUpdateTransactionError.invalidJournal }
         _ = try download.prepared()

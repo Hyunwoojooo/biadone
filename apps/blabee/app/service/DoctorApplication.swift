@@ -360,8 +360,8 @@ struct DoctorDependencies {
 struct DoctorApplication {
     static var alphaBaselineVersion: String { CodexCompatibility.alphaBaselineVersion }
     static var supportedVersions: Set<String> { CodexCompatibility.supportedVersions }
-    static let pluginManifestSHA256 = "ae5248318d13b80c625ffb7cdfc7ef7e1be2fc2b559447d0cff7f3714ff1e7a7"
-    static let skillSHA256 = "496b602b57ed0bb9c07f96500dd993c89dba43ba70bfd54ecce7365faa732197"
+    static let pluginManifestSHA256 = "3809bb68bfd1627ae893cafd39d5d046ffdd9df30d1d600c1f98078647e635c3"
+    static let skillSHA256 = "91b7d0d876a753e3c807cd3e78d56146e978d3112c5acb736ef93eb1afa1d5b5"
     static let skillAgentSHA256 = "6a57a7eea07b13f0053208de1075dbdaf8ee708f83357d5029498ff2e0a7b1a6"
     static let launcherSHA256 = "f50318516b52b9e099669fdc1cf9c0bd82891be0da5253c50a941f1f1c1f2ec2"
     static func expectedHookCommand(event: String) -> String {
@@ -1084,7 +1084,7 @@ private extension DoctorApplication {
                 summary: "Codex의 Blabee 플러그인이 비활성화되어 있습니다."
             ), sourceURL: sourceURL)
         }
-        guard entry["version"] as? String == "0.1.2" else {
+        guard entry["version"] as? String == "0.1.3" else {
             return PluginInspection(check: DoctorCheck(
                 id: "plugin_installation", status: .fail,
                 code: "plugin_version_mismatch",
@@ -1384,7 +1384,7 @@ private extension DoctorApplication {
             "name", "version", "description", "author", "skills", "interface", "mcpServers",
         ]),
         manifest["name"] as? String == "blabee",
-        manifest["version"] as? String == "0.1.2",
+        manifest["version"] as? String == "0.1.3",
         (manifest["description"] as? String)?.isEmpty == false,
         manifest["skills"] as? String == "./skills/",
         manifest["mcpServers"] as? String == "./.mcp.json",

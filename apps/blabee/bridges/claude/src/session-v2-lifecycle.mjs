@@ -26,7 +26,9 @@ export class SessionV2LifecycleError extends Error {
  */
 export function normalizeSessionV2Hook(input) {
   if (!record(input)) throw new SessionV2LifecycleError('session_v2_hook_invalid_input');
-  if (Object.hasOwn(input, 'agent_id') || Object.hasOwn(input, 'agent_type')) {
+  // agent_type also names a main session launched with --agent. It is ignored
+  // metadata; only agent_id marks subagent input, including malformed values.
+  if (Object.hasOwn(input, 'agent_id')) {
     throw new SessionV2LifecycleError('session_v2_hook_subagent');
   }
   if (!uuid(input.session_id) || !text(input.cwd, 4096) || !isAbsolute(input.cwd) || resolve(input.cwd) !== input.cwd) {

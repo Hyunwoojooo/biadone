@@ -42,27 +42,116 @@ private func navigationSnapshot(
 
 private actor NavigationBlockingTransport: PetCoordinatorTransport {
     let backend: PetFakeTransport
-    private var continuation: CheckedContinuation<Void, Never>?
+    private var continuations: [CheckedContinuation<Void, any Error>] = []
     private(set) var started = false
+    var pendingCount: Int { continuations.count }
 
     init(_ backend: PetFakeTransport) { self.backend = backend }
 
     func request(type: String, payload: Data) async throws -> Data {
         if type == "focus_event" {
             started = true
-            await withCheckedContinuation { continuation = $0 }
+            try await withCheckedThrowingContinuation { continuations.append($0) }
         }
         return try await backend.request(type: type, payload: payload)
     }
 
     func release() {
-        continuation?.resume()
-        continuation = nil
+        let pending = continuations
+        continuations = []
+        for continuation in pending { continuation.resume() }
     }
+
+    func releaseFirst(fails: Bool) {
+        guard !continuations.isEmpty else { return }
+        let continuation = continuations.removeFirst()
+        if fails { continuation.resume(throwing: PetTestError.injected("old_event_focus_failure")) }
+        else { continuation.resume() }
+    }
+}
+
+private func navigationWaitForPending(_ count: Int, transport: NavigationBlockingTransport) async -> Bool {
+    let deadline = ContinuousClock.now.advanced(by: .seconds(2))
+    while ContinuousClock.now < deadline {
+        if await transport.pendingCount == count { return true }
+        await Task.yield()
+    }
+    return await transport.pendingCount == count
 }
 
 @Suite("Pet event navigation")
 struct PetEventNavigationTests {
+    @Test("Successful snapshots do not erase a failed automatic event focus cooldown")
+    @MainActor
+    func eventFocusRetryBudget() async throws {
+        let transport = PetFakeTransport()
+        let clock = PetTestFocusClock()
+        let vm = PetViewModel(transport: transport, externalApplicationOpener: PetFakeApplicationOpener(),
+                              focusRetryNow: { clock.now })
+        let card = PetTestCard(suffix: "event_retry", rankedActionCount: 2)
+        let waiting = try navigationSnapshot(cards: [card], focused: nil)
+        await transport.enqueue(type: "get_state", response: waiting)
+        await transport.enqueueFailure(type: "focus_event", code: "response_timeout")
+        await transport.enqueue(type: "get_state", response: waiting)
+        await vm.refresh()
+        for _ in 0..<5 {
+            await transport.enqueue(type: "get_state", response: waiting)
+            await vm.refresh()
+        }
+        #expect(await transport.requestCount(type: "focus_event") == 1)
+        #expect(!vm.canActOnDisplayedEvent && vm.localForegroundIdentity == nil)
+        clock.advance(nanoseconds: 2_000_000_000)
+        await transport.enqueue(type: "get_state", response: waiting)
+        await transport.enqueue(type: "focus_event", response: try petTestFocusResponse())
+        await transport.enqueue(type: "get_state", response: try navigationSnapshot(cards: [card],
+            focused: navigationReference(.decision, card.suffix), foreground: card.suffix))
+        await vm.refresh()
+        #expect(await transport.requestCount(type: "focus_event") == 2)
+        #expect(vm.canActOnDisplayedEvent)
+        #expect(vm.localForegroundIdentity?.interactionID == "interaction_event_retry")
+        #expect(await transport.requestCount(type: "select") == 0)
+    }
+
+    @Test("An old event response cannot clear a newer card focus in the same provider context", arguments: [false, true])
+    @MainActor
+    func lateEventResponsePreservesNewOperation(_ fails: Bool) async throws {
+        let backend = PetFakeTransport()
+        let transport = NavigationBlockingTransport(backend)
+        let vm = PetViewModel(transport: transport, externalApplicationOpener: PetFakeApplicationOpener())
+        let cards = ["shown", "removed", "current"].map { PetTestCard(suffix: $0, rankedActionCount: 2) }
+        let shown = navigationReference(.decision, "shown")
+        let current = navigationReference(.decision, "current")
+        try vm.receiveSnapshotDataForTesting(navigationSnapshot(cards: cards, focused: shown))
+        await backend.enqueue(type: "focus_event", response: try petTestFocusResponse())
+        await backend.enqueue(type: "focus_event", response: try petTestFocusResponse())
+        let old = Task { await vm.navigateToNextEvent() }
+        let firstStarted = await navigationWaitForPending(1, transport: transport)
+        #expect(firstStarted)
+        guard firstStarted else { await transport.release(); await old.value; return }
+        try vm.receiveSnapshotDataForTesting(navigationSnapshot(
+            cards: [cards[0], cards[2]], focused: shown, revision: 2))
+        #expect(vm.pendingEventFocus == nil)
+        let newer = Task { await vm.navigateToNextEvent() }
+        let secondStarted = await navigationWaitForPending(2, transport: transport)
+        #expect(secondStarted)
+        guard secondStarted else { await transport.release(); await old.value; await newer.value; return }
+        let pending = vm.pendingEventFocus
+        #expect(pending?.reference == current)
+        await transport.releaseFirst(fails: fails)
+        await old.value
+        #expect(vm.pendingEventFocus == pending)
+        #expect(vm.localForegroundIdentity == nil && vm.lastError == nil)
+        #expect(await backend.requestCount(type: "get_state") == 0)
+        await backend.enqueue(type: "get_state", response: try navigationSnapshot(
+            cards: [cards[0], cards[2]], focused: current, foreground: "current", revision: 3))
+        await transport.release()
+        await newer.value
+        #expect(vm.pendingEventFocus == nil)
+        #expect(vm.localForegroundIdentity?.interactionID == "interaction_current")
+        #expect(vm.canActOnDisplayedEvent)
+        #expect(await backend.requestCount(type: "select") == 0)
+    }
+
     @Test("Option-left wraps to the third project and only its exact decision is selected")
     @MainActor
     func thirdProjectBeforeFirst() async throws {

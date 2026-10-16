@@ -35,7 +35,7 @@ import {
   requireInternalDMGOutputBuildSuffix,
 } from "./internal-build-number.mjs";
 import { normalizeReleaseSigning } from "./release-signing.mjs";
-import { verifyClaudeRuntimeDirectory } from "./prepare-claude-runtime.mjs";
+import { requirePublicClaudeRuntime, verifyClaudeRuntimeDirectory } from "./prepare-claude-runtime.mjs";
 
 const execFile = promisify(execFileCallback);
 const scriptPath = fileURLToPath(import.meta.url);
@@ -980,8 +980,9 @@ export async function buildFreshInternalDMG({
   requireDarwin(platform);
   const signing = normalizeReleaseSigning(releaseSigning);
   const internalSigning = normalizeReleaseSigning(internalClaudeSigning);
-  if (signing !== null && (internalSigning !== null || claudeRuntimeDirectory !== undefined)) fail("public release cannot include development Channels");
-  if ((internalSigning !== null) !== (claudeRuntimeDirectory !== undefined)) fail("internal Claude build requires runtime, identity and team together");
+  if (signing !== null && internalSigning !== null) fail("public release cannot include internal Claude signing");
+  if (internalSigning !== null && claudeRuntimeDirectory === undefined) fail("internal Claude build requires runtime, identity and team together");
+  if (claudeRuntimeDirectory !== undefined && signing === null && internalSigning === null) fail("Claude DMG build requires explicit Developer ID signing");
   const runtimePath = claudeRuntimeDirectory === undefined ? null : requireAbsolutePath(claudeRuntimeDirectory, "--claude-runtime-directory");
   const normalizedBuildNumber = requireInternalBuildNumber(
     buildNumber,
@@ -1000,6 +1001,10 @@ export async function buildFreshInternalDMG({
     requireAbsolutePath(path, "--compatible-previous-app")
   ));
   const runtimeManifest = runtimePath === null ? null : await verifyClaudeRuntimeDirectory(runtimePath);
+  if (runtimeManifest !== null && signing !== null) requirePublicClaudeRuntime(runtimeManifest);
+  if (runtimeManifest !== null && internalSigning !== null && runtimeManifest.channel_mode !== "development-preview") {
+    fail("internal Claude signing requires a development preview runtime");
+  }
   const verifyRuntimeUnchanged = async () => {
     if (runtimeManifest !== null && (await verifyClaudeRuntimeDirectory(runtimePath)).payload_digest !== runtimeManifest.payload_digest) {
       fail("Claude runtime changed during the fresh build; no DMG was published");
@@ -1069,7 +1074,8 @@ export async function buildFreshInternalDMG({
       buildNumber: normalizedBuildNumber,
       compatiblePreviousApps: previousApps,
       ...(signing === null ? {} : { releaseSigning: signing }),
-      ...(internalSigning === null ? {} : { internalClaudeSigning: internalSigning, claudeRuntimeDirectory: runtimePath }),
+      ...(internalSigning === null ? {} : { internalClaudeSigning: internalSigning }),
+      ...(runtimePath === null ? {} : { claudeRuntimeDirectory: runtimePath }),
       platform,
       sourceRoot: snapshotSource,
       prePublishValidation: async () => {

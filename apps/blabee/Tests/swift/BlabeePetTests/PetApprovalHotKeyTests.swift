@@ -1,5 +1,6 @@
 import AppKit
 import Carbon
+import CoordinatorSwift
 import Foundation
 import Testing
 @testable import BlabeeCoordinator
@@ -70,7 +71,7 @@ private func drainApprovalEvents() async {
     for _ in 0..<15 { await Task.yield() }
 }
 
-@Suite("Approval shortcuts bind Command digits to the visible request")
+@Suite("Approval shortcuts bind Command digits to the visible request", .petLanguage(.korean))
 struct PetApprovalHotKeyTests {
     @Test("Release events do not activate existing toggle, selection or preview handlers")
     @MainActor
@@ -160,6 +161,75 @@ struct PetApprovalHotKeyTests {
         #expect(f.registry.statuses[.toggle] != .inactive)
     }
 
+    @Test("Feedback input focus suspends approval shortcuts and leaving it restores fresh bindings", arguments: [false, true])
+    @MainActor
+    func feedbackInputFocusSuspendsAndRestoresApprovalShortcuts(managed: Bool) async throws {
+        let f = try ApprovalFixture()
+        defer { f.vm.stopPolling() }
+        let kind = managed ? "resolve_managed_command_approval" : "resolve_permission_request"
+        let requestID = managed ? "managed_request_feedback" : "permission_feedback"
+        if managed {
+            try f.show(managed: [PetTestManagedCommandApproval(suffix: "feedback")])
+        } else {
+            try f.show(permission: [PetTestPermissionRequest(suffix: "feedback", allowOnceAvailable: true)])
+        }
+        let head = try #require(f.vm.approvalHead)
+        let oldEvent = try f.event(.deny)
+        #expect(f.approvalRegistrations.count == 3)
+        for intent in PetApprovalShortcutIntent.allCases {
+            #expect(f.vm.approvalShortcutLabel(number: intent.rawValue, for: head) == intent.label)
+        }
+
+        // Focus feedback before the queued event reaches its MainActor handler.
+        f.backend.emit(oldEvent)
+        f.vm.setFeedbackInputActive(true)
+        #expect(f.vm.approvalHead == head)
+        #expect(f.approvalRegistrations.isEmpty)
+        #expect(f.vm.approvalShortcutLabels.isEmpty)
+        for intent in PetApprovalShortcutIntent.allCases {
+            #expect(f.vm.approvalShortcutLabel(number: intent.rawValue, for: head) == nil)
+        }
+        #expect(f.vm.approvalShortcutDiagnostic?.contains("피드백") == true)
+        f.backend.emit(oldEvent)
+        await drainApprovalEvents()
+        #expect(await f.transport.requestCount(type: "resolve_permission_request") == 0)
+        #expect(await f.transport.requestCount(type: "resolve_managed_command_approval") == 0)
+
+        f.vm.setFeedbackInputActive(false)
+        #expect(f.vm.approvalHead == head)
+        #expect(f.approvalRegistrations.count == 3)
+        for intent in PetApprovalShortcutIntent.allCases {
+            #expect(f.vm.approvalShortcutLabel(number: intent.rawValue, for: head) == intent.label)
+        }
+        #expect(f.vm.approvalShortcutDiagnostic == nil)
+        let freshEvent = try f.event(.deny)
+        #expect(freshEvent.id != oldEvent.id)
+        f.backend.emit(oldEvent)
+        await drainApprovalEvents()
+        #expect(await f.transport.requestCount(type: "resolve_permission_request") == 0)
+        #expect(await f.transport.requestCount(type: "resolve_managed_command_approval") == 0)
+
+        if managed {
+            await f.transport.enqueue(type: kind, response: try petTestManagedCommandApprovalResolutionResponse(
+                .decline, managedRequestID: requestID
+            ))
+        } else {
+            await f.transport.enqueue(type: kind, response: try petTestPermissionResolutionResponse(
+                .deny, requestID: requestID
+            ))
+        }
+        await f.transport.enqueue(type: "get_state", response: try petTestSnapshotData(cards: []))
+        try f.press(.deny)
+        #expect(await approvalWait { await f.transport.requestCount(type: kind) == 1 && f.vm.approvalHead == nil })
+        let payload = try #require(await f.transport.requestPayloads(type: kind).first)
+        let object = try petTestObject(payload)
+        #expect(object[managed ? "managed_request_id" : "request_id"] as? String == requestID)
+        #expect(object["decision"] as? String == (managed ? "decline" : "deny"))
+        #expect(await f.transport.requestCount(type: "resolve_permission_request") == (managed ? 0 : 1))
+        #expect(await f.transport.requestCount(type: "resolve_managed_command_approval") == (managed ? 1 : 0))
+        #expect(f.approvalRegistrations.isEmpty)
+    }
+
     @Test("An approval arriving over settings owns Command keys and preserves the underlying screen", arguments: [false, true], [false, true])
     @MainActor
     func approvalOverSettings(onboarding: Bool, managed: Bool) async throws {
@@ -202,6 +272,37 @@ struct PetApprovalHotKeyTests {
         #expect(f.vm.isEditingShortcuts == !onboarding)
         #expect(f.vm.shortcutDraft == draft)
         #expect(f.registry.configuration == .defaults)
+    }
+
+    @Test("Reviewed 0.162 Hook requests offer Command-1 and resolve one exact request",
+          arguments: ["0.162.0", "0.162.1"])
+    @MainActor
+    func reviewed0162AllowOnce(version: String) async throws {
+        let profile = try #require(HookPermissionPolicy.qualifiedProfiles.first { $0.version == version })
+        let f = try ApprovalFixture()
+        defer { f.vm.stopPolling() }
+        try f.show(permission: [PetTestPermissionRequest(
+            suffix: "reviewed_runtime",
+            allowOnceAvailable: HookPermissionPolicy.allowsOnce(qualification: profile.qualification)
+        )])
+        let head = try #require(f.vm.approvalHead)
+        #expect(f.vm.approvalShortcutLabel(number: 1, for: head) == "⌘1")
+        await f.transport.enqueue(
+            type: "resolve_permission_request",
+            response: try petTestPermissionResolutionResponse(
+                .allowOnce, requestID: "permission_reviewed_runtime"
+            )
+        )
+        await f.transport.enqueue(type: "get_state", response: try petTestSnapshotData(cards: []))
+        try f.press(.allowOnce)
+        #expect(await approvalWait {
+            await f.transport.requestCount(type: "resolve_permission_request") == 1 && f.vm.approvalHead == nil
+        })
+        let payload = try #require(await f.transport.requestPayloads(type: "resolve_permission_request").first)
+        let object = try petTestObject(payload)
+        #expect(object["request_id"] as? String == "permission_reviewed_runtime")
+        #expect(object["decision"] as? String == "allow_once")
+        #expect(await f.transport.requestCount(type: "select") == 0)
     }
 
     @Test("Unavailable and failed chords are not advertised or remapped")

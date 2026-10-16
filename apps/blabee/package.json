@@ -5,6 +5,8 @@
   "type": "module",
   "description": "Blabee contracts, Codex integration, and the macOS coordinator.",
   "scripts": {
+    "test:access-sql": "node --test Tests/Cloud/access-control.test.mjs",
+    "test:connection-sql": "node --test Tests/Cloud/connection-diagnostics.test.mjs",
     "test": "node --test --test-concurrency=1 Tests/Contracts/*.test.mjs Tests/CoordinatorCore/*.test.mjs Tests/CoordinatorOperational/*.test.mjs Tests/CoordinatorPersistence/*.test.mjs Tests/RuntimeQualification/*.test.mjs Tests/AppPackaging/*.test.mjs Tests/LocalDogfood/*.test.mjs",
     "test:swift": "DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer /usr/bin/lockf -t 0 -k -w /tmp/blabee-coordinator-swift-tests.lock /usr/bin/xcrun swift test --package-path . --scratch-path /tmp/blabee-coordinator-swift-build --experimental-maximum-parallelization-width 1",
     "test:contracts": "node --test --test-concurrency=1 Tests/Contracts/*.test.mjs",
@@ -28,6 +30,7 @@
     "node": ">=22"
   },
   "devDependencies": {
+    "@electric-sql/pglite": "0.5.8",
     "ajv": "^8.18.0"
   }
 }

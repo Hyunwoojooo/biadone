@@ -98,6 +98,7 @@ public final class ClaudeCoreAdapter: @unchecked Sendable {
             switch operation {
             case "activate": result = try activate(request)
             case "select": result = try select(request)
+            case "dismiss_interaction": result = try dismissInteraction(request)
             case "claim": result = try claim(request)
             case "complete": result = try complete(request)
             case "invalidate": result = try invalidate(request)
@@ -239,6 +240,27 @@ public final class ClaudeCoreAdapter: @unchecked Sendable {
         offered[selectionID] = value
         proposals.removeValue(forKey: binding.fullKey)
         return selectionDTO(value)
+    }
+
+    private func dismissInteraction(_ request: [String: Any]) throws -> [String: Any] {
+        try Self.fields(request, ["binding", "interaction_id", "packet_id", "revision"])
+        let binding = try Self.binding(request)
+        let interactionID = try Self.text(request, "interaction_id", maximum: 256)
+        let packetID = try Self.text(request, "packet_id", maximum: 256)
+        guard let revision = ExactJSONInteger.int64(request["revision"], minimum: 1) else {
+            throw CoordinatorError("invalid_dismissal")
+        }
+        var target = binding.jsonObject
+        target.merge(["interaction_id": interactionID, "packet_id": packetID, "revision": revision]) { _, next in next }
+        try routing.dismissInteraction(Self.data(target), closingWith: Self.data([
+            "type": "close_boundary", "event_id": Self.id("event_dismiss"),
+            "occurred_at": try instant().rawValue, "binding": binding.jsonObject,
+            "close_reason": "user_dismissed",
+        ]))
+        // No selection, continuation, Channel offer or execution capability is
+        // created. Durable routing validates an exact already-committed retry.
+        proposals.removeValue(forKey: binding.fullKey)
+        return ["dismissed": true, "interaction_id": interactionID, "packet_id": packetID, "revision": revision]
     }
 
     private func claim(_ request: [String: Any]) throws -> [String: Any] {

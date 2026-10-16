@@ -86,7 +86,8 @@ final class PetUsageAnalytics: ObservableObject {
 
     @Published private(set) var isEnabled: Bool
     var onConsentChanged: (() -> Void)?
-    let productEnvironment: PetProductEnvironment
+    private let productEnvironmentOverride: PetProductEnvironment?
+    var productEnvironment: PetProductEnvironment { productEnvironmentOverride ?? .current }
 
     private let authorization: @MainActor () -> PetUsageAuthorization?
     private let store: any PetUsageEventStoring
@@ -155,7 +156,7 @@ final class PetUsageAnalytics: ObservableObject {
             try await Task.sleep(for: .seconds(delay))
         },
         makeEventID: @escaping @MainActor () -> UUID = UUID.init,
-        productEnvironment: PetProductEnvironment = .current,
+        productEnvironment: PetProductEnvironment? = nil,
         monotonicNow: @escaping @MainActor () -> TimeInterval = { ProcessInfo.processInfo.systemUptime },
         consentID: UUID = UUID(),
         persistedProductIdentity: PetProductIdentity? = nil,
@@ -170,7 +171,7 @@ final class PetUsageAnalytics: ObservableObject {
         self.now = now
         self.sleep = sleep
         self.makeEventID = makeEventID
-        self.productEnvironment = productEnvironment
+        self.productEnvironmentOverride = productEnvironment
         self.monotonicNow = monotonicNow
         self.consentID = consentID
         self.saveConsentID = saveConsentID

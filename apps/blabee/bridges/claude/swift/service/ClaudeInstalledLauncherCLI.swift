@@ -8,6 +8,48 @@ struct ClaudeInstalledLauncherArguments {
     let options: ClaudeInstalledLauncher.Options
     let openTerminal: Bool
 
+    /// Called only after the common runtime bootstrap has verified the source
+    /// and copy as the same signed identity. This function does not establish
+    /// trust in either bundle. Only the two bundled resource arguments move;
+    /// conversation arguments and authority/socket bindings stay byte-for-byte.
+    static func rebasedForRuntimeCopy(_ arguments: [String], sourceBundleURL: URL,
+                                     copiedBundleURL: URL) throws -> [String] {
+        let parsed = try Self(arguments)
+        for bundle in [sourceBundleURL, copiedBundleURL] {
+            guard bundle.isFileURL, bundle.path.hasPrefix("/"),
+                  bundle.lastPathComponent == "Blabee.app",
+                  bundle.standardizedFileURL.path == bundle.path else {
+                throw CoordinatorError("claude_installed_invalid_arguments")
+            }
+        }
+        let resourcePath = "Contents/Resources/claude"
+        let sourceRuntime = sourceBundleURL.appendingPathComponent(resourcePath)
+        let copiedRuntime = copiedBundleURL.appendingPathComponent(resourcePath)
+        guard parsed.options.nodeExecutable.path == sourceRuntime.appendingPathComponent("node/bin/node").path,
+              parsed.options.payloadRoot.path == sourceRuntime.appendingPathComponent("payload").path else {
+            // Never turn an unrelated caller-provided payload into a trusted
+            // one, even if both files happen to exist or resolve to one path.
+            throw CoordinatorError("claude_installed_invalid_arguments")
+        }
+        var result = arguments
+        var index = 0
+        while index < result.count {
+            let argument = result[index]
+            if argument == "--" { break }
+            if argument == "--terminal" || argument == "--observe-session" {
+                index += 1
+                continue
+            }
+            if argument == "--node-bin" {
+                result[index + 1] = copiedRuntime.appendingPathComponent("node/bin/node").path
+            } else if argument == "--payload-root" {
+                result[index + 1] = copiedRuntime.appendingPathComponent("payload").path
+            }
+            index += 2
+        }
+        return result
+    }
+
     init(_ arguments: [String]) throws {
         let required: Set<String> = ["--owner-socket", "--session-socket", "--runtime-identity", "--cwd",
                                      "--claude-bin", "--node-bin", "--payload-root"]
@@ -72,6 +114,9 @@ func runClaudeInstalledLauncher(arguments: [String]) throws -> Int32 {
         try ClaudeInstalledLauncher.openInTerminal(parsed.options,
             coordinatorExecutable: URL(fileURLWithPath: CommandLine.arguments[0]).resolvingSymlinksInPath())
         return 0
+    }
+    if parsed.options.observeSession {
+        return try ClaudeAutoConnectCommand.runAfterRuntimeHandoff(parsed.options)
     }
     return try ClaudeInstalledLauncher.run(parsed.options)
 }

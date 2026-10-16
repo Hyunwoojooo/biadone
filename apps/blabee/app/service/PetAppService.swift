@@ -14,63 +14,67 @@ enum PetAppServiceState: Equatable, Sendable {
 
     var title: String {
         switch self {
-        case .disabled: "사용 안 함"
-        case .stopped: "서비스 시작 대기"
-        case .starting: "서비스 시작 중"
-        case .ready: "서비스 연결됨"
-        case .reconnecting: "서비스 연결 확인 중"
-        case .unresponsive: "서비스 응답 지연"
-        case .stopping: "서비스 종료 중"
-        case .blocked: "기존 서비스 등록 해제 필요"
-        case .failed: "서비스 실행 확인 필요"
+        case .disabled: PetL10n.text("Disabled", korean: "사용 안 함")
+        case .stopped: PetL10n.text("Waiting to start service", korean: "서비스 시작 대기")
+        case .starting: PetL10n.text("Starting service", korean: "서비스 시작 중")
+        case .ready: PetL10n.text("Service connected", korean: "서비스 연결됨")
+        case .reconnecting: PetL10n.text("Checking service connection", korean: "서비스 연결 확인 중")
+        case .unresponsive: PetL10n.text("Service response delayed", korean: "서비스 응답 지연")
+        case .stopping: PetL10n.text("Stopping service", korean: "서비스 종료 중")
+        case .blocked: PetL10n.text("Unregister the previous service", korean: "기존 서비스 등록 해제 필요")
+        case .failed: PetL10n.text("Service needs attention", korean: "서비스 실행 확인 필요")
         }
     }
 
     var detail: String {
         switch self {
         case .disabled:
-            "한 번 켜면 다음부터 Blabee 앱과 함께 시작합니다. 로그인 자동 시작은 등록하지 않습니다."
+            PetL10n.text("Once enabled, the service starts with Blabee. This does not register automatic launch at login.", korean: "한 번 켜면 다음부터 Blabee 앱과 함께 시작합니다. 로그인 자동 시작은 등록하지 않습니다.")
         case .stopped:
-            "앱 실행형 서비스가 선택되어 있습니다. 서비스 시작을 눌러 연결하세요."
+            PetL10n.text("The app-owned service is selected. Choose Start Service to connect.", korean: "앱 실행형 서비스가 선택되어 있습니다. 서비스 시작을 눌러 연결하세요.")
         case .starting:
-            "서비스를 준비하고 있습니다. macOS에서 키체인 접근을 요청하면 확인해 주세요. 처음 실행하거나 앱을 업데이트한 뒤에는 시간이 더 걸릴 수 있습니다."
+            PetL10n.text("Preparing the service. Review any Keychain access request from macOS. First launch or launch after an update may take longer.", korean: "서비스를 준비하고 있습니다. macOS에서 키체인 접근을 요청하면 확인해 주세요. 처음 실행하거나 앱을 업데이트한 뒤에는 시간이 더 걸릴 수 있습니다.")
         case .ready:
-            "이 앱이 시작한 서비스에 연결되었습니다. 패널을 닫아도 유지되고 Blabee 종료 시 함께 종료됩니다."
+            PetL10n.text("Connected to the service started by this app. It continues when the panel closes and stops when Blabee quits.", korean: "이 앱이 시작한 서비스에 연결되었습니다. 패널을 닫아도 유지되고 Blabee 종료 시 함께 종료됩니다.")
         case .reconnecting:
-            "응답을 확인할 때까지 선택을 중지합니다. 기존 작업을 자동으로 다시 보내지 않습니다."
+            PetL10n.text("Selections are paused until a response is confirmed. Previous tasks will not be resent automatically.", korean: "응답을 확인할 때까지 선택을 중지합니다. 기존 작업을 자동으로 다시 보내지 않습니다.")
         case .unresponsive:
-            "서비스 응답이 늦어지고 있습니다. 실행 중인 서비스를 유지하며 연결을 다시 확인합니다. 응답을 확인할 때까지 선택을 중지하고, 기존 작업을 자동으로 다시 보내지 않습니다. 계속 지연되면 설정에서 서비스 다시 시작을 선택하세요."
+            PetL10n.text("The service response is delayed. Keeping the service running while rechecking the connection. Selections are paused until a response is confirmed, and previous tasks will not be resent automatically. If delays continue, choose Restart Service in Settings.", korean: "서비스 응답이 늦어지고 있습니다. 실행 중인 서비스를 유지하며 연결을 다시 확인합니다. 응답을 확인할 때까지 선택을 중지하고, 기존 작업을 자동으로 다시 보내지 않습니다. 계속 지연되면 설정에서 서비스 다시 시작을 선택하세요.")
         case .stopping:
-            "이 앱이 시작한 서비스만 종료하고 있습니다. Codex 세션은 종료하지 않습니다."
+            PetL10n.text("Stopping only the service started by this app. Codex sessions will remain running.", korean: "이 앱이 시작한 서비스만 종료하고 있습니다. Codex 세션은 종료하지 않습니다.")
         case .blocked:
-            "아래 macOS 자동 시작 등록을 해제한 뒤 다시 시도하세요. 기존 서비스는 자동으로 변경하지 않습니다."
+            PetL10n.text("Finish active Blabee selections, unregister the Previous Auto-Start Service, then choose Restart Service.", korean: "진행 중인 Blabee 선택을 마친 뒤 ‘이전 자동 시작 서비스’의 등록을 해제하고 ‘서비스 다시 시작’을 선택하세요.")
         case .failed(let code):
-            "\(Self.recovery(for: code)) 자동 재시작하지 않습니다. 진단: \(code)"
+            PetL10n.text("\(Self.recovery(for: code)) Automatic restart is disabled. Diagnostic: \(code)", korean: "\(Self.recovery(for: code)) 자동 재시작하지 않습니다. 진단: \(code)")
         }
     }
 
     private static func recovery(for code: String) -> String {
         switch code {
         case "operational_owner_active":
-            "다른 Blabee 서비스가 실행 중입니다. 기존 실행을 직접 종료한 뒤 다시 시도하세요."
+            PetL10n.text("Another Blabee service is running. Close it yourself and try again.", korean: "다른 Blabee 서비스가 실행 중입니다. 기존 실행을 직접 종료한 뒤 다시 시도하세요.")
         case "app_service_identity_mismatch", "app_service_bundle_unverified",
              "operational_runtime_identity_unverified", "operational_runtime_identity_invalid":
-            "앱 실행 파일을 확인할 수 없습니다. 앱을 완전히 종료하고 설치된 Blabee를 다시 여세요."
+            PetL10n.text("Unable to verify the app executable. Quit the app completely and reopen installed Blabee.", korean: "앱 실행 파일을 확인할 수 없습니다. 앱을 완전히 종료하고 설치된 Blabee를 다시 여세요.")
         case "freshness_anchor_unavailable":
-            "Keychain에 접근하지 못했습니다. macOS의 접근 요청과 잠금 상태를 확인한 뒤 다시 시도하세요."
+            PetL10n.text("Unable to access Keychain. Check macOS access prompts and lock status, then try again.", korean: "Keychain에 접근하지 못했습니다. macOS의 접근 요청과 잠금 상태를 확인한 뒤 다시 시도하세요.")
         case "freshness_storage_missing":
-            "이전 검증 기록에 대응하는 저장 파일이 없습니다. 설정의 저장소 복구에서 상태를 확인하세요. 데이터나 Keychain 항목을 직접 삭제하지 마세요."
+            PetL10n.text("The storage file for a previous verification record is missing. Check Storage Recovery in Settings. Do not delete data or Keychain items manually.", korean: "이전 검증 기록에 대응하는 저장 파일이 없습니다. 설정의 저장소 복구에서 상태를 확인하세요. 데이터나 Keychain 항목을 직접 삭제하지 마세요.")
+        case "freshness_lock_busy":
+            PetL10n.text("Another storage operation is running, and the wait timed out. Check again shortly. Previous selections will not run again automatically.", korean: "다른 저장 작업이 진행 중이어서 대기를 마쳤습니다. 잠시 뒤 다시 확인하세요. 기존 선택을 자동으로 다시 실행하지 않습니다.")
+        case "freshness_transition_pending":
+            PetL10n.text("Unable to safely finish an interrupted write. The original data and authority must be verified. Do not resend past selections or delete data or Keychain items. Share this code from Error Diagnostics in Settings.", korean: "중단된 저장을 안전하게 완료하지 못했습니다. 원래 저장 내용과 권한 확인이 필요하므로 과거 선택을 다시 보내거나 데이터·Keychain 항목을 삭제하지 마세요. 설정의 오류 진단에서 이 코드를 확인해 전달해 주세요.")
         case "freshness_anchor_missing", "freshness_anchor_corrupt",
-             "freshness_transition_pending", "freshness_transition_mismatch", "database_integrity_failed":
-            "저장 정보 검증에 실패했습니다. 데이터나 Keychain 항목을 삭제하지 말고 진단 코드를 전달해 주세요."
+             "freshness_transition_mismatch", "database_integrity_failed":
+            PetL10n.text("Storage verification failed. Do not delete data or Keychain items. Share the diagnostic code with support.", korean: "저장 정보 검증에 실패했습니다. 데이터나 Keychain 항목을 삭제하지 말고 진단 코드를 전달해 주세요.")
         case "app_service_connection_timeout":
-            "서비스 응답 대기 시간이 지났습니다. 아래 서비스 다시 시작을 눌러 재확인하세요."
+            PetL10n.text("The service response timed out. Choose Restart Service below to check again.", korean: "서비스 응답 대기 시간이 지났습니다. 아래 서비스 다시 시작을 눌러 재확인하세요.")
         case "app_service_stop_incomplete":
-            "기존 서비스 종료가 확인되지 않아 새 실행을 막았습니다. 잠시 뒤 종료를 다시 시도하세요."
+            PetL10n.text("A new launch was blocked because the previous service's exit was not confirmed. Try stopping it again shortly.", korean: "기존 서비스 종료가 확인되지 않아 새 실행을 막았습니다. 잠시 뒤 종료를 다시 시도하세요.")
         case "service_registration_unknown":
-            "macOS 서비스 등록 상태를 확인하지 못했습니다. 설정 새로고침 후 다시 시도하세요."
+            PetL10n.text("Unable to verify macOS service registration. Refresh Settings and try again.", korean: "macOS 서비스 등록 상태를 확인하지 못했습니다. 설정 새로고침 후 다시 시도하세요.")
         default:
-            "서비스 실행을 확인하지 못했습니다. 다시 시도해도 반복되면 진단 코드를 전달해 주세요."
+            PetL10n.text("Unable to verify service execution. If this repeats, share the diagnostic code with support.", korean: "서비스 실행을 확인하지 못했습니다. 다시 시도해도 반복되면 진단 코드를 전달해 주세요.")
         }
     }
 }

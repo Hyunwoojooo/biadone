@@ -185,7 +185,7 @@ enum AppOwnedServiceControlFrame {
         "operational_socket_unsafe", "operational_socket_unavailable",
         "operational_socket_bind_failed", "operational_socket_listen_failed",
         "freshness_anchor_unavailable", "freshness_anchor_missing", "freshness_anchor_corrupt",
-        "freshness_storage_missing", "freshness_transition_pending",
+        "freshness_storage_missing", "freshness_transition_pending", "freshness_lock_busy",
         "freshness_transition_mismatch", "database_integrity_failed",
     ]
 

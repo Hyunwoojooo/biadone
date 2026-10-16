@@ -2,6 +2,8 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<key>BlabeeLegalDocumentsDeferred</key>
+	<true/>
 	<key>BlabeeUpdateRepository</key>
 	<string>Hyunwoojooo/biadone</string>
 	<key>BlabeeRuntimeUseLeaseProtocol</key>
@@ -9,7 +11,7 @@
 	<key>BlabeeRuntimeUseLeasePreviousIdentities</key>
 	<array/>
 	<key>CFBundleDevelopmentRegion</key>
-	<string>ko</string>
+    <string>en</string>
 	<key>CFBundleDisplayName</key>
 	<string>Blabee</string>
 	<key>CFBundleExecutable</key>
@@ -35,7 +37,7 @@
 	<key>NSHighResolutionCapable</key>
 	<true/>
 	<key>NSAppleEventsUsageDescription</key>
-	<string>Codex 관리 세션을 시작하거나 복원할 때 Terminal의 새 창을 엽니다.</string>
+	<string>Codex 또는 Claude Code 세션을 시작하거나 지원되는 세션을 복원할 때, Terminal 등 지원되는 터미널 앱의 새 창을 엽니다.</string>
 	<key>NSPrincipalClass</key>
 	<string>NSApplication</string>
 </dict>

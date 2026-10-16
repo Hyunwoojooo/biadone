@@ -16,6 +16,20 @@ enum DoctorHookTrustInspector {
         projectURL: URL,
         timeoutMilliseconds: Int
     ) throws -> Data {
+        try inspect(
+            executable: executable,
+            projectURL: projectURL,
+            timeoutMilliseconds: timeoutMilliseconds,
+            environment: ProcessInfo.processInfo.environment
+        )
+    }
+
+    static func inspect(
+        executable: URL,
+        projectURL: URL,
+        timeoutMilliseconds: Int,
+        environment: [String: String]
+    ) throws -> Data {
         let process = Process()
         let input = Pipe()
         let output = Pipe()
@@ -23,6 +37,7 @@ enum DoctorHookTrustInspector {
         process.executableURL = executable
         process.arguments = ["app-server", "--listen", "stdio://"]
         process.currentDirectoryURL = projectURL
+        process.environment = environment
         process.standardInput = input
         process.standardOutput = output
         process.standardError = FileHandle.nullDevice

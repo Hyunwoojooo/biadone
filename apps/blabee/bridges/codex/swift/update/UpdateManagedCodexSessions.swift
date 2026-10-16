@@ -90,10 +90,10 @@ struct UpdateManagedCodexSessions: Sendable {
                 var session = record.session
                 if record.session.state == .paused {
                     // Retain the durable pause receipt, but it cannot authorize a PID.
-                    session.detail = "원래 터미널 연결을 확인할 수 없습니다. 복원 시 정확한 세션 ID로 Terminal 창을 엽니다."
+                    session.detail = PetL10n.text("The original terminal connection could not be verified. Restoration will open a Terminal window using the exact session ID.", korean: "원래 터미널 연결을 확인할 수 없습니다. 복원 시 정확한 세션 ID로 Terminal 창을 엽니다.")
                 } else {
                     session.state = .failed
-                    session.detail = "관리 세션 연결을 확인하지 못했습니다. 기존 터미널을 확인하세요."
+                    session.detail = PetL10n.text("Unable to verify the managed session connection. Check the existing terminal.", korean: "관리 세션 연결을 확인하지 못했습니다. 기존 터미널을 확인하세요.")
                 }
                 return session
             }
@@ -161,8 +161,40 @@ struct UpdateManagedCodexSessions: Sendable {
             let arguments = try UpdateManagedCodexArguments(["--cwd", cwd.path]
                 + (resumeThreadID.map { ["--resume", $0] } ?? []))
             let record = try self.prepare(arguments)
-            try Self.openTerminal(record: record)
+            try self.launchPreparedSession(record)
         }.value
+    }
+
+    /// Initial launch only: restoration has a durable claim that must survive
+    /// an uncertain response. Injection keeps failure tests away from Terminal,
+    /// native Codex qualification, and the user's installed application.
+    func launchPreparedSession(
+        _ record: UpdateManagedCodexRecord,
+        prepareCommand: (UpdateManagedCodexRecord) throws -> URL = {
+            try Self.prepareTerminalCommand(record: $0)
+        },
+        openTerminal: (URL) throws -> Void = {
+            try UpdateManagedCodexTerminal.open(commandURL: $0)
+        }
+    ) throws {
+        let command: URL
+        do {
+            command = try prepareCommand(record)
+        } catch {
+            // No Apple event has been sent. Keep cleanup errors visible rather
+            // than claiming that a failed registry write/deletion succeeded.
+            try registry.discardUnstarted(record)
+            throw error
+        }
+        do {
+            try openTerminal(command)
+        } catch let error as UpdateManagedCodexTerminalError
+            where error == .invalidCommand || error == .automationDenied {
+            try registry.discardUnstarted(record)
+            throw error
+        }
+        // Timeout, generic launch failure, and unknown errors deliberately
+        // propagate without cleanup or retry: Terminal may have started a host.
     }
 
     fileprivate func prepare(_ arguments: UpdateManagedCodexArguments) throws -> UpdateManagedCodexRecord {
@@ -212,6 +244,11 @@ struct UpdateManagedCodexSessions: Sendable {
     }
 
     fileprivate static func openTerminal(record: UpdateManagedCodexRecord, claim: String? = nil) throws {
+        let scriptURL = try prepareTerminalCommand(record: record, claim: claim)
+        try UpdateManagedCodexTerminal.open(commandURL: scriptURL)
+    }
+
+    private static func prepareTerminalCommand(record: UpdateManagedCodexRecord, claim: String? = nil) throws -> URL {
         let executable = executable(record)
         let script = try UpdateManagedCodexArguments.terminalScript(executable: executable,
             sessionID: record.session.id, claim: claim)
@@ -223,7 +260,7 @@ struct UpdateManagedCodexSessions: Sendable {
         try handle.write(contentsOf: Data(script.utf8))
         guard fsync(descriptor) == 0 else { throw CoordinatorError("update_managed_terminal_command_failed") }
         try handle.close()
-        try UpdateManagedCodexTerminal.open(commandURL: scriptURL)
+        return scriptURL
     }
 }
 
@@ -233,13 +270,17 @@ enum UpdateManagedCodexCommand {
         switch mode {
         case "managed-session":
             guard isatty(STDIN_FILENO) == 1 else { throw CoordinatorError("update_managed_terminal_unavailable") }
-            let record = try UpdateManagedCodexSessions.live().prepare(UpdateManagedCodexArguments(Array(arguments.dropFirst())))
+            let sessions = UpdateManagedCodexSessions.live()
+            let record = try sessions.prepare(UpdateManagedCodexArguments(Array(arguments.dropFirst())))
             let executable = UpdateManagedCodexSessions.executable(record)
             let arguments = [executable, "managed-session-host", "--session", record.session.id]
             let strings = arguments.map { strdup($0) }
             defer { strings.forEach { free($0) } }
             var pointers = strings + [nil]
             pointers.withUnsafeMutableBufferPointer { _ = execv(executable, $0.baseAddress!) }
+            // A successful exec never returns. This launch definitely failed,
+            // so it must not leave a placeholder blocking later app updates.
+            try sessions.registry.discardUnstarted(record)
             throw CoordinatorError("update_managed_host_exec_failed")
         case "managed-session-host":
             let tail = Array(arguments.dropFirst())

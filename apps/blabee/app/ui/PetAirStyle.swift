@@ -222,7 +222,7 @@ struct PetAirButtonStyle: ButtonStyle {
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .font(.system(size: 13, weight: .medium))
+            .font(.blabee(size: 13, weight: .medium))
             .padding(.horizontal, 13)
             .padding(.vertical, 8)
             .foregroundStyle(PetAirPalette.ink(for: colorScheme))
@@ -263,6 +263,7 @@ struct PetAirBeeMark: Shape {
 }
 
 struct PetAirWaitingArtwork: View {
+    @ObservedObject private var localization = PetLocalization.shared
     @Environment(\.colorScheme) private var colorScheme
 
     // Same 53-dot pattern as ui-demos/air-v1/components.js.
@@ -312,6 +313,7 @@ struct PetAirWaitingArtwork: View {
 
 /// A compact, static count of the available choices, matching the demo meter.
 struct PetAirChoiceCount: View {
+    @ObservedObject private var localization = PetLocalization.shared
     @Environment(\.colorScheme) private var colorScheme
     let count: Int
 
@@ -351,11 +353,11 @@ struct PetAirChoiceCount: View {
             }
             .frame(width: 83, height: 78)
             VStack(alignment: .leading, spacing: 3) {
-                Text("개의 다음 선택")
-                    .font(.system(size: 13, weight: .semibold))
+                Text(PetL10n.text("next choices", korean: "개의 다음 선택"))
+                    .font(.blabee(size: 13, weight: .semibold))
                     .foregroundStyle(PetAirPalette.ink(for: colorScheme))
-                Text("지금 필요한 작업부터")
-                    .font(.system(size: 12))
+                Text(PetL10n.text("Start with what you need now", korean: "지금 필요한 작업부터"))
+                    .font(.blabee(size: 12))
                     .foregroundStyle(PetAirPalette.secondary(for: colorScheme))
             }
         }
@@ -363,6 +365,6 @@ struct PetAirChoiceCount: View {
         .frame(height: 82)
         .petInsetSurface(cornerRadius: 24)
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("\(count)개의 다음 선택")
+        .accessibilityLabel(PetL10n.text("\(count) next choices", korean: "\(count)개의 다음 선택"))
     }
 }

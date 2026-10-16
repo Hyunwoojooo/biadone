@@ -28,10 +28,11 @@ enum ClaudeAutoConnectCommand {
         guard isTerminal, environment["CLAUDECODE", default: ""].isEmpty else { return .direct }
         let commands: Set<String> = ["auth", "config", "doctor", "install", "mcp", "plugin", "plugins",
             "setup-token", "update", "upgrade", "help", "remote-control", "agents", "attach", "auto-mode",
-            "gateway", "import", "logs", "project", "respawn", "rm", "stop", "kill", "ultrareview"]
+            "gateway", "import", "logs", "project", "respawn", "rm", "stop", "kill", "ultrareview",
+            "daemon", "purge", "self-hosted-runner"]
         let direct: Set<String> = ["--help", "-h", "--version", "-v", "--print", "-p",
             "--output-format", "--input-format", "--init-only", "--maintenance",
-            "--bg", "--background", "--cloud", "--environment"]
+            "--bg", "--background", "--cloud", "--environment", "--desktop"]
         let explicit: Set<String> = ["--settings", "--setting-sources", "--mcp-config", "--strict-mcp-config",
             "--channels", "--dangerously-load-development-channels", "--bare", "--safe-mode",
             "--disable-slash-commands", "--remote", "--teleport", "--ide", "--worktree", "-w"]
@@ -121,7 +122,27 @@ enum ClaudeAutoConnectCommand {
             // safe; never use this fallback after starting an interactive child.
             return try passthroughAfterPreparationFailure(parsed)
         }
-        return try launchWithPreSpawnFallback(launch: { try ClaudeInstalledLauncher.run(options) },
+        return try launchWithPreSpawnFallback(launch: {
+            // Resolve installed app/service settings before detaching. The
+            // common bootstrap verifies the complete copied bundle and execs
+            // it without leaving an installed-app parent lease alive. It does
+            // not restart the app, re-enroll a live child or replay a request.
+            do {
+                guard let executable = Bundle.main.executableURL else {
+                    throw CoordinatorError("claude_auto_connect_installed_app_required")
+                }
+                let startupAdmission = try AppBridgeRuntimeBootstrap.reexecIfNeeded(commandLine:
+                    ClaudeInstalledLauncher.terminalArguments(options, coordinatorExecutable: executable))
+                // main already pins this executable for the process lifetime.
+                // Installed packaged success execs; a copied invocation can return.
+                startupAdmission?.release()
+            } catch {
+                // No Claude child has been spawned; preserve the existing
+                // one-time direct launch when detached preparation fails.
+                throw ClaudeInstalledLauncher.PreSpawnFailure()
+            }
+            return try ClaudeInstalledLauncher.run(options)
+        },
             passthrough: { try passthroughAfterPreparationFailure(parsed) })
     }
 
@@ -134,6 +155,18 @@ enum ClaudeAutoConnectCommand {
         } catch is ClaudeInstalledLauncher.PreSpawnFailure {
             return try passthrough()
         }
+    }
+
+    /// exec replaced the automatic wrapper, so the copied launcher now owns
+    /// its proven pre-spawn fallback. The live child and uncertain failures
+    /// still have no retry path. This also preserves Claude's exact resume args.
+    static func runAfterRuntimeHandoff(_ options: ClaudeInstalledLauncher.Options,
+        launch: (ClaudeInstalledLauncher.Options) throws -> Int32 = ClaudeInstalledLauncher.run,
+        passthrough: (Arguments) throws -> Int32 = passthroughAfterPreparationFailure) throws -> Int32 {
+        guard options.observeSession else { throw CoordinatorError("claude_auto_connect_invalid_arguments") }
+        let parsed = try Arguments(["--claude-bin", options.claudeExecutable.path, "--"] + options.claudeArguments)
+        return try launchWithPreSpawnFallback(launch: { try launch(options) },
+            passthrough: { try passthrough(parsed) })
     }
 
     private static func passthroughAfterPreparationFailure(_ arguments: Arguments) throws -> Int32 {

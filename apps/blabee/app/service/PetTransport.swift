@@ -15,6 +15,17 @@ protocol PetProviderControlling: PetCoordinatorTransport {
     func selectSession(_ session: PetProviderSession) async throws
     func checkConnection(_ expectedContext: PetProviderContext) async throws
     func disconnect(_ expectedContext: PetProviderContext) async throws
+    func checkSessionConnection(_ session: PetProviderSession) async throws
+    func disconnectSession(_ session: PetProviderSession) async throws
+}
+
+extension PetProviderControlling {
+    func checkSessionConnection(_ session: PetProviderSession) async throws {
+        try await checkConnection(session.context)
+    }
+    func disconnectSession(_ session: PetProviderSession) async throws {
+        try await disconnect(session.context)
+    }
 }
 
 extension PetCoordinatorTransport {
@@ -55,6 +66,8 @@ enum PetTransportTimeoutPolicy {
         dismissalTimeoutMilliseconds: Int32 = dismissalResponseTimeoutMilliseconds
     ) -> Int32 {
         switch requestType {
+        case "pet_provider_snapshot", "pet_directory_v1", "pet_inbox_v1":
+            min(defaultTimeoutMilliseconds, 500)
         case "select":
             selectionTimeoutMilliseconds
         case "dismiss_interaction":
@@ -69,8 +82,12 @@ enum PetTransportTimeoutPolicy {
     static func operationType(_ type: String, payload: [String: Any]) -> String {
         guard type == "pet_provider_v1", let envelope = payload["envelope"] as? [String: Any],
               envelope["schema_version"] as? String == "blabee.pet-provider.v1",
-              envelope["operation"] as? String == "select" else { return type }
-        return "select"
+              let operation = envelope["operation"] as? String else { return type }
+        switch operation {
+        case "select": return "select"
+        case "snapshot": return "pet_provider_snapshot"
+        default: return type
+        }
     }
 }
 
@@ -132,12 +149,14 @@ actor PetUnixDomainSocketTransport: PetCoordinatorTransport {
                         from: payload,
                         limits: StrictJSONLimits(maximumBytes: 1_048_576, maximumDepth: 72)
                     )
+                    let operation = PetTransportTimeoutPolicy.operationType(type, payload: payloadObject)
+                    let isInboxRead = ["pet_provider_snapshot", "pet_directory_v1", "pet_inbox_v1"].contains(operation)
                     let result = try client.request(
                         type: type,
                         payload: payloadObject,
-                        connectTimeoutMilliseconds: connectTimeoutMilliseconds,
+                        connectTimeoutMilliseconds: isInboxRead ? min(connectTimeoutMilliseconds, 250) : connectTimeoutMilliseconds,
                         responseTimeoutMilliseconds: PetTransportTimeoutPolicy.responseTimeoutMilliseconds(
-                            for: PetTransportTimeoutPolicy.operationType(type, payload: payloadObject),
+                            for: operation,
                             defaultTimeoutMilliseconds: defaultTimeout,
                             userDecisionTimeoutMilliseconds: userDecisionTimeout,
                             selectionTimeoutMilliseconds: selectionTimeout,

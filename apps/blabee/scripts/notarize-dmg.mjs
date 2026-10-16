@@ -9,9 +9,10 @@ import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 
-import { verifyDeveloperIDSignature } from "./release-signing.mjs";
-import { attachAndVerifyDMG, verifyInternalAppBundle } from "./build-internal-dmg.mjs";
+import { verifyDeveloperIDSignature, verifyEmbeddedSigningEntitlements } from "./release-signing.mjs";
+import { attachAndVerifyDMG, verifyInternalAppBundle, internalClaudeNotice } from "./build-internal-dmg.mjs";
 import { requireInternalBuildNumber } from "./internal-build-number.mjs";
+import { requirePublicClaudeRuntime, verifyClaudeRuntimeDirectory } from "./prepare-claude-runtime.mjs";
 
 const execFile = promisify(execFileCallback);
 const schema = "blabee.dmg-notarization.v1";
@@ -22,6 +23,10 @@ const phases = new Set(["submitting", "submission_unknown", "submitted", "accept
 const fileFlags = constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK;
 
 function fail(message) { throw new Error(message); }
+function requireDistributionMode(value) {
+  if (value !== "public" && value !== "internal-preview") fail("--distribution-mode must be public or internal-preview");
+  return value;
+}
 function absolute(value, name) {
   if (typeof value !== "string" || !isAbsolute(value) || /[\0\r\n]/.test(value)) fail(`${name} must be an explicit absolute path`);
   return resolve(value);
@@ -149,9 +154,19 @@ function requireSubmissionID(value) {
   if (typeof value !== "string" || !uuidPattern.test(value)) fail("submission ID must be a UUID");
   return value.toLowerCase();
 }
-function validateState(state, { dmgPath, teamID, keychainProfile, keychainPath }) {
+function validateState(state, { dmgPath, teamID, keychainProfile, keychainPath, distributionMode }) {
   if (state.schema !== schema || state.dmg !== dmgPath || state.team_id !== teamID || state.keychain_profile !== keychainProfile || state.keychain !== keychainPath
       || !phases.has(state.phase) || !shaPattern.test(state.submitted_sha256)) fail("notarization state does not match this DMG, team, or Keychain profile");
+  // Older states were public-only. Never adopt one as an internal submission,
+  // or promote an internal submission by changing the invocation's mode.
+  const recordedMode = requireDistributionMode(state.distribution_mode === undefined ? "public" : state.distribution_mode);
+  if (recordedMode !== distributionMode) fail("notarization distribution mode does not match the recorded submission");
+  if (recordedMode === "internal-preview" && (state.public_distribution_ready !== false
+      || state.claude_channel_mode !== "development-preview")) fail("internal notarization state must retain development-preview and public_distribution_ready=false");
+  if (recordedMode === "public" && state.claude_channel_mode !== undefined) fail("public notarization state cannot carry internal Claude metadata");
+  if (state.claude_delivery_mode !== undefined && (recordedMode !== "public" || state.claude_delivery_mode !== "mcp-hook-v1")) {
+    fail("notarization Claude delivery mode does not match the distribution mode");
+  }
   if (state.submission_id !== null) requireSubmissionID(state.submission_id);
   for (const key of ["pending_sha256", "final_sha256"]) if (state[key] != null && !shaPattern.test(state[key])) fail(`invalid ${key} in notarization state`);
   if (["submitted", "accepted", "invalid", "publishing", "complete"].includes(state.phase) && !state.submission_id) fail("notarization state is missing its submission ID");
@@ -164,16 +179,20 @@ function validateLog(log, state) {
   if (log.sha256 && String(log.sha256).toLowerCase() !== state.submitted_sha256) fail("Apple notarization log SHA-256 does not match the submitted DMG");
 }
 
-// A common product identifier is not evidence that an internal development
-// Channels payload is eligible for public distribution. Inspect sealed content
-// before any upload, using the same read-only attach/verified-detach lifecycle.
-export async function verifyPublicDMGPayload(dmgPath, {
+// Both modes inspect the sealed payload before uploading. Internal notarization
+// is a Gatekeeper security check, not public Channels distribution approval.
+async function verifyDMGPayload(dmgPath, distributionMode, {
   teamID,
   runner = execFile,
   mountVerifier = attachAndVerifyDMG,
   appVerifier = verifyInternalAppBundle,
   appSignatureVerifier = verifyDeveloperIDSignature,
+  appEntitlementsVerifier = verifyEmbeddedSigningEntitlements,
+  internalRuntimeVerifier = verifyClaudeRuntimeDirectory,
 } = {}) {
+  const internalPreview = requireDistributionMode(distributionMode) === "internal-preview";
+  const label = internalPreview ? "internal preview" : "public";
+  const noticeName = internalPreview ? "INTERNAL_TESTING.txt" : "README.txt";
   const workRoot = await realpath(await mkdtemp(join(tmpdir(), "blabee-notary-qualification-")));
   const ownership = await lstat(workRoot);
   const execute = (command, args, options) => runner(command, args, { ...options, timeout: 120_000 });
@@ -184,25 +203,59 @@ export async function verifyPublicDMGPayload(dmgPath, {
       const app = join(mountPoint, "Blabee.app");
       for (const path of [app, join(app, "Contents"), join(app, "Contents", "Resources")]) {
         const metadata = await lstat(path);
-        if (!metadata.isDirectory() || metadata.isSymbolicLink()) fail("public DMG app must contain real directories");
+        if (!metadata.isDirectory() || metadata.isSymbolicLink()) fail(`${label} DMG app must contain real directories`);
       }
       const hasClaude = await lstat(join(app, "Contents", "Resources", "claude")).then(() => true, error => {
         if (error.code === "ENOENT") return false;
         throw error;
       });
-      if (hasClaude) fail("development Channels payload cannot be notarized for public distribution");
-      if (JSON.stringify((await readdir(mountPoint)).sort()) !== JSON.stringify(["Applications", "Blabee.app", "README.txt"])) {
-        fail("public DMG must contain exactly Applications, Blabee.app and README.txt");
+      if (internalPreview && !hasClaude) fail("internal preview notarization requires the development Claude runtime");
+      if (hasClaude) {
+        const metadata = await lstat(join(app, "Contents", "Resources", "claude"));
+        if (!metadata.isDirectory() || metadata.isSymbolicLink()) fail(`${label} Claude runtime must be a real directory`);
+      }
+      if (JSON.stringify((await readdir(mountPoint)).sort()) !== JSON.stringify(["Applications", "Blabee.app", noticeName].sort())) {
+        fail(`${label} DMG must contain exactly Applications, Blabee.app and ${noticeName}`);
       }
       const applications = join(mountPoint, "Applications");
-      if (!(await lstat(applications)).isSymbolicLink() || await readlink(applications) !== "/Applications") fail("public DMG Applications link is invalid");
-      const notice = await lstat(join(mountPoint, "README.txt"));
-      if (!notice.isFile() || notice.isSymbolicLink() || notice.nlink !== 1 || notice.size > 64 * 1024) fail("public DMG notice is invalid");
+      if (!(await lstat(applications)).isSymbolicLink() || await readlink(applications) !== "/Applications") fail(`${label} DMG Applications link is invalid`);
+      const notice = await lstat(join(mountPoint, noticeName));
+      if (!notice.isFile() || notice.isSymbolicLink() || notice.nlink !== 1 || notice.size > 64 * 1024
+          || (internalPreview && notice.size === 0)) fail(`${label} DMG notice is invalid`);
+      if (internalPreview) {
+        // A pre-notarization-only notice would contradict the completed image.
+        // Require the current status-neutral text, never rewrite an old DMG.
+        if (notice.size !== Buffer.byteLength(internalClaudeNotice, "utf8")) fail("internal preview DMG notice must match the current status-neutral notice; rebuild the candidate");
+        const handle = await open(join(mountPoint, noticeName), fileFlags);
+        try {
+          if (!stableFile(notice, await handle.stat()) || await handle.readFile("utf8") !== internalClaudeNotice
+              || !stableFile(notice, await handle.stat())) fail("internal preview DMG notice changed or does not match the current notice");
+        } finally { await handle.close(); }
+      }
+      if (hasClaude) {
+        const runtime = await internalRuntimeVerifier(join(app, "Contents", "Resources", "claude"));
+        if (internalPreview) {
+          if (runtime.node_arch !== "arm64" || runtime.channel_mode !== "development-preview") fail("internal preview runtime must use arm64 development-preview");
+        } else {
+          requirePublicClaudeRuntime(runtime);
+          if (runtime.node_arch !== "arm64") fail("public Claude runtime must use arm64");
+        }
+      }
       const signature = await appSignatureVerifier(app, { teamID, kind: "app", identifier: "com.biadone.blabee", runner: execute });
+      if (hasClaude) {
+        await appEntitlementsVerifier(app, "com.apple.security.automation.apple-events", { runner: execute });
+      }
       const version = await execute("/usr/bin/plutil", ["-extract", "CFBundleVersion", "raw", "-o", "-", join(app, "Contents", "Info.plist")], { encoding: "utf8", maxBuffer: 1024 });
-      if (version.stderr !== "") fail("public DMG app version wrote unexpected diagnostics");
-      const buildNumber = requireInternalBuildNumber(version.stdout.trim(), "public app build number");
-      return appVerifier(app, { expectedBuildNumber: buildNumber, releaseSigning: { identity: signature.authority, teamID } });
+      if (version.stderr !== "") fail(`${label} DMG app version wrote unexpected diagnostics`);
+      const buildNumber = requireInternalBuildNumber(version.stdout.trim(), `${label} app build number`);
+      const signing = { identity: signature.authority, teamID };
+      const verified = await appVerifier(app, { expectedBuildNumber: buildNumber,
+        ...(internalPreview ? { internalClaudeSigning: signing } : { releaseSigning: signing }) });
+      // The app verifier checks the complete pinned runtime manifest,
+      // nested Node signature/entitlements, and enclosing app signature.
+      return internalPreview ? { ...verified, distribution_mode: "internal-preview",
+        claude_channel_mode: "development-preview", public_distribution_ready: false }
+        : { ...verified, ...(hasClaude ? { claude_delivery_mode: "mcp-hook-v1" } : {}) };
     } });
   } catch (error) {
     primaryError = error;
@@ -220,6 +273,14 @@ export async function verifyPublicDMGPayload(dmgPath, {
   return result;
 }
 
+export function verifyPublicDMGPayload(dmgPath, options) {
+  return verifyDMGPayload(dmgPath, "public", options);
+}
+
+export function verifyInternalPreviewDMGPayload(dmgPath, options) {
+  return verifyDMGPayload(dmgPath, "internal-preview", options);
+}
+
 export async function notarizeDMG({
   dmgPath,
   teamID,
@@ -228,13 +289,17 @@ export async function notarizeDMG({
   submissionID = null,
   resume = false,
   timeout = 45,
+  distributionMode = "public",
   runner = execFile,
   signatureVerifier = verifyDeveloperIDSignature,
   publicPayloadVerifier = verifyPublicDMGPayload,
+  internalPreviewPayloadVerifier = verifyInternalPreviewDMGPayload,
   platform = process.platform,
 } = {}) {
   if (platform !== "darwin") fail("DMG notarization is supported only on macOS");
-  if (typeof publicPayloadVerifier !== "function") fail("public payload verifier is required");
+  requireDistributionMode(distributionMode);
+  const payloadVerifier = distributionMode === "internal-preview" ? internalPreviewPayloadVerifier : publicPayloadVerifier;
+  if (typeof payloadVerifier !== "function") fail(`${distributionMode} payload verifier is required`);
   dmgPath = absolute(dmgPath, "--dmg");
   if (!dmgPath.endsWith(".dmg")) fail("--dmg must end with .dmg");
   if (typeof teamID !== "string" || !/^[A-Z0-9]{10}$/.test(teamID)) fail("--team-id must be a 10-character Apple Team ID");
@@ -275,11 +340,20 @@ export async function notarizeDMG({
     const initialSHA = await digest(dmgPath);
     await verify(dmgPath);
     await assertDigest(initialSHA);
-    await publicPayloadVerifier(dmgPath, { teamID, runner });
+    const payload = await payloadVerifier(dmgPath, { teamID, runner });
+    if (distributionMode === "internal-preview" && (payload?.distribution_mode !== distributionMode
+        || payload?.claude_channel_mode !== "development-preview" || payload?.public_distribution_ready !== false)) {
+      fail("internal preview payload qualification is missing or inconsistent");
+    }
+    if (distributionMode === "public" && (payload?.claude_channel_mode !== undefined
+        || (payload?.claude_delivery_mode !== undefined && payload.claude_delivery_mode !== "mcp-hook-v1"))) {
+      fail("public payload qualification cannot contain development Channels or an unknown Claude delivery mode");
+    }
     await assertDigest(initialSHA);
     state = await readJSON(paths.state);
     if (state) {
-      validateState(state, { dmgPath, teamID, keychainProfile, keychainPath });
+      validateState(state, { dmgPath, teamID, keychainProfile, keychainPath, distributionMode });
+      if (state.claude_delivery_mode !== payload?.claude_delivery_mode) fail("notarization Claude delivery mode differs from the verified payload");
       stateValidated = true;
       if (!resume && submissionID === null) fail("notarization state already exists; use --resume to continue without uploading again");
       if (submissionID && state.submission_id && state.submission_id !== submissionID) fail("--submission-id differs from the recorded submission");
@@ -296,6 +370,9 @@ export async function notarizeDMG({
       if (resume && !submissionID) fail("--resume requires an existing notarization state or an explicit --submission-id");
       state = {
         schema, dmg: dmgPath, team_id: teamID, keychain_profile: keychainProfile, keychain: keychainPath,
+        distribution_mode: distributionMode,
+        ...(distributionMode === "internal-preview" ? { claude_channel_mode: "development-preview", public_distribution_ready: false } : {}),
+        ...(distributionMode === "public" && payload?.claude_delivery_mode ? { claude_delivery_mode: payload.claude_delivery_mode } : {}),
         phase: submissionID ? "submitted" : "submitting", submission_id: submissionID, submitted_sha256: initialSHA,
         adopted_submission: submissionID !== null, notarized: false, distribution_security_verified: false,
         log: paths.log, checksum: paths.checksum, clean_mac_validation: "not_performed", created_at: new Date().toISOString(),
@@ -379,6 +456,7 @@ export async function notarizeDMG({
     state.status = "Accepted";
     state.notarized = true;
     state.distribution_security_verified = true;
+    state.distribution_mode = distributionMode;
     state.completed_at ??= new Date().toISOString();
     await save();
     return { ...state, pending: false, state_file: paths.state };
@@ -393,21 +471,22 @@ export async function notarizeDMG({
 
 export function parseNotarizeArguments(args) {
   const options = {};
-  const names = new Map([["--dmg", "dmgPath"], ["--team-id", "teamID"], ["--keychain-profile", "keychainProfile"], ["--keychain", "keychainPath"], ["--submission-id", "submissionID"], ["--timeout", "timeout"]]);
+  const names = new Map([["--dmg", "dmgPath"], ["--team-id", "teamID"], ["--keychain-profile", "keychainProfile"], ["--keychain", "keychainPath"], ["--submission-id", "submissionID"], ["--timeout", "timeout"], ["--distribution-mode", "distributionMode"]]);
   for (let index = 0; index < args.length; index += 1) {
     const flag = args[index];
     if (flag === "--resume") { if (options.resume) fail("duplicate --resume"); options.resume = true; continue; }
     const name = names.get(flag);
     if (!name || options[name] !== undefined || index + 1 >= args.length) fail(`invalid or duplicate argument: ${flag}`);
     const value = args[++index];
-    options[name] = name === "timeout" ? (/^[1-9][0-9]*$/.test(value) ? Number(value) : NaN) : value;
+    options[name] = name === "timeout" ? (/^[1-9][0-9]*$/.test(value) ? Number(value) : NaN)
+      : name === "distributionMode" ? requireDistributionMode(value) : value;
   }
   return options;
 }
 
 if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.meta.url) {
   if (process.argv.includes("--help")) {
-    process.stdout.write("Usage: node scripts/notarize-dmg.mjs --dmg /absolute/Blabee.dmg --team-id TEAMID [--keychain-profile blabee-notary] [--keychain /absolute/login.keychain-db] [--resume | --submission-id UUID] [--timeout 45]\nThe default Keychain is ~/Library/Keychains/login.keychain-db. Exit 2 means Apple is still processing; resume the same submission.\n");
+    process.stdout.write("Usage: node scripts/notarize-dmg.mjs --dmg /absolute/Blabee.dmg --team-id TEAMID [--distribution-mode public|internal-preview] [--keychain-profile blabee-notary] [--keychain /absolute/login.keychain-db] [--resume | --submission-id UUID] [--timeout 45]\nThe default mode is public. Internal-preview requires the signed development Claude runtime and never grants public distribution qualification. The default Keychain is ~/Library/Keychains/login.keychain-db. Exit 2 means Apple is still processing; resume the same submission with the same distribution mode.\n");
   } else {
     try {
       const result = await notarizeDMG(parseNotarizeArguments(process.argv.slice(2)));

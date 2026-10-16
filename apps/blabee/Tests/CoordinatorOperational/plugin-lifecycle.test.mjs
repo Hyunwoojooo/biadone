@@ -100,7 +100,7 @@ test("Codex can install, cache-bust update, remove, and forget an isolated Blabe
 
     const installed = await expectCodexJSON(["plugin", "list", "--json"], env);
     assert.equal(containsJSONValue(installed, "blabee"), true);
-    assert.equal(containsJSONValue(installed, "0.1.2"), true);
+    assert.equal(containsJSONValue(installed, "0.1.3"), true);
 
     const manifestPath = path.join(marketplacePlugin, ".codex-plugin/plugin.json");
     const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
@@ -181,7 +181,7 @@ test("Codex accepts the packaged Blabee Resources layout as a local marketplace"
 
     const pluginAdd = await expectCodexJSON(["plugin", "add", selector, "--json"], env);
     assert.equal(pluginAdd.pluginId, selector);
-    assert.equal(pluginAdd.version, "0.1.2");
+    assert.equal(pluginAdd.version, "0.1.3");
 
     const installed = await expectCodexJSON(["plugin", "list", "--json"], env);
     const entry = installed.installed.find((value) => value.pluginId === selector);

@@ -1,4 +1,5 @@
 import CoordinatorSwift
+import Darwin
 import Foundation
 import Testing
 @testable import BlabeeCoordinator
@@ -29,7 +30,8 @@ struct UpdateManagedCodexTerminalTests {
     }
 
     @Test("denial, Apple event timeout, and unknown failures never open another window",
-          arguments: ["denied (-1743)", "not permitted (-1744)", "timed out (-1712)", "other error"])
+          arguments: ["denied (-1743)", "not permitted (-1744)", "timed out (-1712)", "other error",
+                      "denied (-1743)\n", "not permitted (-1744)\r\n "])
     func appleEventFailure(_ diagnostic: String) throws {
         let fixture = try Fixture()
         defer { fixture.cleanup() }
@@ -44,6 +46,38 @@ struct UpdateManagedCodexTerminalTests {
         }
         #expect(invocations == 1)
         #expect(expected.errorDescription?.isEmpty == false)
+    }
+
+    @Test("signal termination cannot turn denial text into proof that Terminal never launched",
+          arguments: ["denied (-1743)", "not permitted (-1744)", "timed out (-1712)"])
+    func signaledResultIsUncertain(_ diagnostic: String) throws {
+        let fixture = try Fixture()
+        defer { fixture.cleanup() }
+        var invocations = 0
+        #expect(throws: UpdateManagedCodexTerminalError.launchFailed) {
+            try UpdateManagedCodexTerminal.open(commandURL: fixture.command) { _, _, _, _ in
+                invocations += 1
+                return .init(exitCode: 1, stdout: Data(), stderr: Data(diagnostic.utf8),
+                             terminationSignal: SIGTERM)
+            }
+        }
+        #expect(invocations == 1)
+    }
+
+    @Test("an Apple event code inside diagnostic text is not a confirmed refusal",
+          arguments: ["path (-1743) failed (-1)", "denied (-1744) but result unknown",
+                      "timed out (-1712) but result unknown"])
+    func embeddedDiagnosticCodeIsUncertain(_ diagnostic: String) throws {
+        let fixture = try Fixture()
+        defer { fixture.cleanup() }
+        var invocations = 0
+        #expect(throws: UpdateManagedCodexTerminalError.launchFailed) {
+            try UpdateManagedCodexTerminal.open(commandURL: fixture.command) { _, _, _, _ in
+                invocations += 1
+                return .init(exitCode: 1, stdout: Data(), stderr: Data(diagnostic.utf8))
+            }
+        }
+        #expect(invocations == 1)
     }
 
     @Test("runner timeout is localized without retrying")

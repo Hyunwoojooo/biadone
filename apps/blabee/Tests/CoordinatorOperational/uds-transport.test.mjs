@@ -1192,9 +1192,11 @@ test("Hook large request times out even when the daemon never reads the socket",
 
 test("MCP requires the ranked proposal schema and never echoes correlation tokens", async () => {
   let forwardedCalls = 0;
+  const forwardedKinds = [];
   const fake = await startFakeCoordinator((request) => {
     assert.equal(request.type, "emit_decision");
     assert.deepEqual(request.payload.proposal, operationalProposal);
+    forwardedKinds.push(request.payload.suggestion_kind);
     forwardedCalls += 1;
     return { accepted: true, status: "waiting_for_selection" };
   });
@@ -1254,6 +1256,23 @@ test("MCP requires the ranked proposal schema and never echoes correlation token
       },
     },
   ];
+  const classifiedCalls = ["current_task", "new_suggestion"].map((kind, index) => ({
+    jsonrpc: "2.0",
+    id: 6 + index,
+    method: "tools/call",
+    params: { name: "emit_decision", arguments: { ...arguments_, suggestion_kind: kind } },
+  }));
+  const invalidCalls = [
+    ...[null, 1, true, {}, [], "", "unknown", "new_suggestion "].map((kind) => ({
+      ...arguments_, suggestion_kind: kind,
+    })),
+    { ...arguments_, suggestion_kind: "new_suggestion", extra: "not allowed" },
+    { ...arguments_, proposal: { ...operationalProposal, suggestion_kind: "new_suggestion" } },
+  ].map((argumentsValue, index) => ({
+    jsonrpc: "2.0", id: 8 + index, method: "tools/call",
+    params: { name: "emit_decision", arguments: argumentsValue },
+  }));
+  messages.push(...classifiedCalls, ...invalidCalls);
   try {
     const result = await runBinary(
       ["mcp", "--socket", fake.socketPath],
@@ -1262,11 +1281,21 @@ test("MCP requires the ranked proposal schema and never echoes correlation token
     assert.deepEqual({ code: result.code, signal: result.signal }, { code: 0, signal: null });
     assert.equal(result.stderr, "");
     const responses = result.stdout.trim().split("\n").map((line) => JSON.parse(line));
-    assert.equal(responses.length, 5);
+    assert.equal(responses.length, 5 + classifiedCalls.length + invalidCalls.length);
     assert.equal(responses[0].result.protocolVersion, "2025-06-18");
     const tool = responses[1].result.tools[0];
     assert.equal(tool.name, "emit_decision");
+    assert.match(tool.description, /including internal automatic recommendations/);
+    assert.match(tool.description, /with zero or one, do not emit or invent extras/);
+    assert.match(tool.description, /Include it only when the current MCP tool schema supports this field; otherwise omit it/);
+    assert.match(tool.description, /Native permission and approval events, including subagent approvals, keep their existing handling/);
+    assert.match(tool.description, /the user's explicitly requested response language; otherwise use the language of the actual user conversation/);
+    assert.match(tool.description, /next_actions\[\]\.constraints\[\], next_actions\[\]\.done_when\[\], and reported_side_effects\[\]\.summary/);
+    assert.match(tool.description, /preserve any deliverable explicitly requested in another language/);
     assert.equal(tool.inputSchema.additionalProperties, false);
+    assert.deepEqual(tool.inputSchema.properties.suggestion_kind.enum, ["current_task", "new_suggestion"]);
+    assert.equal(tool.inputSchema.required.includes("suggestion_kind"), false);
+    assert.equal(Object.hasOwn(tool.inputSchema.properties.proposal.properties, "suggestion_kind"), false);
     assert.equal(tool.inputSchema.properties.proposal.additionalProperties, false);
     for (const required of [
       "proposal_id",
@@ -1307,7 +1336,20 @@ test("MCP requires the ranked proposal schema and never echoes correlation token
       error_code: "coordinator_unavailable_or_rejected",
       retryable: false,
     });
-    assert.equal(forwardedCalls, 1, "legacy and invalid exact-key wrappers must not reach UDS");
+    for (const call of classifiedCalls) {
+      assert.deepEqual(responses.find((response) => response.id === call.id).result.structuredContent, {
+        accepted: true, status: "waiting_for_selection",
+      });
+    }
+    for (const call of invalidCalls) {
+      const response = responses.find((response) => response.id === call.id);
+      assert.equal(response.result.isError, true);
+      assert.deepEqual(response.result.structuredContent, {
+        accepted: false, error_code: "coordinator_unavailable_or_rejected", retryable: false,
+      });
+    }
+    assert.equal(forwardedCalls, 3, "only existing and well-typed classified wrappers may reach UDS");
+    assert.deepEqual(forwardedKinds, [undefined, "current_task", "new_suggestion"]);
     assert.equal(result.stdout.includes(proposal.correlation_token), false);
   } finally {
     await fake.close();

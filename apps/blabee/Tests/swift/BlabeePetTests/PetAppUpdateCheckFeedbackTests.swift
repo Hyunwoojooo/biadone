@@ -2,7 +2,7 @@ import Foundation
 import Testing
 @testable import BlabeeCoordinator
 
-@Suite("Air update check feedback")
+@Suite("Air update check feedback", .petLanguage(.korean))
 struct PetAppUpdateCheckFeedbackTests {
     @Test("Only a confirmed comparison may claim latest or available")
     func feedbackUsesRealResult() throws {

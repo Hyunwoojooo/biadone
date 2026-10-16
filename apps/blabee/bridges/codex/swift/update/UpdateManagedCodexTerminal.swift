@@ -11,13 +11,13 @@ enum UpdateManagedCodexTerminalError: Error, LocalizedError, Equatable {
     var errorDescription: String? {
         switch self {
         case .invalidCommand:
-            return "Codex 복원 명령 파일을 확인하지 못했습니다."
+            return PetL10n.text("Unable to verify the Codex restore command file.", korean: "Codex 복원 명령 파일을 확인하지 못했습니다.")
         case .automationDenied:
-            return "Terminal 제어 권한이 필요합니다. 시스템 설정 → 개인정보 보호 및 보안 → 자동화에서 Blabee의 Terminal 접근을 허용해 주세요. 중복 실행을 막기 위해 새 창을 다시 열지 않았습니다."
+            return PetL10n.text("Terminal control permission is required. Allow Blabee to access Terminal in System Settings → Privacy & Security → Automation. A new window was not opened again to avoid duplicates.", korean: "Terminal 제어 권한이 필요합니다. 시스템 설정 → 개인정보 보호 및 보안 → 자동화에서 Blabee의 Terminal 접근을 허용해 주세요. 중복 실행을 막기 위해 새 창을 다시 열지 않았습니다.")
         case .timedOut:
-            return "Terminal 창 열기 응답 시간이 지났습니다. 창이 이미 열렸을 수 있어 다시 실행하지 않았습니다. Terminal에서 복원 상태를 확인해 주세요."
+            return PetL10n.text("The Terminal window-opening response timed out. It may already be open, so it was not retried. Check the restore status in Terminal.", korean: "Terminal 창 열기 응답 시간이 지났습니다. 창이 이미 열렸을 수 있어 다시 실행하지 않았습니다. Terminal에서 복원 상태를 확인해 주세요.")
         case .launchFailed:
-            return "Terminal 창을 열었는지 확인하지 못했습니다. 중복 실행을 막기 위해 다시 실행하지 않았습니다. Terminal에서 복원 상태를 확인해 주세요."
+            return PetL10n.text("Unable to confirm whether the Terminal window opened. It was not retried to avoid duplicates. Check the restore status in Terminal.", korean: "Terminal 창을 열었는지 확인하지 못했습니다. 중복 실행을 막기 위해 다시 실행하지 않았습니다. Terminal에서 복원 상태를 확인해 주세요.")
         }
     }
 }
@@ -50,12 +50,20 @@ enum UpdateManagedCodexTerminal {
         } catch {
             throw UpdateManagedCodexTerminalError.launchFailed
         }
-        guard result.exitCode == 0, result.terminationSignal == nil else {
+        // Signal termination leaves delivery uncertain even when partial stderr
+        // contains a denial code. It cannot authorize initial-record cleanup.
+        guard result.terminationSignal == nil else {
+            throw UpdateManagedCodexTerminalError.launchFailed
+        }
+        guard result.exitCode == 0 else {
             let diagnostic = String(decoding: result.stderr, as: UTF8.self)
-            if diagnostic.contains("(-1743)") || diagnostic.contains("(-1744)") {
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            // osascript terminates its diagnostic with the Apple event code;
+            // a code echoed inside a command/path is not a denial receipt.
+            if diagnostic.hasSuffix("(-1743)") || diagnostic.hasSuffix("(-1744)") {
                 throw UpdateManagedCodexTerminalError.automationDenied
             }
-            if diagnostic.contains("(-1712)") {
+            if diagnostic.hasSuffix("(-1712)") {
                 throw UpdateManagedCodexTerminalError.timedOut
             }
             throw UpdateManagedCodexTerminalError.launchFailed

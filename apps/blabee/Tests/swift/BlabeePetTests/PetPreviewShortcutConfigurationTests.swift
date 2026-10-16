@@ -24,7 +24,7 @@ private final class PetPreviewShortcutTestStore: PetShortcutConfigurationStoring
     }
 }
 
-@Suite("Pet preview shortcut configuration and atomic registration")
+@Suite("Pet preview shortcut configuration and atomic registration", .petLanguage(.korean))
 @MainActor
 struct PetPreviewShortcutConfigurationTests {
     @Test("Legacy v1 data keeps every selection binding even when a preview default overlaps")

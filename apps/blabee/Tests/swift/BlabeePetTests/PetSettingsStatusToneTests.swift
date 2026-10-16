@@ -1,7 +1,7 @@
 import Testing
 @testable import BlabeeCoordinator
 
-@Suite("Pet settings status tones")
+@Suite("Pet settings status tones", .petLanguage(.korean))
 struct PetSettingsStatusToneTests {
     private func readiness(
         pluginState: CodexPluginSetupState = .installedNeedsHookReview(version: "0.1.0"),
@@ -102,6 +102,16 @@ struct PetSettingsStatusToneTests {
         #expect(model.nextStep == .verifyInCodex)
         #expect(state.detail.contains("Hook 신뢰 완료 여부를 자동 확인할 수 없습니다"))
         #expect(model.checks[3].detail.contains("Codex 반환은 자동 판정하지 않습니다"))
+    }
+
+    @Test("Shared service status is independent of missing Codex setup")
+    func commonServiceDoesNotRequireCodex() {
+        let claudeOnly = readiness(pluginState: .notInstalled, configuredProjectPaths: [])
+        #expect(PetSettingsStatusTone.connection(claudeOnly) == .actionNeeded)
+        #expect(PetSettingsStatusTone.commonService(claudeOnly) == .confirmed)
+        #expect(PetSettingsStatusTone.commonService(readiness(serviceConnected: false)) == .actionNeeded)
+        #expect(PetSettingsStatusTone.commonService(readiness(serviceIsTransitioning: true)) == .neutral)
+        #expect(PetSettingsStatusTone.commonService(readiness(serviceIssue: "socket unavailable")) == .error)
     }
 
     @Test("Every connection status uses its recommendation and failure evidence")

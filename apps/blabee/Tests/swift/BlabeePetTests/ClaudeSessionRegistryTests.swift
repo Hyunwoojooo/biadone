@@ -273,7 +273,7 @@ private final class RegistryFixture {
         let tokens = try #require(grant["role_capabilities"] as? [String: String])
         let token = try #require(tokens[role])
         return ["auth_token": token, "envelope": [
-            "schema_version": "blabee.claude-session.v2", "kind": "request", "request_id": UUID().uuidString.lowercased(),
+            "schema_version": "blabee.claude-session.v3", "kind": "request", "request_id": UUID().uuidString.lowercased(),
             "provider": "claude", "role": role, "operation": operation,
             "authority": publicGrant["authority"]!, "payload": payload,
         ]]
@@ -288,7 +288,7 @@ private final class RegistryFixture {
     }
 }
 
-@Suite("Claude product registry")
+@Suite("Claude product registry", .petLanguage(.korean))
 struct ClaudeSessionRegistryTests {
     @Test("An observed first start binds Claude's real ID without creating a boundary or readiness",
           arguments: ["startup", "resume", "fork"])
@@ -307,7 +307,9 @@ struct ClaudeSessionRegistryTests {
         #expect(initial["selection_enabled"] as? Bool == false)
         #expect((initial["native_observation"] as? [String: Any])?["status"] as? String == "started")
         let polled = try f.session(issued, grant: grant, operation: "bridge.poll", payload: ["bridge_id": bridge])
-        #expect(((polled["result"] as? [String: Any])?["event"] as? [String: Any])?["kind"] as? String == "readiness_probe")
+        #expect((polled["result"] as? [String: Any])?["event"] is NSNull)
+        let probe = try f.session(issued, grant: grant, operation: "readiness.begin", payload: ["bridge_id": bridge])
+        #expect((probe["result"] as? [String: Any])?["nonce"] is String)
         #expect(try f.petSnapshot(issued)["ready"] as? Bool == false)
         // No synthetic SessionStart was sent through session-v2. The fresh
         // user observation can open a boundary after the typed initial start.
@@ -357,8 +359,8 @@ struct ClaudeSessionRegistryTests {
         let (owner, old, oldGrant) = try f.enrollObserved(nativeID: nativeID, source: "startup")
         let opened = try f.session(old, grant: oldGrant, operation: "bridge.open")
         let oldBridge = try #require((opened["result"] as? [String: Any])?["bridge_id"] as? String)
-        let polled = try f.session(old, grant: oldGrant, operation: "bridge.poll", payload: ["bridge_id": oldBridge])
-        let probe = try #require((polled["result"] as? [String: Any])?["event"] as? [String: Any])
+        let started = try f.session(old, grant: oldGrant, operation: "readiness.begin", payload: ["bridge_id": oldBridge])
+        let probe = try #require(started["result"] as? [String: Any])
         let prompt = try f.hook(old, grant: oldGrant, event: "UserPromptSubmit", fields: [
             "prompt_id": UUID().uuidString.lowercased(), "prompt_sha256": String(repeating: "a", count: 64)])
         let boundary = try #require((prompt["result"] as? [String: Any])?["boundary_id"] as? String)

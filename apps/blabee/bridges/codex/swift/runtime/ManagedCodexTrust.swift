@@ -1933,14 +1933,24 @@ final class ManagedCodexApprovedExecutableProvider: @unchecked Sendable {
     }
 
     func next() throws -> URL {
+        try nextApprovedExecutable().canonicalURL
+    }
+
+    /// The launch policy uses the same private pin as execution, never a
+    /// separately discovered installation or a second version subprocess.
+    func qualifiedVersion() throws -> String {
+        try nextApprovedExecutable().qualifiedVersion
+    }
+
+    private func nextApprovedExecutable() throws -> CodexRuntimeApprovedExecutable {
         stateLock.lock()
         defer { stateLock.unlock() }
 
         if let selection {
-            return try resolver.revalidate(selection).canonicalURL
+            return try resolver.revalidate(selection)
         }
         let resolved = try resolver.resolveApproved()
         selection = resolved
-        return resolved.executable.canonicalURL
+        return resolved.executable
     }
 }

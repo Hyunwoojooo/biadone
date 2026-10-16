@@ -36,13 +36,36 @@ struct ClaudeRuntimePayloadTests {
         defer { fixture.cleanup() }
         // Generated independently with Python json.dumps(sort_keys=True,
         // separators=(',', ':'), ensure_ascii=False) and hashlib.sha256.
-        let expected = "sha256:bebee91f4dec15c5c971299436b02bfb97f1f0123b4e078c8eb6f69c6eb8d1b3"
+        let expected = "sha256:d20312b664349aa6c7d7fc1d8ad8d5ee83c09fbf83d12f9fc4121b0fa843e531"
         let manifest = try ClaudeRuntimePayload.qualify(rootURL: fixture.runtimeRoot, expectedArchitecture: "arm64")
         #expect(manifest.payloadDigest == expected)
-        #expect(manifest.files.count == 52)
+        #expect(manifest.files.count == 53)
         #expect(manifest.files.filter(\.executable).map(\.path) == ["node/bin/node"])
         #expect(throws: CoordinatorError("claude_runtime_payload_invalid")) {
             try ClaudeRuntimePayload.qualify(rootURL: fixture.runtimeRoot, expectedArchitecture: "x64")
+        }
+    }
+
+    @Test("The installed product refuses legacy Channels manifests and extra channel selectors")
+    func publicDeliveryMode() throws {
+        let fixture = try ClaudeRuntimePayloadFixture()
+        defer { fixture.cleanup() }
+        let current = fixture.manifestObject
+        fixture.manifestObject["schema_version"] = "blabee.claude-runtime.v1"
+        fixture.manifestObject.removeValue(forKey: "delivery_mode")
+        fixture.manifestObject["channel_mode"] = "development-preview"
+        fixture.manifestObject["channel_source"] = "blabee-claude"
+        fixture.manifestObject["channel_selector"] = "server:blabee-claude"
+        fixture.manifestObject["contract_versions"] = ["owner": "blabee.claude-owner.v1", "session": "blabee.claude-session.v2", "pet": "blabee.pet-provider.v1"]
+        try fixture.writeManifest()
+        #expect(throws: CoordinatorError("claude_runtime_payload_invalid")) {
+            try ClaudeRuntimePayload.qualify(rootURL: fixture.runtimeRoot)
+        }
+        fixture.manifestObject = current
+        fixture.manifestObject["channel_selector"] = "server:blabee-claude"
+        try fixture.writeManifest()
+        #expect(throws: CoordinatorError("claude_runtime_payload_invalid")) {
+            try ClaudeRuntimePayload.qualify(rootURL: fixture.runtimeRoot)
         }
     }
 
@@ -225,11 +248,10 @@ final class ClaudeRuntimePayloadFixture: @unchecked Sendable {
                 files.append(["path": path, "sha256": SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined(),
                               "size": data.count, "executable": path == "node/bin/node"])
             }
-            manifestObject = ["schema_version": "blabee.claude-runtime.v1", "bridge_version": "0.1.0",
+            manifestObject = ["schema_version": "blabee.claude-runtime.v2", "bridge_version": "0.1.0",
                 "node_version": "22.23.2", "node_arch": architecture, "mcp_sdk_version": "1.30.0",
-                "mcp_protocol_negotiation": "legacy", "channel_mode": "development-preview",
-                "channel_source": "blabee-claude", "channel_selector": "server:blabee-claude",
-                "contract_versions": ["owner": "blabee.claude-owner.v1", "session": "blabee.claude-session.v2", "pet": "blabee.pet-provider.v1"],
+                "mcp_protocol_negotiation": "legacy", "delivery_mode": "mcp-hook-v1",
+                "contract_versions": ["owner": "blabee.claude-owner.v1", "session": "blabee.claude-session.v3", "pet": "blabee.pet-provider.v1"],
                 "files": files]
             try writeManifest()
         } catch { cleanup(); throw error }

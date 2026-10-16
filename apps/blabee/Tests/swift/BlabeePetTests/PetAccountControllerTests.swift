@@ -2,7 +2,7 @@ import Foundation
 import Testing
 @testable import BlabeeCoordinator
 
-@Suite("Pet account controller")
+@Suite("Pet account controller", .petLanguage(.korean))
 @MainActor
 struct PetAccountControllerTests {
     @Test("Both providers exchange, verify the user, and persist the verified identity", arguments: PetAccountProvider.allCases)
@@ -14,12 +14,15 @@ struct PetAccountControllerTests {
         fixture.service.userResults = [.success(verified)]
         var completions = 0
         fixture.controller.onSignInCompleted = { completions += 1 }
+        var credentials: [PetAccountVerifiedCredential] = []
+        fixture.controller.onVerifiedCredential = { credentials.append($0) }
 
         let login = Task { await fixture.controller.signIn(provider) }
         await gate.waitUntilEntered()
         #expect(fixture.controller.phase == .authorizing(provider))
         #expect(fixture.store.value == AccountControllerValues.fresh)
         #expect(completions == 0)
+        #expect(credentials.isEmpty)
         gate.release()
         await login.value
 
@@ -32,6 +35,9 @@ struct PetAccountControllerTests {
         #expect(fixture.service.userInputs == [AccountControllerValues.fresh.accessToken])
         #expect(fixture.events.values == ["browser", "exchange", "save", "user", "save"])
         #expect(completions == 1)
+        #expect(credentials == [.init(userID: UUID(uuidString: verified.id)!,
+                                      accessToken: AccountControllerValues.fresh.accessToken,
+                                      expiresAt: AccountControllerValues.fresh.expiresAt)])
 
         let request = try #require(fixture.browser.requests.first)
         let parts = try #require(URLComponents(url: request.url, resolvingAgainstBaseURL: false))
@@ -290,6 +296,10 @@ struct PetAccountControllerTests {
         fixture.pause(stage, at: gate)
         var completions = 0
         fixture.controller.onSignInCompleted = { completions += 1 }
+        var credentials: [PetAccountVerifiedCredential] = []
+        var invalidations = 0
+        fixture.controller.onVerifiedCredential = { credentials.append($0) }
+        fixture.controller.onCredentialInvalidated = { invalidations += 1 }
         let pending = Task { await fixture.run(stage) }
         await gate.waitUntilEntered()
         let savesBeforeLogout = fixture.store.saved.count
@@ -305,6 +315,8 @@ struct PetAccountControllerTests {
         #expect(fixture.store.saved.count == savesBeforeLogout)
         #expect(fixture.store.clearCount == 1)
         #expect(completions == 0)
+        #expect(credentials.isEmpty)
+        #expect(invalidations == 1)
         if stage == .user {
             #expect(fixture.service.signOutInputs == [AccountControllerValues.fresh.accessToken])
         } else if stage == .refresh {
@@ -336,6 +348,13 @@ struct PetAccountControllerTests {
         let fixture = AccountControllerFixture(stored: AccountControllerValues.fresh)
         await fixture.controller.restoreIfNeeded()
         fixture.store.clearError = PetAccountAuthError.storageUnavailable
+        var invalidations = 0
+        fixture.controller.onCredentialInvalidated = {
+            // The UI must lock before either the phase transition or storage.
+            #expect(fixture.controller.phase == .signedIn(AccountControllerValues.user))
+            #expect(fixture.store.clearCount == 0)
+            invalidations += 1
+        }
 
         await fixture.controller.signOut()
 
@@ -343,6 +362,8 @@ struct PetAccountControllerTests {
         #expect(fixture.store.value == AccountControllerValues.fresh)
         #expect(fixture.service.signOutInputs.isEmpty)
         #expect(fixture.controller.message.contains("키체인"))
+        #expect(invalidations == 1)
+        fixture.controller.onCredentialInvalidated = nil
 
         fixture.store.clearError = nil
         await fixture.controller.signOut()
@@ -417,6 +438,60 @@ struct PetAccountControllerTests {
         await fixture.controller.refresh()
         #expect(fixture.controller.phase == .signedIn(AccountControllerValues.user))
         #expect(fixture.store.loadCount == 2)
+    }
+
+    @Test("Routine checking and transient failures do not invalidate a verified product credential")
+    func transientAccountCheckPreservesProductCredential() async {
+        let fixture = AccountControllerFixture(stored: AccountControllerValues.fresh)
+        var credentials: [PetAccountVerifiedCredential] = []
+        var invalidations = 0
+        fixture.controller.onVerifiedCredential = { credentials.append($0) }
+        fixture.controller.onCredentialInvalidated = { invalidations += 1 }
+        await fixture.controller.restoreIfNeeded()
+        let gate = AccountControllerGate()
+        fixture.service.userGate = gate
+        fixture.service.userResults = [.failure(URLError(.notConnectedToInternet))]
+
+        let refresh = Task { await fixture.controller.refresh() }
+        await gate.waitUntilEntered()
+        #expect(fixture.controller.phase == .checking)
+        #expect(invalidations == 0)
+        gate.release()
+        await refresh.value
+        #expect(fixture.controller.phase == .unavailable)
+        #expect(credentials.count == 1)
+        #expect(invalidations == 0)
+    }
+
+    @Test("Unauthorized verification invalidates before a rotated credential can be handed off")
+    func unauthorizedCredentialIsExplicitlyInvalidated() async {
+        let fixture = AccountControllerFixture(stored: AccountControllerValues.fresh)
+        var events: [String] = []
+        fixture.controller.onVerifiedCredential = { events.append($0.accessToken) }
+        fixture.controller.onCredentialInvalidated = { events.append("invalidated") }
+        await fixture.controller.restoreIfNeeded()
+        fixture.service.userResults = [.failure(PetAccountAuthError.unauthorized), .success(AccountControllerValues.user)]
+
+        await fixture.controller.refresh()
+
+        #expect(events == [AccountControllerValues.fresh.accessToken, "invalidated", AccountControllerValues.rotated.accessToken])
+    }
+
+    @Test("A verified user with a failed credential save never authorizes product access")
+    func failedVerifiedCredentialSaveInvalidates() async {
+        let fixture = AccountControllerFixture(stored: AccountControllerValues.fresh)
+        fixture.store.failedSavesRemaining = 1
+        var credentials: [PetAccountVerifiedCredential] = []
+        var invalidations = 0
+        fixture.controller.onVerifiedCredential = { credentials.append($0) }
+        fixture.controller.onCredentialInvalidated = { invalidations += 1 }
+
+        await fixture.controller.restoreIfNeeded()
+
+        #expect(fixture.service.userInputs == [AccountControllerValues.fresh.accessToken])
+        #expect(fixture.controller.phase == .unavailable)
+        #expect(credentials.isEmpty)
+        #expect(invalidations == 1)
     }
 
     @Test("A fired refresh timer does not cancel its own refresh request")

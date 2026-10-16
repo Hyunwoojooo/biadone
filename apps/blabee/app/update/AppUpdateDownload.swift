@@ -72,17 +72,17 @@ enum AppUpdateDownloadError: Error, LocalizedError, Equatable {
 
     var errorDescription: String? {
         switch self {
-        case .assetsUnavailable: "이 릴리스에는 자동 업데이트용 DMG와 SHA-256 파일이 없습니다."
-        case .invalidRelease: "업데이트 파일의 버전, 크기 또는 GitHub 배포 주소를 확인하지 못했습니다."
-        case .downloadRejected: "업데이트 다운로드의 주소, 응답 또는 파일 크기를 확인하지 못했습니다."
-        case .checksumMismatch: "다운로드한 설치 파일의 SHA-256이 배포 정보와 일치하지 않습니다."
-        case .unsafeStaging: "업데이트 임시 폴더 또는 파일을 안전하게 확인하지 못했습니다."
-        case .signatureRejected: "업데이트 파일의 Blabee 배포 서명을 확인하지 못했습니다."
-        case .notarizationRejected: "macOS가 업데이트 파일의 공증 또는 실행 허용을 확인하지 못했습니다."
-        case .versionMismatch: "설치 파일 안의 앱 버전이 GitHub 배포 버전과 일치하지 않습니다."
-        case .invalidImage: "업데이트 디스크 이미지의 앱 구성을 확인하지 못했습니다."
-        case .cleanupFailed: "업데이트 디스크 이미지를 분리하지 못했습니다. 임시 파일을 보존했습니다."
-        case .runtimeIdentityMismatch: "검증한 설치본과 업데이트 앱의 서명된 실행 식별자가 일치하지 않습니다."
+        case .assetsUnavailable: PetL10n.text("This release has no DMG and SHA-256 files for automatic updates.", korean: "이 릴리스에는 자동 업데이트용 DMG와 SHA-256 파일이 없습니다.")
+        case .invalidRelease: PetL10n.text("Unable to verify the update file's version, size, or GitHub download address.", korean: "업데이트 파일의 버전, 크기 또는 GitHub 배포 주소를 확인하지 못했습니다.")
+        case .downloadRejected: PetL10n.text("Unable to verify the update download address, response, or file size.", korean: "업데이트 다운로드의 주소, 응답 또는 파일 크기를 확인하지 못했습니다.")
+        case .checksumMismatch: PetL10n.text("The downloaded installer's SHA-256 does not match the release information.", korean: "다운로드한 설치 파일의 SHA-256이 배포 정보와 일치하지 않습니다.")
+        case .unsafeStaging: PetL10n.text("Unable to safely verify the update temporary folder or file.", korean: "업데이트 임시 폴더 또는 파일을 안전하게 확인하지 못했습니다.")
+        case .signatureRejected: PetL10n.text("Unable to verify the Blabee distribution signature on the update file.", korean: "업데이트 파일의 Blabee 배포 서명을 확인하지 못했습니다.")
+        case .notarizationRejected: PetL10n.text("macOS could not verify notarization or permission to run the update file.", korean: "macOS가 업데이트 파일의 공증 또는 실행 허용을 확인하지 못했습니다.")
+        case .versionMismatch: PetL10n.text("The app version inside the installer does not match the GitHub release version.", korean: "설치 파일 안의 앱 버전이 GitHub 배포 버전과 일치하지 않습니다.")
+        case .invalidImage: PetL10n.text("Unable to verify the app structure inside the update disk image.", korean: "업데이트 디스크 이미지의 앱 구성을 확인하지 못했습니다.")
+        case .cleanupFailed: PetL10n.text("Unable to detach the update disk image. Temporary files have been preserved.", korean: "업데이트 디스크 이미지를 분리하지 못했습니다. 임시 파일을 보존했습니다.")
+        case .runtimeIdentityMismatch: PetL10n.text("The verified installer and update app have different signed executable identities.", korean: "검증한 설치본과 업데이트 앱의 서명된 실행 식별자가 일치하지 않습니다.")
         }
     }
 }

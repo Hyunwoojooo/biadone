@@ -100,7 +100,7 @@ private func productServiceErrorCode(
     }
 }
 
-@Test("product service derives only bundle and Application Support paths")
+@Test("product service derives only bundle and Application Support paths", .petLanguage(.korean))
 func productServiceDerivesFixedPathsWithoutConfig() throws {
     let fixture = try ProductServiceFixture()
     defer { try? FileManager.default.removeItem(at: fixture.root) }
@@ -134,7 +134,7 @@ func productServiceDerivesFixedPathsWithoutConfig() throws {
     ).enabledProjectPaths == [])
 }
 
-@Test("product service rejects every extra launch argument before bootstrapping")
+@Test("product service rejects every extra launch argument before bootstrapping", .petLanguage(.korean))
 func productServiceRejectsExtraArguments() throws {
     let fixture = try ProductServiceFixture()
     defer { try? FileManager.default.removeItem(at: fixture.root) }
@@ -146,7 +146,7 @@ func productServiceRejectsExtraArguments() throws {
     } == "invalid_arguments")
 }
 
-@Test("product service accepts, normalizes, and UTF-8 sorts enabled projects")
+@Test("product service accepts, normalizes, and UTF-8 sorts enabled projects", .petLanguage(.korean))
 func productServiceLoadsEnabledProjectsDeterministically() throws {
     let fixture = try ProductServiceFixture()
     defer { try? FileManager.default.removeItem(at: fixture.root) }
@@ -163,7 +163,7 @@ func productServiceLoadsEnabledProjectsDeterministically() throws {
     ])
 }
 
-@Test("product service rejects bundle identity and layout lookalikes")
+@Test("product service rejects bundle identity and layout lookalikes", .petLanguage(.korean))
 func productServiceRejectsBundleLookalikes() throws {
     let fixture = try ProductServiceFixture()
     defer { try? FileManager.default.removeItem(at: fixture.root) }
@@ -184,7 +184,7 @@ func productServiceRejectsBundleLookalikes() throws {
     }
 }
 
-@Test("product service requires a real bundled Contracts v1 directory")
+@Test("product service requires a real bundled Contracts v1 directory", .petLanguage(.korean))
 func productServiceRejectsMissingAndSymlinkedContracts() throws {
     let fixture = try ProductServiceFixture()
     defer { try? FileManager.default.removeItem(at: fixture.root) }
@@ -205,7 +205,7 @@ func productServiceRejectsMissingAndSymlinkedContracts() throws {
     } == "product_service_bundle_invalid")
 }
 
-@Test("product service rejects malformed schemas and unsafe project paths")
+@Test("product service rejects malformed schemas and unsafe project paths", .petLanguage(.korean))
 func productServiceRejectsInvalidConfigContent() throws {
     let fixture = try ProductServiceFixture()
     defer { try? FileManager.default.removeItem(at: fixture.root) }
@@ -230,7 +230,7 @@ func productServiceRejectsInvalidConfigContent() throws {
     } == "product_service_config_invalid")
 }
 
-@Test("product service enforces project count and UTF-8 path bounds")
+@Test("product service enforces project count and UTF-8 path bounds", .petLanguage(.korean))
 func productServiceRejectsConfigCollectionLimits() throws {
     let fixture = try ProductServiceFixture()
     defer { try? FileManager.default.removeItem(at: fixture.root) }
@@ -253,7 +253,7 @@ func productServiceRejectsConfigCollectionLimits() throws {
     } == "product_service_config_invalid")
 }
 
-@Test("product service requires secure config directory and file metadata")
+@Test("product service requires secure config directory and file metadata", .petLanguage(.korean))
 func productServiceRejectsUnsafeConfigMetadata() throws {
     let fixture = try ProductServiceFixture()
     defer { try? FileManager.default.removeItem(at: fixture.root) }
@@ -280,7 +280,7 @@ func productServiceRejectsUnsafeConfigMetadata() throws {
     } == "product_service_config_unsafe")
 }
 
-@Test("product service refuses symlinked, special, and oversized config inputs")
+@Test("product service refuses symlinked, special, and oversized config inputs", .petLanguage(.korean))
 func productServiceRejectsSymlinkSpecialAndOversizedConfig() throws {
     let fixture = try ProductServiceFixture()
     defer { try? FileManager.default.removeItem(at: fixture.root) }
@@ -323,7 +323,7 @@ func productServiceRejectsSymlinkSpecialAndOversizedConfig() throws {
     } == "product_service_config_unsafe")
 }
 
-@Test("product service refuses a symlinked config directory")
+@Test("product service refuses a symlinked config directory", .petLanguage(.korean))
 func productServiceRejectsSymlinkedConfigDirectory() throws {
     let fixture = try ProductServiceFixture()
     defer { try? FileManager.default.removeItem(at: fixture.root) }
@@ -348,7 +348,7 @@ func productServiceRejectsSymlinkedConfigDirectory() throws {
     } == "product_service_config_unsafe")
 }
 
-@Test("product service refuses a symlinked Blabee ancestor on restart")
+@Test("product service refuses a symlinked Blabee ancestor on restart", .petLanguage(.korean))
 func productServiceRejectsSymlinkedProductDirectory() throws {
     let fixture = try ProductServiceFixture()
     defer { try? FileManager.default.removeItem(at: fixture.root) }

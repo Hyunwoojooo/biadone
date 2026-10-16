@@ -5,7 +5,7 @@ import Testing
 @testable import BlabeeCoordinator
 @testable import CoordinatorSwift
 
-@Test("Installed Plugin copy does not claim to know Codex Hook trust")
+@Test("Installed Plugin copy does not claim to know Codex Hook trust", .petLanguage(.korean))
 func installedPluginCopyKeepsHookTrustUnknown() {
     let state = CodexPluginSetupState.installedNeedsHookReview(version: "0.1.0")
     #expect(state.title == "Plugin 설치됨 · Hook 상태 확인")
@@ -571,7 +571,7 @@ private func pluginSetupMutationArguments(
     }
 }
 
-@Test("Passive Codex Plugin inspection never mutates configuration")
+@Test("Passive Codex Plugin inspection never mutates configuration", .petLanguage(.korean))
 func codexPluginSetupPassiveInspectionDoesNotMutate() async throws {
     let fixture = try CodexPluginSetupFixture()
     let state = await fixture.manager().inspect()
@@ -587,7 +587,7 @@ func codexPluginSetupPassiveInspectionDoesNotMutate() async throws {
     })
 }
 
-@Test("Connect uses only exact official Codex Plugin argv and verifies post-state")
+@Test("Connect uses only exact official Codex Plugin argv and verifies post-state", .petLanguage(.korean))
 func codexPluginSetupConnectsWithExactArguments() async throws {
     let fixture = try CodexPluginSetupFixture()
     let state = await fixture.manager().connect()
@@ -605,7 +605,7 @@ func codexPluginSetupConnectsWithExactArguments() async throws {
         .allSatisfy { $0.timeoutMilliseconds == 15_000 })
 }
 
-@Test("Repeated connect is idempotent after exact installation")
+@Test("Repeated connect is idempotent after exact installation", .petLanguage(.korean))
 func codexPluginSetupConnectIsIdempotent() async throws {
     let fixture = try CodexPluginSetupFixture()
     fixture.fake.installOwned()
@@ -616,7 +616,7 @@ func codexPluginSetupConnectIsIdempotent() async throws {
     #expect(pluginSetupMutationArguments(fixture).isEmpty)
 }
 
-@Test("Malformed Codex JSON fails closed without mutation")
+@Test("Malformed Codex JSON fails closed without mutation", .petLanguage(.korean))
 func codexPluginSetupRejectsMalformedJSON() async throws {
     let fixture = try CodexPluginSetupFixture()
     fixture.fake.malformedMarketplaceListOnCall = 1
@@ -625,7 +625,7 @@ func codexPluginSetupRejectsMalformedJSON() async throws {
     #expect(pluginSetupMutationArguments(fixture).isEmpty)
 }
 
-@Test("Plugin installed and enabled fields accept only JSON booleans")
+@Test("Plugin installed and enabled fields accept only JSON booleans", .petLanguage(.korean))
 func codexPluginSetupRejectsCoercedPluginBooleans() async throws {
     let scenarios: [(field: String, value: Any)] = [
         ("installed", 1),
@@ -645,7 +645,7 @@ func codexPluginSetupRejectsCoercedPluginBooleans() async throws {
     }
 }
 
-@Test("Same marketplace name with a different root is a conflict")
+@Test("Same marketplace name with a different root is a conflict", .petLanguage(.korean))
 func codexPluginSetupRejectsMarketplaceRootConflict() async throws {
     let fixture = try CodexPluginSetupFixture()
     fixture.fake.marketplaces = [
@@ -660,7 +660,7 @@ func codexPluginSetupRejectsMarketplaceRootConflict() async throws {
     #expect(pluginSetupMutationArguments(fixture).isEmpty)
 }
 
-@Test("Blabee from another marketplace is never removed automatically")
+@Test("Blabee from another marketplace is never removed automatically", .petLanguage(.korean))
 func codexPluginSetupRejectsOtherMarketplacePlugin() async throws {
     let fixture = try CodexPluginSetupFixture()
     fixture.fake.marketplaces = [("team-marketplace", "/tmp/team-marketplace")]
@@ -772,7 +772,7 @@ private func codexPluginSetupCreateLegacyFilesystem(
     try Data("plugin-\(marker)".utf8).write(to: pluginManifest)
 }
 
-@Test("Legacy dogfood connection is detected but never changed automatically")
+@Test("Legacy dogfood connection is detected but never changed automatically", .petLanguage(.korean))
 func codexPluginSetupDetectsLegacyWithoutAutomaticMutation() async throws {
     let fixture = try CodexPluginSetupFixture()
     let legacyRoot = codexPluginSetupLegacyRoot(fixture)
@@ -799,7 +799,7 @@ func codexPluginSetupDetectsLegacyWithoutAutomaticMutation() async throws {
     #expect(pluginSetupMutationArguments(fixture).isEmpty)
 }
 
-@Test("Orphaned legacy marketplace is actionable but never changed automatically")
+@Test("Orphaned legacy marketplace is actionable but never changed automatically", .petLanguage(.korean))
 func codexPluginSetupDetectsOrphanedLegacyWithoutAutomaticMutation() async throws {
     let fixture = try CodexPluginSetupFixture()
     let legacyRoot = codexPluginSetupLegacyRoot(fixture)
@@ -824,7 +824,7 @@ func codexPluginSetupDetectsOrphanedLegacyWithoutAutomaticMutation() async throw
     #expect(pluginSetupMutationArguments(fixture).isEmpty)
 }
 
-@Test("Ambiguous orphaned legacy marketplaces remain fail closed")
+@Test("Ambiguous orphaned legacy marketplaces remain fail closed", .petLanguage(.korean))
 func codexPluginSetupRejectsAmbiguousOrphanedLegacyMarketplaces() async throws {
     for scenario in ["duplicate", "extra-plugin", "current-marketplace"] {
         let fixture = try CodexPluginSetupFixture()
@@ -877,7 +877,7 @@ func codexPluginSetupRejectsAmbiguousOrphanedLegacyMarketplaces() async throws {
     }
 }
 
-@Test("Explicit legacy migration removes only the exact legacy pair then installs blabee-app")
+@Test("Explicit legacy migration removes only the exact legacy pair then installs blabee-app", .petLanguage(.korean))
 func codexPluginSetupMigratesExactLegacyInstallation() async throws {
     let fixture = try CodexPluginSetupFixture()
     let legacyRoot = codexPluginSetupLegacyRoot(fixture)
@@ -916,7 +916,7 @@ func codexPluginSetupMigratesExactLegacyInstallation() async throws {
     #expect(probe.snapshot().qualifications == 1)
 }
 
-@Test("Legacy migration confirmation rejects a replacement target before mutation")
+@Test("Legacy migration confirmation rejects a replacement target before mutation", .petLanguage(.korean))
 func codexPluginSetupLegacyMigrationRejectsReplacedConfirmedTarget() async throws {
     let fixture = try CodexPluginSetupFixture()
     let originalRoot = codexPluginSetupLegacyRoot(fixture)
@@ -959,7 +959,7 @@ func codexPluginSetupLegacyMigrationRejectsReplacedConfirmedTarget() async throw
     #expect(pluginSetupMutationArguments(fixture).isEmpty)
 }
 
-@Test("Legacy migration confirmation rejects same-path file identity replacement")
+@Test("Legacy migration confirmation rejects same-path file identity replacement", .petLanguage(.korean))
 func codexPluginSetupLegacyMigrationRejectsSamePathIdentityReplacement() async throws {
     for scenario in [
         "marketplace-directory", "marketplace-manifest",
@@ -1037,7 +1037,7 @@ func codexPluginSetupLegacyMigrationRejectsSamePathIdentityReplacement() async t
     }
 }
 
-@Test("Legacy migration rechecks target identity after mutation trust preflight")
+@Test("Legacy migration rechecks target identity after mutation trust preflight", .petLanguage(.korean))
 func codexPluginSetupLegacyMigrationRejectsSwapAfterTrustPreflight() async throws {
     let fixture = try CodexPluginSetupFixture()
     let legacyRoot = codexPluginSetupLegacyRoot(fixture)
@@ -1082,7 +1082,7 @@ func codexPluginSetupLegacyMigrationRejectsSwapAfterTrustPreflight() async throw
     #expect(pluginSetupMutationArguments(fixture).isEmpty)
 }
 
-@Test("Legacy marketplace removal rechecks identity after mutation trust preflight")
+@Test("Legacy marketplace removal rechecks identity after mutation trust preflight", .petLanguage(.korean))
 func codexPluginSetupLegacyMarketplaceRemovalRejectsSwapAfterTrustPreflight() async throws {
     let fixture = try CodexPluginSetupFixture()
     let legacyRoot = codexPluginSetupLegacyRoot(fixture)
@@ -1125,7 +1125,7 @@ func codexPluginSetupLegacyMarketplaceRemovalRejectsSwapAfterTrustPreflight() as
     #expect(pluginSetupMutationArguments(fixture).isEmpty)
 }
 
-@Test("Legacy migration rejects duplicate or inexact ownership shapes")
+@Test("Legacy migration rejects duplicate or inexact ownership shapes", .petLanguage(.korean))
 func codexPluginSetupRejectsAmbiguousLegacyInstallations() async throws {
     for scenario in [
         "duplicate-marketplace", "wrong-source", "disabled", "extra-plugin",
@@ -1212,7 +1212,7 @@ func codexPluginSetupRejectsAmbiguousLegacyInstallations() async throws {
     }
 }
 
-@Test("Legacy migration makes partial removal failures explicit")
+@Test("Legacy migration makes partial removal failures explicit", .petLanguage(.korean))
 func codexPluginSetupReportsLegacyPartialFailures() async throws {
     do {
         let fixture = try CodexPluginSetupFixture()
@@ -1300,7 +1300,7 @@ func codexPluginSetupReportsLegacyPartialFailures() async throws {
     }
 }
 
-@Test("Legacy migration timeout requires a fresh orphan confirmation before resuming")
+@Test("Legacy migration timeout requires a fresh orphan confirmation before resuming", .petLanguage(.korean))
 func codexPluginSetupLegacyTimeoutResumesAtMarketplaceRemoval() async throws {
     let fixture = try CodexPluginSetupFixture()
     let legacyRoot = codexPluginSetupLegacyRoot(fixture)
@@ -1363,7 +1363,7 @@ func codexPluginSetupLegacyTimeoutResumesAtMarketplaceRemoval() async throws {
     #expect(pluginSetupMutationArguments(fixture).filter { $0 == legacyRemove }.count == 1)
 }
 
-@Test("Legacy migration rechecks ownership before its first destructive command")
+@Test("Legacy migration rechecks ownership before its first destructive command", .petLanguage(.korean))
 func codexPluginSetupLegacyMigrationRejectsLateOwnershipDrift() async throws {
     let fixture = try CodexPluginSetupFixture()
     let legacyRoot = codexPluginSetupLegacyRoot(fixture)
@@ -1400,7 +1400,7 @@ func codexPluginSetupLegacyMigrationRejectsLateOwnershipDrift() async throws {
     #expect(pluginSetupMutationArguments(fixture).isEmpty)
 }
 
-@Test("Legacy migration rechecks ownership before removing the marketplace")
+@Test("Legacy migration rechecks ownership before removing the marketplace", .petLanguage(.korean))
 func codexPluginSetupLegacyMigrationRejectsDriftAfterPluginRemoval() async throws {
     let fixture = try CodexPluginSetupFixture()
     let legacyRoot = codexPluginSetupLegacyRoot(fixture)
@@ -1440,7 +1440,7 @@ func codexPluginSetupLegacyMigrationRejectsDriftAfterPluginRemoval() async throw
     ]])
 }
 
-@Test("Unrelated remote Plugin without a source path is tolerated")
+@Test("Unrelated remote Plugin without a source path is tolerated", .petLanguage(.korean))
 func codexPluginSetupToleratesUnrelatedRemotePluginWithoutPath() async throws {
     let fixture = try CodexPluginSetupFixture()
     fixture.fake.plugins = [[
@@ -1457,7 +1457,7 @@ func codexPluginSetupToleratesUnrelatedRemotePluginWithoutPath() async throws {
     #expect(pluginSetupMutationArguments(fixture).isEmpty)
 }
 
-@Test("Remote Blabee Plugin without a source path is a conflict")
+@Test("Remote Blabee Plugin without a source path is a conflict", .petLanguage(.korean))
 func codexPluginSetupRejectsRemoteBlabeePluginWithoutPath() async throws {
     for (pluginID, name) in [
         ("blabee@public-marketplace", "remote-tool"),
@@ -1482,7 +1482,7 @@ func codexPluginSetupRejectsRemoteBlabeePluginWithoutPath() async throws {
     }
 }
 
-@Test("Local Plugin without an absolute source path remains malformed")
+@Test("Local Plugin without an absolute source path remains malformed", .petLanguage(.korean))
 func codexPluginSetupRejectsLocalPluginWithoutPath() async throws {
     for source: [String: Any] in [
         ["source": "local"],
@@ -1506,7 +1506,7 @@ func codexPluginSetupRejectsLocalPluginWithoutPath() async throws {
     }
 }
 
-@Test("Foreign Plugin in the owned marketplace is always a conflict")
+@Test("Foreign Plugin in the owned marketplace is always a conflict", .petLanguage(.korean))
 func codexPluginSetupRejectsForeignPluginInOwnedMarketplace() async throws {
     let fixture = try CodexPluginSetupFixture()
     fixture.fake.marketplaces = [
@@ -1521,7 +1521,7 @@ func codexPluginSetupRejectsForeignPluginInOwnedMarketplace() async throws {
     #expect(pluginSetupMutationArguments(fixture).isEmpty)
 }
 
-@Test("Disconnect rechecks for foreign marketplace Plugins before removal")
+@Test("Disconnect rechecks for foreign marketplace Plugins before removal", .petLanguage(.korean))
 func codexPluginSetupDisconnectBlocksLateForeignPlugin() async throws {
     let fixture = try CodexPluginSetupFixture()
     fixture.fake.installOwned()
@@ -1549,7 +1549,7 @@ private func pluginSetupForeignMarketplacePlugin() -> [String: Any] {
     ]
 }
 
-@Test("Failed plugin add cleans only the marketplace created by this call")
+@Test("Failed plugin add cleans only the marketplace created by this call", .petLanguage(.korean))
 func codexPluginSetupCleansUnambiguousPartialInstall() async throws {
     let fixture = try CodexPluginSetupFixture()
     fixture.fake.pluginAddExitCode = 19
@@ -1566,7 +1566,7 @@ func codexPluginSetupCleansUnambiguousPartialInstall() async throws {
     ])
 }
 
-@Test("Automatic cleanup stops when a foreign marketplace Plugin appears")
+@Test("Automatic cleanup stops when a foreign marketplace Plugin appears", .petLanguage(.korean))
 func codexPluginSetupCleanupBlocksLateForeignPlugin() async throws {
     let fixture = try CodexPluginSetupFixture()
     fixture.fake.pluginAddExitCode = 19
@@ -1586,7 +1586,7 @@ func codexPluginSetupCleanupBlocksLateForeignPlugin() async throws {
     ])
 }
 
-@Test("Marketplace-only state is explicit and connect retries only plugin add")
+@Test("Marketplace-only state is explicit and connect retries only plugin add", .petLanguage(.korean))
 func codexPluginSetupRetriesMarketplaceOnlyInstall() async throws {
     let fixture = try CodexPluginSetupFixture()
     fixture.fake.marketplaces = [
@@ -1602,7 +1602,7 @@ func codexPluginSetupRetriesMarketplaceOnlyInstall() async throws {
     ])
 }
 
-@Test("Plugin add exit zero without effect is not installation success")
+@Test("Plugin add exit zero without effect is not installation success", .petLanguage(.korean))
 func codexPluginSetupRejectsNoEffectPluginAdd() async throws {
     let fixture = try CodexPluginSetupFixture()
     fixture.fake.pluginAddCreatesPlugin = false
@@ -1618,7 +1618,7 @@ func codexPluginSetupRejectsNoEffectPluginAdd() async throws {
     ])
 }
 
-@Test("Marketplace already-added receipt is never treated as cleanup ownership")
+@Test("Marketplace already-added receipt is never treated as cleanup ownership", .petLanguage(.korean))
 func codexPluginSetupDoesNotClaimIdempotentMarketplaceAdd() async throws {
     let fixture = try CodexPluginSetupFixture()
     fixture.fake.marketplaceAddReceiptAlreadyAdded = true
@@ -1632,7 +1632,7 @@ func codexPluginSetupDoesNotClaimIdempotentMarketplaceAdd() async throws {
     ])
 }
 
-@Test("Marketplace add receipt fields must exactly match the Codex contract")
+@Test("Marketplace add receipt fields must exactly match the Codex contract", .petLanguage(.korean))
 func codexPluginSetupRejectsInvalidMarketplaceAddReceiptFields() async throws {
     for scenario in [
         "missing", "string-bool", "numeric-bool", "wrong-name", "wrong-root",
@@ -1664,7 +1664,7 @@ func codexPluginSetupRejectsInvalidMarketplaceAddReceiptFields() async throws {
     }
 }
 
-@Test("Malformed marketplace mutation JSON cannot authorize cleanup")
+@Test("Malformed marketplace mutation JSON cannot authorize cleanup", .petLanguage(.korean))
 func codexPluginSetupRejectsMalformedMutationReceipt() async throws {
     let fixture = try CodexPluginSetupFixture()
     fixture.fake.malformedMutationArguments = [
@@ -1681,7 +1681,7 @@ func codexPluginSetupRejectsMalformedMutationReceipt() async throws {
     ])
 }
 
-@Test("Ambiguous post-install state is never deleted")
+@Test("Ambiguous post-install state is never deleted", .petLanguage(.korean))
 func codexPluginSetupDoesNotCleanAmbiguousPartialInstall() async throws {
     let fixture = try CodexPluginSetupFixture()
     fixture.fake.pluginAddExitCode = 19
@@ -1695,7 +1695,7 @@ func codexPluginSetupDoesNotCleanAmbiguousPartialInstall() async throws {
     ])
 }
 
-@Test("Marketplace remove exit zero without effect preserves cleanup-needed state")
+@Test("Marketplace remove exit zero without effect preserves cleanup-needed state", .petLanguage(.korean))
 func codexPluginSetupRejectsNoEffectMarketplaceRemove() async throws {
     let fixture = try CodexPluginSetupFixture()
     fixture.fake.marketplaces = [
@@ -1710,7 +1710,7 @@ func codexPluginSetupRejectsNoEffectMarketplaceRemove() async throws {
     ]])
 }
 
-@Test("Disconnect removes only the exact owned plugin and marketplace")
+@Test("Disconnect removes only the exact owned plugin and marketplace", .petLanguage(.korean))
 func codexPluginSetupDisconnectsOwnedInstallation() async throws {
     let fixture = try CodexPluginSetupFixture()
     fixture.fake.installOwned()
@@ -1725,7 +1725,7 @@ func codexPluginSetupDisconnectsOwnedInstallation() async throws {
     ])
 }
 
-@Test("Disconnect rechecks ownership immediately before destructive cleanup")
+@Test("Disconnect rechecks ownership immediately before destructive cleanup", .petLanguage(.korean))
 func codexPluginSetupDisconnectRechecksOwnershipBeforeRemoval() async throws {
     let fixture = try CodexPluginSetupFixture()
     fixture.fake.installOwned()
@@ -1737,7 +1737,7 @@ func codexPluginSetupDisconnectRechecksOwnershipBeforeRemoval() async throws {
     #expect(pluginSetupMutationArguments(fixture).isEmpty)
 }
 
-@Test("Installed version and enabled flag must match bundled plugin")
+@Test("Installed version and enabled flag must match bundled plugin", .petLanguage(.korean))
 func codexPluginSetupReportsUpdateAvailable() async throws {
     let fixture = try CodexPluginSetupFixture()
     fixture.fake.installOwned(version: "0.0.9", enabled: false)
@@ -1749,7 +1749,7 @@ func codexPluginSetupReportsUpdateAvailable() async throws {
     #expect(pluginSetupMutationArguments(fixture).isEmpty)
 }
 
-@Test("Update reinstalls in place without removing the last working plugin first")
+@Test("Update reinstalls in place without removing the last working plugin first", .petLanguage(.korean))
 func codexPluginSetupUpdatesWithoutDestructivePreRemoval() async throws {
     let fixture = try CodexPluginSetupFixture()
     fixture.fake.installOwned(version: "0.0.9", enabled: true)
@@ -1760,7 +1760,38 @@ func codexPluginSetupUpdatesWithoutDestructivePreRemoval() async throws {
     ])
 }
 
-@Test("Failed update preserves the previously installed plugin")
+@Test("Bundled language policy revision updates the prior 0.1.2 Plugin cache", .petLanguage(.korean))
+func codexPluginSetupUpdatesPriorLanguagePolicyVersion() async throws {
+    let fixture = try CodexPluginSetupFixture()
+    let sourceManifest = URL(fileURLWithPath: #filePath)
+        .deletingLastPathComponent().deletingLastPathComponent()
+        .deletingLastPathComponent().deletingLastPathComponent()
+        .appendingPathComponent("bridges/codex/plugin/.codex-plugin/plugin.json")
+    let manifestData = try Data(contentsOf: sourceManifest)
+    let manifestObject = try JSONSerialization.jsonObject(with: manifestData)
+    let manifest = try #require(manifestObject as? [String: Any])
+    let bundledVersion = try #require(manifest["version"] as? String)
+    #expect(bundledVersion == "0.1.3")
+    try manifestData.write(
+        to: fixture.pluginRoot.appendingPathComponent(".codex-plugin/plugin.json")
+    )
+    fixture.fake.bundledVersion = bundledVersion
+    fixture.fake.installOwned(version: "0.1.2", enabled: true)
+    let manager = fixture.manager()
+
+    #expect(await manager.inspect() == .updateAvailable(
+        installedVersion: "0.1.2",
+        bundledVersion: bundledVersion
+    ))
+    #expect(pluginSetupMutationArguments(fixture).isEmpty)
+    #expect(await manager.connect() == .installedNeedsHookReview(version: bundledVersion))
+    #expect(await manager.connect() == .installedNeedsHookReview(version: bundledVersion))
+    #expect(pluginSetupMutationArguments(fixture) == [
+        ["plugin", "add", CodexPluginSetupManager.pluginSelector, "--json"],
+    ])
+}
+
+@Test("Failed update preserves the previously installed plugin", .petLanguage(.korean))
 func codexPluginSetupFailedUpdatePreservesOldPlugin() async throws {
     let fixture = try CodexPluginSetupFixture()
     fixture.fake.installOwned(version: "0.0.9", enabled: true)
@@ -1777,7 +1808,7 @@ func codexPluginSetupFailedUpdatePreservesOldPlugin() async throws {
     ))
 }
 
-@Test("Update exit zero without effect remains update available")
+@Test("Update exit zero without effect remains update available", .petLanguage(.korean))
 func codexPluginSetupRejectsNoEffectUpdate() async throws {
     let fixture = try CodexPluginSetupFixture()
     fixture.fake.installOwned(version: "0.0.9", enabled: true)
@@ -1792,7 +1823,7 @@ func codexPluginSetupRejectsNoEffectUpdate() async throws {
     ])
 }
 
-@Test("Every Plugin CLI call revalidates the selected Codex identity")
+@Test("Every Plugin CLI call revalidates the selected Codex identity", .petLanguage(.korean))
 func codexPluginSetupRevalidatesBeforeEveryInvocation() async throws {
     let fixture = try CodexPluginSetupFixture()
     let probe = CodexPluginSetupTrustProbe()
@@ -1809,7 +1840,7 @@ func codexPluginSetupRevalidatesBeforeEveryInvocation() async throws {
     #expect(counts.revalidations == 20)
 }
 
-@Test("Revalidation drift prevents Codex Plugin subprocess execution")
+@Test("Revalidation drift prevents Codex Plugin subprocess execution", .petLanguage(.korean))
 func codexPluginSetupRevalidationFailureFailsClosed() async throws {
     let fixture = try CodexPluginSetupFixture()
     let executable = fixture.executable
@@ -1824,7 +1855,7 @@ func codexPluginSetupRevalidationFailureFailsClosed() async throws {
     #expect(fixture.fake.snapshotInvocations().isEmpty)
 }
 
-@Test("One operation deadline bounds all repeated Plugin CLI steps")
+@Test("One operation deadline bounds all repeated Plugin CLI steps", .petLanguage(.korean))
 func codexPluginSetupUsesSharedOperationDeadline() async throws {
     let fixture = try CodexPluginSetupFixture()
     let clock = CodexPluginSetupManualClock()
@@ -1854,7 +1885,7 @@ func codexPluginSetupUsesSharedOperationDeadline() async throws {
     #expect(pluginSetupMutationArguments(fixture).isEmpty)
 }
 
-@Test("Bundle identity drift immediately before mutation prevents execution")
+@Test("Bundle identity drift immediately before mutation prevents execution", .petLanguage(.korean))
 func codexPluginSetupBundleDriftBeforeMutationFailsClosed() async throws {
     let fixture = try CodexPluginSetupFixture()
     let probe = CodexPluginSetupBundleProbe(failureCall: 2)
@@ -1865,7 +1896,7 @@ func codexPluginSetupBundleDriftBeforeMutationFailsClosed() async throws {
     #expect(probe.snapshot() == 2)
 }
 
-@Test("Bundle identity drift after mutation cannot be reported as success")
+@Test("Bundle identity drift after mutation cannot be reported as success", .petLanguage(.korean))
 func codexPluginSetupBundleDriftAfterMutationFailsClosed() async throws {
     let fixture = try CodexPluginSetupFixture()
     let probe = CodexPluginSetupBundleProbe(failureCall: 3)
@@ -1878,7 +1909,7 @@ func codexPluginSetupBundleDriftAfterMutationFailsClosed() async throws {
     #expect(probe.snapshot() == 3)
 }
 
-@Test("Plugin subprocess environment removes ambient override variables")
+@Test("Plugin subprocess environment removes ambient override variables", .petLanguage(.korean))
 func codexPluginSetupProcessEnvironmentIsSanitized() {
     let sanitized = CodexPluginSetupProcessRunner.sanitizedEnvironment([
         "HOME": "/Users/example",
@@ -1899,7 +1930,7 @@ func codexPluginSetupProcessEnvironmentIsSanitized() {
     ])
 }
 
-@Test("Mutation lock contention fails closed within its bounded deadline")
+@Test("Mutation lock contention fails closed within its bounded deadline", .petLanguage(.korean))
 func codexPluginSetupMutationLockHasBoundedContention() throws {
     let root = FileManager.default.temporaryDirectory
         .appendingPathComponent("blabee-plugin-lock-\(UUID().uuidString)", isDirectory: true)
@@ -1953,7 +1984,7 @@ func codexPluginSetupMutationLockHasBoundedContention() throws {
     #expect(holderResult.snapshot() == nil)
 }
 
-@Test("Mutation lock serializes separate Blabee processes")
+@Test("Mutation lock serializes separate Blabee processes", .petLanguage(.korean))
 func codexPluginSetupMutationLockSerializesProcesses() throws {
     let root = FileManager.default.temporaryDirectory
         .appendingPathComponent("blabee-plugin-lock-process-\(UUID().uuidString)", isDirectory: true)
@@ -1994,7 +2025,7 @@ func codexPluginSetupMutationLockSerializesProcesses() throws {
     #expect(holder.terminationStatus == 0)
 }
 
-@Test("Mutation lock rejects a symbolic-link ancestor")
+@Test("Mutation lock rejects a symbolic-link ancestor", .petLanguage(.korean))
 func codexPluginSetupMutationLockRejectsSymlinkAncestor() throws {
     let root = FileManager.default.temporaryDirectory
         .appendingPathComponent("blabee-plugin-lock-link-\(UUID().uuidString)", isDirectory: true)
@@ -2013,7 +2044,7 @@ func codexPluginSetupMutationLockRejectsSymlinkAncestor() throws {
     }
 }
 
-@Test("Mutation lock rejects a writable untrusted ancestor")
+@Test("Mutation lock rejects a writable untrusted ancestor", .petLanguage(.korean))
 func codexPluginSetupMutationLockRejectsUnsafeAncestorMode() throws {
     let root = FileManager.default.temporaryDirectory
         .appendingPathComponent("blabee-plugin-lock-mode-\(UUID().uuidString)", isDirectory: true)
@@ -2031,7 +2062,7 @@ func codexPluginSetupMutationLockRejectsUnsafeAncestorMode() throws {
     }
 }
 
-@Test("Mutation lock rejects grant ACLs on every ancestor")
+@Test("Mutation lock rejects grant ACLs on every ancestor", .petLanguage(.korean))
 func codexPluginSetupMutationLockRejectsAncestorGrantACL() throws {
     let root = FileManager.default.temporaryDirectory
         .appendingPathComponent("blabee-plugin-lock-acl-\(UUID().uuidString)", isDirectory: true)
@@ -2054,7 +2085,7 @@ func codexPluginSetupMutationLockRejectsAncestorGrantACL() throws {
     }
 }
 
-@Test("Mutation lock permits deny-only ACLs on ancestors")
+@Test("Mutation lock permits deny-only ACLs on ancestors", .petLanguage(.korean))
 func codexPluginSetupMutationLockPermitsAncestorDenyACL() throws {
     let root = FileManager.default.temporaryDirectory
         .appendingPathComponent("blabee-plugin-lock-deny-acl-\(UUID().uuidString)", isDirectory: true)
@@ -2072,7 +2103,7 @@ func codexPluginSetupMutationLockPermitsAncestorDenyACL() throws {
     try lock.withLock {}
 }
 
-@Test("Mutation lock rejects grant ACLs on the lock file")
+@Test("Mutation lock rejects grant ACLs on the lock file", .petLanguage(.korean))
 func codexPluginSetupMutationLockRejectsLockFileGrantACL() throws {
     let root = FileManager.default.temporaryDirectory
         .appendingPathComponent("blabee-plugin-file-acl-\(UUID().uuidString)", isDirectory: true)
@@ -2093,7 +2124,7 @@ func codexPluginSetupMutationLockRejectsLockFileGrantACL() throws {
     }
 }
 
-@Test("Mutation lock permits deny-only ACLs on the lock file")
+@Test("Mutation lock permits deny-only ACLs on the lock file", .petLanguage(.korean))
 func codexPluginSetupMutationLockPermitsLockFileDenyACL() throws {
     let root = FileManager.default.temporaryDirectory
         .appendingPathComponent("blabee-plugin-file-deny-acl-\(UUID().uuidString)", isDirectory: true)
@@ -2138,7 +2169,7 @@ private func pluginSetupRunChmod(_ arguments: [String]) throws {
     }
 }
 
-@Test("Every inspect rediscovers the Codex executable")
+@Test("Every inspect rediscovers the Codex executable", .petLanguage(.korean))
 func codexPluginSetupRediscoversExecutable() async throws {
     let fixture = try CodexPluginSetupFixture()
     final class ResolverCounter: @unchecked Sendable {
@@ -2167,7 +2198,7 @@ func codexPluginSetupRediscoversExecutable() async throws {
     #expect(counter.snapshot() == 2)
 }
 
-@Test("Production manager refuses nonstandard app locations before running Codex")
+@Test("Production manager refuses nonstandard app locations before running Codex", .petLanguage(.korean))
 func codexPluginSetupLiveLocationFailsClosed() async throws {
     let fixture = try CodexPluginSetupFixture()
 
@@ -2180,7 +2211,7 @@ func codexPluginSetupLiveLocationFailsClosed() async throws {
     #expect(fixture.fake.snapshotInvocations().isEmpty)
 }
 
-@Test("Bundled manifests reject symbolic links without invoking Codex")
+@Test("Bundled manifests reject symbolic links without invoking Codex", .petLanguage(.korean))
 func codexPluginSetupManifestRejectsSymbolicLink() async throws {
     let fixture = try CodexPluginSetupFixture()
     let manifest = fixture.root
@@ -2197,7 +2228,7 @@ func codexPluginSetupManifestRejectsSymbolicLink() async throws {
     #expect(fixture.fake.snapshotInvocations().isEmpty)
 }
 
-@Test("Bundled manifests reject FIFOs without blocking or invoking Codex")
+@Test("Bundled manifests reject FIFOs without blocking or invoking Codex", .petLanguage(.korean))
 func codexPluginSetupManifestRejectsFIFO() async throws {
     let fixture = try CodexPluginSetupFixture()
     let manifest = fixture.pluginRoot
@@ -2217,7 +2248,7 @@ func codexPluginSetupManifestRejectsFIFO() async throws {
     #expect(fixture.fake.snapshotInvocations().isEmpty)
 }
 
-@Test("Codex discovery sorts nvm versions by numeric semver descending")
+@Test("Codex discovery sorts nvm versions by numeric semver descending", .petLanguage(.korean))
 func codexPluginSetupSortsNVMVersionsNumerically() throws {
     let root = FileManager.default.temporaryDirectory
         .appendingPathComponent("blabee-plugin-nvm-\(UUID().uuidString)", isDirectory: true)
@@ -2247,7 +2278,7 @@ func codexPluginSetupSortsNVMVersionsNumerically() throws {
     #expect(nvmCandidates.map(\.path) == [v22Executable.path, v9Executable.path])
 }
 
-@Test("Unsupported preferred Codex candidate falls through to supported candidate")
+@Test("Unsupported preferred Codex candidate falls through to supported candidate", .petLanguage(.korean))
 func codexPluginSetupFallsThroughUnsupportedCandidate() throws {
     let root = FileManager.default.temporaryDirectory
         .appendingPathComponent("blabee-plugin-fallback-\(UUID().uuidString)", isDirectory: true)
@@ -2275,15 +2306,16 @@ func codexPluginSetupFallsThroughUnsupportedCandidate() throws {
     #expect(selected.version == "0.152.1")
 }
 
-@Test("Production Plugin CLI allowlist is explicit")
+@Test("Production Plugin CLI allowlist is explicit", .petLanguage(.korean))
 func codexPluginSetupProductionAllowlistIsExplicit() {
     #expect(CodexPluginSetupProductionTrust.supportedPluginCLIVersions == [
         "0.151.0", "0.152.0", "0.152.1", "0.153.0", "0.153.1", "0.153.2",
-        "0.153.3", "0.153.4", "0.154.0", "0.155.0", "0.155.1",
+        "0.153.3", "0.153.4", "0.154.0", "0.155.0", "0.155.1", "0.156.0", "0.156.1",
+        "0.157.0", "0.157.1", "0.158.0", "0.159.0", "0.159.1", "0.159.2", "0.159.3", "0.160.0", "0.160.1", "0.161.0", "0.162.0", "0.162.1", "0.163.0",
     ])
 }
 
-@Test("Production pinned executable catalog is exact for Codex 0.153.2 arm64")
+@Test("Production pinned executable catalog is exact for Codex 0.153.2 arm64", .petLanguage(.korean))
 func codexPluginSetupPinnedExecutableCatalogIsExact() throws {
     let artifact = CodexPluginSetupPinnedArtifact(
         version: "0.153.2",
@@ -2324,7 +2356,7 @@ func codexPluginSetupPinnedExecutableCatalogIsExact() throws {
     ) == nil)
 }
 
-@Test("Static Plugin inspection preserves an unknown version for an official signature")
+@Test("Static Plugin inspection preserves an unknown version for an official signature", .petLanguage(.korean))
 func codexPluginSetupStaticInspectionKeepsSignedVersionUnknown() throws {
     let fixture = try CodexPluginSetupFixture()
     let executable = fixture.root.appendingPathComponent("signed-static-codex")
@@ -2353,7 +2385,7 @@ func codexPluginSetupStaticInspectionKeepsSignedVersionUnknown() throws {
     #expect(calls.processInvocations.isEmpty)
 }
 
-@Test("Static Plugin inspection propagates the exact pinned artifact version")
+@Test("Static Plugin inspection propagates the exact pinned artifact version", .petLanguage(.korean))
 func codexPluginSetupStaticInspectionPropagatesPinnedVersion() throws {
     let fixture = try CodexPluginSetupFixture()
     let executable = fixture.root.appendingPathComponent("pinned-static-codex")
@@ -2386,7 +2418,7 @@ func codexPluginSetupStaticInspectionPropagatesPinnedVersion() throws {
     #expect(calls.processInvocations.isEmpty)
 }
 
-@Test("Static Plugin inspection rejects a changed second trust snapshot")
+@Test("Static Plugin inspection rejects a changed second trust snapshot", .petLanguage(.korean))
 func codexPluginSetupStaticInspectionRejectsChangedSnapshot() throws {
     let fixture = try CodexPluginSetupFixture()
     let executable = fixture.root.appendingPathComponent("changing-static-codex")
@@ -2416,7 +2448,7 @@ func codexPluginSetupStaticInspectionRejectsChangedSnapshot() throws {
     #expect(signatures.snapshot() == 1)
 }
 
-@Test("Production trust binds one pinned hash to a stable qualification snapshot")
+@Test("Production trust binds one pinned hash to a stable qualification snapshot", .petLanguage(.korean))
 func codexPluginSetupProductionTrustOrchestratesPinnedFallback() throws {
     let root = URL(fileURLWithPath: "/tmp", isDirectory: true)
         .appendingPathComponent("blabee-plugin-trust-\(UUID().uuidString)", isDirectory: true)
@@ -2497,7 +2529,7 @@ func codexPluginSetupProductionTrustOrchestratesPinnedFallback() throws {
     )])
 }
 
-@Test("Valid official signatures never invoke the pinned hash fallback")
+@Test("Valid official signatures never invoke the pinned hash fallback", .petLanguage(.korean))
 func codexPluginSetupProductionTrustKeepsValidSignaturePath() throws {
     let root = URL(fileURLWithPath: "/tmp", isDirectory: true)
         .appendingPathComponent("blabee-plugin-signed-\(UUID().uuidString)", isDirectory: true)
@@ -2543,7 +2575,7 @@ func codexPluginSetupProductionTrustKeepsValidSignaturePath() throws {
     )])
 }
 
-@Test("Pinned fallback handles only an explicit invalid-signature result")
+@Test("Pinned fallback handles only an explicit invalid-signature result", .petLanguage(.korean))
 func codexPluginSetupProductionTrustDoesNotMaskUnexpectedSignatureErrors() throws {
     let root = URL(fileURLWithPath: "/tmp", isDirectory: true)
         .appendingPathComponent("blabee-plugin-signature-error-\(UUID().uuidString)", isDirectory: true)
@@ -2575,7 +2607,7 @@ func codexPluginSetupProductionTrustDoesNotMaskUnexpectedSignatureErrors() throw
     #expect(snapshot.processInvocations.isEmpty)
 }
 
-@Test("Production qualification forwards one absolute deadline to its version probe")
+@Test("Production qualification forwards one absolute deadline to its version probe", .petLanguage(.korean))
 func codexPluginSetupProductionQualificationUsesSharedDeadline() throws {
     let root = URL(fileURLWithPath: "/tmp", isDirectory: true)
         .appendingPathComponent("blabee-plugin-deadline-\(UUID().uuidString)", isDirectory: true)
@@ -2614,7 +2646,7 @@ func codexPluginSetupProductionQualificationUsesSharedDeadline() throws {
     #expect(probe.snapshot().processInvocations.map(\.timeoutMilliseconds) == [10])
 }
 
-@Test("Pinned selection rejects structural drift before reusing hash evidence")
+@Test("Pinned selection rejects structural drift before reusing hash evidence", .petLanguage(.korean))
 func codexPluginSetupPinnedSelectionRejectsSnapshotDrift() throws {
     let temporaryPath = FileManager.default.temporaryDirectory.path
     let canonicalTemporaryPath = temporaryPath.hasPrefix("/var/")
@@ -2670,7 +2702,7 @@ func codexPluginSetupPinnedSelectionRejectsSnapshotDrift() throws {
     #expect(snapshot.signaturePaths.count == 1)
 }
 
-@Test("Pinned 0.153.2 bytes cannot report a different supported version")
+@Test("Pinned 0.153.2 bytes cannot report a different supported version", .petLanguage(.korean))
 func codexPluginSetupProductionTrustRejectsPinnedVersionMismatch() throws {
     let root = URL(fileURLWithPath: "/tmp", isDirectory: true)
         .appendingPathComponent("blabee-plugin-version-\(UUID().uuidString)", isDirectory: true)
@@ -2705,7 +2737,7 @@ func codexPluginSetupProductionTrustRejectsPinnedVersionMismatch() throws {
     #expect(snapshot.processInvocations.map(\.arguments) == [["--version"]])
 }
 
-@Test("Pinned executable revalidation rejects identity and content changes")
+@Test("Pinned executable revalidation rejects identity and content changes", .petLanguage(.korean))
 func codexPluginSetupPinnedExecutableRejectsMutation() throws {
     let root = FileManager.default.temporaryDirectory
         .appendingPathComponent("blabee-plugin-pin-\(UUID().uuidString)", isDirectory: true)
@@ -2790,7 +2822,7 @@ func codexPluginSetupPinnedExecutableRejectsMutation() throws {
     }
 }
 
-@Test("Pinned executable hashing covers multiple chunks and exact EOF")
+@Test("Pinned executable hashing covers multiple chunks and exact EOF", .petLanguage(.korean))
 func codexPluginSetupPinnedExecutableStreamsAndRejectsSizeChanges() throws {
     let root = URL(fileURLWithPath: "/tmp", isDirectory: true)
         .appendingPathComponent("blabee-plugin-stream-\(UUID().uuidString)", isDirectory: true)
@@ -2849,7 +2881,7 @@ func codexPluginSetupPinnedExecutableStreamsAndRejectsSizeChanges() throws {
     }
 }
 
-@Test("Pinned executable rejects a deterministic append at the exact EOF boundary")
+@Test("Pinned executable rejects a deterministic append at the exact EOF boundary", .petLanguage(.korean))
 func codexPluginSetupPinnedExecutableRejectsExactEOFRace() throws {
     let root = URL(fileURLWithPath: "/tmp", isDirectory: true)
         .appendingPathComponent("blabee-plugin-eof-race-\(UUID().uuidString)", isDirectory: true)
@@ -2892,7 +2924,7 @@ func codexPluginSetupPinnedExecutableRejectsExactEOFRace() throws {
         == Int64(bytes.count + 1))
 }
 
-@Test("Pinned executable hashing stops at the shared operation deadline")
+@Test("Pinned executable hashing stops at the shared operation deadline", .petLanguage(.korean))
 func codexPluginSetupPinnedExecutableHonorsOperationDeadline() throws {
     let root = URL(fileURLWithPath: "/tmp", isDirectory: true)
         .appendingPathComponent("blabee-plugin-hash-deadline-\(UUID().uuidString)", isDirectory: true)
@@ -2965,9 +2997,12 @@ private func codexPluginSetupTrustSnapshot(
     )
 }
 
-@Test("Production Plugin CLI version gate rejects unsupported canonical output")
+@Test("Production Plugin CLI version gate rejects unsupported canonical output", .petLanguage(.korean))
 func codexPluginSetupProductionVersionGateRejectsUnsupportedVersion() throws {
-    for version in ["0.150.1", "0.154.1", "0.154.10", "0.155.2", "0.155.10", "0.156.0"] {
+    for version in [
+        "0.150.1", "0.154.1", "0.154.10", "0.155.2", "0.155.10", "0.156.2", "0.157.2",
+        "0.158.1", "0.159.4", "0.160.2", "0.161.1", "0.162.2", "0.163.1", "0.164.0",
+    ] {
         let unsupported = CodexPluginSetupProcessResult(
             exitCode: 0,
             stdout: Data("codex-cli \(version)\n".utf8)
@@ -2976,7 +3011,7 @@ func codexPluginSetupProductionVersionGateRejectsUnsupportedVersion() throws {
             try CodexPluginSetupProductionTrust.supportedVersion(from: unsupported)
         }
     }
-    for version in ["0.153.0", "0.153.1", "0.153.2", "0.153.3", "0.153.4", "0.154.0", "0.155.0", "0.155.1"] {
+    for version in CodexCompatibility.pluginCLISupportedVersions.sorted() {
         let supported = CodexPluginSetupProcessResult(
             exitCode: 0,
             stdout: Data("codex-cli \(version)\n".utf8)
@@ -2985,7 +3020,7 @@ func codexPluginSetupProductionVersionGateRejectsUnsupportedVersion() throws {
     }
 }
 
-@Test("Production qualification rejects a signed non-Codex binary before execution")
+@Test("Production qualification rejects a signed non-Codex binary before execution", .petLanguage(.korean))
 func codexPluginSetupProductionRejectsNonCodexSignatureBeforeExecution() {
     let probe = CodexPluginSetupProcessProbe()
     #expect(throws: (any Error).self) {
@@ -3003,7 +3038,7 @@ func codexPluginSetupProductionRejectsNonCodexSignatureBeforeExecution() {
     #expect(probe.snapshot() == 0)
 }
 
-@Test("NVM candidate cap is applied after numeric sorting")
+@Test("NVM candidate cap is applied after numeric sorting", .petLanguage(.korean))
 func codexPluginSetupNVMCapDoesNotHideNewestVersion() throws {
     let root = FileManager.default.temporaryDirectory
         .appendingPathComponent("blabee-plugin-nvm-cap-\(UUID().uuidString)", isDirectory: true)
@@ -3026,7 +3061,7 @@ func codexPluginSetupNVMCapDoesNotHideNewestVersion() throws {
     #expect(nvmCandidates.last?.path.contains("/v77.0.0/") == true)
 }
 
-@Test("Oversized NVM version directories fail closed without candidates")
+@Test("Oversized NVM version directories fail closed without candidates", .petLanguage(.korean))
 func codexPluginSetupRejectsOversizedNVMDirectory() throws {
     let root = FileManager.default.temporaryDirectory
         .appendingPathComponent("blabee-plugin-nvm-oversized-\(UUID().uuidString)", isDirectory: true)
@@ -3046,7 +3081,7 @@ func codexPluginSetupRejectsOversizedNVMDirectory() throws {
     #expect(candidates.filter { $0.path.contains("/.nvm/versions/node/") }.isEmpty)
 }
 
-@Test("Native qualification diagnostics remain typed Plugin errors")
+@Test("Native qualification diagnostics remain typed Plugin errors", .petLanguage(.korean))
 func codexPluginSetupNativeQualificationPreservesDiagnostic() async throws {
     for diagnostic in CodexNativeDiagnostic.allCases {
         let fixture = try CodexPluginSetupFixture()
@@ -3060,7 +3095,7 @@ func codexPluginSetupNativeQualificationPreservesDiagnostic() async throws {
     }
 }
 
-@Test("Plugin inspection preserves native preflight failure memory until explicit recheck")
+@Test("Plugin inspection preserves native preflight failure memory until explicit recheck", .petLanguage(.korean))
 func codexPluginSetupNativePreflightRecheckOnlyResetsFailureMemory() async throws {
     let fixture = try CodexPluginSetupFixture()
     let executable = fixture.root.appendingPathComponent("native-codex-fixture")
@@ -3119,7 +3154,7 @@ func codexPluginSetupNativePreflightRecheckOnlyResetsFailureMemory() async throw
     #expect(preflightProbe.snapshot() == 5)
 }
 
-@Test("Explicit recheck report uses the same inspection and retains qualified executable evidence")
+@Test("Explicit recheck report uses the same inspection and retains qualified executable evidence", .petLanguage(.korean))
 func codexPluginCheckReportUsesSingleInspection() async throws {
     let fixture = try CodexPluginSetupFixture()
     fixture.fake.installOwned()
@@ -3144,7 +3179,7 @@ func codexPluginCheckReportUsesSingleInspection() async throws {
     ])
 }
 
-@Test("Explicit recheck report identifies failed list stage without probing again", arguments: [false, true])
+@Test("Explicit recheck report identifies failed list stage without probing again", .petLanguage(.korean), arguments: [false, true])
 func codexPluginCheckReportIdentifiesFailedListStage(failPluginList: Bool) async throws {
     let fixture = try CodexPluginSetupFixture()
     if failPluginList {
@@ -3161,7 +3196,7 @@ func codexPluginCheckReportIdentifiesFailedListStage(failPluginList: Bool) async
     #expect(fixture.fake.snapshotInvocations().count == (failPluginList ? 2 : 1))
 }
 
-@Test("Explicit recheck report does not invent a selection when native qualification fails")
+@Test("Explicit recheck report does not invent a selection when native qualification fails", .petLanguage(.korean))
 func codexPluginCheckReportQualificationFailureKeepsSelectionUnknown() async throws {
     let fixture = try CodexPluginSetupFixture()
     let manager = fixture.manager(resolver: {
@@ -3177,7 +3212,95 @@ func codexPluginCheckReportQualificationFailureKeepsSelectionUnknown() async thr
     #expect(fixture.fake.snapshotInvocations().isEmpty)
 }
 
-@Test("Prepared Plugin mutation keeps native errors instead of generic add failure")
+@Test("Failed native observations reach the report without becoming an execution selection", .petLanguage(.korean))
+func codexPluginCheckReportRetainsFailedNativeObservations() async throws {
+    let fixture = try CodexPluginSetupFixture()
+    let observations = CodexPluginCheckEvidence(
+        stage: .nativeExecutable,
+        sourcePath: "/opt/homebrew/bin/codex",
+        canonicalPath: "/opt/homebrew/Caskroom/codex/9.9.9/bin/codex",
+        codexVersion: "9.9.9"
+    )
+    let probe = CodexPluginSetupProcessProbe()
+    let manager = fixture.manager(
+        qualifier: { _ in
+            probe.record()
+            throw CodexNativeQualificationFailure(
+                error: CodexNativeDiagnostic.versionUnqualified.error,
+                evidence: observations
+            )
+        },
+        revalidator: { _ in
+            Issue.record("Failed observations must not authorize revalidation")
+            throw CodexNativeDiagnostic.binaryChanged.error
+        }
+    )
+    let result = await manager.recheckNativeExecutableWithReport()
+    #expect(result.state == .error(code: "codex_native_version_unqualified"))
+    #expect(result.evidence.stage == .nativeExecutable)
+    #expect(result.evidence.sourcePath == observations.sourcePath)
+    #expect(result.evidence.canonicalPath == observations.canonicalPath)
+    #expect(result.evidence.codexVersion == "9.9.9")
+    #expect(result.evidence.errorCode == "codex_native_version_unqualified")
+    #expect(probe.snapshot() == 1)
+    #expect(fixture.fake.snapshotInvocations().isEmpty)
+}
+
+@Test("Explicit recheck preserves the typed path rejection and never runs Plugin commands", .petLanguage(.korean))
+func codexPluginCheckReportRetainsPathRejection() async throws {
+    let fixture = try CodexPluginSetupFixture()
+    let sourcePath = "/opt/homebrew/bin/codex"
+    let diagnostic = CodexRuntimePathDiagnostic(
+        issue: .groupWritable, role: .sourceAncestor, path: "/opt/homebrew"
+    )
+    let manager = fixture.manager(
+        qualifier: { _ in
+            throw CodexNativeQualificationFailure(
+                error: CodexRuntimeTrustError.unsafePath("group write", diagnostic: diagnostic),
+                evidence: .init(stage: .nativeExecutable, sourcePath: sourcePath)
+            )
+        },
+        revalidator: { _ in
+            Issue.record("A failed path inspection cannot authorize a revalidation")
+            throw CodexNativeDiagnostic.binaryChanged.error
+        }
+    )
+    let result = await manager.recheckNativeExecutableWithReport()
+    #expect(result.state == .error(code: "codex_native_path_unsafe"))
+    #expect(result.evidence.pathDiagnostic == diagnostic)
+    #expect(result.evidence.sourcePath == sourcePath)
+    #expect(result.evidence.canonicalPath == nil)
+    #expect(result.evidence.codexVersion == nil)
+    #expect(fixture.fake.snapshotInvocations().isEmpty)
+}
+
+@Test("An exhausted inspection budget retains completed probe evidence without running Plugin commands", .petLanguage(.korean))
+func codexPluginCheckReportRetainsProbeAtOperationDeadline() async throws {
+    let fixture = try CodexPluginSetupFixture()
+    let clock = CodexPluginSetupManualClock()
+    let executable = fixture.executable
+    let manager = fixture.manager(
+        qualifier: { _ in
+            clock.advance(milliseconds: 10)
+            return .testOnly(url: executable, version: "0.155.1")
+        },
+        revalidator: { _ in
+            Issue.record("Expired inspection must not reach revalidation")
+            throw CodexNativeDiagnostic.binaryChanged.error
+        },
+        monotonicNow: clock.now,
+        operationTimeoutMilliseconds: 10
+    )
+    let result = await manager.recheckNativeExecutableWithReport()
+    #expect(result.state == .error(code: "codex_plugin_setup_operation_timed_out"))
+    #expect(result.evidence.stage == .nativeExecutable)
+    #expect(result.evidence.sourcePath == executable.path)
+    #expect(result.evidence.canonicalPath == executable.path)
+    #expect(result.evidence.codexVersion == "0.155.1")
+    #expect(fixture.fake.snapshotInvocations().isEmpty)
+}
+
+@Test("Prepared Plugin mutation keeps native errors instead of generic add failure", .petLanguage(.korean))
 func codexPluginSetupNativeMutationPreservesDiagnostic() async throws {
     for diagnostic in [
         CodexNativeDiagnostic.executionTerminated,
@@ -3206,7 +3329,7 @@ func codexPluginSetupNativeMutationPreservesDiagnostic() async throws {
     }
 }
 
-@Test("Production version preflight rejects changed executable before the version process starts")
+@Test("Production version preflight rejects changed executable before the version process starts", .petLanguage(.korean))
 func codexPluginSetupProductionPreflightRejectsChangedIdentityBeforeVersion() throws {
     let fixture = try CodexPluginSetupFixture()
     let executable = fixture.root.appendingPathComponent("changing-native-codex-fixture")
@@ -3240,7 +3363,7 @@ func codexPluginSetupProductionPreflightRejectsChangedIdentityBeforeVersion() th
     #expect(processProbe.snapshot() == 0)
 }
 
-@Test("Production version gate separates signal termination, ordinary exit 137 and malformed output")
+@Test("Production version gate separates signal termination, ordinary exit 137 and malformed output", .petLanguage(.korean))
 func codexPluginSetupProductionVersionGatePreservesNativeFailureType() throws {
     let validVersion = Data("codex-cli 0.153.2\n".utf8)
     let killed = CodexPluginSetupProcessResult(
@@ -3263,7 +3386,7 @@ func codexPluginSetupProductionVersionGatePreservesNativeFailureType() throws {
     }
 }
 
-@Test("Unsafe alias does not exclude a safe candidate for the same canonical Codex file")
+@Test("Unsafe alias does not exclude a safe candidate for the same canonical Codex file", .petLanguage(.korean))
 func codexPluginSetupResolverKeepsSafeSourceAfterUnsafeAlias() throws {
     let fixture = try CodexPluginSetupFixture()
     let safe = fixture.root.appendingPathComponent("safe-fixed-codex")
@@ -3295,7 +3418,7 @@ func codexPluginSetupResolverKeepsSafeSourceAfterUnsafeAlias() throws {
     #expect(selected.version == "0.153.2")
 }
 
-@Test("Dangling and nonregular preferred Codex candidates do not hide a valid file")
+@Test("Dangling and nonregular preferred Codex candidates do not hide a valid file", .petLanguage(.korean))
 func codexPluginSetupSkipsDanglingAndNonregularCandidates() throws {
     let root = FileManager.default.temporaryDirectory
         .appendingPathComponent("blabee-plugin-dangling-\(UUID().uuidString)", isDirectory: true)

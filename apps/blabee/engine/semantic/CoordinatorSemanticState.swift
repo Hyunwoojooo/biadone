@@ -1,5 +1,6 @@
 import CoreFoundation
 import CryptoKit
+import Dispatch
 import Foundation
 
 public struct CoordinatorPacketRevision: Sendable, Hashable {
@@ -222,6 +223,38 @@ public struct CoordinatorSemanticState: Sendable, Equatable {
         return actionJSON
     }
 
+    /// Closing the decision ends selection/transport authority, not the work
+    /// performed by an already claimed delivery turn. This narrow exception
+    /// does not authorize an outcome for an unclaimed or timed-out delivery.
+    func closedQueuedOutcomeClaim(
+        for continuation: CoordinatorContinuationState,
+        occurredAt: RFC3339Instant
+    ) throws -> CoordinatorQueuedActionContextClaim {
+        try require(continuation.dispatchMode == "queued_next_turn", "decision_boundary_closed")
+        try require(
+            continuation.queuedActionContextClaimProtocol == "v1",
+            "queued_action_context_claim_protocol_missing"
+        )
+        try require(continuation.consumedAt != nil, "continuation_not_consumed")
+        try require(
+            continuation.transport?.status == .completed,
+            "transport_terminal_observation_missing"
+        )
+        guard let claim = continuation.queuedActionContextClaim else {
+            throw CoordinatorError("queued_action_context_not_claimed")
+        }
+        let actionJSON = try selectedActionJSON(for: continuation.continuationID)
+        try require(
+            CoordinatorSHA256.fingerprint(actionJSON) == claim.actionSHA256,
+            "queued_action_context_claim_mismatch"
+        )
+        try require(
+            occurredAt >= claim.claimedAt,
+            "work_outcome_before_context_claim"
+        )
+        return claim
+    }
+
     public var pendingInteractions: [CoordinatorBoundaryState] {
         boundaries.values.filter(\.isPendingInteraction)
     }
@@ -240,6 +273,17 @@ public struct CoordinatorSemanticState: Sendable, Equatable {
     }
 }
 
+/// Counts semantic work independently of storage scans and actor wait time.
+/// The optional internal observer is nil in production and carries no data.
+enum CoordinatorSemanticReplayWork: Sendable {
+    case fullReplay(eventCount: Int)
+    case incrementalApplication(eventCount: Int)
+    /// In-function wall time only; no storage or actor wait is included.
+    /// Emitted on failure as well, so this is not a success receipt.
+    case fullReplayFinished(elapsedNanoseconds: UInt64)
+    case incrementalApplicationFinished(elapsedNanoseconds: UInt64)
+}
+
 public enum CoordinatorSemanticReplay {
     public static func replay(_ snapshot: JournalSnapshot) throws -> CoordinatorSemanticState {
         try replay(
@@ -254,7 +298,63 @@ public enum CoordinatorSemanticReplay {
         documents: [Data] = [],
         verificationRecords: [Data] = []
     ) throws -> CoordinatorSemanticState {
-        var state = CoordinatorSemanticState()
+        try apply(
+            to: CoordinatorSemanticState(),
+            events: events,
+            documents: documents,
+            verificationRecords: verificationRecords
+        )
+    }
+
+    static func replay(
+        _ snapshot: JournalSnapshot,
+        observing observer: (@Sendable (CoordinatorSemanticReplayWork) -> Void)?
+    ) throws -> CoordinatorSemanticState {
+        observer?(.fullReplay(eventCount: snapshot.events.count))
+        let started = observer == nil ? nil : DispatchTime.now().uptimeNanoseconds
+        defer {
+            if let started {
+                observer?(.fullReplayFinished(
+                    elapsedNanoseconds: DispatchTime.now().uptimeNanoseconds &- started
+                ))
+            }
+        }
+        return try replay(snapshot)
+    }
+
+    /// Operation-local suffix of an already fully replayed authority. The
+    /// caller must discard this value on CAS conflict and never reuse it for
+    /// another request. New sidecars, envelopes, event IDs, sequence, binding
+    /// and final completeness pass the identical checks used by full replay.
+    static func applying(
+        _ change: CoordinatorSemanticChange,
+        to verifiedState: CoordinatorSemanticState,
+        observing observer: (@Sendable (CoordinatorSemanticReplayWork) -> Void)? = nil
+    ) throws -> CoordinatorSemanticState {
+        observer?(.incrementalApplication(eventCount: change.events.count))
+        let started = observer == nil ? nil : DispatchTime.now().uptimeNanoseconds
+        defer {
+            if let started {
+                observer?(.incrementalApplicationFinished(
+                    elapsedNanoseconds: DispatchTime.now().uptimeNanoseconds &- started
+                ))
+            }
+        }
+        return try apply(
+            to: verifiedState,
+            events: change.events,
+            documents: change.documents,
+            verificationRecords: change.verificationRecords
+        )
+    }
+
+    private static func apply(
+        to initialState: CoordinatorSemanticState,
+        events: [Data],
+        documents: [Data],
+        verificationRecords: [Data]
+    ) throws -> CoordinatorSemanticState {
+        var state = initialState
 
         for data in documents {
             let packet = try SemanticJSON.packet(from: data)
@@ -320,12 +420,16 @@ public enum CoordinatorSemanticReplay {
             return
         }
 
-        // Delivery claims may be committed after the action boundary has
-        // closed. The continuation and its sealed packet remain the durable
-        // authority, so replay validates the claim before applying the normal
-        // closed-boundary gate used by lifecycle mutations.
+        // Delivery claims and subsequent work outcomes may be committed after
+        // the action boundary has closed. Their own validators retain the
+        // original continuation, claim and sealed-action authority. Neither
+        // event reopens selection or permits more lifecycle mutations.
         if event.type == "queued_action_context_claimed" {
             try claimQueuedActionContext(&state, event: event)
+            return
+        }
+        if event.type == "work_outcome_recorded" {
+            try recordWorkOutcome(&state, event: event)
             return
         }
 
@@ -350,8 +454,6 @@ public enum CoordinatorSemanticReplay {
             try completeTransport(&state, event: event)
         case "continuation_transport_timed_out_unknown":
             try timeoutTransport(&state, event: event)
-        case "work_outcome_recorded":
-            try recordWorkOutcome(&state, event: event)
         default:
             throw CoordinatorError("runtime_event_type_unhandled")
         }
@@ -762,6 +864,9 @@ public enum CoordinatorSemanticReplay {
         let payload = event.payload
         let actionID = try SemanticJSON.string(payload, "action_id", field: "action_id", identifier: true)
         try require(actionID == item.actionID, "decision_boundary_binding_mismatch")
+        if state.boundaries[item.binding.fullKey]?.closed == true {
+            _ = try state.closedQueuedOutcomeClaim(for: item, occurredAt: event.occurredAt)
+        }
         let status = payload["work_outcome_status"] as? String ?? ""
         try require(["succeeded", "failed", "cancelled", "unknown"].contains(status), "work_outcome_status_invalid")
         let summary = try SemanticJSON.string(payload, "summary", field: "summary", maximum: 8_192)

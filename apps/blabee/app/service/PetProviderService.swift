@@ -10,16 +10,19 @@ final class PetProviderService: @unchecked Sendable {
     private let registry: ClaudeSessionRegistry?
     private let codec: ClaudeProductWireCodec
     private let corpus: RuntimeSecretCorpus
+    private let arrivalLedger: PetEventArrivalLedger
     private let lock = NSLock()
     private var stopped = false
     let codexContext: PetProviderContext
 
     init(credential: String, codex: any CoordinatorOperationalHandling,
-         registry: ClaudeSessionRegistry?, secretCorpus: RuntimeSecretCorpus) throws {
+         registry: ClaudeSessionRegistry?, secretCorpus: RuntimeSecretCorpus,
+         arrivalLedger: PetEventArrivalLedger = PetEventArrivalLedger()) throws {
         guard credential.count == 64, credential.utf8.allSatisfy({ (48...57).contains($0) || (97...102).contains($0) }) else {
             throw CoordinatorError("pet_provider_unauthorized")
         }
         self.credential = credential; self.codex = codex; self.registry = registry
+        self.arrivalLedger = arrivalLedger
         corpus = secretCorpus; corpus.register(credential)
         codec = ClaudeProductWireCodec(credentialCorpus: secretCorpus)
         codexContext = PetProviderContext(provider: .codex, scopeID: "codex-primary",
@@ -28,6 +31,48 @@ final class PetProviderService: @unchecked Sendable {
     }
 
     func stop() { lock.withLock { stopped = true } }
+
+    /// Reads service-admission order only. Polling the Pet never assigns an
+    /// order, revives authority or changes a provider's current focus.
+    func handleInbox(_ payload: Data) throws -> Data {
+        let request = try authenticate(payload)
+        let queries = try PetProviderInboxCodec.validateRequest(request)
+        guard request["service_incarnation"] as? String == codexContext.serviceIncarnation else {
+            throw CoordinatorError("pet_provider_stale_context")
+        }
+        var claudeTargets = Set<PetProviderContext>()
+        if queries.contains(where: { $0.context.provider == .claude }) {
+            guard let registry else { throw CoordinatorError("claude_product_unavailable") }
+            var cursor: UUID?
+            for _ in 0..<4 {
+                let page = try registry.petSessions(afterScopeID: cursor,
+                    limit: PetProviderDirectoryCodec.maximumRows, refresh: false)
+                for entry in page {
+                    let identity = entry.mapping.authority
+                    claudeTargets.insert(PetProviderContext(provider: .claude,
+                        scopeID: identity.scopeID.uuidString.lowercased(),
+                        serviceIncarnation: identity.serviceIncarnation.uuidString.lowercased(),
+                        sessionIncarnation: identity.sessionIncarnation.uuidString.lowercased(),
+                        authorityEpoch: identity.authorityEpoch.uuidString.lowercased(),
+                        uiGeneration: entry.uiGeneration))
+                }
+                if page.count < PetProviderDirectoryCodec.maximumRows { break }
+                cursor = page.last?.mapping.authority.scopeID
+            }
+        }
+        let sequences = try queries.map { query -> UInt64? in
+            guard query.context.provider == .codex
+                    ? query.context == codexContext : claudeTargets.contains(query.context) else {
+                throw CoordinatorError("pet_provider_stale_context")
+            }
+            return arrivalLedger.sequence(scopeID: query.context.scopeID,
+                kind: query.reference.kind.rawValue, eventID: query.reference.eventID)
+        }
+        try requireActive()
+        let response = try PetProviderInboxCodec.response(request: request, sequences: sequences)
+        try corpus.assertNoKnownSecret(in: response)
+        return response
+    }
 
     func handleDirectory(_ payload: Data) throws -> Data {
         let request = try authenticate(payload)
@@ -40,7 +85,8 @@ final class PetProviderService: @unchecked Sendable {
             result = ["disconnected": true]
         } else {
             let cursor = (body["after_scope_id"] as? String).flatMap(UUID.init(uuidString:))
-            let entries = try registry?.petSessions(afterScopeID: cursor, limit: PetProviderDirectoryCodec.maximumRows + 1) ?? []
+            let entries = try registry?.petSessions(afterScopeID: cursor,
+                limit: PetProviderDirectoryCodec.maximumRows + 1, refresh: false) ?? []
             let rows = entries.prefix(PetProviderDirectoryCodec.maximumRows).map { entry -> [String: Any] in
                 let mapping = entry.mapping, identity = mapping.authority
                 let context = PetProviderContext(provider: .claude, scopeID: identity.scopeID.uuidString.lowercased(),

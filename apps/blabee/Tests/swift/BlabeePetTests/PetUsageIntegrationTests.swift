@@ -394,7 +394,7 @@ struct PetUsageIntegrationTests {
         #expect(collection.service.usageEvents.isEmpty)
     }
 
-    @Test("Account observations do not pretend a cached card is newly received or count as usage")
+    @Test("Account observations do not pretend a cached card is newly received or count as usage", .petLanguage(.english))
     func productOnboardingRequiresFreshObservation() async throws {
         let account = UsageIntegrationAccountFixture(stored: true)
         defer { account.controller.stop() }
@@ -413,7 +413,7 @@ struct PetUsageIntegrationTests {
         #expect(await collection.waitUntilDelivered())
         var records = collection.service.events.compactMap(\.product)
         #expect(records.map(\.kind) == [.environmentObserved, .accountReady])
-        #expect(records.allSatisfy { $0.environment.uiLanguage == .ko })
+        #expect(records.allSatisfy { $0.environment.uiLanguage == .en })
         await fixture.backend.enqueue(type: "get_state", response: try petTestSnapshotData(cards: []))
         await fixture.vm.refresh()
         #expect(await collection.waitUntilDelivered())
@@ -589,16 +589,16 @@ struct PetUsageIntegrationTests {
         #expect(!collection.service.events.compactMap(\.insight).contains { $0.kind == .cardResponded })
     }
 
-    @Test("Feedback editing suppresses global selection and restores it on close")
+    @Test("Feedback input focus suppresses global selection and restores it on focus loss")
     func feedbackEditingDoesNotRunChoices() async throws {
         let fixture = UsageIntegrationFixture(action: .globalChoice)
         defer { fixture.vm.stopPolling() }
         try await fixture.prepare()
-        fixture.vm.setFeedbackWindowVisible(true)
+        fixture.vm.setFeedbackInputActive(true)
         await fixture.vm.handleGlobalSlot(1)
         #expect(await fixture.backend.requestCount(type: "select") == 0)
         #expect(fixture.vm.riskConfirmation == nil)
-        fixture.vm.setFeedbackWindowVisible(false)
+        fixture.vm.setFeedbackInputActive(false)
         try await fixture.enqueueAcknowledgement()
         await fixture.perform()
         #expect(await fixture.backend.requestCount(type: "select") == 1)

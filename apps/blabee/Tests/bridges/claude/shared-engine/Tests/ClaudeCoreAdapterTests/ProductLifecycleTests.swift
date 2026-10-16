@@ -32,6 +32,235 @@ private func lifecycleRenew(_ f: ProductAuthorityFixture, sequence: inout UInt64
 
 @Suite("Product native lifecycle")
 struct ProductLifecycleTests {
+    @Test("Automatic and Pet probes expose the same nonce only through the authenticated MCP check")
+    func automaticProbeIsRetrievedDirectly() throws {
+        let f = try ProductAuthorityFixture()
+        try f.startup(); try f.open()
+        let automaticData = try #require(try f.native.beginInitialProductReadiness(identity: f.configuration.identity,
+            credential: f.configuration.selectorToken))
+        let automatic = try StrictJSONTransport.object(from: automaticData)
+        #expect(automatic["nonce"] == nil)
+        #expect(try f.poll() == nil)
+        let checked = try f.call("readiness.begin", ["bridge_id": f.bridgeID!])
+        #expect(checked["probe_id"] as? String == automatic["probe_id"] as? String)
+        #expect(checked["expires_at_nanoseconds"] as? String == automatic["expires_at_nanoseconds"] as? String)
+        let nonce = try #require(checked["nonce"] as? String)
+        let pet = try StrictJSONTransport.object(from: f.native.beginProductReadiness(identity: f.configuration.identity,
+            credential: f.configuration.selectorToken))
+        #expect(pet["nonce"] == nil)
+        #expect(pet["probe_id"] as? String == checked["probe_id"] as? String)
+        #expect(!String(decoding: automaticData, as: UTF8.self).contains(nonce))
+        #expect(try f.snapshot()["ready"] as? Bool == false)
+        let ack = try f.call("readiness.ack", ["bridge_id": f.bridgeID!, "probe_id": checked["probe_id"]!, "nonce": nonce])
+        #expect(ack["acknowledged"] as? Bool == true)
+        productWireRejected("unavailable") {
+            try f.call("readiness.ack", ["bridge_id": f.bridgeID!, "probe_id": checked["probe_id"]!, "nonce": nonce])
+        }
+    }
+
+    @Test("A Pet recheck preserves the existing verified connection and its original expiry")
+    func petRecheckDoesNotStrandAnIdleCard() throws {
+        let f = try ProductAuthorityFixture()
+        try f.prepare()
+        let pending = try StrictJSONTransport.object(from: f.native.beginProductReadiness(identity: f.configuration.identity,
+            credential: f.configuration.selectorToken))
+        #expect(pending["nonce"] == nil)
+        #expect(try f.snapshot()["selection_enabled"] as? Bool == true)
+        let check = try f.call("readiness.begin", ["bridge_id": f.bridgeID!])
+        #expect(check["probe_id"] as? String == pending["probe_id"] as? String)
+        #expect(check["nonce"] is String)
+        #expect(try f.snapshot()["selection_enabled"] as? Bool == true)
+        for _ in 0..<75 { f.clock.advance(4); _ = try f.poll(); _ = try f.waiterRequest("hook.poll") }
+        #expect(try f.snapshot()["ready"] as? Bool == false)
+        #expect(try f.snapshot()["selection_enabled"] as? Bool == false)
+    }
+
+    @Test("Hook polling delivers once without core writes and claim requires the exact native continuation prompt")
+    func hookWaiterDeliversExactlyOnce() throws {
+        let f = try ProductAuthorityFixture()
+        try f.prepare()
+        let waiter = try #require(f.waiter)
+        let generation = try #require(waiter["generation"] as? String)
+        #expect(waiter["prompt_id"] as? String == f.promptID)
+        #expect(waiter["boundary_id"] as? String == f.boundaryID)
+        #expect(waiter["expires_at_nanoseconds"] as? String == "600000000000")
+        let snapshot = try StrictJSONTransport.data(forJSONObject: f.snapshot())
+        #expect(!String(decoding: snapshot, as: UTF8.self).contains(generation))
+        let before = (f.meter.count, f.replay.count, try f.rawEventCount())
+        #expect(try f.waiterRequest("hook.poll")["status"] as? String == "waiting")
+        #expect(try f.poll() == nil)
+        #expect(f.meter.count == before.0 && f.replay.count == before.1)
+        #expect(try f.rawEventCount() == before.2)
+        try f.select()
+        let selected = (f.meter.count, f.replay.count, try f.rawEventCount())
+        #expect(try f.poll() == nil)
+        let delivered = try f.waiterRequest("hook.poll")
+        let event = try #require(delivered["event"] as? [String: Any])
+        #expect(delivered["status"] as? String == "delivered")
+        #expect(event["delivery_sequence"] as? String == "1")
+        #expect(event["expires_at_nanoseconds"] as? String == "120000000000")
+        #expect(event["channel_source"] == nil && event["waiter_generation"] == nil)
+        #expect(try f.waiterRequest("hook.poll")["status"] as? String == "closed")
+        #expect(f.meter.count == selected.0 && f.replay.count == selected.1)
+        #expect(try f.rawEventCount() == selected.2)
+        productWireRejected("binding_mismatch") { try f.claim(event) }
+        try f.observeSelection(event)
+        #expect(f.boundaryID == waiter["boundary_id"] as? String)
+        #expect(f.promptID != waiter["prompt_id"] as? String)
+        let claim = try f.claim(event)
+        #expect(claim["prompt_id"] as? String == f.promptID)
+        #expect(claim["boundary_id"] as? String != waiter["boundary_id"] as? String)
+        productWireRejected("binding_mismatch") { try f.claim(event) }
+        try f.complete(event["selection_id"] as! String)
+    }
+
+    @Test("Old waiter generations and wrong native identities cannot poll or cancel the current Stop")
+    func staleWaiterCannotAffectCurrentGeneration() throws {
+        let f = try ProductAuthorityFixture()
+        try f.prepare()
+        let old = try #require(f.waiter)
+        try lifecycleStop(f)
+        let current = try #require(f.waiter)
+        #expect(old["generation"] as? String != current["generation"] as? String)
+        #expect(try f.waiterRequest("hook.poll", waiter: old)["status"] as? String == "closed")
+        #expect(try f.waiterRequest("hook.cancel", waiter: old)["cancelled"] as? Bool == false)
+        #expect(try f.waiterRequest("hook.poll")["status"] as? String == "waiting")
+        for field in ["native_session_id", "cwd", "prompt_id"] {
+            var payload: [String: Any] = ["native_session_id": f.configuration.identity.nativeSessionID.uuidString.lowercased(),
+                "cwd": f.directory.path, "prompt_id": current["prompt_id"]!, "waiter_generation": current["generation"]!]
+            payload[field] = field == "cwd" ? "/foreign-project" : productID()
+            if field == "prompt_id" {
+                #expect(try f.call("hook.poll", payload, role: "hook")["status"] as? String == "closed")
+            } else {
+                productWireRejected("binding_mismatch") { try f.call("hook.poll", payload, role: "hook") }
+            }
+        }
+        let request = try f.envelope("hook.poll", payload: [
+            "native_session_id": f.configuration.identity.nativeSessionID.uuidString.lowercased(), "cwd": f.directory.path,
+            "prompt_id": current["prompt_id"]!, "waiter_generation": current["generation"]!], role: "hook")
+        productRejected("claude_session_forbidden") {
+            _ = try f.native.handleProduct(request: request, credential: f.configuration.bridgeToken)
+        }
+        #expect(try f.snapshot()["selection_enabled"] as? Bool == true)
+    }
+
+    @Test("Stop descriptors require a first poll and a lost Hook process cannot leave the card selectable",
+          arguments: [false, true])
+    func waiterNeedsItsOwnLivePoll(_ armBeforeLoss: Bool) throws {
+        let f = try ProductAuthorityFixture()
+        try f.startup(); try f.prompt(); try f.open(); try f.ready(); try f.emit()
+        let stop = try lifecycleHook(f, "Stop", ["prompt_id": f.promptID!, "background_task_ids": [String]()])
+        try f.call(stop)
+        let waiter = try #require(f.waiter)
+        #expect(try f.snapshot()["selection_enabled"] as? Bool == false)
+        productRejected("claude_session_stop_required") { try f.select() }
+        if armBeforeLoss {
+            #expect(try f.waiterRequest("hook.poll")["status"] as? String == "waiting")
+            #expect(try f.snapshot()["selection_enabled"] as? Bool == true)
+        }
+        let firstDeadline = try f.native.nextProductWakeNanoseconds(identity: f.configuration.identity,
+            credential: f.configuration.selectorToken)
+        #expect(firstDeadline == 5_000_000_000)
+        f.clock.advance(4); _ = try f.poll()
+        f.clock.advance(1)
+        #expect(try f.snapshot()["bridge_connected"] as? Bool == true)
+        #expect(try f.snapshot()["selection_enabled"] as? Bool == false)
+        let before = (f.meter.count, f.replay.count, try f.rawEventCount())
+        #expect(try f.waiterRequest("hook.poll", waiter: waiter)["status"] as? String == "closed")
+        #expect(try f.waiterRequest("hook.poll", waiter: waiter)["status"] as? String == "closed")
+        #expect(f.meter.count == before.0 && f.replay.count == before.1)
+        #expect(try f.rawEventCount() == before.2)
+        try lifecycleStop(f)
+        #expect(f.waiter?["generation"] as? String != waiter["generation"] as? String)
+        #expect(try f.snapshot()["selection_enabled"] as? Bool == true)
+    }
+
+    @Test("A delivered Hook may exit while the original MCP claim remains live")
+    func deliveredHookDoesNotNeedFurtherPolls() throws {
+        let f = try ProductAuthorityFixture()
+        try f.prepare()
+        let event = try f.selectedEvent()
+        for _ in 0..<3 { f.clock.advance(4); _ = try f.poll() }
+        let claim = try f.claim(event)
+        #expect(claim["selection_id"] as? String == event["selection_id"] as? String)
+        try f.complete(event["selection_id"] as! String)
+    }
+
+    @Test("Cancellation retires only the matching generation without polling storage")
+    func cancellationDoesNotWriteFromPollingPath() throws {
+        let f = try ProductAuthorityFixture()
+        try f.prepare()
+        let event = try f.selectedEvent()
+        let before = (f.meter.count, f.replay.count, try f.rawEventCount())
+        #expect(try f.waiterRequest("hook.cancel")["cancelled"] as? Bool == true)
+        #expect(try f.waiterRequest("hook.cancel")["cancelled"] as? Bool == false)
+        #expect(try f.waiterRequest("hook.poll")["status"] as? String == "closed")
+        #expect(f.meter.count == before.0 && f.replay.count == before.1)
+        #expect(try f.rawEventCount() == before.2)
+        productWireRejected("binding_mismatch") { try f.claim(event) }
+        #expect((try f.snapshot()["outcomes"] as? [[String: Any]])?.isEmpty == true)
+    }
+
+    @Test("New observations cancel unclaimed Hook delivery and preserve already claimed reports",
+          arguments: ["new_input", "new_stop", "compact", "failure", "heartbeat", "cancel"], [false, true])
+    func waiterInvalidationPreservesClaimedReports(_ eventName: String, _ claimed: Bool) throws {
+        let f = try ProductAuthorityFixture()
+        try f.prepare()
+        let waiter = try #require(f.waiter)
+        let event = try f.selectedEvent()
+        if claimed { try f.claim(event) }
+        switch eventName {
+        case "new_input": try f.prompt()
+        case "new_stop": try lifecycleStop(f)
+        case "compact": try f.hook("SessionStart", ["source": "compact", "prompt_id": f.promptID!])
+        case "failure": try f.hook("StopFailure", ["failure_code": "interrupted", "prompt_id": f.promptID!])
+        case "heartbeat": f.clock.advance(5); _ = try f.poll()
+        default: _ = try f.waiterRequest("hook.cancel", waiter: waiter)
+        }
+        #expect(try f.waiterRequest("hook.poll", waiter: waiter)["status"] as? String == "closed")
+        productWireRejected("binding_mismatch") { try f.claim(event) }
+        #expect(try f.snapshot()["pending_report_count"] as? Int == (claimed ? 1 : 0))
+        if claimed { try f.complete(event["selection_id"] as! String) }
+        #expect((try f.snapshot()["outcomes"] as? [[String: Any]])?.count == (claimed ? 1 : 0))
+    }
+
+    @Test("Waiters and selection delivery keep the original card, continuation and lease deadlines")
+    func waiterDeadlinesAreNotExtended() throws {
+        let f = try ProductAuthorityFixture()
+        try f.prepare()
+        let waiter = try #require(f.waiter)
+        let event = try f.selectedEvent()
+        for _ in 0..<30 { f.clock.advance(4); _ = try f.poll() }
+        let before = (f.meter.count, f.replay.count, try f.rawEventCount())
+        #expect(try f.waiterRequest("hook.poll", waiter: waiter)["status"] as? String == "closed")
+        #expect(f.meter.count == before.0 && f.replay.count == before.1)
+        #expect(try f.rawEventCount() == before.2)
+        productWireRejected("binding_mismatch") { try f.claim(event) }
+        let nearLease = try ProductAuthorityFixture()
+        nearLease.clock.advance(3599)
+        try nearLease.prepare()
+        #expect(nearLease.waiter?["expires_at_nanoseconds"] as? String == "3600000000000")
+        _ = try nearLease.authority.renew(owner: nearLease.authority.ownerHandle, sequence: 1)
+        nearLease.clock.advance(1)
+        #expect(try nearLease.waiterRequest("hook.poll")["status"] as? String == "closed")
+        #expect(try nearLease.snapshot()["selection_enabled"] as? Bool == false)
+    }
+
+    @Test("A claim consumed after its shorter waiter deadline never releases the executable action")
+    func slowClaimCannotOutliveWaiter() throws {
+        let f = try ProductAuthorityFixture(checkRejectedMutationSequence: true)
+        f.clock.advance(3598)
+        try f.prepare()
+        let event = try f.selectedEvent()
+        #expect(event["expires_at_nanoseconds"] as? String == "3600000000000")
+        _ = try f.authority.renew(owner: f.authority.ownerHandle, sequence: 1)
+        f.readProbe?.delayNextBoundMutationLoad { [clock = f.clock] in clock.advance(2) }
+        productWireRejected("binding_mismatch") { try f.claim(event) }
+        #expect(try f.snapshot()["pending_report_count"] as? Int == 1)
+        productWireRejected("binding_mismatch") { try f.claim(event) }
+        try f.complete(event["selection_id"] as! String)
+    }
+
     @Test("Proposal replay keys preserve the existing nonblank text grammar", arguments: ["proposal A", " proposal A ", "proposal\tA", "proposal\nA"])
     func proposalWhitespaceRemainsLiteral(_ identifier: String) throws {
         let f = try ProductAuthorityFixture()
@@ -194,7 +423,150 @@ struct ProductLifecycleTests {
         try f.prompt(); try f.emit(); try lifecycleStop(f); try f.ready(); try f.select()
     }
 
-    @Test("Five hundred cycles through a volatile journal retain real core outcomes and ordered Channel events")
+    @Test("A late Stop for a retired prompt preserves only the new connection probe", arguments: [false, true])
+    func lateStopPreservesNewProbeAfterPromptConflict(_ pollBeforeStop: Bool) throws {
+        let f = try ProductAuthorityFixture()
+        try f.startup(); try f.open()
+        let initial = try f.native.beginInitialProductReadiness(identity: f.configuration.identity,
+            credential: f.configuration.selectorToken)
+        #expect(initial != nil)
+        let initialProbe = try f.call("readiness.begin", ["bridge_id": f.bridgeID!])
+        let retiredPromptID = productID()
+        let initialHook = try f.hook("UserPromptSubmit", ["prompt_id": retiredPromptID,
+            "prompt_sha256": productDigest("Initial native input.")])
+        #expect(initialHook["boundary_id"] is String)
+        // Claude can absorb busy input under the current native prompt ID.
+        // The conflicting text still invalidates that observation and probe.
+        productWireRejected("binding_mismatch") {
+            try f.hook("UserPromptSubmit", ["prompt_id": retiredPromptID,
+                "prompt_sha256": productDigest("Check the Blabee connection.")])
+        }
+        productWireRejected("unavailable") {
+            try f.call("readiness.ack", ["bridge_id": f.bridgeID!,
+                "probe_id": initialProbe["probe_id"]!, "nonce": initialProbe["nonce"]!])
+        }
+        let fresh = try f.call("readiness.begin", ["bridge_id": f.bridgeID!])
+        if pollBeforeStop { #expect(try f.poll() == nil) }
+        productWireRejected("binding_mismatch") {
+            try f.hook("Stop", ["prompt_id": retiredPromptID, "background_task_ids": [String]()])
+        }
+        let retired = try f.snapshot()
+        #expect(retired["boundary_id"] is NSNull)
+        #expect(retired["ready"] as? Bool == false)
+        #expect(retired["selection_enabled"] as? Bool == false)
+        #expect((retired["native_observation"] as? [String: Any])?["status"] as? String == "new_prompt_required")
+        #expect(f.native.productRetainedStateCounts().prompts == 0)
+        #expect(f.native.productRetainedStateCounts().references == 1)
+        if !pollBeforeStop { #expect(try f.poll() == nil) }
+        let probe = fresh
+        #expect(probe["probe_id"] as? String == fresh["probe_id"] as? String)
+        let nonce = try #require(probe["nonce"] as? String)
+        // Never accidentally use the fixture's all-1 Hook credential when
+        // the random nonce starts with 0; that tests secret reflection instead.
+        let wrongNonce = String(repeating: nonce.hasPrefix("f") ? "e" : "f", count: 64)
+        productWireRejected("unavailable") {
+            try f.call("readiness.ack", ["bridge_id": f.bridgeID!, "probe_id": probe["probe_id"]!, "nonce": wrongNonce])
+        }
+        let ack = try f.call("readiness.ack", ["bridge_id": f.bridgeID!,
+            "probe_id": probe["probe_id"]!, "nonce": nonce])
+        #expect(ack["acknowledged"] as? Bool == true)
+        let connected = try f.snapshot()
+        #expect(connected["ready"] as? Bool == true)
+        #expect(connected["boundary_id"] is NSNull)
+        #expect(connected["selection_enabled"] as? Bool == false)
+        #expect((connected["cards"] as? [[String: Any]])?.isEmpty == true)
+        productWireRejected("unavailable") {
+            try f.call("readiness.ack", ["bridge_id": f.bridgeID!, "probe_id": probe["probe_id"]!, "nonce": nonce])
+        }
+        // Only a fresh ordinary native prompt can create a new task boundary.
+        try f.prompt(); try f.emit(); try lifecycleStop(f); try f.select()
+    }
+
+    @Test("Preserving a fresh probe cannot revive retired work or erase claimed reports", arguments: [false, true])
+    func lateStopProbePreservesOnlyConnectionAndClaimedReports(_ claimed: Bool) throws {
+        let f = try ProductAuthorityFixture()
+        try f.prepare()
+        var oldCard = try lifecycleCard(f)
+        let event = try f.selectedEvent()
+        if claimed {
+            try f.claim(event)
+            try f.prompt(); try f.emit(); try lifecycleStop(f)
+            oldCard = try lifecycleCard(f)
+        }
+        let oldBoundaryID = try #require(f.boundaryID)
+        let retiredPromptID = try #require(f.promptID)
+        let authority = f.authority.snapshot()
+        productWireRejected("binding_mismatch") {
+            try f.hook("UserPromptSubmit", ["prompt_id": retiredPromptID,
+                "prompt_sha256": productDigest("Changed current input.")])
+        }
+        let probe = try f.call("readiness.begin", ["bridge_id": f.bridgeID!])
+        productWireRejected("binding_mismatch") {
+            try f.hook("Stop", ["prompt_id": retiredPromptID, "background_task_ids": [String]()])
+        }
+        let ack = try f.call("readiness.ack", ["bridge_id": f.bridgeID!,
+            "probe_id": probe["probe_id"]!, "nonce": probe["nonce"]!])
+        #expect(ack["acknowledged"] as? Bool == true)
+        productWireRejected("binding_mismatch") {
+            try f.call("proposal.emit", ["bridge_id": f.bridgeID!, "boundary_id": oldBoundaryID,
+                "proposal": productProposal()])
+        }
+        productRejected("claude_session_boundary_mismatch") { try f.select(card: oldCard) }
+        productWireRejected("binding_mismatch") { try f.claim(event) }
+        let snapshot = try f.snapshot()
+        #expect(snapshot["selection_enabled"] as? Bool == false)
+        #expect(snapshot["boundary_id"] is NSNull)
+        #expect(snapshot["pending_report_count"] as? Int == (claimed ? 1 : 0))
+        #expect((snapshot["outcomes"] as? [[String: Any]])?.isEmpty == true)
+        #expect(f.authority.snapshot() == authority)
+        if claimed { try f.complete(event["selection_id"] as! String) }
+        #expect((try f.snapshot()["outcomes"] as? [[String: Any]])?.count == (claimed ? 1 : 0))
+    }
+
+    @Test("Mismatched Stop still invalidates probes with expired or current native observations",
+          arguments: ["heartbeat", "probe_expiry", "retirement_pending", "current_task", "bound_probe"])
+    func lateStopCannotPreserveAnUnsafeProbe(_ variant: String) throws {
+        let f = try ProductAuthorityFixture()
+        try f.prepare()
+        let promptID = try #require(f.promptID)
+        if variant != "current_task" {
+            productWireRejected("binding_mismatch") {
+                try f.hook("UserPromptSubmit", ["prompt_id": promptID,
+                    "prompt_sha256": productDigest("Conflicting native input.")])
+            }
+        }
+        let probe = try f.call("readiness.begin", ["bridge_id": f.bridgeID!])
+        switch variant {
+        case "heartbeat": f.clock.advance(5)
+        case "probe_expiry":
+            for _ in 0..<74 { f.clock.advance(4); _ = try f.poll() }
+            f.clock.advance(4)
+        case "retirement_pending":
+            f.clock.advance(5)
+            #expect(try f.poll() == nil)
+        case "bound_probe":
+            let observation = try f.hook("UserPromptSubmit", ["prompt_id": productID(),
+                "prompt_sha256": productDigest("A real native input.")])
+            #expect(observation["boundary_id"] is String)
+            #expect(f.native.productRetainedStateCounts().prompts == 1)
+        default: break
+        }
+        productWireRejected("binding_mismatch") {
+            try f.hook("Stop", ["prompt_id": variant == "current_task" ? productID() : promptID,
+                "background_task_ids": [String]()])
+        }
+        productWireRejected("unavailable") {
+            try f.call("readiness.ack", ["bridge_id": f.bridgeID!,
+                "probe_id": probe["probe_id"]!, "nonce": probe["nonce"]!])
+        }
+        let snapshot = try f.snapshot()
+        #expect(snapshot["ready"] as? Bool == false)
+        #expect(snapshot["boundary_id"] is NSNull)
+        #expect(snapshot["selection_enabled"] as? Bool == false)
+        #expect(f.native.productRetainedStateCounts().references == 0)
+    }
+
+    @Test("Five hundred cycles through a volatile journal retain real core outcomes and ordered Hook events")
     func fiveHundredCycles() throws {
         try completedCycles(500, storage: .lifecycleMemory)
     }
@@ -225,11 +597,7 @@ struct ProductLifecycleTests {
                 if index > 0 { f.clock.advance(5); _ = try f.poll() }
                 try lifecycleRenew(f, sequence: &renewal, next: &nextRenewal)
                 try f.prompt()
-                try f.call("readiness.begin", ["bridge_id": f.bridgeID!])
-                let probeValue = try f.poll()
-                let probe = try #require(probeValue)
-                delivery += 1
-                #expect(probe["delivery_sequence"] as? String == String(delivery))
+                let probe = try f.call("readiness.begin", ["bridge_id": f.bridgeID!])
                 try f.call("readiness.ack", ["bridge_id": f.bridgeID!, "probe_id": probe["probe_id"]!, "nonce": probe["nonce"]!])
                 let proposal = productProposal()
                 if index == 0 { firstProposal = (proposal["value"] as? [String: Any])?["proposal_id"] as? String }
@@ -252,7 +620,7 @@ struct ProductLifecycleTests {
         }
         let snapshot = try f.snapshot()
         #expect((snapshot["history"] as? [String: Any])?["total_outcomes"] as? Int == cycles)
-        #expect(delivery == UInt64(cycles * 2))
+        #expect(delivery == UInt64(cycles))
         let state = try CoordinatorSemanticReplay.replay(f.journal.load())
         let completed = state.continuations.values.filter { $0.workOutcome?.status == "succeeded" }
         #expect(completed.count == cycles)
@@ -299,7 +667,7 @@ struct ProductLifecycleTests {
                 let result = try f.call(request)
                 return result["event"] is NSNull
             }
-            guard hasNoEvent else { Issue.record("Unexpected Channel event"); return }
+            guard hasNoEvent else { Issue.record("Unexpected heartbeat event"); return }
         }
         for _ in 0..<1_000 { try autoreleasepool { _ = try f.snapshot() } }
         #expect(f.meter.count == calls && f.replay.count == replays)

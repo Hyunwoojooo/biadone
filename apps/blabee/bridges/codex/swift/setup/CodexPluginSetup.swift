@@ -50,49 +50,49 @@ enum CodexPluginSetupState: Sendable, Equatable {
     var title: String {
         switch self {
         case .unchecked:
-            return "Codex 연결 확인 전"
+            return PetL10n.text("Codex connection not checked", korean: "Codex 연결 확인 전")
         case .unavailable:
-            return "Codex 연결을 사용할 수 없음"
+            return PetL10n.text("Codex connection unavailable", korean: "Codex 연결을 사용할 수 없음")
         case .notInstalled:
-            return "Codex Plugin 미설치"
+            return PetL10n.text("Codex Plugin not installed", korean: "Codex Plugin 미설치")
         case .marketplaceInstalledNeedsPlugin:
-            return "Codex 연결 마무리 필요"
+            return PetL10n.text("Finish Codex connection setup", korean: "Codex 연결 마무리 필요")
         case .legacyInstallationDetected:
-            return "이전 Blabee 연결 발견"
+            return PetL10n.text("Previous Blabee connection found", korean: "이전 Blabee 연결 발견")
         case .installedNeedsHookReview:
-            return "Plugin 설치됨 · Hook 상태 확인"
+            return PetL10n.text("Plugin installed · Check Hooks", korean: "Plugin 설치됨 · Hook 상태 확인")
         case .updateAvailable:
-            return "Blabee Plugin 업데이트 필요"
+            return PetL10n.text("Blabee Plugin update required", korean: "Blabee Plugin 업데이트 필요")
         case .conflict:
-            return "기존 Blabee Plugin 충돌"
+            return PetL10n.text("Existing Blabee Plugin conflict", korean: "기존 Blabee Plugin 충돌")
         case .error:
-            return "Codex 연결 확인 실패"
+            return PetL10n.text("Codex connection check failed", korean: "Codex 연결 확인 실패")
         }
     }
 
     var detail: String {
         switch self {
         case .unchecked:
-            return "아직 Codex Plugin 상태를 확인하지 않았습니다."
+            return PetL10n.text("Codex Plugin status has not been checked yet.", korean: "아직 Codex Plugin 상태를 확인하지 않았습니다.")
         case let .unavailable(reason):
             return reason
         case .notInstalled:
-            return "연결 후 새 Codex 세션을 열고 /hooks에서 Blabee Hook을 검토해야 합니다."
+            return PetL10n.text("After connecting, open a new Codex session and review Blabee Hooks in /hooks.", korean: "연결 후 새 Codex 세션을 열고 /hooks에서 Blabee Hook을 검토해야 합니다.")
         case .marketplaceInstalledNeedsPlugin:
-            return "Blabee Marketplace만 연결되어 있습니다. 연결을 다시 시도하거나 안전하게 정리하세요."
+            return PetL10n.text("Only the Blabee Marketplace is connected. Retry the connection or clean it up safely.", korean: "Blabee Marketplace만 연결되어 있습니다. 연결을 다시 시도하거나 안전하게 정리하세요.")
         case let .legacyInstallationDetected(marketplaceName, _):
-            return "이전 테스트 연결(\(marketplaceName))이 발견되었습니다. 사용자가 이전 연결 마이그레이션을 명시적으로 선택해야만 변경합니다."
+            return PetL10n.text("A previous test connection (\(marketplaceName)) was found. It will change only after you explicitly choose to migrate it.", korean: "이전 테스트 연결(\(marketplaceName))이 발견되었습니다. 사용자가 이전 연결 마이그레이션을 명시적으로 선택해야만 변경합니다.")
         case .installedNeedsHookReview:
-            return "Blabee는 Hook 신뢰 완료 여부를 자동 확인할 수 없습니다. 새 Codex 세션 또는 다시 연 세션에서 /hooks로 현재 상태를 확인하세요."
+            return PetL10n.text("Blabee cannot automatically confirm completed Hook trust. Check /hooks in a new or reopened Codex session.", korean: "Blabee는 Hook 신뢰 완료 여부를 자동 확인할 수 없습니다. 새 Codex 세션 또는 다시 연 세션에서 /hooks로 현재 상태를 확인하세요.")
         case .updateAvailable:
-            return "앱에 포함된 최신 Plugin으로 다시 연결한 뒤 새 세션에서 /hooks를 검토하세요."
+            return PetL10n.text("Reconnect using the latest Plugin included in the app, then review /hooks in a new session.", korean: "앱에 포함된 최신 Plugin으로 다시 연결한 뒤 새 세션에서 /hooks를 검토하세요.")
         case let .conflict(reason):
             return reason
         case let .error(code):
             if let diagnostic = CodexNativeDiagnostic(rawValue: code) {
                 return "\(diagnostic.detail) (\(code))"
             }
-            return "Codex Plugin 상태를 안전하게 확인하지 못했습니다. (\(code))"
+            return PetL10n.text("Unable to safely verify Codex Plugin status. (\(code))", korean: "Codex Plugin 상태를 안전하게 확인하지 못했습니다. (\(code))")
         }
     }
 }
@@ -119,7 +119,7 @@ extension CodexPluginSetupManaging {
 actor CodexUnavailablePluginSetupManager: CodexPluginSetupManaging {
     private let reason: String
 
-    init(reason: String = "제품 앱에서만 Codex 연결 설정을 사용할 수 있습니다.") {
+    init(reason: String = PetL10n.text("Codex connection settings are available only in the product app.", korean: "제품 앱에서만 Codex 연결 설정을 사용할 수 있습니다.")) {
         self.reason = reason
     }
 
@@ -247,14 +247,36 @@ enum CodexPluginSetupExecutableResolver {
         var seen: Set<String> = []
         for candidate in candidates.prefix(256) {
             var info = stat()
-            guard stat(candidate.path, &info) == 0,
-                  info.st_mode & mode_t(S_IFMT) == mode_t(S_IFREG)
-            else { continue }
+            guard lstat(candidate.path, &info) == 0 else { continue }
+            let sourceType = info.st_mode & mode_t(S_IFMT)
+            guard sourceType == mode_t(S_IFREG) || sourceType == mode_t(S_IFLNK) else { continue }
             // Source ancestors are part of trust: an unsafe alias must not
             // exclude a later safe launcher resolving to the same target.
             guard seen.insert(candidate.standardizedFileURL.path).inserted else { continue }
+            if sourceType == mode_t(S_IFLNK) {
+                // A dangling link cannot enter the failure guard, which needs
+                // a readable file identity. Keep diagnostic evidence without
+                // executing it or preventing a later candidate from qualifying.
+                guard stat(candidate.path, &info) == 0 else {
+                    firstFailure = firstFailure ?? CodexNativeQualificationFailure(
+                        error: CodexRuntimeTrustError.invalidSource(
+                            "stable source target cannot be resolved",
+                            diagnostic: .init(issue: .linkUnresolved, role: .source, path: candidate.path)
+                        ),
+                        evidence: .init(stage: .nativeExecutable, sourcePath: candidate.path)
+                    )
+                    continue
+                }
+                guard info.st_mode & mode_t(S_IFMT) == mode_t(S_IFREG) else { continue }
+            }
             do {
                 return try qualifier(candidate)
+            } catch let failure as CodexNativeQualificationFailure
+                where failure.diagnostic == .probeTimeout
+                    || failure.diagnostic == .guardUnavailable
+                    || failure.diagnostic == .executionInProgress
+            {
+                throw failure
             } catch let error as CoordinatorError
                 where error.code == "codex_plugin_setup_operation_timed_out"
                     || error.code == "codex_native_probe_timeout"
@@ -1296,7 +1318,7 @@ actor CodexPluginSetupManager: CodexPluginSetupManaging {
         return CodexPluginSetupManager(
             optionalMarketplaceRoot: bundle.resourceURL,
             requireStandardApplicationRoot: true,
-            executableQualifier: { try nativeRuntime.qualify(timeoutMilliseconds: $0) },
+            executableQualifier: { try nativeRuntime.qualifyWithEvidence(timeoutMilliseconds: $0) },
             executableRevalidator: CodexPluginSetupProductionTrust.revalidate,
             processRunner: processRunner,
             nativeRuntime: nativeRuntime,
@@ -1336,10 +1358,11 @@ actor CodexPluginSetupManager: CodexPluginSetupManaging {
             state: state,
             evidence: .init(
                 stage: operation.checkStage,
-                sourcePath: operation.executable?.sourceURL.path,
-                canonicalPath: operation.executable?.canonicalURL.path,
-                codexVersion: operation.executable?.version,
-                errorCode: operation.checkErrorCode
+                sourcePath: operation.executable?.sourceURL.path ?? operation.nativeFailureEvidence?.sourcePath,
+                canonicalPath: operation.executable?.canonicalURL.path ?? operation.nativeFailureEvidence?.canonicalPath,
+                codexVersion: operation.executable?.version ?? operation.nativeFailureEvidence?.codexVersion,
+                errorCode: operation.checkErrorCode,
+                pathDiagnostic: operation.nativeFailureEvidence?.pathDiagnostic
             )
         )
     }
@@ -1499,12 +1522,12 @@ actor CodexPluginSetupManager: CodexPluginSetupManaging {
                 return state
             case .marketplaceOnly:
                 state = .conflict(
-                    reason: "이전 Blabee Plugin이 마이그레이션 전에 변경되었습니다."
+                    reason: PetL10n.text("The previous Blabee Plugin changed before migration.", korean: "이전 Blabee Plugin이 마이그레이션 전에 변경되었습니다.")
                 )
                 return state
             case .absent:
                 state = .conflict(
-                    reason: "이전 Blabee Marketplace가 마이그레이션 전에 변경되었습니다."
+                    reason: PetL10n.text("The previous Blabee Marketplace changed before migration.", korean: "이전 Blabee Marketplace가 마이그레이션 전에 변경되었습니다.")
                 )
                 return state
             case let .conflict(reason):
@@ -1556,12 +1579,12 @@ actor CodexPluginSetupManager: CodexPluginSetupManaging {
             state = legacy.pluginIsInstalled
                 ? .error(code: "legacy_plugin_remove_not_applied")
                 : .conflict(
-                    reason: "제거한 이전 Blabee Plugin이 마이그레이션 중 다시 나타났습니다."
+                    reason: PetL10n.text("The removed Blabee Plugin reappeared during migration.", korean: "제거한 이전 Blabee Plugin이 마이그레이션 중 다시 나타났습니다.")
                 )
             return state
         case .absent:
             state = .conflict(
-                reason: "이전 Blabee Marketplace가 마이그레이션 중 외부에서 변경되었습니다."
+                reason: PetL10n.text("The previous Blabee Marketplace was changed externally during migration.", korean: "이전 Blabee Marketplace가 마이그레이션 중 외부에서 변경되었습니다.")
             )
             return state
         case let .conflict(reason):
@@ -1595,7 +1618,7 @@ actor CodexPluginSetupManager: CodexPluginSetupManaging {
             return state
         case .installation:
             state = .conflict(
-                reason: "제거한 이전 Blabee Plugin이 마이그레이션 중 다시 나타났습니다."
+                reason: PetL10n.text("The removed Blabee Plugin reappeared during migration.", korean: "제거한 이전 Blabee Plugin이 마이그레이션 중 다시 나타났습니다.")
             )
             return state
         case let .conflict(reason):
@@ -1653,7 +1676,7 @@ actor CodexPluginSetupManager: CodexPluginSetupManaging {
         }
         guard legacyMarketplaces.count == legacyMarketplaceCandidates.count else {
             return .conflict(
-                reason: "이전 Blabee Marketplace 이름과 경로의 결합을 확인할 수 없습니다."
+                reason: PetL10n.text("Unable to verify the previous Blabee Marketplace's name and path binding.", korean: "이전 Blabee Marketplace 이름과 경로의 결합을 확인할 수 없습니다.")
             )
         }
         let currentMarketplaces = marketplaces.filter {
@@ -1674,7 +1697,7 @@ actor CodexPluginSetupManager: CodexPluginSetupManaging {
                   blabeePlugins.isEmpty
             else {
                 return .conflict(
-                    reason: "이전 Blabee Marketplace 제거 후 다른 Blabee 연결이 나타났습니다."
+                    reason: PetL10n.text("Another Blabee connection appeared after removing the previous Marketplace.", korean: "이전 Blabee Marketplace 제거 후 다른 Blabee 연결이 나타났습니다.")
                 )
             }
             return .absent
@@ -1684,7 +1707,7 @@ actor CodexPluginSetupManager: CodexPluginSetupManaging {
                 && plugin.pluginID == expected.pluginSelector
         }) else {
             return .conflict(
-                reason: "이전 Blabee Marketplace 제거 전에 다른 Blabee Plugin이 나타났습니다."
+                reason: PetL10n.text("Another Blabee Plugin appeared before removing the previous Marketplace.", korean: "이전 Blabee Marketplace 제거 전에 다른 Blabee Plugin이 나타났습니다.")
             )
         }
         guard legacyMarketplaces.count == 1,
@@ -1696,12 +1719,12 @@ actor CodexPluginSetupManager: CodexPluginSetupManaging {
                 == normalizedPath(expected.marketplaceRoot)
         else {
             return .conflict(
-                reason: "이전 Blabee Marketplace의 경로 또는 개수가 변경되었습니다."
+                reason: PetL10n.text("The previous Blabee Marketplace's path or count changed.", korean: "이전 Blabee Marketplace의 경로 또는 개수가 변경되었습니다.")
             )
         }
         guard marketplacePlugins.count <= 1 else {
             return .conflict(
-                reason: "이전 Blabee Marketplace에 여러 Plugin이 연결되어 있어 변경하지 않습니다."
+                reason: PetL10n.text("Multiple Plugins are connected to the previous Blabee Marketplace, so it will not be changed.", korean: "이전 Blabee Marketplace에 여러 Plugin이 연결되어 있어 변경하지 않습니다.")
             )
         }
         if let plugin = marketplacePlugins.first {
@@ -1712,7 +1735,7 @@ actor CodexPluginSetupManager: CodexPluginSetupManaging {
                     == normalizedPath(expected.pluginRoot)
             else {
                 return .conflict(
-                    reason: "이전 Blabee Plugin의 소유권 정보가 변경되었습니다."
+                    reason: PetL10n.text("The previous Blabee Plugin's ownership information changed.", korean: "이전 Blabee Plugin의 소유권 정보가 변경되었습니다.")
                 )
             }
         }
@@ -1733,7 +1756,7 @@ actor CodexPluginSetupManager: CodexPluginSetupManaging {
         }
         guard currentFilesystemIdentity == expected.filesystemIdentity else {
             return .conflict(
-                reason: "이전 Blabee Marketplace 또는 Plugin 파일이 변경되었습니다."
+                reason: PetL10n.text("The previous Blabee Marketplace or Plugin files changed.", korean: "이전 Blabee Marketplace 또는 Plugin 파일이 변경되었습니다.")
             )
         }
         return marketplacePlugins.isEmpty
@@ -1779,10 +1802,22 @@ actor CodexPluginSetupManager: CodexPluginSetupManaging {
             return executable
         }
         let executable = try executableQualifier(timeout)
-        _ = try remainingTimeout(
-            maximumMilliseconds: Self.inspectionTimeoutMilliseconds,
-            operation: operation
-        )
+        do {
+            _ = try remainingTimeout(
+                maximumMilliseconds: Self.inspectionTimeoutMilliseconds,
+                operation: operation
+            )
+        } catch {
+            // Keep an already observed result even when the enclosing budget
+            // expires before it can become this operation's execution selection.
+            operation.nativeFailureEvidence = .init(
+                stage: .nativeExecutable,
+                sourcePath: executable.sourceURL.path,
+                canonicalPath: executable.canonicalURL.path,
+                codexVersion: executable.version
+            )
+            throw error
+        }
         operation.executable = executable
         return executable
     }
@@ -1917,7 +1952,7 @@ actor CodexPluginSetupManager: CodexPluginSetupManaging {
               context.marketplaceIsExact,
               context.ownedPlugin != nil
         else {
-            state = .conflict(reason: "업데이트할 Blabee Plugin의 소유권을 확인할 수 없습니다.")
+            state = .conflict(reason: PetL10n.text("Unable to verify ownership of the Blabee Plugin to update.", korean: "업데이트할 Blabee Plugin의 소유권을 확인할 수 없습니다."))
             return state
         }
 
@@ -2147,7 +2182,7 @@ actor CodexPluginSetupManager: CodexPluginSetupManaging {
         } catch {
             operation.checkErrorCode = "codex_plugin_setup_bundle_unavailable"
             return Inspection(
-                state: .unavailable(reason: "Blabee 앱의 Plugin 리소스를 확인할 수 없습니다."),
+                state: .unavailable(reason: PetL10n.text("Unable to verify the Blabee app's Plugin resources.", korean: "Blabee 앱의 Plugin 리소스를 확인할 수 없습니다.")),
                 context: nil
             )
         }
@@ -2156,6 +2191,9 @@ actor CodexPluginSetupManager: CodexPluginSetupManaging {
         let executable: CodexPluginSetupQualifiedExecutable
         do {
             executable = try qualifiedExecutable(operation: &operation)
+        } catch let failure as CodexNativeQualificationFailure {
+            operation.nativeFailureEvidence = failure.evidence
+            return Inspection(state: .error(code: failure.diagnostic.rawValue), context: nil)
         } catch let error as CoordinatorError
             where error.code == "codex_plugin_setup_operation_timed_out"
                 || CodexNativeDiagnostic(rawValue: error.code) != nil
@@ -2165,7 +2203,7 @@ actor CodexPluginSetupManager: CodexPluginSetupManaging {
             operation.checkErrorCode = (error as? CoordinatorError)?.code
                 ?? "codex_plugin_setup_executable_unavailable"
             return Inspection(
-                state: .unavailable(reason: "안전하고 지원되는 Codex CLI를 찾을 수 없습니다."),
+                state: .unavailable(reason: PetL10n.text("Unable to find a safe, supported Codex CLI.", korean: "안전하고 지원되는 Codex CLI를 찾을 수 없습니다.")),
                 context: nil
             )
         }
@@ -2200,7 +2238,7 @@ actor CodexPluginSetupManager: CodexPluginSetupManaging {
         let namedMarketplaces = marketplaces.filter { $0.name == Self.marketplaceName }
         guard namedMarketplaces.count <= 1 else {
             return Inspection(
-                state: .conflict(reason: "blabee-app Marketplace 항목이 중복되어 있습니다."),
+                state: .conflict(reason: PetL10n.text("Duplicate blabee-app Marketplace entries found.", korean: "blabee-app Marketplace 항목이 중복되어 있습니다.")),
                 context: nil
             )
         }
@@ -2208,7 +2246,7 @@ actor CodexPluginSetupManager: CodexPluginSetupManaging {
         if let marketplace = namedMarketplaces.first {
             guard normalizedPath(marketplace.root) == normalizedPath(configuration.marketplaceRoot) else {
                 return Inspection(
-                    state: .conflict(reason: "같은 blabee-app 이름이 다른 경로에 연결되어 있습니다."),
+                    state: .conflict(reason: PetL10n.text("The same blabee-app name is connected to another path.", korean: "같은 blabee-app 이름이 다른 경로에 연결되어 있습니다.")),
                     context: nil
                 )
             }
@@ -2231,7 +2269,7 @@ actor CodexPluginSetupManager: CodexPluginSetupManaging {
         guard legacyMarketplaces.count == legacyMarketplaceCandidates.count else {
             return Inspection(
                 state: .conflict(
-                    reason: "이전 Blabee Marketplace 이름과 경로의 결합을 확인할 수 없습니다."
+                    reason: PetL10n.text("Unable to verify the previous Blabee Marketplace's name and path binding.", korean: "이전 Blabee Marketplace 이름과 경로의 결합을 확인할 수 없습니다.")
                 ),
                 context: nil
             )
@@ -2248,14 +2286,14 @@ actor CodexPluginSetupManager: CodexPluginSetupManaging {
         guard foreignMarketplacePlugins.isEmpty else {
             return Inspection(
                 state: .conflict(
-                    reason: "blabee-app Marketplace에 다른 Plugin이 연결되어 있어 자동 변경하지 않습니다."
+                    reason: PetL10n.text("Other Plugins are connected to the blabee-app Marketplace, so it will not be changed automatically.", korean: "blabee-app Marketplace에 다른 Plugin이 연결되어 있어 자동 변경하지 않습니다.")
                 ),
                 context: nil
             )
         }
         guard blabeePlugins.count <= 1 else {
             return Inspection(
-                state: .conflict(reason: "여러 Blabee Plugin 설치가 발견되어 자동 변경하지 않습니다."),
+                state: .conflict(reason: PetL10n.text("Multiple Blabee Plugin installations found. They will not be changed automatically.", korean: "여러 Blabee Plugin 설치가 발견되어 자동 변경하지 않습니다.")),
                 context: nil
             )
         }
@@ -2271,7 +2309,7 @@ actor CodexPluginSetupManager: CodexPluginSetupManaging {
                 guard legacyMarketplaces.isEmpty else {
                     return Inspection(
                         state: .conflict(
-                            reason: "현재 연결과 이전 Blabee 테스트 Marketplace가 함께 있어 자동 변경하지 않습니다."
+                            reason: PetL10n.text("Both the current connection and a previous Blabee test Marketplace exist. They will not be changed automatically.", korean: "현재 연결과 이전 Blabee 테스트 Marketplace가 함께 있어 자동 변경하지 않습니다.")
                         ),
                         context: nil
                     )
@@ -2292,7 +2330,7 @@ actor CodexPluginSetupManager: CodexPluginSetupManaging {
                 else {
                     return Inspection(
                         state: .conflict(
-                            reason: "이전 Blabee 테스트 연결의 소유권을 정확히 확인할 수 없습니다."
+                            reason: PetL10n.text("Unable to precisely verify ownership of the previous Blabee test connection.", korean: "이전 Blabee 테스트 연결의 소유권을 정확히 확인할 수 없습니다.")
                         ),
                         context: nil
                     )
@@ -2321,7 +2359,7 @@ actor CodexPluginSetupManager: CodexPluginSetupManaging {
                 }
             } else {
                 return Inspection(
-                    state: .conflict(reason: "기존 Blabee Plugin이 다른 Marketplace 또는 경로를 사용합니다."),
+                    state: .conflict(reason: PetL10n.text("The existing Blabee Plugin uses a different Marketplace or path.", korean: "기존 Blabee Plugin이 다른 Marketplace 또는 경로를 사용합니다.")),
                     context: nil
                 )
             }
@@ -2340,7 +2378,7 @@ actor CodexPluginSetupManager: CodexPluginSetupManaging {
             else {
                 return Inspection(
                     state: .conflict(
-                        reason: "Plugin 없이 남은 이전 Blabee 테스트 Marketplace의 소유권을 정확히 확인할 수 없습니다."
+                        reason: PetL10n.text("Unable to precisely verify ownership of the previous test Marketplace left without a Plugin.", korean: "Plugin 없이 남은 이전 Blabee 테스트 Marketplace의 소유권을 정확히 확인할 수 없습니다.")
                     ),
                     context: nil
                 )
@@ -2478,14 +2516,14 @@ actor CodexPluginSetupManager: CodexPluginSetupManaging {
         guard let marketplaceRoot else {
             throw CoordinatorError(
                 "codex_plugin_setup_resources_unavailable",
-                "Blabee 앱의 Resources 경로를 찾을 수 없습니다."
+                PetL10n.text("Unable to find the Blabee app's Resources path.", korean: "Blabee 앱의 Resources 경로를 찾을 수 없습니다.")
             )
         }
         let root = marketplaceRoot.standardizedFileURL
         guard root.isFileURL, root.path.hasPrefix("/") else {
             throw CoordinatorError(
                 "codex_plugin_setup_resources_invalid",
-                "Blabee 앱의 Resources 경로가 올바르지 않습니다."
+                PetL10n.text("The Blabee app's Resources path is invalid.", korean: "Blabee 앱의 Resources 경로가 올바르지 않습니다.")
             )
         }
         if requireStandardApplicationRoot,
@@ -2493,7 +2531,7 @@ actor CodexPluginSetupManager: CodexPluginSetupManaging {
         {
             throw CoordinatorError(
                 "codex_plugin_setup_nonstandard_app_location",
-                "Blabee를 /Applications 폴더로 옮긴 뒤 다시 연결하세요."
+                PetL10n.text("Move Blabee to /Applications, then reconnect.", korean: "Blabee를 /Applications 폴더로 옮긴 뒤 다시 연결하세요.")
             )
         }
 
@@ -2515,7 +2553,7 @@ actor CodexPluginSetupManager: CodexPluginSetupManaging {
         else {
             throw CoordinatorError(
                 "codex_plugin_setup_marketplace_manifest_invalid",
-                "Blabee 앱의 Marketplace 구성이 올바르지 않습니다."
+                PetL10n.text("The Blabee app's Marketplace configuration is invalid.", korean: "Blabee 앱의 Marketplace 구성이 올바르지 않습니다.")
             )
         }
 
@@ -2527,7 +2565,7 @@ actor CodexPluginSetupManager: CodexPluginSetupManaging {
         else {
             throw CoordinatorError(
                 "codex_plugin_setup_plugin_manifest_invalid",
-                "Blabee 앱의 Plugin 구성이 올바르지 않습니다."
+                PetL10n.text("The Blabee app's Plugin configuration is invalid.", korean: "Blabee 앱의 Plugin 구성이 올바르지 않습니다.")
             )
         }
         return BundledConfiguration(
@@ -2972,6 +3010,7 @@ actor CodexPluginSetupManager: CodexPluginSetupManaging {
     private struct OperationContext {
         let deadlineNanoseconds: UInt64
         var executable: CodexPluginSetupQualifiedExecutable?
+        var nativeFailureEvidence: CodexPluginCheckEvidence?
         var checkStage: CodexPluginCheckStage = .unknown
         var checkErrorCode: String?
 

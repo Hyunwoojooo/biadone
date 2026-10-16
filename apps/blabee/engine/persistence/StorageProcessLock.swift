@@ -7,12 +7,44 @@ package final class StorageProcessLock: @unchecked Sendable {
     private let lockURL: URL
     private let processMutex: NSLock
     private let allowParentCreation: Bool
+    private let acquisitionTimeout: Duration
+    private let now: @Sendable () -> ContinuousClock.Instant
+    private let pause: @Sendable (Duration) -> Void
 
-    package init(keyURL: URL, allowParentCreation: Bool) throws {
+    package convenience init(keyURL: URL, allowParentCreation: Bool) throws {
+        // Leave the rest of the Hook response budget for journal work and delivery.
+        try self.init(
+            keyURL: keyURL,
+            allowParentCreation: allowParentCreation,
+            acquisitionTimeout: .milliseconds(250),
+            now: { ContinuousClock.now },
+            pause: { duration in
+                let components = duration.components
+                var interval = timespec(
+                    tv_sec: Int(components.seconds),
+                    tv_nsec: Int(components.attoseconds / 1_000_000_000)
+                )
+                // An interrupted sleep returns to the same deadline check.
+                _ = nanosleep(&interval, nil)
+            }
+        )
+    }
+
+    // Internal timing injection keeps contention regressions independent of wall time.
+    init(
+        keyURL: URL,
+        allowParentCreation: Bool,
+        acquisitionTimeout: Duration,
+        now: @escaping @Sendable () -> ContinuousClock.Instant,
+        pause: @escaping @Sendable (Duration) -> Void
+    ) throws {
         let parent = keyURL.standardizedFileURL.deletingLastPathComponent()
         lockURL = parent.appendingPathComponent(".blabee-coordinator-freshness.lock", isDirectory: false)
         processMutex = Self.registry.mutex(for: Self.normalizedSystemAlias(lockURL.path))
         self.allowParentCreation = allowParentCreation
+        self.acquisitionTimeout = acquisitionTimeout
+        self.now = now
+        self.pause = pause
     }
 
     package func withLock<T>(_ operation: () throws -> T) throws -> T {
@@ -25,12 +57,14 @@ package final class StorageProcessLock: @unchecked Sendable {
     }
 
     private func withLock<T>(wait: Bool, _ operation: (Int32) throws -> T) throws -> T {
-        if wait {
-            processMutex.lock()
-        } else if !processMutex.try() {
-            throw CoordinatorError("freshness_lock_busy", "freshness storage is in use")
+        let deadline = wait ? now().advanced(by: acquisitionTimeout) : nil
+        while true {
+            try checkDeadline(deadline)
+            if processMutex.try() { break }
+            try pauseBeforeRetry(until: deadline)
         }
         defer { processMutex.unlock() }
+        try checkDeadline(deadline)
 
         let parent = try Self.openSecureParent(
             lockURL.deletingLastPathComponent(),
@@ -47,36 +81,57 @@ package final class StorageProcessLock: @unchecked Sendable {
             throw CoordinatorError("freshness_lock_unavailable", "cannot open freshness lock")
         }
         defer { close(descriptor) }
-        try Self.verifyLockFile(descriptor)
-        if wait {
-            try Self.acquire(descriptor)
-        } else {
-            guard flock(descriptor, LOCK_EX | LOCK_NB) == 0 else {
-                throw CoordinatorError("freshness_lock_busy", "freshness storage is in use")
-            }
-            var opened = stat()
-            var entry = stat()
-            guard fstat(descriptor, &opened) == 0,
-                  fstatat(parent, lockURL.lastPathComponent, &entry, AT_SYMLINK_NOFOLLOW) == 0,
-                  opened.st_dev == entry.st_dev,
-                  opened.st_ino == entry.st_ino,
-                  opened.st_nlink == 1
-            else {
-                throw CoordinatorError("freshness_lock_unavailable", "freshness lock identity changed")
-            }
-        }
+        _ = try Self.verifyLockFile(descriptor)
+        try acquire(descriptor, until: deadline)
         defer { _ = flock(descriptor, LOCK_UN) }
+
+        // Another owner may have replaced or changed the file while we waited.
+        let opened = try Self.verifyLockFile(descriptor)
+        var entry = stat()
+        guard fstatat(parent, lockURL.lastPathComponent, &entry, AT_SYMLINK_NOFOLLOW) == 0,
+              opened.st_dev == entry.st_dev,
+              opened.st_ino == entry.st_ino,
+              opened.st_mode == entry.st_mode,
+              opened.st_uid == entry.st_uid,
+              entry.st_nlink == 1
+        else {
+            throw CoordinatorError("freshness_lock_unavailable", "freshness lock identity changed")
+        }
+        try checkDeadline(deadline)
         return try operation(parent)
     }
 
-    private static func acquire(_ descriptor: Int32) throws {
-        while flock(descriptor, LOCK_EX) != 0 {
-            if errno == EINTR { continue }
+    private func acquire(_ descriptor: Int32, until deadline: ContinuousClock.Instant?) throws {
+        while true {
+            try checkDeadline(deadline)
+            if flock(descriptor, LOCK_EX | LOCK_NB) == 0 { return }
+            let failure = errno
+            if failure == EWOULDBLOCK || failure == EAGAIN || (failure == EINTR && deadline != nil) {
+                try pauseBeforeRetry(until: deadline)
+                continue
+            }
             throw CoordinatorError("freshness_lock_unavailable", "cannot acquire freshness lock")
         }
     }
 
-    private static func verifyLockFile(_ descriptor: Int32) throws {
+    private func checkDeadline(_ deadline: ContinuousClock.Instant?) throws {
+        if let deadline, now() >= deadline {
+            throw CoordinatorError("freshness_lock_busy", "freshness storage is in use")
+        }
+    }
+
+    private func pauseBeforeRetry(until deadline: ContinuousClock.Instant?) throws {
+        guard let deadline else {
+            throw CoordinatorError("freshness_lock_busy", "freshness storage is in use")
+        }
+        let instant = now()
+        guard instant < deadline else {
+            throw CoordinatorError("freshness_lock_busy", "freshness storage is in use")
+        }
+        pause(min(.milliseconds(5), instant.duration(to: deadline)))
+    }
+
+    private static func verifyLockFile(_ descriptor: Int32) throws -> stat {
         var info = stat()
         guard fstat(descriptor, &info) == 0 else {
             throw CoordinatorError("freshness_lock_unavailable", "cannot inspect freshness lock")
@@ -98,6 +153,12 @@ package final class StorageProcessLock: @unchecked Sendable {
             "freshness_lock_unavailable",
             "freshness lock owner mismatch"
         )
+        try require(
+            info.st_nlink == 1,
+            "freshness_lock_unavailable",
+            "freshness lock must have exactly one link"
+        )
+        return info
     }
 
     private static func openSecureParent(_ parent: URL, allowCreation: Bool) throws -> Int32 {

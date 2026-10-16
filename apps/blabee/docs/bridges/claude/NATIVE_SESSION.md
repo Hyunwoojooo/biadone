@@ -35,7 +35,7 @@ DB/key는 runtime의 `native-storage`, 실행 권한 잠금은 `native-authority
 | --- | --- |
 | `hook` | SessionStart / UserPromptSubmit / Stop / SessionEnd 관측 |
 | `bridge` | 연결 epoch, poll, probe 시작·ACK, 제안, claim, 완료 보고 |
-| `selector` | 기존 snapshot, 별도 버전 `pet.snapshot`, 현재 카드의 사용자 선택 |
+| `selector` | 기존 snapshot, 별도 버전 `pet.snapshot`, 현재 카드의 사용자 선택, `dismiss_interaction`으로 현재 제안 카드 닫기 |
 | `control` | snapshot, 세션 종료 |
 
 이 세션 모드에서는 저수준 `claude_bridge_v1`을 허용하지 않아 readiness나 Hook 경계를 우회할 수 없다. 기존 앱의 [사전 등록 ingress](PRODUCT_INGRESS.md)와 구별한다.

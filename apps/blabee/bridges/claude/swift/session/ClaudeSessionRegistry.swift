@@ -89,6 +89,8 @@ final class ClaudeSessionRegistry: @unchecked Sendable {
     private let freshnessFactory: FreshnessFactory
     private let clock: any CoordinatorContinuousClock
     private let wallNow: @Sendable () -> Date
+    private let petArrivalLedger: PetEventArrivalLedger
+    private let productAccessCheck: @Sendable () throws -> UInt64
     private let allowedChannelSources: Set<String>
     private let newID: @Sendable () -> UUID
     private let lock = NSLock()
@@ -107,7 +109,9 @@ final class ClaudeSessionRegistry: @unchecked Sendable {
          freshnessFactory: @escaping FreshnessFactory = { try KeychainFreshnessAnchorStore(account: $0) },
          clock: any CoordinatorContinuousClock = SystemCoordinatorContinuousClock(),
          wallNow: @escaping @Sendable () -> Date = { Date() },
-         newID: @escaping @Sendable () -> UUID = { UUID() }) throws {
+         newID: @escaping @Sendable () -> UUID = { UUID() },
+         petArrivalLedger: PetEventArrivalLedger = PetEventArrivalLedger(),
+         productAccessCheck: @escaping @Sendable () throws -> UInt64 = { 0 }) throws {
         guard OperationalRuntimeIdentity.isValid(runtimeIdentity), !allowedChannelSources.isEmpty else {
             throw CoordinatorError("claude_registry_configuration_invalid")
         }
@@ -120,6 +124,8 @@ final class ClaudeSessionRegistry: @unchecked Sendable {
         self.freshnessFactory = freshnessFactory
         self.clock = clock
         self.wallNow = wallNow
+        self.petArrivalLedger = petArrivalLedger
+        self.productAccessCheck = productAccessCheck
         self.newID = newID
         scopesURL = try ClaudeBridgeConfiguration.privateChild(of: self.rootURL, name: "scopes")
         authorityURL = try ClaudeBridgeConfiguration.privateChild(of: self.rootURL, name: "authority")
@@ -365,12 +371,12 @@ final class ClaudeSessionRegistry: @unchecked Sendable {
     /// Bounded in-memory directory. A busy scope returns its last verified
     /// descriptor, so one SQLite operation cannot block all other scopes.
     /// Actions always revalidate under that scope's serial executor.
-    func petSessions(afterScopeID: UUID? = nil, limit: Int = 32) throws -> [PetSessionDescriptor] {
+    func petSessions(afterScopeID: UUID? = nil, limit: Int = 32, refresh: Bool = true) throws -> [PetSessionDescriptor] {
         guard (1...33).contains(limit) else { throw CoordinatorError("claude_pet_invalid_request") }
         let (active, disconnected) = lock.withLock { (Array(entries.values), disconnectedPetSessions) }
         var values = disconnected
         for entry in active {
-            if entry.executionLock.try() {
+            if refresh, entry.executionLock.try() {
                 defer { entry.executionLock.unlock() }
                 // Read-only projection failures cannot initialize native state
                 // or turn a disk history record back into live authority.
@@ -403,7 +409,16 @@ final class ClaudeSessionRegistry: @unchecked Sendable {
         response.removeValue(forKey: "payload")
         do {
             let entry = try petEntry(target: target)
-            return try entry.executionLock.withLock {
+            // Reading every provider must not queue behind another scope's
+            // slow mutation. The Pet keeps a disabled last-known card and
+            // retries on its next ordinary poll; mutations keep their lock.
+            if checked.operation == "snapshot" {
+                guard entry.executionLock.try() else { throw CoordinatorError("claude_pet_unavailable") }
+            } else {
+                entry.executionLock.lock()
+            }
+            defer { entry.executionLock.unlock() }
+            return try {
                 let projection = try refreshPetPresentation(entry)
                 try requirePetTarget(target, entry: entry)
                 let identity = entry.mapping.authority
@@ -426,6 +441,20 @@ final class ClaudeSessionRegistry: @unchecked Sendable {
                     _ = try native.processProductTime(identity: identity, credential: entry.capabilities["selector"]!)
                     _ = try refreshPetPresentation(entry)
                     response["result"] = ["selection": payload, "status": "awaiting_claude_claim"]
+                case "dismiss_interaction":
+                    guard let native = entry.native else { throw CoordinatorError("claude_pet_unavailable") }
+                    let binding = try CoordinatorBinding(jsonObject: payload["binding"] as! [String: Any])
+                    guard binding.projectID == entry.mapping.coreProjectID,
+                          binding.sessionID == entry.mapping.coreSessionID else {
+                        throw CoordinatorError("claude_pet_binding_mismatch")
+                    }
+                    _ = try native.productDismiss(identity: identity, credential: entry.capabilities["selector"]!,
+                        binding: binding, interactionID: payload["interaction_id"] as! String,
+                        packetID: payload["packet_id"] as! String,
+                        revision: ExactJSONInteger.int64(payload["revision"], minimum: 1)!)
+                    _ = try native.processProductTime(identity: identity, credential: entry.capabilities["selector"]!)
+                    _ = try refreshPetPresentation(entry)
+                    response["result"] = ["dismissal": payload, "dismissed": true]
                 case "readiness.begin":
                     guard let native = entry.native else { throw CoordinatorError("claude_pet_unavailable") }
                     let data = try native.beginProductReadiness(identity: identity, credential: entry.capabilities["selector"]!)
@@ -439,7 +468,7 @@ final class ClaudeSessionRegistry: @unchecked Sendable {
                 let encoded = try codec.encodeResponse(response, matching: checked,
                     connection: .init(serviceIncarnation: serviceIncarnation))
                 return try entry.authority.withMutationFence(ticket) { encoded }
-            }
+            }()
         } catch {
             response.removeValue(forKey: "result")
             response["ok"] = false
@@ -514,6 +543,15 @@ final class ClaudeSessionRegistry: @unchecked Sendable {
 
     private func setPetPresentation(_ entry: Entry, state: PetSessionDescriptor.State,
                                     projection: [String: Any]?, forceAdvance: Bool = false) throws {
+        // Record at ingress/maintenance publication, before any UI chooses to
+        // read this scope. Repeated snapshots keep the first admission number.
+        let scope = entry.mapping.authority.scopeID.uuidString.lowercased()
+        let keys = Set((projection?["cards"] as? [[String: Any]] ?? []).compactMap { card -> PetEventArrivalLedger.Key? in
+            guard let packet = card["packet"] as? [String: Any], let id = packet["interaction_id"] as? String else { return nil }
+            petArrivalLedger.record(scopeID: scope, kind: "decision", eventID: id)
+            return .init(scopeID: scope, kind: "decision", eventID: id)
+        })
+        petArrivalLedger.retain(scopeID: scope, eventKeys: keys)
         // Countdown changes are presentation details, not permission changes.
         // Expiry/readiness/selection/routing changes remain in this digest.
         func stable(_ value: Any) -> Any {
@@ -540,6 +578,7 @@ final class ClaudeSessionRegistry: @unchecked Sendable {
     /// Registry lock is held. No native/core operation or scope execution lock
     /// is taken while recording these bounded, non-authoritative UI entries.
     private func rememberPetDisconnectLocked(_ entry: Entry) {
+        petArrivalLedger.removeScope(entry.mapping.authority.scopeID.uuidString.lowercased())
         let descriptor = entry.petDescriptor
         disconnectedPetSessions.removeAll { $0.mapping.authority.scopeID == descriptor.mapping.authority.scopeID }
         disconnectedPetSessions.append(PetSessionDescriptor(mapping: descriptor.mapping, state: .disconnected,
@@ -743,6 +782,11 @@ final class ClaudeSessionRegistry: @unchecked Sendable {
         return try entry.executionLock.withLock {
             _ = try entry.authority.authorize(identity: identity)
             if entry.native == nil {
+                // A poll cannot bootstrap stores or manufacture a bridge or
+                // waiter that no authenticated open/observation has created.
+                guard !["bridge.poll", "hook.poll", "hook.cancel"].contains(request.operation) else {
+                    throw CoordinatorError("claude_product_unavailable")
+                }
                 do {
                     entry.native = try entry.metadata.withMutation(operationID: UUID(),
                         readCoreCheckpoint: { try Self.checkpoint(journal: entry.journal, freshness: entry.coreFreshness) }) {
@@ -766,7 +810,8 @@ final class ClaudeSessionRegistry: @unchecked Sendable {
                    && (object["payload"] as? [String: Any])?["source"] as? String == "startup") {
                 _ = try native.beginInitialProductReadiness(identity: identity, credential: entry.capabilities["selector"]!)
             }
-            if request.operation != "bridge.poll", case .active = entry.authority.snapshot() {
+            if !["bridge.poll", "hook.poll", "hook.cancel"].contains(request.operation),
+               case .active = entry.authority.snapshot() {
                 do {
                     _ = try native.processProductTime(identity: identity,
                         credential: entry.capabilities["selector"]!)
@@ -829,7 +874,7 @@ final class ClaudeSessionRegistry: @unchecked Sendable {
                     authority.revoke(reason: .serviceReplaced)
                     throw error
                 }
-            }, initialStart: entry.initialStart)
+            }, initialStart: entry.initialStart, productAccessCheck: productAccessCheck)
         entry.initialStart = nil
         return native
     }

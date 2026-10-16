@@ -13,6 +13,8 @@ const mcp = JSON.parse(readFileSync(process.argv[3], 'utf8')).mcpServers['blabee
 let phase = 'startup';
 let child;
 let childClosed;
+let stopChild;
+let stopClosed;
 let nextID = 0;
 const replies = new Map();
 const notifications = [];
@@ -94,45 +96,61 @@ try {
   });
   const initialized = await request('initialize', { protocolVersion: '2025-11-25', capabilities: {},
     clientInfo: { name: 'cp05-automated-fixture', version: '1' } });
-  assert.ok(initialized.capabilities.experimental['claude/channel']);
+  assert.equal(initialized.capabilities.experimental, undefined);
   send({ method: 'notifications/initialized' });
   const listed = await request('tools/list', {});
   assert.deepEqual(listed.tools.map(value => value.name), ['check_connection_v1', 'ack_readiness_probe_v1',
     'emit_decision_v1', 'claim_selection_v1', 'complete_selection_v1']);
   phase = 'readiness';
   const probe = await tool('check_connection_v1');
-  const notification = await waitFor(() => notifications.find(value => value.method === 'notifications/claude/channel'
-    && value.params?.meta?.probe_id === probe.probe_id));
-  assert.equal(notification.params.meta.probe_id, probe.probe_id);
-  const values = JSON.parse(notification.params.content.split('\n').at(-1));
-  const promptID = randomUUID();
-  const wrapper = `<channel source="blabee-claude" kind="readiness_probe" probe_id="${probe.probe_id}">\n${notification.params.content}\n</channel>`;
-  const observed = hook('UserPromptSubmit', { prompt_id: promptID, prompt: wrapper });
-  assert.ok(observed.hookSpecificOutput.additionalContext.includes(`boundary_id=${boundary}`));
-  assert.equal((await tool('ack_readiness_probe_v1', values)).acknowledged, true);
+  assert.match(probe.nonce, /^[a-f0-9]{64}$/);
+  assert.equal((await tool('ack_readiness_probe_v1', { probe_id: probe.probe_id, nonce: probe.nonce })).acknowledged, true);
+  assert.equal(notifications.some(value => value.method === 'notifications/claude/channel'), false);
   phase = 'proposal';
   const packet = await tool('emit_decision_v1', { boundary_id: boundary, proposal: {
     proposal_id: randomUUID(), task_goal: 'Exercise the installed product bridge.',
-    outcome: { status: 'completed', summary: 'The fixture acknowledged its Channel.' }, reported_side_effects: [],
+    outcome: { status: 'completed', summary: 'The fixture explicitly acknowledged its MCP probe.' }, reported_side_effects: [],
     options: ['a', 'b'].map(id => ({ id, title: `Read ${id}`, description: `Inspect ${id}`,
       task: `Read fixture ${id}`, constraints: ['Do not modify files.'], done_when: 'Report the observed value.' })),
   } });
   assert.equal(packet.revision, 1);
   assert.match(packet.packet_id, /^claude_packet_/);
-  hook('Stop', { prompt_id: promptID, background_tasks: [], session_crons: [] });
+  phase = 'stop_waiter';
+  const stop = settings.hooks.Stop[0].hooks[0];
+  assert.equal(stop.asyncRewake, true);
+  stopChild = spawn(stop.command, stop.args, { env: process.env, cwd, stdio: ['pipe', 'pipe', 'pipe'] });
+  let stopOutput = '';
+  stopChild.stdout.on('data', chunk => { stopOutput += chunk.toString('utf8'); });
+  stopChild.stderr.on('data', chunk => { stopOutput += chunk.toString('utf8'); });
+  stopClosed = new Promise(resolveClose => stopChild.once('close', resolveClose));
+  stopChild.stdin.end(JSON.stringify({ session_id: nativeID, cwd, hook_event_name: 'Stop', prompt_id: initialPrompt,
+    background_tasks: [], session_crons: [] }));
+  // The real Hook process must still own its waiter after its first 500ms poll.
+  await new Promise(resolveWait => setTimeout(resolveWait, 750));
+  assert.equal(stopChild.exitCode, null);
   phase = 'compact';
-  const compact = hook('SessionStart', { source: 'compact', prompt_id: promptID });
+  const compact = hook('SessionStart', { source: 'compact', prompt_id: initialPrompt });
   const newBoundary = compact.hookSpecificOutput.additionalContext.match(/boundary_id=([a-f0-9-]{36})/)?.[1];
   assert.ok(newBoundary && newBoundary !== boundary);
-  hook('StopFailure', { prompt_id: promptID, error: 'server_error' });
+  const stopStatus = await waitFor(() => stopChild.exitCode ?? undefined);
+  assert.equal(stopStatus, 0);
+  await stopClosed;
+  assert.equal(stopOutput, '');
+  hook('StopFailure', { prompt_id: initialPrompt, error: 'server_error' });
   phase = 'session_end';
   hook('SessionEnd');
   process.stdout.write(JSON.stringify({ ok: true, hookEvents: 5, tools: 5, channelAcknowledged: true,
+    mcpAcknowledged: true, stopWaiterCancelled: true, channelNotifications: false,
     proposalSaved: true, compactRebound: true, sessionEnded: true, realModel: false }) + '\n');
 } catch {
   process.stderr.write(`[cp05-fixture] failed:${phase}\n`);
   process.exitCode = 1;
 } finally {
+  if (stopChild && stopChild.exitCode === null) {
+    stopChild.kill('SIGTERM');
+    const timer = setTimeout(() => stopChild.kill('SIGKILL'), 2000);
+    timer.unref(); await stopClosed; clearTimeout(timer);
+  }
   if (child) {
     child.stdin.end();
     const timer = setTimeout(() => child.kill('SIGKILL'), 2000);

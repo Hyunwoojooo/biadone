@@ -47,7 +47,7 @@ private final class IngressFixture {
     var adapters: [String: ClaudeCoreAdapter] = [:]
     var ingress: ClaudeBridgeIngress!
 
-    init(count: Int = 2) throws {
+    init(count: Int = 2, productAccessCheck: @escaping @Sendable () throws -> UInt64 = { 0 }) throws {
         var root = URL(fileURLWithPath: #filePath)
         for _ in 0..<4 { root.deleteLastPathComponent() }
         directory = root.appendingPathComponent("build/shared-engine/ingress-\(UUID().uuidString)")
@@ -68,7 +68,7 @@ private final class IngressFixture {
             adapters[scope.scopeID] = try ClaudeCoreAdapter(journal: journal)
         }
         ingress = try ClaudeBridgeIngress(scopes: scopes, adapters: adapters, secretCorpus: corpus,
-                                          now: { [clock] in clock.read() })
+                                          now: { [clock] in clock.read() }, productAccessCheck: productAccessCheck)
     }
     deinit {
         ingress = nil
@@ -137,6 +137,17 @@ private func selected(_ fixture: IngressFixture, scope: Int = 0) throws -> [Stri
 
 @Suite("Authenticated Claude ingress")
 struct ClaudeIngressTests {
+    @Test("Legacy configured scopes also bind action claims to the original account authority")
+    func productAccessGeneration() throws {
+        let clock = IngressNow()
+        let fixture = try IngressFixture(productAccessCheck: { UInt64(clock.read().timeIntervalSince1970) })
+        _ = try selected(fixture)
+        clock.advance(1)
+        reject("product_access_changed") {
+            _ = try fixture.call("claim", fields: ["binding": ingressBinding(), "selection_id": "fixture-selection"])
+        }
+    }
+
     @Test("Configured credentials and scope identities validate before storage is created")
     func configuration() throws {
         let now = Date()

@@ -62,8 +62,8 @@ struct PetProductEnvironment: Codable, Equatable, Hashable, Sendable {
         Self(appVersion: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "unknown",
              appBuild: Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "unknown",
              osMajor: String(ProcessInfo.processInfo.operatingSystemVersion.majorVersion),
-             // The app's actual displayed UI is Korean; locale is not a proxy.
-             uiLanguage: .ko)
+             // Report the app preference, independently of the system locale.
+             uiLanguage: PetL10n.language == .korean ? .ko : .en)
     }
 
     init(appVersion: String, appBuild: String, osMajor: String, uiLanguage: PetProductUILanguage) {

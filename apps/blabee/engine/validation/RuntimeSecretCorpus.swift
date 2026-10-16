@@ -23,7 +23,7 @@ public final class RuntimeSecretCorpus: @unchecked Sendable {
     }
 
     public func registerKnownSecrets(inJSONObject value: Any) {
-        walk(value) { key, candidate in
+        walkKnownSecretFields(value) { key, candidate in
             guard Self.knownSecretKeys.contains(key) else { return }
             register(candidate)
         }
@@ -35,12 +35,8 @@ public final class RuntimeSecretCorpus: @unchecked Sendable {
 
     public func containsKnownSecret(inJSONObject value: Any) -> Bool {
         let current = snapshot()
-        var found = false
-        walk(value) { _, candidate in
-            let data = Data(candidate.utf8)
-            if current.contains(where: { data.range(of: $0) != nil }) { found = true }
-        }
-        return found
+        guard !current.isEmpty else { return false }
+        return containsKnownSecret(in: value, matching: current)
     }
 
     public func assertNoKnownSecret(in data: Data) throws {
@@ -65,20 +61,47 @@ public final class RuntimeSecretCorpus: @unchecked Sendable {
         return secrets
     }
 
-    private func walk(_ value: Any, visit: (_ key: String, _ string: String) -> Void) {
+    // Registration stays limited to typed secret fields. Merely observing a
+    // public string (including a root or array value) must not enroll it.
+    private func walkKnownSecretFields(_ value: Any, visit: (_ key: String, _ string: String) -> Void) {
         if let object = value as? [String: Any] {
             for (key, child) in object {
                 if let string = child as? String { visit(key, string) }
-                walk(child, visit: visit)
+                walkKnownSecretFields(child, visit: visit)
             }
         } else if let array = value as? [Any] {
-            for child in array { walk(child, visit: visit) }
+            for child in array { walkKnownSecretFields(child, visit: visit) }
         }
+    }
+
+    // Detection covers every decoded string. The canonical byte scan alone
+    // cannot find a secret whose quotes, backslashes, or control bytes are
+    // escaped in JSON, including when that secret appears in an object key.
+    private func containsKnownSecret(in value: Any, matching current: [Data]) -> Bool {
+        if let string = value as? String {
+            let data = Data(string.utf8)
+            return current.contains { data.range(of: $0) != nil }
+        }
+        if let object = value as? [String: Any] {
+            for (key, child) in object {
+                if containsKnownSecret(in: key, matching: current)
+                    || containsKnownSecret(in: child, matching: current) {
+                    return true
+                }
+            }
+        } else if let array = value as? [Any] {
+            for child in array where containsKnownSecret(in: child, matching: current) {
+                return true
+            }
+        }
+        return false
     }
 
     private static let knownSecretKeys: Set<String> = [
         "continuation_token",
         "correlation_token",
         "raw_continuation_token",
+        "access_token",
+        "refresh_token",
     ]
 }

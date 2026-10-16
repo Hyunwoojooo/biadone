@@ -23,11 +23,12 @@ const voiceFixtureFiles = [
   "licenses/PCRE2.md", "licenses/libffi.txt", "licenses/proxy-libintl.txt", "licenses/sljit.txt", "licenses/zlib.txt",
 ].map((path) => `${voiceRoot}/${path}`);
 
-async function fixture(t, { voice = false, version = voice ? "0.155.1" : "0.153.4" } = {}) {
+async function fixture(t, { voice = false, version = voice ? "0.163.0" : "0.153.4", bundledShell = version !== "0.163.0" } = {}) {
   const directory = await realpath(await mkdtemp(join(tmpdir(), "blabee-codex-qualification-fixture-")));
   t.after(() => rm(directory, { recursive: true, force: true }));
   const runtimeDir = join(directory, "runtime");
-  const executables = ["bin/codex", "bin/codex-code-mode-host", "codex-path/rg", "codex-resources/zsh/bin/zsh"];
+  const executables = ["bin/codex", "bin/codex-code-mode-host", "codex-path/rg"];
+  if (bundledShell) executables.push("codex-resources/zsh/bin/zsh");
   for (const name of executables) {
     await mkdir(dirname(join(runtimeDir, name)), { recursive: true, mode: 0o700 });
     // Inert fixture bytes are never executed. Only the injected runner sees them.
@@ -87,77 +88,97 @@ test("fixture evidence binds package contract checks without claiming real runti
   assert.ok(f.calls.every((call) => call.options.env === env));
 });
 
-test("0.155.1 arm64 requires the complete voice layout and verifies every native resource before CLI execution", async (t) => {
-  const f = await fixture(t, { voice: true });
-  const report = await qualifyCodexCompatibility(f.options, f.dependencies);
-  assert.equal(report.status, "fixture_passed", JSON.stringify(report.failure));
-  assert.equal(report.package.files.length, 42);
-  assert.ok(report.testedCapabilities.includes("voice-resource-manifest"));
-  assert.ok(report.unverified.includes("voice capture and audio processing"));
-  const trustCalls = f.calls.filter((call) => call.command === "/usr/bin/codesign");
-  assert.equal(trustCalls.length, 60);
-  assert.ok(f.calls.slice(0, 60).every((call) => call.command === "/usr/bin/codesign"));
-  for (const path of voiceFixtureFiles.filter((name) => name.endsWith(".dylib") || name.endsWith("/codex-voice-host"))) {
-    const checks = trustCalls.filter((call) => call.args.at(-1) === join(f.runtimeDir, path));
-    assert.equal(checks.length, 2, path);
-    assert.ok(checks.some((call) => call.args.some((argument) => argument.includes('certificate leaf[subject.OU] = "2DC432GLL2"') && argument.includes('identifier "com.openai.codex.voice'))));
-    assert.ok(checks.some((call) => call.args.includes("-R=notarized") && call.args.includes("--check-notarization")));
-  }
-  assert.equal(trustCalls.some((call) => call.args.at(-1).endsWith("/runtime.json")), false);
-  assert.deepEqual(report.publication, { productionEligible: false, approvalRequired: true, catalogChanged: false });
-});
-
-test("0.155.0 uses the same complete voice contract with its own exact manifest version", async (t) => {
-  const f = await fixture(t, { voice: true, version: "0.155.0" });
-  const report = await qualifyCodexCompatibility(f.options, f.dependencies);
-  assert.equal(report.status, "fixture_passed", JSON.stringify(report.failure));
-  assert.equal(report.package.manifest.version, "0.155.0");
-  assert.equal(report.package.files.length, 42);
-  assert.equal(f.calls.filter((call) => call.command === "/usr/bin/codesign").length, 60);
-  assert.ok(report.testedCapabilities.includes("voice-resource-manifest"));
-});
-
-test("voice layout rejects omitted resources, unknown files and unreviewed version or target combinations", async (t) => {
-  for (const kind of ["host", "library", "license", "manifest", "extra", "version", "target", "entire-voice-layout"]) {
-    const f = await fixture(t, { voice: kind !== "entire-voice-layout", version: kind === "version" ? "0.155.2" : "0.155.1" });
-    const missing = { host: "bin/codex-voice-host", library: "lib/libopus.0.dylib", license: "licenses/Opus.txt", manifest: "manifest.json" }[kind];
-    if (missing) await rm(join(f.runtimeDir, voiceRoot, missing));
-    if (kind === "extra") await writeFile(join(f.runtimeDir, voiceRoot, "plugins/unreviewed.dylib"), "extra");
-    if (kind === "target") f.dependencies.arch = "x64";
+for (const version of ["0.155.0", "0.155.1", "0.156.0", "0.156.1", "0.157.0", "0.157.1", "0.158.0", "0.159.0", "0.159.1", "0.159.2", "0.159.3", "0.160.0", "0.160.1", "0.161.0", "0.162.0", "0.162.1", "0.163.0"]) {
+  test(`${version} arm64 requires the complete voice layout and verifies every native resource before CLI execution`, async (t) => {
+    const f = await fixture(t, { voice: true, version });
     const report = await qualifyCodexCompatibility(f.options, f.dependencies);
-    assert.equal(report.failure.code, "package_layout_invalid", kind);
-    assert.equal(f.calls.length, 0, kind);
-  }
-});
-
-test("voice metadata must bind every declared resource hash to the exact version and target", async (t) => {
-  for (const kind of ["version", "target", "hash", "missing-hash", "extra-hash", "oversized"]) {
-    const f = await fixture(t, { voice: true });
-    const path = join(f.runtimeDir, voiceRoot, "manifest.json");
-    const manifest = JSON.parse(await readFile(path, "utf8"));
-    if (kind === "version") manifest.appVersion = "0.155.2";
-    if (kind === "target") manifest.voiceTarget = "x86_64-apple-darwin";
-    if (kind === "hash") manifest.sha256[`${voiceRoot}/runtime.json`] = "0".repeat(64);
-    if (kind === "missing-hash") delete manifest.sha256[`${voiceRoot}/licenses/Opus.txt`];
-    if (kind === "extra-hash") manifest.sha256[`${voiceRoot}/extra`] = "0".repeat(64);
-    await writeFile(path, kind === "oversized" ? " ".repeat(16_385) : JSON.stringify(manifest));
-    const report = await qualifyCodexCompatibility(f.options, f.dependencies);
-    assert.equal(report.failure.code, kind === "oversized" ? "package_layout_invalid" : "package_manifest_mismatch", kind);
-    assert.equal(f.calls.length, 0, kind);
-  }
-});
-
-test("added native signature or notarization failures stop before candidate CLI execution", async (t) => {
-  for (const path of ["bin/codex-voice-host", "lib/libopus.0.dylib", "plugins/libgstopus.dylib"]) {
-    for (const notarization of [false, true]) {
-      const f = await fixture(t, { voice: true });
-      const report = await qualifyCodexCompatibility(f.options, { ...f.dependencies, run: async (...args) => {
-        const result = await f.run(...args);
-        return args[1].at(-1) === join(f.runtimeDir, voiceRoot, path) && args[1].includes("-R=notarized") === notarization ? { ...result, code: 1 } : result;
-      } });
-      assert.equal(report.failure.code, notarization ? "notarization_unverified" : "signature_invalid", path);
-      assert.equal(f.calls.some((call) => call.command.endsWith("/bin/codex")), false, path);
+    assert.equal(report.status, "fixture_passed", JSON.stringify(report.failure));
+    assert.equal(report.package.manifest.version, version);
+    assert.equal(report.package.files.length, version === "0.163.0" ? 41 : 42);
+    assert.ok(report.testedCapabilities.includes("voice-resource-manifest"));
+    assert.ok(report.unverified.includes("voice capture and audio processing"));
+    const trustCalls = f.calls.filter((call) => call.command === "/usr/bin/codesign");
+    const expectedTrustChecks = version === "0.163.0" ? 58 : 60;
+    assert.equal(trustCalls.length, expectedTrustChecks);
+    assert.ok(f.calls.slice(0, expectedTrustChecks).every((call) => call.command === "/usr/bin/codesign"));
+    assert.equal(trustCalls.some((call) => call.args.at(-1).endsWith("/zsh/bin/zsh")), version !== "0.163.0");
+    for (const path of voiceFixtureFiles.filter((name) => name.endsWith(".dylib") || name.endsWith("/codex-voice-host"))) {
+      const checks = trustCalls.filter((call) => call.args.at(-1) === join(f.runtimeDir, path));
+      assert.equal(checks.length, 2, path);
+      assert.ok(checks.some((call) => call.args.some((argument) => argument.includes('certificate leaf[subject.OU] = "2DC432GLL2"') && argument.includes('identifier "com.openai.codex.voice'))));
+      assert.ok(checks.some((call) => call.args.includes("-R=notarized") && call.args.includes("--check-notarization")));
     }
+    assert.equal(trustCalls.some((call) => call.args.at(-1).endsWith("/runtime.json")), false);
+    assert.deepEqual(report.publication, { productionEligible: false, approvalRequired: true, catalogChanged: false });
+  });
+}
+
+for (const [version, unreviewedVersion] of [
+  ["0.156.0", "0.156.2"], ["0.156.1", "0.156.2"],
+  ["0.157.0", "0.157.2"], ["0.157.1", "0.157.2"],
+  ["0.158.0", "0.158.1"], ["0.159.0", "0.159.4"],
+  ["0.159.1", "0.159.4"], ["0.159.2", "0.159.4"],
+  ["0.159.3", "0.159.4"], ["0.160.0", "0.160.2"],
+  ["0.160.1", "0.160.2"], ["0.161.0", "0.161.1"],
+  ["0.162.0", "0.162.2"], ["0.162.1", "0.162.2"],
+  ["0.163.0", "0.163.1"],
+]) {
+  test(`${version} voice layout rejects omitted resources, unknown files and unreviewed version or target combinations`, async (t) => {
+    for (const kind of ["host", "library", "license", "manifest", "extra", "version", "target", "entire-voice-layout"]) {
+      const f = await fixture(t, { voice: kind !== "entire-voice-layout", version: kind === "version" ? unreviewedVersion : version, bundledShell: version !== "0.163.0" });
+      const missing = { host: "bin/codex-voice-host", library: "lib/libopus.0.dylib", license: "licenses/Opus.txt", manifest: "manifest.json" }[kind];
+      if (missing) await rm(join(f.runtimeDir, voiceRoot, missing));
+      if (kind === "extra") await writeFile(join(f.runtimeDir, voiceRoot, "plugins/unreviewed.dylib"), "extra");
+      if (kind === "target") f.dependencies.arch = "x64";
+      const report = await qualifyCodexCompatibility(f.options, f.dependencies);
+      assert.equal(report.failure.code, "package_layout_invalid", kind);
+      assert.equal(f.calls.length, 0, kind);
+    }
+  });
+
+  test(`${version} voice metadata must bind every declared resource hash to the exact version and target`, async (t) => {
+    for (const kind of ["version", "target", "hash", "missing-hash", "extra-hash", "oversized"]) {
+      const f = await fixture(t, { voice: true, version });
+      const path = join(f.runtimeDir, voiceRoot, "manifest.json");
+      const manifest = JSON.parse(await readFile(path, "utf8"));
+      if (kind === "version") manifest.appVersion = unreviewedVersion;
+      if (kind === "target") manifest.voiceTarget = "x86_64-apple-darwin";
+      if (kind === "hash") manifest.sha256[`${voiceRoot}/runtime.json`] = "0".repeat(64);
+      if (kind === "missing-hash") delete manifest.sha256[`${voiceRoot}/licenses/Opus.txt`];
+      if (kind === "extra-hash") manifest.sha256[`${voiceRoot}/extra`] = "0".repeat(64);
+      await writeFile(path, kind === "oversized" ? " ".repeat(16_385) : JSON.stringify(manifest));
+      const report = await qualifyCodexCompatibility(f.options, f.dependencies);
+      assert.equal(report.failure.code, kind === "oversized" ? "package_layout_invalid" : "package_manifest_mismatch", kind);
+      assert.equal(f.calls.length, 0, kind);
+    }
+  });
+
+  test(`${version} added native signature or notarization failures stop before candidate CLI execution`, async (t) => {
+    for (const path of ["bin/codex-voice-host", "lib/libopus.0.dylib", "plugins/libgstopus.dylib"]) {
+      for (const notarization of [false, true]) {
+        const f = await fixture(t, { voice: true, version });
+        const report = await qualifyCodexCompatibility(f.options, { ...f.dependencies, run: async (...args) => {
+          const result = await f.run(...args);
+          return args[1].at(-1) === join(f.runtimeDir, voiceRoot, path) && args[1].includes("-R=notarized") === notarization ? { ...result, code: 1 } : result;
+        } });
+        assert.equal(report.failure.code, notarization ? "notarization_unverified" : "signature_invalid", path);
+        assert.equal(f.calls.some((call) => call.command.endsWith("/bin/codex")), false, path);
+      }
+    }
+  });
+}
+
+test("retired bundled shell and partial older packages fail before any child is launched", async (t) => {
+  for (const [version, bundledShell, voice] of [
+    ["0.163.0", true, true],
+    ["0.162.1", false, true],
+    ["0.155.0", false, true],
+    ["0.153.4", false, false],
+  ]) {
+    const f = await fixture(t, { version, bundledShell, voice });
+    const report = await qualifyCodexCompatibility(f.options, f.dependencies);
+    assert.equal(report.failure.code, "package_layout_invalid", version);
+    assert.equal(f.calls.length, 0, version);
   }
 });
 

@@ -31,11 +31,11 @@ enum PetShortcutIntent: String, Codable, Sendable, CaseIterable, Hashable {
 
     var displayName: String {
         switch self {
-        case .toggle: "Pet 열기/닫기"
-        case .slot1: "1번 선택"
-        case .slot2: "2번 선택"
-        case .slot3: "3번 선택"
-        case .slot4: "4번 선택"
+        case .toggle: PetL10n.text("Open/Close Pet", korean: "Pet 열기/닫기")
+        case .slot1: PetL10n.text("Choice 1", korean: "1번 선택")
+        case .slot2: PetL10n.text("Choice 2", korean: "2번 선택")
+        case .slot3: PetL10n.text("Choice 3", korean: "3번 선택")
+        case .slot4: PetL10n.text("Choice 4", korean: "4번 선택")
         }
     }
 }
@@ -109,11 +109,11 @@ enum PetShortcutConfigurationIssue: Sendable, Equatable {
     var message: String {
         switch self {
         case .unsupported(let intent):
-            "\(intent.displayName)에 지원하지 않는 키 조합이 있습니다."
+            PetL10n.text("\(intent.displayName) uses an unsupported key combination.", korean: "\(intent.displayName)에 지원하지 않는 키 조합이 있습니다.")
         case .duplicate(let owner, let duplicate):
-            "\(owner.displayName)와 \(duplicate.displayName)에 같은 단축키를 사용할 수 없습니다."
+            PetL10n.text("\(owner.displayName) and \(duplicate.displayName) cannot use the same shortcut.", korean: "\(owner.displayName)와 \(duplicate.displayName)에 같은 단축키를 사용할 수 없습니다.")
         case .previewCollision(let owner, let slot):
-            "\(owner.displayName)와 \(slot)번 미리보기에 같은 단축키를 사용할 수 없습니다."
+            PetL10n.text("\(owner.displayName) and preview \(slot) cannot use the same shortcut.", korean: "\(owner.displayName)와 \(slot)번 미리보기에 같은 단축키를 사용할 수 없습니다.")
         }
     }
 }
@@ -185,7 +185,7 @@ enum PetShortcutCatalog {
     static func displayLabel(for shortcut: PetShortcut) -> String {
         guard let modifier = PetShortcutModifierPreset(modifiers: shortcut.modifiers),
               let key = keys.first(where: { $0.keyCode == shortcut.keyCode })
-        else { return "지원되지 않음" }
+        else { return PetL10n.text("Unsupported", korean: "지원되지 않음") }
         return modifier.displayLabel + key.displayLabel
     }
 }
@@ -464,14 +464,14 @@ struct PetShortcutApplyFailure: Sendable, Equatable {
 
     var message: String {
         let reason = switch status {
-        case .registered: "알 수 없는 등록 상태"
-        case .inactive: "등록되지 않음"
-        case .internalCollision: "설정 내부 충돌"
-        case .systemCollision: "macOS 단축키 충돌"
+        case .registered: PetL10n.text("Unknown registration status", korean: "알 수 없는 등록 상태")
+        case .inactive: PetL10n.text("Not registered", korean: "등록되지 않음")
+        case .internalCollision: PetL10n.text("Conflicting settings", korean: "설정 내부 충돌")
+        case .systemCollision: PetL10n.text("macOS shortcut conflict", korean: "macOS 단축키 충돌")
         case .registrationFailure(let status):
-            if let status { "등록 실패 (\(status))" } else { "등록 실패" }
+            if let status { PetL10n.text("Registration failed (\(status))", korean: "등록 실패 (\(status))") } else { PetL10n.text("Registration failed", korean: "등록 실패") }
         }
-        let name = isPreview ? intent.slot.map { "\($0)번 미리보기" } ?? intent.displayName
+        let name = isPreview ? intent.slot.map { PetL10n.text("Preview \($0)", korean: "\($0)번 미리보기") } ?? intent.displayName
             : intent.displayName
         return "\(name): \(reason)"
     }
@@ -494,16 +494,16 @@ enum PetShortcutApplyResult: Sendable, Equatable {
             issue.message
         case .registrationRejected(let failures):
             if failures.allSatisfy(\.isRetryAttempt) {
-                "단축키 등록 재시도에 실패했습니다. "
+                PetL10n.text("Retrying shortcut registration failed. ", korean: "단축키 등록 재시도에 실패했습니다. ")
                     + failures.map(\.message).joined(separator: ", ")
             } else {
-                "새 단축키를 등록하지 못해 기존 설정으로 복원했습니다. "
+                PetL10n.text("The new shortcuts could not be registered. Previous settings were restored. ", korean: "새 단축키를 등록하지 못해 기존 설정으로 복원했습니다. ")
                     + failures.map(\.message).joined(separator: ", ")
             }
         case .rollbackFailed(let candidateFailures, let rollbackFailures):
-            "새 단축키를 등록하지 못했고 기존 단축키도 완전히 복원하지 못했습니다. "
-                + "새 설정: " + candidateFailures.map(\.message).joined(separator: ", ")
-                + " / 복원: " + rollbackFailures.map(\.message).joined(separator: ", ")
+            PetL10n.text("The new shortcuts could not be registered, and previous shortcuts could not be fully restored. ", korean: "새 단축키를 등록하지 못했고 기존 단축키도 완전히 복원하지 못했습니다. ")
+                + PetL10n.text("New settings: ", korean: "새 설정: ") + candidateFailures.map(\.message).joined(separator: ", ")
+                + PetL10n.text(" / Restore: ", korean: " / 복원: ") + rollbackFailures.map(\.message).joined(separator: ", ")
         }
     }
 }

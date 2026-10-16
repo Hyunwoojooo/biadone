@@ -1,4 +1,4 @@
-import ClaudeCoreAdapter
+@testable import ClaudeCoreAdapter
 @testable import CoordinatorSwift
 import CryptoKit
 import Foundation
@@ -19,7 +19,17 @@ final class ProductAuthorityAnchor: FreshnessAnchorStore, @unchecked Sendable {
     let storageSlot = "product-authority-" + UUID().uuidString
     private let lock = NSLock()
     private var stored: FreshnessStoredRecord?
-    func load() -> FreshnessStoredRecord? { lock.withLock { stored } }
+    private var nextLoad: (@Sendable () -> Void)?
+    func delayNextLoad(_ body: @escaping @Sendable () -> Void) { lock.withLock { nextLoad = body } }
+    func load() -> FreshnessStoredRecord? {
+        let (value, body) = lock.withLock {
+            let result = (stored, nextLoad)
+            nextLoad = nil
+            return result
+        }
+        body?()
+        return value
+    }
     func create(_ record: FreshnessRecord) throws -> FreshnessStoredRecord {
         try lock.withLock {
             guard stored == nil else { throw CoordinatorError("fixture_anchor_conflict") }
@@ -73,9 +83,55 @@ final class ProductMutationMeter: @unchecked Sendable {
     }
 }
 
+/// Test-only single-read delay. The real SQLite journal, freshness anchor and
+/// product authority still own all validation and commits.
+final class ProductMutationReadProbe: CoordinatorSemanticJournalPort, @unchecked Sendable {
+    private let journal: any CoordinatorSemanticJournalPort
+    private let lock = NSLock()
+    private var pending: (@Sendable () -> Void)?
+    private var nextRead: (@Sendable () -> Void)?
+    init(_ journal: any CoordinatorSemanticJournalPort) { self.journal = journal }
+    func delayNextBoundMutationLoad(_ body: @escaping @Sendable () -> Void) { lock.withLock { pending = body } }
+    func admit(_ binding: CoordinatorBinding?) {
+        guard binding != nil else { return }
+        lock.withLock { nextRead = pending; pending = nil }
+    }
+    func load() throws -> JournalSnapshot {
+        let body = lock.withLock { let body = nextRead; nextRead = nil; return body }
+        body?()
+        return try journal.load()
+    }
+    func append(expectedSequence: Int64, events: [Data], documents: [Data], verificationRecords: [Data]) throws -> JournalAppendResult {
+        try journal.append(expectedSequence: expectedSequence, events: events,
+            documents: documents, verificationRecords: verificationRecords)
+    }
+    func append(expectedSequence: Int64, events: [Data], documents: [Data],
+                verificationRecords: [Data], validateAdmission: () throws -> Void) throws -> JournalAppendResult {
+        try journal.append(expectedSequence: expectedSequence, events: events,
+            documents: documents, verificationRecords: verificationRecords,
+            validateAdmission: validateAdmission)
+    }
+}
+
 func productID() -> String { UUID().uuidString.lowercased() }
 func productDigest(_ text: String) -> String {
     SHA256.hash(data: Data(text.utf8)).map { String(format: "%02x", $0) }.joined()
+}
+func productHookNoticeFixture() throws -> [String: Any] {
+    var root = URL(fileURLWithPath: #filePath)
+    for _ in 0..<4 { root.deleteLastPathComponent() }
+    return try StrictJSONTransport.object(from: Data(contentsOf:
+        root.appendingPathComponent("fixtures/product-hook/selection-notice.json")))
+}
+func productHookText(_ event: [String: Any], field: String = "native_prompt_text") throws -> String {
+    let fixture = try productHookNoticeFixture()
+    let original = try #require(fixture["selection_event"] as? [String: Any])
+    var text = try #require(fixture[field] as? String)
+    for key in ["selection_id", "delivery_token"] {
+        text = text.replacingOccurrences(of: try #require(original[key] as? String),
+            with: try #require(event[key] as? String))
+    }
+    return text
 }
 struct ProductWireRejection: Error {
     let code: String
@@ -152,12 +208,16 @@ final class ProductAuthorityFixture: @unchecked Sendable {
     let gate: ProductAuthorityGate
     let codec: ClaudeProductWireCodec
     var journal: (any CoordinatorSemanticJournalPort)!
+    var readProbe: ProductMutationReadProbe?
     var native: ClaudeNativeSession!
     var bridgeID: String?
     var boundaryID: String?
     var promptID: String?
+    var waiter: [String: Any]?
 
-    init(storage: Storage = .sqlite, channelSource: String = "blabee-claude") throws {
+    init(storage: Storage = .sqlite, channelSource: String = "blabee-claude",
+         checkRejectedMutationSequence: Bool = false,
+         productAccessCheck: @escaping @Sendable () throws -> UInt64 = { 0 }) throws {
         var root = URL(fileURLWithPath: #filePath)
         for _ in 0..<4 { root.deleteLastPathComponent() }
         let path = root.appendingPathComponent("build/cp03-authority/" + productID())
@@ -182,10 +242,28 @@ final class ProductAuthorityFixture: @unchecked Sendable {
         case .lifecycleMemory:
             journal = ProductLifecycleMemoryJournal(gate: gate)
         }
+        if checkRejectedMutationSequence {
+            let probe = ProductMutationReadProbe(journal)
+            readProbe = probe; journal = probe
+        }
         native = try ClaudeNativeSession(productConfiguration: configuration, authority: authority,
             journal: journal, secretCorpus: corpus, clock: clock, wallNow: { [clock] in clock.date() },
             replayPort: replay,
-            withCoreMutation: { [meter] in try meter.execute(id: $0, binding: $1, body: $2) })
+            withCoreMutation: { [meter, journal = journal!, authority, readProbe] id, binding, body in
+                try meter.execute(id: id, binding: binding) {
+                    let before = try readProbe.map { _ in try journal.load().journalSequence }
+                    readProbe?.admit(binding)
+                    let result = try body()
+                    if let before, try StrictJSONTransport.object(from: result)["ok"] as? Bool == false,
+                       try journal.load().journalSequence != before {
+                        // Mirror the registry's failed-mutation checkpoint
+                        // rule in this isolated single-writer meter fixture.
+                        authority.revoke(reason: .serviceReplaced)
+                        throw CoordinatorError("fixture_core_mutation_uncertain")
+                    }
+                    return result
+                }
+            }, productAccessCheck: productAccessCheck)
         try processTime()
     }
     deinit { native = nil; journal = nil; try? FileManager.default.removeItem(at: directory) }
@@ -199,7 +277,7 @@ final class ProductAuthorityFixture: @unchecked Sendable {
     func envelope(_ operation: String, payload: [String: Any] = [:], role: String = "bridge",
                   identity: [String: Any]? = nil) throws -> ClaudeProductWireCodec.Envelope {
         try codec.decodeRequest(StrictJSONTransport.data(forJSONObject: [
-            "schema_version": "blabee.claude-session.v2", "kind": "request", "provider": "claude",
+            "schema_version": "blabee.claude-session.v3", "kind": "request", "provider": "claude",
             "request_id": productID(), "role": role, "operation": operation,
             "authority": identity ?? authorityObject(), "payload": payload,
         ]))
@@ -215,12 +293,19 @@ final class ProductAuthorityFixture: @unchecked Sendable {
             connection: .init(serviceIncarnation: configuration.identity.serviceIncarnation,
                               ownerConnectionID: configuration.identity.ownerConnectionID))
         let object = try StrictJSONTransport.object(from: reply.canonicalJSON)
-        if request.operation != "bridge.poll", case .active = authority.snapshot() { try processTime() }
+        if !["bridge.poll", "hook.poll", "hook.cancel"].contains(request.operation),
+           case .active = authority.snapshot() { try processTime() }
         if object["ok"] as? Bool == false {
             let code = try #require((object["error"] as? [String: Any])?["code"] as? String)
             throw ProductWireRejection(code: code)
         }
         let result = try #require(object["result"] as? [String: Any])
+        if request.operation == "hook" {
+            let original = try StrictJSONTransport.object(from: request.canonicalJSON)
+            if (original["payload"] as? [String: Any])?["event"] as? String == "Stop" {
+                waiter = result["waiter"] as? [String: Any]
+            }
+        }
         return result
     }
     func processTime() throws {
@@ -232,6 +317,9 @@ final class ProductAuthorityFixture: @unchecked Sendable {
         payload.merge(extra) { _, next in next }
         let result = try call("hook", payload, role: "hook")
         boundaryID = result["boundary_id"] as? String
+        // Simulate the command Hook receiving its descriptor and starting the
+        // immediate first poll. Raw call(envelope) tests can leave it unarmed.
+        if event == "Stop", waiter != nil { _ = try waiterRequest("hook.poll") }
         return result
     }
     func startup() throws { try hook("SessionStart", ["source": "startup"]) }
@@ -247,10 +335,13 @@ final class ProductAuthorityFixture: @unchecked Sendable {
     @discardableResult func poll() throws -> [String: Any]? { try call("bridge.poll", ["bridge_id": bridgeID!])["event"] as? [String: Any] }
     @discardableResult func ready() throws -> [String: Any] {
         let probe = try call("readiness.begin", ["bridge_id": bridgeID!])
-        let value = try poll()
-        let event = try #require(value)
-        try call("readiness.ack", ["bridge_id": bridgeID!, "probe_id": event["probe_id"]!, "nonce": event["nonce"]!])
+        try call("readiness.ack", ["bridge_id": bridgeID!, "probe_id": probe["probe_id"]!, "nonce": probe["nonce"]!])
         return probe
+    }
+    func waiterRequest(_ operation: String, waiter supplied: [String: Any]? = nil) throws -> [String: Any] {
+        let value = try #require(supplied ?? waiter)
+        return try call(operation, ["native_session_id": configuration.identity.nativeSessionID.uuidString.lowercased(),
+            "cwd": directory.path, "prompt_id": value["prompt_id"]!, "waiter_generation": value["generation"]!], role: "hook")
     }
     func emit() throws { try call("proposal.emit", ["bridge_id": bridgeID!, "boundary_id": boundaryID!, "proposal": productProposal()]) }
     func snapshot() throws -> [String: Any] {
@@ -276,6 +367,20 @@ final class ProductAuthorityFixture: @unchecked Sendable {
         try processTime()
         return result
     }
+    @discardableResult func dismiss(card supplied: [String: Any]? = nil) throws -> [String: Any] {
+        let card: [String: Any]
+        if let supplied { card = supplied }
+        else { card = try #require((snapshot()["cards"] as? [[String: Any]])?.first) }
+        let binding = try CoordinatorBinding(jsonObject: #require(card["binding"] as? [String: Any]))
+        let packet = try #require(card["packet"] as? [String: Any])
+        let result = try StrictJSONTransport.object(from: native.productDismiss(identity: configuration.identity,
+            credential: configuration.selectorToken, binding: binding,
+            interactionID: #require(packet["interaction_id"] as? String),
+            packetID: #require(packet["packet_id"] as? String),
+            revision: #require(ExactJSONInteger.int64(packet["revision"], minimum: 1))))
+        try processTime()
+        return result
+    }
     @discardableResult func claim(_ event: [String: Any]) throws -> [String: Any] {
         try call("selection.claim", ["bridge_id": bridgeID!, "selection_id": event["selection_id"]!, "delivery_token": event["delivery_token"]!])
     }
@@ -285,10 +390,18 @@ final class ProductAuthorityFixture: @unchecked Sendable {
         #expect(result["reported_by"] as? String == "claude")
     }
     func prepare() throws { try startup(); try prompt(); try open(); try ready(); try emit(); try hook("Stop", ["prompt_id": promptID!, "background_task_ids": [String]()]) }
-    func selectedEvent() throws -> [String: Any] {
+    func observeSelection(_ event: [String: Any], promptID: String = productID()) throws {
+        let text = try productHookText(event)
+        try hook("UserPromptSubmit", ["prompt_id": promptID, "prompt_sha256": productDigest(text)])
+        self.promptID = promptID
+    }
+    func selectedEvent(observeNative: Bool = true) throws -> [String: Any] {
         try select()
-        let value = try poll()
-        return try #require(value)
+        let value = try waiterRequest("hook.poll")
+        #expect(value["status"] as? String == "delivered")
+        let event = try #require(value["event"] as? [String: Any])
+        if observeNative { try observeSelection(event) }
+        return event
     }
     func rawEventCount() throws -> Int64 {
         if let memory = journal as? ProductLifecycleMemoryJournal { return memory.eventCount }
@@ -332,6 +445,160 @@ private func productRevokeConcurrently(_ authority: ClaudeSessionAuthority) thro
 
 @Suite("Product authority integration")
 struct ProductAuthorityIntegrationTests {
+    @Test("Product journal and read probe preserve admission after SQLite freshness validation")
+    func forwardsLateStorageAdmission() throws {
+        let directory = FileManager.default.temporaryDirectory.resolvingSymlinksInPath()
+            .appendingPathComponent("blabee-claude-admission-" + productID(), isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false,
+            attributes: [.posixPermissions: 0o700])
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let clock = ProductAuthorityClock()
+        let anchor = ProductAuthorityAnchor()
+        let authority = try ClaudeSessionAuthority(identity: .init(scopeID: UUID(), nativeSessionID: UUID(),
+            sessionIncarnation: UUID(), serviceIncarnation: UUID(), ownerConnectionID: UUID(), authorityEpoch: UUID()),
+            clock: clock)
+        let gate = ProductAuthorityGate(authority)
+        let journal = try SQLiteJournal(databaseURL: directory.appendingPathComponent("journal.sqlite"),
+            keyURL: directory.appendingPathComponent("storage.key"), freshnessStore: anchor,
+            appendCommitGate: { try gate.commit($0) })
+        let wrapped: any CoordinatorSemanticJournalPort = ClaudeProductAuthorityJournal(
+            journal: ProductMutationReadProbe(journal), authority: authority)
+        let before = try journal.load()
+        let freshnessBefore = try #require(anchor.load())
+        let event = try StrictJSONTransport.data(forJSONObject: [
+            "schema_version": "1.0", "kind": "blabee_runtime_event",
+            "event_id": "event_product_late_admission", "event_sequence": 1,
+            "event_type": "decision_boundary_opened", "event_category": "decision_lifecycle",
+            "occurred_at": "2026-08-21T01:00:00Z",
+            "project_id": "project_product_admission", "session_id": "session_product_admission",
+            "source_turn_id": "turn_product_admission", "source_prompt_id": "prompt_product_admission",
+            "episode_id": "episode_product_admission", "episode_root_prompt_id": "prompt_product_admission",
+            "episode_baseline_checkpoint_id": "checkpoint_product_admission",
+            "decision_boundary_id": "boundary_product_admission", "boundary_sequence": 1,
+            "payload": ["proposal_id": "proposal_product_admission"],
+        ])
+        // This read occurs inside SQLite's transaction. A wrapper that uses the
+        // protocol default would check at 0 ns and incorrectly commit afterward.
+        anchor.delayNextLoad { clock.advance(1) }
+        var admissionTimes: [UInt64] = []
+        productRejected("fixture_admission_expired") {
+            _ = try wrapped.append(expectedSequence: 0, events: [event], documents: [],
+                verificationRecords: [], validateAdmission: {
+                    let now = clock.nowNanoseconds()
+                    admissionTimes.append(now)
+                    guard now < 1_000_000_000 else { throw CoordinatorError("fixture_admission_expired") }
+                })
+        }
+        #expect(admissionTimes == [1_000_000_000])
+        #expect(try journal.load() == before)
+        #expect(anchor.load() == freshnessBefore)
+
+        _ = try wrapped.append(expectedSequence: 0, events: [event], documents: [],
+            verificationRecords: [], validateAdmission: {})
+        #expect(try journal.load().journalSequence == 1)
+        authority.revoke(reason: .ownerDisconnected)
+        productRejected("claude_bridge_unauthorized") {
+            _ = try wrapped.append(expectedSequence: 1, events: [event], documents: [],
+                verificationRecords: [], validateAdmission: { Issue.record("Unauthorized append reached admission") })
+        }
+        #expect(try journal.load().journalSequence == 1)
+    }
+
+    @Test("Product dismissal retires one ready card without a selection, Channel delivery or model claim")
+    func productDismissalNoExecution() throws {
+        let f = try ProductAuthorityFixture()
+        try f.prepare()
+        let card = try #require((f.snapshot()["cards"] as? [[String: Any]])?.first)
+        let replayCount = f.replay.count
+        let result = try f.dismiss(card: card)
+        #expect(result["dismissed"] as? Bool == true)
+        #expect(f.replay.count == replayCount)
+        #expect(try f.poll() == nil)
+        #expect((try f.snapshot()["cards"] as? [Any])?.isEmpty == true)
+        let state = try CoordinatorSemanticReplay.replay(f.journal.load())
+        #expect(state.continuations.isEmpty)
+        #expect(state.boundaries.values.allSatisfy { $0.selection == nil && $0.closeReason == "user_dismissed" })
+        try f.prompt(); try f.emit()
+        try f.hook("Stop", ["prompt_id": f.promptID!, "background_task_ids": [String]()])
+        productRejected("claude_session_boundary_mismatch") { try f.dismiss(card: card) }
+        #expect((try f.snapshot()["cards"] as? [Any])?.count == 1)
+        #expect(try f.poll() == nil)
+    }
+
+    @Test("Dismissal rechecks authority before commit and before releasing the receipt", arguments: ["revoked_before", "revoked_at_commit", "expired_at_commit", "revoked_after_commit"])
+    func productDismissalAuthorityFence(_ kind: String) throws {
+        let f = try ProductAuthorityFixture()
+        if kind == "expired_at_commit" { f.clock.advance(3599) }
+        try f.prepare()
+        let card = try #require((f.snapshot()["cards"] as? [[String: Any]])?.first)
+        let before = try f.rawEventCount()
+        switch kind {
+        case "revoked_before": f.authority.revoke(reason: .ownerDisconnected)
+        case "revoked_at_commit":
+            f.gate.onNext(before: { [authority = f.authority] in try productRevokeConcurrently(authority) })
+        case "expired_at_commit": f.gate.onNext(before: { [clock = f.clock] in clock.advance(1) })
+        default: f.gate.onNext(after: { [authority = f.authority] in authority.revoke(reason: .ownerDisconnected) })
+        }
+        productRejected { try f.dismiss(card: card) }
+        #expect(try f.rawEventCount() == before + (kind == "revoked_after_commit" ? 1 : 0))
+        if kind == "revoked_at_commit" || kind == "expired_at_commit" {
+            // The concrete commit gate deliberately interrupted a prepared
+            // freshness transition. Its unchanged raw SQLite event count is
+            // the evidence of no commit; normal journal loads must fail closed.
+            productRejected("freshness_transition_pending") { _ = try f.journal.load() }
+        } else {
+            let state = try CoordinatorSemanticReplay.replay(f.journal.load())
+            #expect(state.continuations.isEmpty)
+            #expect(state.boundaries.values.allSatisfy { $0.selection == nil })
+        }
+    }
+
+    @Test("A ready cached card cannot be dismissed once its monotonic lifetime ends during service admission")
+    func productDismissalRejectsExpiredProjection() throws {
+        let f = try ProductAuthorityFixture()
+        try f.prepare()
+        for step in 1...149 {
+            f.clock.advance(4); _ = try f.poll()
+            _ = try f.waiterRequest("hook.poll")
+            if step == 74 || step == 148 { try f.ready() }
+        }
+        let snapshot = try f.snapshot()
+        #expect(snapshot["selection_enabled"] as? Bool == true)
+        let card = try #require((snapshot["cards"] as? [[String: Any]])?.first)
+        f.clock.advance(4)
+        productRejected("claude_session_stop_required") { try f.dismiss(card: card) }
+        let state = try CoordinatorSemanticReplay.replay(f.journal.load())
+        #expect(state.continuations.isEmpty)
+        #expect(state.boundaries.values.allSatisfy { $0.selection == nil && $0.closeReason != "user_dismissed" })
+    }
+
+    @Test("Expiry during dismissal replay refuses without a partial core mutation or incidental authority revocation")
+    func productDismissalDelayedExpiryKeepsAuthority() throws {
+        let f = try ProductAuthorityFixture(checkRejectedMutationSequence: true)
+        try f.prepare()
+        for step in 1...149 {
+            f.clock.advance(4); _ = try f.poll()
+            _ = try f.waiterRequest("hook.poll")
+            if step == 74 || step == 148 { try f.ready() }
+        }
+        let card = try #require((f.snapshot()["cards"] as? [[String: Any]])?.first)
+        let before = try f.rawEventCount()
+        let mutations = f.meter.count
+        f.readProbe?.delayNextBoundMutationLoad { [clock = f.clock] in clock.advance(4) }
+        productRejected("interaction_not_waiting") { try f.dismiss(card: card) }
+        #expect(try f.rawEventCount() == before)
+        #expect(f.meter.count == mutations + 2) // Native refresh, then dismissal validation.
+        if case .active = f.authority.snapshot() {} else { Issue.record("Ordinary card expiry revoked product authority") }
+        #expect(try f.poll() == nil)
+        try f.processTime() // The separately successful scheduler mutation retires the expired card.
+        #expect(try f.rawEventCount() > before)
+        #expect((try f.snapshot()["cards"] as? [Any])?.isEmpty == true)
+        let state = try CoordinatorSemanticReplay.replay(f.journal.load())
+        #expect(state.continuations.isEmpty)
+        #expect(state.boundaries.values.allSatisfy { $0.selection == nil && $0.expired && $0.closeReason != "user_dismissed" })
+        if case .active = f.authority.snapshot() {} else { Issue.record("Expiry cleanup revoked product authority") }
+    }
+
     @Test("Typed first-start metadata must match the fresh product authority and canonical cwd", arguments: ["native_id", "cwd"])
     func initialStartMatchesConfiguration(field: String) throws {
         let f = try ProductAuthorityFixture()
@@ -462,7 +729,7 @@ struct ProductAuthorityIntegrationTests {
         let before = try f.snapshot()
         let card = try #require((before["cards"] as? [[String: Any]])?.first)
         let authority = f.authority.snapshot()
-        for _ in 0..<76 { f.clock.advance(4); _ = try f.poll() }
+        for _ in 0..<76 { f.clock.advance(4); _ = try f.poll(); _ = try f.waiterRequest("hook.poll") }
         let expired = try f.snapshot()
         #expect(expired["ready"] as? Bool == false)
         #expect(expired["boundary_id"] as? String == before["boundary_id"] as? String)
@@ -545,10 +812,10 @@ struct ProductAuthorityIntegrationTests {
     func claimAfterRenewal() throws {
         let f = try ProductAuthorityFixture()
         f.clock.advance(3595)
+        _ = try f.authority.renew(owner: f.authority.ownerHandle, sequence: 1)
         try f.prepare()
         let event = try f.selectedEvent()
         f.clock.advance(4)
-        _ = try f.authority.renew(owner: f.authority.ownerHandle, sequence: 1)
         _ = try f.poll()
         f.clock.advance(2)
         let claimed = try f.claim(event)

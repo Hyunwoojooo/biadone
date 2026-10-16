@@ -18,7 +18,7 @@ private final class DoctorFakeProcesses {
     var versionOutput = "codex-cli 0.148.0\n"
     var pluginInstalled: Any = true
     var pluginEnabled: Any = true
-    var pluginVersion = "0.1.2"
+    var pluginVersion = "0.1.3"
     var pluginSourceKind = "local"
     var pluginPresent = true
     var duplicatePlugin = false
@@ -510,7 +510,7 @@ private func expectDoctorArgumentFailure(_ values: [String]) {
 // changes during inspection. These tests create and delete `/tmp` fixtures,
 // so the suite is serialized to keep unrelated fixture churn from simulating
 // an ancestor-path ABA attack.
-@Suite(.serialized)
+@Suite(.petLanguage(.korean), .serialized)
 struct DoctorApplicationTestSuite {
 
 @Test("Doctor arguments accept only unique absolute allowlisted flags")
@@ -689,17 +689,20 @@ func doctorHumanOutputEscapesControlCharacters() throws {
     #expect(checks.first?["detail"] as? String == detail)
 }
 
-@Test("Doctor keeps the alpha baseline pending and rejects every unapproved Codex version")
+@Test("Doctor follows shared managed version policy and keeps unqualified versions blocked")
 func doctorCodexVersionPolicy() throws {
     let fixture = try DoctorFixture()
-    #expect(DoctorApplication.supportedVersions == ["0.149.1", "0.150.1", "0.151.0"])
+    // CodexCompatibilityTests owns the exact allowlist. Doctor must follow
+    // that policy and diagnose every supported version without duplicating it.
+    let supportedVersions = CodexCompatibility.supportedVersions(for: .managedAppServer)
+    #expect(DoctorApplication.supportedVersions == supportedVersions)
     var execution = DoctorApplication(dependencies: fixture.dependencies())
         .run(arguments: try fixture.arguments())
     #expect(try doctorCheck(execution, id: "codex_version").status == .actionRequired)
     #expect(try doctorCheck(execution, id: "codex_version").code == "codex_alpha_qualification_required")
     #expect(try doctorCheck(execution, id: "codex_runtime_version").status == .actionRequired)
 
-    for supportedVersion in ["0.149.1", "0.150.1", "0.151.0"] {
+    for supportedVersion in supportedVersions.sorted() {
         try fixture.writeCodexPackage(version: supportedVersion)
         execution = DoctorApplication(dependencies: fixture.dependencies())
             .run(arguments: try fixture.arguments())
@@ -715,11 +718,27 @@ func doctorCodexVersionPolicy() throws {
             == "codex_runtime_live_version_required", "version=\(supportedVersion)")
     }
 
-    try fixture.writeCodexPackage(version: "0.149.0")
-    execution = DoctorApplication(dependencies: fixture.dependencies())
-        .run(arguments: try fixture.arguments())
-    #expect(try doctorCheck(execution, id: "codex_version").code == "codex_version_not_allowlisted")
-    #expect(execution.exitCode == 1)
+    // Plugin CLI support alone must not qualify a version for managed use.
+    let unsupportedVersions = CodexCompatibility.supportedVersions(for: .pluginCLI)
+        .subtracting(supportedVersions).union(["0.149.0"])
+    for unsupportedVersion in unsupportedVersions.sorted() {
+        try fixture.writeCodexPackage(version: unsupportedVersion)
+        execution = DoctorApplication(dependencies: fixture.dependencies())
+            .run(arguments: try fixture.arguments())
+        #expect(try doctorCheck(execution, id: "codex_version").status
+            == .fail, "version=\(unsupportedVersion)")
+        #expect(try doctorCheck(execution, id: "codex_version").code
+            == "codex_version_not_allowlisted", "version=\(unsupportedVersion)")
+        // Doctor reports the unsupported version as the primary failure and
+        // marks dependent runtime checks as blocked, never as approved.
+        #expect(try doctorCheck(execution, id: "codex_runtime_version").status
+            == .actionRequired, "version=\(unsupportedVersion)")
+        #expect(try doctorCheck(execution, id: "codex_runtime_version").blockedBy
+            == "codex_version", "version=\(unsupportedVersion)")
+        #expect(try doctorCheck(execution, id: "codex_runtime_version").code
+            == "codex_runtime_version_not_allowlisted", "version=\(unsupportedVersion)")
+        #expect(execution.exitCode == 1, "version=\(unsupportedVersion)")
+    }
 
     let missingCodex = fixture.root.appendingPathComponent("missing-codex")
     execution = DoctorApplication(dependencies: fixture.dependencies())
@@ -978,7 +997,7 @@ func doctorPluginExactContractRejectsDrift() throws {
     #expect(try doctorCheck(execution, id: "plugin_layout").code == "plugin_layout_invalid")
 }
 
-@Test("Doctor Hook contract matches the bundled version 0.1.2 Plugin")
+@Test("Doctor Hook contract matches the bundled version 0.1.3 Plugin")
 func doctorHookContractMatchesBundledPlugin() throws {
     let data = try Data(contentsOf: doctorBundledPluginRoot()
         .appendingPathComponent("hooks/hooks.json"))
@@ -997,7 +1016,7 @@ func doctorHookContractMatchesBundledPlugin() throws {
     }
 }
 
-@Test("Doctor launcher digest matches the bundled version 0.1.2 contract")
+@Test("Doctor launcher digest matches the bundled version 0.1.3 contract")
 func doctorLauncherDigestMatchesBundledContract() throws {
     let launcher = doctorBundledPluginRoot().appendingPathComponent("scripts/blabee-launcher")
     let digest = SHA256.hash(data: try Data(contentsOf: launcher))
@@ -1006,7 +1025,7 @@ func doctorLauncherDigestMatchesBundledContract() throws {
     #expect(digest == DoctorApplication.launcherSHA256)
 }
 
-@Test("Doctor manifest digest matches the bundled version 0.1.2 bytes")
+@Test("Doctor manifest digest matches the bundled version 0.1.3 bytes")
 func doctorManifestDigestMatchesBundledContract() throws {
     let manifest = doctorBundledPluginRoot().appendingPathComponent(".codex-plugin/plugin.json")
     let data = try Data(contentsOf: manifest)
@@ -1072,7 +1091,7 @@ func doctorPluginSkillPayloadFailsClosed() throws {
     #expect(try doctorCheck(execution, id: "plugin_layout").code == "plugin_layout_invalid")
 }
 
-@Test("Doctor skill digests match the bundled version 0.1.2 files")
+@Test("Doctor skill digests match the bundled version 0.1.3 files")
 func doctorSkillDigestsMatchBundledContract() throws {
     let bundledPlugin = doctorBundledPluginRoot()
     let cases = [
@@ -1495,6 +1514,53 @@ func doctorHookTrustInspectorUsesOfficialHandshake() throws {
         executable: executable,
         projectURL: root,
         timeoutMilliseconds: 2_000
+    )
+    let object = try StrictJSONTransport.object(from: response)
+    #expect(ExactJSONInteger.int64(object["id"]) == 2)
+}
+
+@Test("Pet Hook inspection uses the same explicit environment as Plugin queries")
+func doctorHookTrustInspectorUsesPluginEnvironment() throws {
+    let root = URL(fileURLWithPath: "/tmp", isDirectory: true)
+        .appendingPathComponent("bdhe-\(UUID().uuidString.prefix(8))", isDirectory: true)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let executable = root.appendingPathComponent("fake-codex")
+    let environment = CodexPluginSetupProcessRunner.sanitizedEnvironment([
+        "HOME": root.path,
+        "PATH": "/usr/bin:/bin",
+        "LANG": "C",
+        "CODEX_HOME": root.appendingPathComponent("different-codex-home").path,
+        "BLABEE_SOCKET": root.appendingPathComponent("wrong.sock").path,
+        "OPENAI_API_KEY": "fixture-not-a-secret",
+        "DYLD_LIBRARY_PATH": root.appendingPathComponent("wrong-libraries").path,
+    ])
+    let script = #"""
+    #!/bin/sh
+    [ "$HOME" = '\#(root.path)' ] || exit 11
+    [ "$PATH" = '/usr/bin:/bin' ] || exit 12
+    [ "$LANG" = 'C' ] || exit 13
+    [ "${CODEX_HOME+x}" != x ] || exit 14
+    [ "${BLABEE_SOCKET+x}" != x ] || exit 15
+    [ "${OPENAI_API_KEY+x}" != x ] || exit 16
+    [ "${DYLD_LIBRARY_PATH+x}" != x ] || exit 17
+    IFS= read -r initialize || exit 18
+    printf '%s\n' '{"id":1,"result":{}}'
+    IFS= read -r initialized || exit 19
+    IFS= read -r hooks || exit 20
+    printf '%s\n' '{"id":2,"result":{"data":[]}}'
+    while IFS= read -r ignored; do :; done
+    """#
+    try Data(script.utf8).write(to: executable)
+    guard chmod(executable.path, mode_t(0o700)) == 0 else {
+        throw CoordinatorError("test_chmod_failed")
+    }
+
+    let response = try DoctorHookTrustInspector.inspect(
+        executable: executable,
+        projectURL: root,
+        timeoutMilliseconds: 2_000,
+        environment: environment
     )
     let object = try StrictJSONTransport.object(from: response)
     #expect(ExactJSONInteger.int64(object["id"]) == 2)

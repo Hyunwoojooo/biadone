@@ -1,7 +1,7 @@
 import Testing
 @testable import BlabeeCoordinator
 
-@Suite("Pet settings connection readiness")
+@Suite("Pet settings connection readiness", .petLanguage(.korean))
 struct PetConnectionReadinessTests {
     private let gannet = "/projects/gannet"
     private let platy = "/projects/platy"

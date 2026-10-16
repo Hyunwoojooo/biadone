@@ -83,6 +83,34 @@ private final class NativeFailureStorageFaults: @unchecked Sendable {
 
 @Suite("Durable native Codex failure suppression", .serialized)
 struct CodexNativeFailureGuardTests {
+    @Test("Unreadable source identity is a path failure with no attempt or negative execution record",
+          .enabled(if: geteuid() != 0))
+    func unreadableSourceDoesNotImplicateGuardStorage() throws {
+        let fixture = try NativeFailureFixture()
+        let observations = NativeFailureCounter()
+        var attempts = 0
+        try #require(chmod(fixture.executable.path, mode_t(0o000)) == 0)
+        defer { _ = chmod(fixture.executable.path, mode_t(0o700)) }
+        try #require(access(fixture.executable.path, R_OK) != 0)
+        #expect(throws: CodexRuntimeTrustError.invalidSource(
+            "source identity cannot be inspected",
+            diagnostic: .init(issue: .inspectionUnavailable, role: .source, path: fixture.executable.path)
+        )) {
+            try fixture.makeGuard().withAttempt(executable: fixture.executable,
+                onCachedFailure: { observations.increment() }) { attempts += 1 }
+        }
+        #expect(attempts == 0)
+        #expect(observations.value == 0)
+        #expect(try fixture.recordURLs().isEmpty)
+
+        // Restoring access does not need an explicit failure reset because no
+        // executable callback began and no uncertain result was recorded.
+        try #require(chmod(fixture.executable.path, mode_t(0o700)) == 0)
+        try fixture.makeGuard().withAttempt(executable: fixture.executable) { attempts += 1 }
+        #expect(attempts == 1)
+        #expect(try fixture.recordURLs().isEmpty)
+    }
+
     @Test("Failure persists across instances and records only safe negative evidence")
     func failurePersistsWithoutSensitiveDiagnostics() throws {
         let fixture = try NativeFailureFixture()
@@ -129,6 +157,76 @@ struct CodexNativeFailureGuardTests {
         try fixture.makeGuard().withAttempt(executable: fixture.executable) { attempts += 1 }
         #expect(attempts == 2)
         #expect(try fixture.recordURLs().isEmpty)
+    }
+
+    @Test("Cached failure observation distinguishes a stored block from a new failing attempt")
+    func cachedFailureObservationPreservesLegacyRecordAndSuppression() throws {
+        let fixture = try NativeFailureFixture()
+        let observations = NativeFailureCounter()
+        var attempts = 0
+        #expect(throws: CoordinatorError("codex_native_probe_timeout")) {
+            try fixture.makeGuard().withAttempt(
+                executable: fixture.executable,
+                onCachedFailure: { observations.increment() }
+            ) {
+                attempts += 1
+                throw CoordinatorError("codex_native_probe_timeout")
+            }
+        }
+        #expect(observations.value == 0)
+        let record = try #require(try fixture.recordURLs().first)
+        let bytes = try Data(contentsOf: record)
+        #expect(throws: CoordinatorError("codex_native_probe_timeout")) {
+            try fixture.makeGuard().withAttempt(
+                executable: fixture.executable,
+                onCachedFailure: { observations.increment() }
+            ) { attempts += 1 }
+        }
+        #expect(observations.value == 1)
+        #expect(attempts == 1)
+        #expect(try Data(contentsOf: record) == bytes)
+        let object = try #require(try JSONSerialization.jsonObject(with: bytes) as? [String: Any])
+        #expect(object["schemaVersion"] as? Int == 1)
+    }
+
+    @Test("An unsuccessful guard record write never enters the operation or reports a cached block")
+    func failedRecordWriteCannotInvokeOperation() throws {
+        let fixture = try NativeFailureFixture()
+        let observations = NativeFailureCounter()
+        try fixture.makeGuard().withAttempt(executable: fixture.executable) {}
+        let guarded = CodexNativeFailureGuard(directoryURL: fixture.directory, storageFault: { event in
+            if case .synchronizeFile = event { throw CoordinatorError("codex_native_guard_unavailable") }
+        })
+        var attempts = 0
+        #expect(throws: CoordinatorError("codex_native_guard_unavailable")) {
+            try guarded.withAttempt(executable: fixture.executable,
+                                    onCachedFailure: { observations.increment() }) { attempts += 1 }
+        }
+        #expect(attempts == 0)
+        #expect(observations.value == 0)
+    }
+
+    @Test("A failed negative-result write retains the preceding uncertainty and cannot repeat the operation")
+    func failedNegativeRecordWriteKeepsUncertainty() throws {
+        let fixture = try NativeFailureFixture()
+        let faults = NativeFailureStorageFaults(.restoreFileSync)
+        let observations = NativeFailureCounter()
+        let guarded = CodexNativeFailureGuard(directoryURL: fixture.directory,
+            storageFault: { try faults.inject($0) })
+        var attempts = 0
+        #expect(throws: CoordinatorError("codex_native_guard_unavailable")) {
+            try guarded.withAttempt(executable: fixture.executable) {
+                attempts += 1
+                faults.arm()
+                throw CoordinatorError("codex_native_probe_timeout")
+            }
+        }
+        #expect(throws: CoordinatorError("codex_native_execution_uncertain")) {
+            try fixture.makeGuard().withAttempt(executable: fixture.executable,
+                onCachedFailure: { observations.increment() }) { attempts += 1 }
+        }
+        #expect(attempts == 1)
+        #expect(observations.value == 1)
     }
 
     @Test("Clearing absent storage or executable creates no new state")
@@ -376,10 +474,15 @@ struct CodexNativeFailureGuardTests {
                 // succeeded, directory fsync and then restoration fsync failed.
                 #expect(try fixture.recordURLs().count == (mode == .restoreFileSync ? 0 : 1))
                 let reopened = fixture.makeGuard()
+                let cachedObservations = NativeFailureCounter()
                 #expect(throws: CoordinatorError("codex_native_execution_uncertain")) {
-                    try reopened.withAttempt(executable: fixture.executable) { attempts += 1 }
+                    try reopened.withAttempt(
+                        executable: fixture.executable,
+                        onCachedFailure: { cachedObservations.increment() }
+                    ) { attempts += 1 }
                 }
                 #expect(attempts == 1)
+                #expect(cachedObservations.value == 1)
                 if recovery == "reset" {
                     try reopened.resetAllFailures()
                     try reopened.withAttempt(executable: fixture.executable) { attempts += 1 }

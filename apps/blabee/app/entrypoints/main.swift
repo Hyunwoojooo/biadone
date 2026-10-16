@@ -3,6 +3,7 @@ import BlabeeProductSupport
 import AppKit
 import Darwin
 import Foundation
+import OSLog
 #if BLABEE_JOURNAL_TEST_HARNESS
 import Dispatch
 #endif
@@ -810,7 +811,8 @@ private func runProductService(
     )
     try runDaemon(
         configuration: DaemonRuntimeConfiguration(configuration),
-        appLifetime: appLifetime
+        appLifetime: appLifetime,
+        protectsUpdateTransition: true
     )
 }
 
@@ -842,7 +844,8 @@ private func runProductProjectSettings(arguments: [String]) throws {
 
 private func runDaemon(
     configuration arguments: DaemonRuntimeConfiguration,
-    appLifetime: AppOwnedServiceLifetime? = nil
+    appLifetime: AppOwnedServiceLifetime? = nil,
+    protectsUpdateTransition: Bool = false
 ) throws {
     try ContractPin.verify(contractsDirectory: arguments.contracts)
     #if BLABEE_JOURNAL_TEST_HARNESS
@@ -858,7 +861,18 @@ private func runDaemon(
     let authorityLease = try CoordinatorAuthorityLease(databaseURL: arguments.database)
     // Acquire the process-lifetime owner lease before storage initialization.
     // The socket itself is published only after the full application is ready.
-    let server = try UnixDomainSocketServer(socketPath: arguments.socketPath)
+    let serviceDiagnostics = OperationalServiceDiagnostics()
+    let updateAdmission: (@Sendable () throws -> any Sendable)?
+    if protectsUpdateTransition {
+        updateAdmission = { try AppUpdateAdmissionGate.acquireRequest() }
+    } else {
+        updateAdmission = nil
+    }
+    let server = try UnixDomainSocketServer(
+        socketPath: arguments.socketPath,
+        responseWriter: OperationalResponseWriter(observer: serviceDiagnostics.recordResponseWrite),
+        updateAdmission: updateAdmission
+    )
     appLifetime?.installShutdownHandler { server.stop() }
     let freshness = try FreshnessRuntimeConfiguration(
         environment: arguments.freshnessEnvironment
@@ -873,19 +887,41 @@ private func runDaemon(
         freshnessStore: freshness.store
     )
     let routing = try CoordinatorRoutingApplication(journal: journal)
+    let petArrivalLedger = PetEventArrivalLedger()
+    let productAccess = ProductAccessController(onVerifiedToken: { journal.secretCorpus.register($0) })
+    defer { productAccess.stop() }
+    let accessCheck: @Sendable () throws -> UInt64 = { try productAccess.authorize() }
+    let accessService = try appLifetime?.petSelectorCredential.map {
+        try ProductAccessService(credential: $0, controller: productAccess)
+    }
+    let dispatchDiagnostics = NextTurnDispatchDiagnostics(
+        directoryURL: arguments.database.deletingLastPathComponent()
+            .appendingPathComponent("dispatch-diagnostics", isDirectory: true),
+        appBuild: Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "unknown",
+        runtimeIdentity: try? OperationalRuntimeIdentity.requireCurrent()
+    )
     let operational = CoordinatorOperationalApplication(
         routing: routing,
         enabledProjectPaths: arguments.enabledProjectPaths,
         suggestionMode: arguments.suggestionMode,
         secretCorpus: journal.secretCorpus,
-        nextTurnDispatcher: CodexQueueNextTurnDispatcher.live().coordinatorDispatcher,
-        permissionLifecycleObserver: { event in HookPermissionDiagnostics.record(event) }
+        nextTurnDispatcher: CodexQueueNextTurnDispatcher.live(productAccessCheck: accessCheck).coordinatorDispatcher,
+        permissionLifecycleObserver: { event in HookPermissionDiagnostics.record(event) },
+        petArrivalLedger: petArrivalLedger,
+        requestTimingObserver: serviceDiagnostics.recordRequestTiming,
+        productAccessCheck: accessCheck,
+        nextTurnDispatchRecorder: { try dispatchDiagnostics.record($0) },
+        dispatchDiagnosticFailureObserver: {
+            Logger(subsystem: "com.biadone.blabee", category: "dispatch")
+                .error("next_turn_dispatch_diagnostics_unavailable")
+        }
     )
     let legacyApplication = try ClaudeBridgeCoordinator(
         codex: operational,
         configurationURL: arguments.claudeBridgeConfiguration,
         configurationRequired: arguments.requiresClaudeBridgeConfiguration,
-        secretCorpus: journal.secretCorpus
+        secretCorpus: journal.secretCorpus,
+        productAccessCheck: accessCheck
     )
     let application: ClaudeProductServiceCoordinator
     if appLifetime != nil {
@@ -895,19 +931,22 @@ private func runDaemon(
                 socketPath: URL(fileURLWithPath: arguments.socketPath).deletingLastPathComponent()
                     .appendingPathComponent("claude-owner.sock").path,
                 runtimeIdentity: OperationalRuntimeIdentity.requireCurrent(), secretCorpus: journal.secretCorpus,
-                petSelectorCredential: appLifetime?.petSelectorCredential
+                petSelectorCredential: appLifetime?.petSelectorCredential,
+                petArrivalLedger: petArrivalLedger,
+                productAccessCheck: accessCheck,
+                access: accessService
             )
         } catch {
             // A private Claude endpoint/store failure must not disable Codex.
             logError(CoordinatorError("claude_product_unavailable"), secretCorpus: journal.secretCorpus)
             let pet = try appLifetime?.petSelectorCredential.map {
                 try PetProviderService(credential: $0, codex: legacyApplication,
-                    registry: nil, secretCorpus: journal.secretCorpus)
+                    registry: nil, secretCorpus: journal.secretCorpus, arrivalLedger: petArrivalLedger)
             }
-            application = ClaudeProductServiceCoordinator(codex: legacyApplication, pet: pet)
+            application = ClaudeProductServiceCoordinator(codex: legacyApplication, pet: pet, access: accessService)
         }
     } else {
-        application = ClaudeProductServiceCoordinator(codex: legacyApplication)
+        application = ClaudeProductServiceCoordinator(codex: legacyApplication, access: accessService)
     }
     defer { application.stop() }
     try server.activate()
@@ -1168,7 +1207,7 @@ private func runResolvedNativeCodexLaunch(
     guard result == 0 else {
         throw CoordinatorError(
             "managed_codex_exec_failed",
-            "승인된 Codex 실행 파일을 시작하지 못했습니다."
+            PetL10n.text("Unable to start the approved Codex executable.", korean: "승인된 Codex 실행 파일을 시작하지 못했습니다.")
         )
     }
 }
@@ -1538,7 +1577,11 @@ do {
     if commandLine.dropFirst().first == "claude-auto-launch" {
         try ClaudeAutoConnectCommand.passthroughIfNeeded(Array(commandLine.dropFirst(2)))
     }
+    let startupAdmission = try AppBridgeRuntimeBootstrap.reexecIfNeeded(commandLine: commandLine)
+    defer { startupAdmission?.release() }
     let runtimeUseLease = try AppRuntimeUseLease.acquireCurrent()
+    try AppBridgeRuntimeBootstrap.completeExecAdmission(runtimeLease: runtimeUseLease)
+    startupAdmission?.release()
     defer { withExtendedLifetime(runtimeUseLease) {} }
     let invocationEnvironment = ProductInvocationEnvironment.live()
     let mode = ProductInvocationResolver.mode(
@@ -1639,6 +1682,7 @@ do {
                     return try ManagedCodexLauncher().run(
                         arguments: arguments,
                         environment: environment,
+                        qualifiedVersion: try provider.qualifiedVersion(),
                         approvedExecutableProvider: provider.next
                     )
                 },

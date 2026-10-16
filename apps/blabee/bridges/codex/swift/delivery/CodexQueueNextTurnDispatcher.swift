@@ -6,6 +6,7 @@ import Foundation
 struct CodexQueueProcessResult: Sendable, Equatable {
     let exitCode: Int32
     let stdout: Data
+    var terminationSignal: Int32? = nil
 }
 
 typealias CodexQueueExecutableResolving = @Sendable () throws -> URL
@@ -187,7 +188,8 @@ enum CodexQueueProcessRunner {
         }
         return CodexQueueProcessResult(
             exitCode: exitCode,
-            stdout: output.data
+            stdout: output.data,
+            terminationSignal: process.terminationReason == .uncaughtSignal ? process.terminationStatus : nil
         )
     }
 }
@@ -204,6 +206,7 @@ struct CodexQueueNextTurnDispatcher: Sendable {
             processRunner: CodexQueueProcessRunning
         )
         case command(CodexQueueCommandRunning)
+        case native(CodexNativeRuntime, @Sendable () throws -> UInt64)
     }
 
     private let execution: Execution
@@ -232,34 +235,25 @@ struct CodexQueueNextTurnDispatcher: Sendable {
     static func live(
         explicitExecutableURL: URL? = nil,
         environment: [String: String] = ProcessInfo.processInfo.environment,
-        timeoutMilliseconds: Int = nativeOperationTimeoutMilliseconds
+        timeoutMilliseconds: Int = nativeOperationTimeoutMilliseconds,
+        productAccessCheck: @escaping @Sendable () throws -> UInt64 = { 0 }
     ) -> CodexQueueNextTurnDispatcher {
         CodexQueueNextTurnDispatcher(
             nativeRuntime: .live(
                 explicitExecutableURL: explicitExecutableURL, environment: environment
             ),
-            timeoutMilliseconds: timeoutMilliseconds
+            timeoutMilliseconds: timeoutMilliseconds,
+            productAccessCheck: productAccessCheck
         )
     }
 
     init(
         nativeRuntime: CodexNativeRuntime,
-        timeoutMilliseconds: Int = nativeOperationTimeoutMilliseconds
+        timeoutMilliseconds: Int = nativeOperationTimeoutMilliseconds,
+        productAccessCheck: @escaping @Sendable () throws -> UInt64 = { 0 }
     ) {
-        self.init(
-            commandRunner: { arguments, timeoutMilliseconds in
-                let result = try nativeRuntime.perform(
-                    arguments: arguments,
-                    timeoutMilliseconds: timeoutMilliseconds,
-                    commandTimeoutMilliseconds: Self.queueCommandTimeoutMilliseconds
-                )
-                return CodexQueueProcessResult(
-                    exitCode: result.exitCode,
-                    stdout: result.stdout
-                )
-            },
-            timeoutMilliseconds: timeoutMilliseconds
-        )
+        execution = .native(nativeRuntime, productAccessCheck)
+        self.timeoutMilliseconds = timeoutMilliseconds
     }
 
     var coordinatorDispatcher: CoordinatorNextTurnDispatcher {
@@ -269,6 +263,30 @@ struct CodexQueueNextTurnDispatcher: Sendable {
     func dispatch(
         _ request: CoordinatorNextTurnDispatchRequest
     ) async throws -> CoordinatorNextTurnDispatchReceipt {
+        let startedAt = DispatchTime.now().uptimeNanoseconds
+        let observations = CodexNativeOperationObservations(stage: .access)
+        do {
+            return try await dispatch(request, observations: observations)
+        } catch {
+            let failure = error.coordinatorError
+            let observed = observations.snapshot()
+            let endedAt = DispatchTime.now().uptimeNanoseconds
+            let elapsed = endedAt >= startedAt ? (endedAt - startedAt) / 1_000_000 : 0
+            throw CoordinatorError(failure.code, dispatchFailure: .init(
+                code: failure.code, stage: observed.stage,
+                commandInvocationAttempted: observed.commandInvocationAttempted,
+                elapsedMilliseconds: Int64(min(elapsed, UInt64(Int64.max))),
+                exitCode: observed.exitCode, terminationSignal: observed.terminationSignal,
+                cachedFailure: observed.cachedFailure, codexVersion: observed.codexVersion,
+                executableIdentity: observed.executableIdentity
+            ))
+        }
+    }
+
+    private func dispatch(
+        _ request: CoordinatorNextTurnDispatchRequest,
+        observations: CodexNativeOperationObservations
+    ) async throws -> CoordinatorNextTurnDispatchReceipt {
         let arguments = [
             "queue", "--thread", request.sessionID,
             "--message", request.message,
@@ -276,15 +294,30 @@ struct CodexQueueNextTurnDispatcher: Sendable {
         let timeout = timeoutMilliseconds
         let result: CodexQueueProcessResult
         switch execution {
+        case let .native(runtime, accessCheck):
+            let generation = try accessCheck()
+            do {
+                result = try await Task.detached(priority: .utility) {
+                    let value = try runtime.perform(arguments: arguments, timeoutMilliseconds: timeout,
+                        commandTimeoutMilliseconds: Self.queueCommandTimeoutMilliseconds,
+                        beforeCommand: {
+                            guard try accessCheck() == generation else { throw CoordinatorError("product_access_changed") }
+                        }, observer: { observations.replace($0) })
+                    return CodexQueueProcessResult(exitCode: value.exitCode, stdout: value.stdout,
+                                                   terminationSignal: value.terminationSignal)
+                }.value
+            } catch { throw stableError(error, fallbackCode: "codex_queue_process_unavailable") }
         case let .command(commandRunner):
             do {
                 result = try await Task.detached(priority: .utility) {
-                    try commandRunner(arguments, timeout)
+                    observations.commandInvocationAttempted()
+                    return try commandRunner(arguments, timeout)
                 }.value
             } catch {
                 throw stableError(error, fallbackCode: "codex_queue_process_unavailable")
             }
         case let .legacy(executableResolver, processRunner):
+            observations.enter(.qualification)
             let executable: URL
             do {
                 executable = try executableResolver()
@@ -296,15 +329,19 @@ struct CodexQueueNextTurnDispatcher: Sendable {
             }
             do {
                 result = try await Task.detached(priority: .utility) {
-                    try processRunner(executable, arguments, timeout)
+                    observations.commandInvocationAttempted()
+                    return try processRunner(executable, arguments, timeout)
                 }.value
             } catch {
                 throw stableError(error, fallbackCode: "codex_queue_process_unavailable")
             }
         }
-        guard result.exitCode == 0 else {
+        observations.returned(exitCode: result.exitCode, terminationSignal: result.terminationSignal)
+        observations.enter(.queueExit)
+        guard result.exitCode == 0, result.terminationSignal == nil else {
             throw CoordinatorError("codex_queue_process_failed")
         }
+        observations.enter(.receipt)
         let queuedSubmissionID = try parseSuccess(
             result.stdout,
             expectedSessionID: request.sessionID
@@ -318,6 +355,7 @@ struct CodexQueueNextTurnDispatcher: Sendable {
         let coordinatorError = error.coordinatorError
         guard coordinatorError.code.hasPrefix("codex_queue_")
                 || coordinatorError.code.hasPrefix("codex_native_")
+                || coordinatorError.code.hasPrefix("product_access_")
         else {
             return CoordinatorError(fallbackCode)
         }

@@ -143,6 +143,7 @@ final class PetApplicationDelegate: NSObject, NSApplicationDelegate {
         viewModel?.errorDiagnostics?.stop()
         viewModel?.usageAnalytics?.stop()
         viewModel?.account?.stop()
+        viewModel?.productAccess?.stop()
         viewModel?.stopPolling()
         menuBarController?.stop()
     }
@@ -186,7 +187,7 @@ final class PetApplicationDelegate: NSObject, NSApplicationDelegate {
                 code: (error as? CoordinatorError)?.code ?? "pet_onboarding_unavailable"
             )
             onboardingAdapter = PetUnavailableOnboardingAdapter(
-                reason: "제품 앱 온보딩 환경을 확인할 수 없습니다: \(error)"
+                reason: PetL10n.text("Unable to verify the app onboarding environment: \(error)", korean: "제품 앱 온보딩 환경을 확인할 수 없습니다: \(error)")
             )
         }
         let suggestionModeStore = BlabeeSuggestionModeStore()
@@ -218,6 +219,10 @@ final class PetApplicationDelegate: NSObject, NSApplicationDelegate {
         let transport = PetProviderTransport(codex: legacyTransport, access: { [weak appService] in
             await MainActor.run { appService?.petProviderAccess }
         })
+        // Access control uses the raw app-owned endpoint, never a selected
+        // provider projection or a provider's role credential.
+        let productAccess = PetAccessController(transport: legacyTransport,
+            ownedAccess: { [weak appService] in appService?.petProviderAccess })
         let viewModel = PetViewModel(
             transport: transport,
             externalApplicationOpener: opener,
@@ -229,6 +234,16 @@ final class PetApplicationDelegate: NSObject, NSApplicationDelegate {
                         guard appService?.petProviderAccess == owned else { throw PetClaudeLauncher.Failure.serviceChanged }
                     })
             },
+            connectClaude: { [weak appService, socketPath = arguments.socketPath] nativeID, terminal in
+                guard let owned = appService?.petProviderAccess else { throw PetClaudeLauncher.Failure.serviceChanged }
+                let runtime = try OperationalRuntimeIdentity.requireCurrent()
+                return try await PetClaudeLauncher.startConnectionLive(socketPath: socketPath,
+                    runtimeIdentity: runtime, nativeSessionID: nativeID, terminal: terminal,
+                    validateService: { [weak appService] in
+                        guard appService?.petProviderAccess == owned else { throw PetClaudeLauncher.Failure.serviceChanged }
+                    })
+            },
+            connectionSetupStore: PetConnectionSetupUserDefaultsSelectionStore(),
             onboardingAdapter: onboardingAdapter,
             appService: appService,
             codexPluginSetupManager: codexPluginSetupManager,
@@ -243,13 +258,14 @@ final class PetApplicationDelegate: NSObject, NSApplicationDelegate {
             projectFolderChooser: PetOpenPanelProjectFolderChooser(),
             appUpdateChecker: PetGitHubAppUpdateChecker.live(),
             account: account,
+            productAccess: productAccess,
             usageAnalytics: usageAnalytics,
             errorDiagnostics: errorDiagnostics,
             feedback: feedback
         )
         let feedbackWindow = PetFeedbackWindowController(controller: feedback)
-        feedbackWindow.onVisibilityChanged = { [weak viewModel] visible in
-            viewModel?.setFeedbackWindowVisible(visible)
+        feedbackWindow.onShortcutSuppressionChanged = { [weak viewModel] active in
+            viewModel?.setFeedbackInputActive(active)
         }
         viewModel.onFeedbackRequested = { suggestion in
             feedbackWindow.show(suggestion: suggestion)
@@ -267,6 +283,10 @@ final class PetApplicationDelegate: NSObject, NSApplicationDelegate {
         // Developer CLI invocations do not consume or modify product onboarding.
         if ProductInvocationResolver.isStandardInstalledApp(.live()) {
             firstRunController = PetFirstRunController()
+            firstRunController?.onDiagnosticsConsentChanged = { [weak errorDiagnostics] enabled in
+                errorDiagnostics?.setEnabled(enabled)
+            }
+            if firstRunController?.isComplete == false { errorDiagnostics.setEnabled(false) }
         }
         let store = PetUserDefaultsShortcutStore()
         let backend = CarbonPetHotKeyBackend()
@@ -310,6 +330,9 @@ final class PetApplicationDelegate: NSObject, NSApplicationDelegate {
                 self?.menuBarController?.showAccountAfterSignIn()
             }
         }
+        account.onVerifiedCredential = { [weak productAccess] in productAccess?.receiveVerifiedCredential($0) }
+        account.onCredentialInvalidated = { [weak productAccess] in productAccess?.invalidateCredential() }
+        productAccess.start()
         Task { await account.restoreIfNeeded() }
         if let firstRunController, !firstRunController.isComplete {
             viewModel.beginFirstRunSetup()

@@ -12,13 +12,13 @@ enum CodexPluginCheckStage: String, Sendable, Equatable {
 
     var title: String {
         switch self {
-        case .unknown: "단계 미확인"
-        case .retryPreparation: "재검사 준비"
-        case .bundledResources: "앱 Plugin 리소스 확인"
-        case .nativeExecutable: "공식 Codex 실행 파일 확인"
-        case .marketplaceList: "Marketplace 목록 조회"
-        case .pluginList: "Plugin 목록 조회"
-        case .installationValidation: "Plugin 설치 상태 확인"
+        case .unknown: PetL10n.text("Stage unknown", korean: "단계 미확인")
+        case .retryPreparation: PetL10n.text("Preparing recheck", korean: "재검사 준비")
+        case .bundledResources: PetL10n.text("Checking app Plugin resources", korean: "앱 Plugin 리소스 확인")
+        case .nativeExecutable: PetL10n.text("Checking official Codex executable", korean: "공식 Codex 실행 파일 확인")
+        case .marketplaceList: PetL10n.text("Querying Marketplace list", korean: "Marketplace 목록 조회")
+        case .pluginList: PetL10n.text("Querying Plugin list", korean: "Plugin 목록 조회")
+        case .installationValidation: PetL10n.text("Checking Plugin installation", korean: "Plugin 설치 상태 확인")
         }
     }
 }
@@ -29,6 +29,7 @@ struct CodexPluginCheckEvidence: Sendable, Equatable {
     var canonicalPath: String?
     var codexVersion: String?
     var errorCode: String?
+    var pathDiagnostic: CodexRuntimePathDiagnostic?
 
     // Diagnostic codes are internal identifiers, never raw process messages.
     static func normalizedCode(_ value: String?) -> String? {
@@ -103,8 +104,8 @@ struct CodexPluginRecheckReport: Sendable, Equatable, Identifiable {
     var isChecking: Bool { completedAt == nil }
 
     var title: String {
-        guard let result else { return "Codex 실행 검사 중…" }
-        return result.failed ? "마지막 실행 검사 실패" : "마지막 실행 검사 완료"
+        guard let result else { return PetL10n.text("Checking Codex execution…", korean: "Codex 실행 검사 중…") }
+        return result.failed ? PetL10n.text("Last execution check failed", korean: "마지막 실행 검사 실패") : PetL10n.text("Last execution check complete", korean: "마지막 실행 검사 완료")
     }
 
     /// This payload deliberately excludes raw state.detail, stderr, environment,
@@ -125,7 +126,7 @@ struct CodexPluginRecheckReport: Sendable, Equatable, Identifiable {
         let architecture = "unknown"
         #endif
         return [
-            "Blabee Codex 실행 검사",
+            PetL10n.text("Blabee Codex Execution Check", korean: "Blabee Codex 실행 검사"),
             "app_build=\(Self.numericVersion(appBuild))",
             "platform=macOS \(os.majorVersion).\(os.minorVersion).\(os.patchVersion) \(architecture)",
             "started_at=\(formatter.string(from: startedAt))",
@@ -134,6 +135,9 @@ struct CodexPluginRecheckReport: Sendable, Equatable, Identifiable {
             "result=\(result?.statusCode ?? "checking")",
             "stage=\(evidence?.stage.rawValue ?? "unknown")",
             "error_code=\(evidence?.errorCode ?? (result?.failed == true ? "unknown" : "none"))",
+            "path_issue=\(evidence?.pathDiagnostic?.issue.rawValue ?? "unknown")",
+            "path_component=\(evidence?.pathDiagnostic?.role.rawValue ?? "unknown")",
+            "failed_path=\(Self.redactedPath(evidence?.pathDiagnostic?.path))",
             "codex_version=\(Self.numericVersion(evidence?.codexVersion))",
             "source_path=\(Self.redactedPath(evidence?.sourcePath))",
             "canonical_path=\(Self.redactedPath(evidence?.canonicalPath))",
@@ -171,8 +175,13 @@ struct CodexPluginRecheckReport: Sendable, Equatable, Identifiable {
             }
         }
         if ["/opt/homebrew/bin/codex", "/usr/local/bin/codex"].contains(path) { return path }
-        if path.hasPrefix("/opt/homebrew/Caskroom/codex/") { return "/opt/homebrew/Caskroom/codex/<runtime>" }
-        if path.hasPrefix("/opt/homebrew/Cellar/") { return "/opt/homebrew/Cellar/<installation>" }
+        for prefix in ["/opt/homebrew", "/usr/local"] {
+            if [prefix, "\(prefix)/bin", "\(prefix)/Caskroom", "\(prefix)/Cellar"].contains(path) {
+                return path
+            }
+            if path.hasPrefix("\(prefix)/Caskroom/codex/") { return "\(prefix)/Caskroom/codex/<runtime>" }
+            if path.hasPrefix("\(prefix)/Cellar/") { return "\(prefix)/Cellar/<installation>" }
+        }
         return "omitted"
     }
 }

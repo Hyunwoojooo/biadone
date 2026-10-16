@@ -920,6 +920,187 @@ func semanticQueuedActionClaimPreconditionsFailClosed() throws {
     }
 }
 
+private func semanticClosedQueuedOutcomeFixture(
+    suffix: String,
+    claim: Bool = true
+) throws -> (journal: SemanticMemoryJournal, app: CoordinatorSemanticApplication, binding: [String: Any]) {
+    let fixture = try semanticReceiptFixture(suffix: suffix)
+    let commands = try semanticReceiptCommands(suffix: suffix, binding: fixture.binding)
+    _ = try fixture.app.executeTransportCompletion(
+        completion: commands.completion,
+        close: commands.close,
+        using: fixture.app.authorityProjection()
+    )
+    if claim {
+        let state = try CoordinatorSemanticReplay.replay(fixture.journal.load())
+        _ = try fixture.app.execute(command: semanticQueuedActionClaim(
+            suffix: suffix,
+            binding: fixture.binding,
+            actionJSON: state.selectedActionJSON(for: "continuation_semantic_\(suffix)")
+        ))
+    }
+    return fixture
+}
+
+private func semanticClosedQueuedOutcomeCommand(
+    suffix: String,
+    binding: [String: Any],
+    status: String = "succeeded"
+) throws -> Data {
+    try semanticData([
+        "type": "record_work_outcome",
+        "event_id": "event_semantic_\(suffix)_outcome",
+        // Work can finish after the packet/transport deadline; this is not
+        // permission to create another claim or resend the selected work.
+        "occurred_at": "2026-08-21T01:10:00Z",
+        "binding": binding,
+        "continuation_id": "continuation_semantic_\(suffix)",
+        "action_id": "action_semantic_\(suffix)_1",
+        "delivery_turn_id": "delivery_turn_semantic",
+        "status": status,
+        "summary": "The claimed fictional work produced an observed outcome.",
+        "evidence_ids": ["evidence_semantic_outcome"],
+    ])
+}
+
+@Test("claimed queued work records one later outcome without reopening or redispatching", arguments: [
+    "succeeded", "failed", "cancelled", "unknown",
+])
+func semanticClosedQueuedOutcomePreservesBoundaryAndClaim(status: String) throws {
+    let suffix = "closed_outcome_\(status)"
+    let fixture = try semanticClosedQueuedOutcomeFixture(suffix: suffix)
+    let originalBinding = try CoordinatorBinding(jsonObject: fixture.binding)
+    let original = try CoordinatorSemanticReplay.replay(fixture.journal.load())
+    #expect(original.boundary(for: originalBinding)?.closed == true)
+    #expect(original.continuation(id: "continuation_semantic_\(suffix)")?.workOutcome == nil)
+
+    // A new decision in the original source turn does not invalidate the
+    // durable selected-action identity whose result is now being reported.
+    let nextBinding = semanticBinding(
+        suffix: suffix, boundarySequence: 2, boundaryID: "boundary_outcome_next_\(status)"
+    )
+    _ = try fixture.app.execute(command: semanticOpen(
+        binding: nextBinding, suffix: "outcome_next_\(status)", occurredAt: "2026-08-21T01:00:09Z"
+    ))
+    let before = try fixture.journal.load()
+    let restarted = CoordinatorSemanticApplication(journal: fixture.journal)
+    let command = try semanticClosedQueuedOutcomeCommand(
+        suffix: suffix, binding: fixture.binding, status: status
+    )
+    let result = try restarted.execute(command: command)
+    #expect(result.commit.eventCount == 1)
+    #expect(result.effects.isEmpty)
+    let after = try fixture.journal.load()
+    let state = try CoordinatorSemanticReplay.replay(after)
+    #expect(after.journalSequence == before.journalSequence + 1)
+    #expect(try semanticObject(#require(after.events.last))["event_type"] as? String == "work_outcome_recorded")
+    #expect(state.boundary(for: originalBinding) == original.boundary(for: originalBinding))
+    #expect(state.boundary(for: try CoordinatorBinding(jsonObject: nextBinding))?.closed == false)
+    let continuation = try #require(state.continuation(id: "continuation_semantic_\(suffix)"))
+    #expect(continuation.workOutcome?.status == status)
+    #expect(continuation.queuedActionContextClaim == original.continuation(id: continuation.continuationID)?.queuedActionContextClaim)
+    #expect(continuation.transport?.status == .completed)
+    let payload = try semanticObject(#require(after.events.last))["payload"] as? [String: Any]
+    #expect(payload?["delivery_turn_id"] == nil)
+    #expect(Set(payload?.keys.map { $0 } ?? []) == Set([
+        "continuation_id", "action_id", "work_outcome_status", "summary", "evidence_ids",
+    ]))
+
+    semanticExpectCode("work_outcome_already_recorded") { _ = try restarted.execute(command: command) }
+    #expect(try fixture.journal.load().journalSequence == after.journalSequence)
+}
+
+@Test("closed queued outcome rejects mismatched caller turn and original authority", arguments: [
+    "action", "missing_action", "delivery_turn", "missing_delivery_turn", "session", "source_turn",
+    "project", "continuation", "before_claim",
+])
+func semanticClosedQueuedOutcomeCommandRejectsMismatch(kind: String) throws {
+    let suffix = "outcome_mismatch_\(kind)"
+    let fixture = try semanticClosedQueuedOutcomeFixture(suffix: suffix)
+    var command = try semanticObject(semanticClosedQueuedOutcomeCommand(suffix: suffix, binding: fixture.binding))
+    let expected: String
+    switch kind {
+    case "action":
+        command["action_id"] = "action_other"
+        expected = "decision_boundary_binding_mismatch"
+    case "missing_action":
+        command.removeValue(forKey: "action_id")
+        expected = "action_id_missing"
+    case "delivery_turn":
+        command["delivery_turn_id"] = "delivery_turn_other"
+        expected = "work_outcome_delivery_turn_mismatch"
+    case "missing_delivery_turn":
+        command.removeValue(forKey: "delivery_turn_id")
+        expected = "delivery_turn_id_missing"
+    case "session", "source_turn", "project":
+        var binding = fixture.binding
+        binding["\(kind)_id"] = "other_\(kind)"
+        command["binding"] = binding
+        expected = "decision_boundary_binding_mismatch"
+    case "continuation":
+        command["continuation_id"] = "continuation_other"
+        expected = "continuation_not_dispatched"
+    default:
+        command["occurred_at"] = "2026-08-21T01:00:06Z"
+        expected = "work_outcome_before_context_claim"
+    }
+    let before = try fixture.journal.load()
+    let attempts = fixture.journal.appendAttempts
+    semanticExpectCode(expected) { _ = try fixture.app.execute(command: semanticData(command)) }
+    #expect(try fixture.journal.load().journalSequence == before.journalSequence)
+    #expect(fixture.journal.appendAttempts == attempts)
+}
+
+@Test("closed queued outcome requires a proven completed claim", arguments: ["unclaimed", "legacy", "timeout"])
+func semanticClosedQueuedOutcomeRejectsUnprovenDelivery(kind: String) throws {
+    let suffix = "outcome_unproven_\(kind)"
+    let fixture = try semanticReceiptFixture(suffix: suffix)
+    let commands = try semanticReceiptCommands(suffix: suffix, binding: fixture.binding)
+    if kind == "timeout" {
+        _ = try fixture.app.execute(command: semanticData([
+            "type": "timeout_transport_unknown",
+            "event_id": "event_outcome_timeout",
+            "occurred_at": "2026-08-21T01:05:03Z",
+            "binding": fixture.binding,
+            "continuation_id": "continuation_semantic_\(suffix)",
+        ]))
+        var close = try semanticObject(commands.close)
+        close["occurred_at"] = "2026-08-21T01:05:03Z"
+        _ = try fixture.app.execute(command: semanticData(close))
+    } else {
+        _ = try fixture.app.executeTransportCompletion(
+            completion: commands.completion, close: commands.close, using: fixture.app.authorityProjection()
+        )
+    }
+    let before = try fixture.journal.load()
+    let journal: SemanticMemoryJournal
+    if kind == "legacy" {
+        let events = try before.events.map { data -> Data in
+            var event = try semanticObject(data)
+            if event["event_type"] as? String == "continuation_dispatched",
+               var payload = event["payload"] as? [String: Any] {
+                payload.removeValue(forKey: "queued_action_context_claim_protocol")
+                event["payload"] = payload
+            }
+            return try semanticData(event)
+        }
+        journal = SemanticMemoryJournal(snapshot: JournalSnapshot(
+            events: events, documents: before.documents, verificationRecords: before.verificationRecords,
+            journalSequence: before.journalSequence
+        ))
+    } else {
+        journal = fixture.journal
+    }
+    let app = CoordinatorSemanticApplication(journal: journal)
+    let expected = kind == "timeout" ? "transport_terminal_observation_missing"
+        : kind == "legacy" ? "queued_action_context_claim_protocol_missing" : "queued_action_context_not_claimed"
+    semanticExpectCode(expected) {
+        _ = try app.execute(command: semanticClosedQueuedOutcomeCommand(suffix: suffix, binding: fixture.binding))
+    }
+    #expect(try journal.load().journalSequence == before.journalSequence)
+    #expect(try CoordinatorSemanticReplay.replay(journal.load()).continuation(id: "continuation_semantic_\(suffix)")?.workOutcome == nil)
+}
+
 @Test("semantic application completes the action lifecycle with canonical sidecars")
 func semanticActionLifecycle() throws {
     let suffix = "lifecycle"

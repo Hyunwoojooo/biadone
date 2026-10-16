@@ -19,6 +19,7 @@ final class ClaudeBridgeCoordinator: CoordinatorOperationalHandling, @unchecked 
         configurationURL: URL?,
         configurationRequired: Bool,
         secretCorpus: RuntimeSecretCorpus,
+        productAccessCheck: @escaping @Sendable () throws -> UInt64 = { 0 },
         freshnessFactory: (String) throws -> any FreshnessAnchorStore = {
             try KeychainFreshnessAnchorStore(account: $0)
         }
@@ -29,6 +30,7 @@ final class ClaudeBridgeCoordinator: CoordinatorOperationalHandling, @unchecked 
                 configurationURL: configurationURL,
                 configurationRequired: configurationRequired,
                 secretCorpus: secretCorpus,
+                productAccessCheck: productAccessCheck,
                 freshnessFactory: freshnessFactory
             )
             ingress = runtime?.ingress
@@ -47,6 +49,7 @@ final class ClaudeBridgeCoordinator: CoordinatorOperationalHandling, @unchecked 
     private static func prepare(
         configurationURL: URL?, configurationRequired: Bool,
         secretCorpus: RuntimeSecretCorpus,
+        productAccessCheck: @escaping @Sendable () throws -> UInt64,
         freshnessFactory: (String) throws -> any FreshnessAnchorStore
     ) throws -> (ingress: ClaudeBridgeIngress, leases: [CoordinatorAuthorityLease])? {
         guard let configurationURL,
@@ -98,7 +101,8 @@ final class ClaudeBridgeCoordinator: CoordinatorOperationalHandling, @unchecked 
             ownedLeases.append(lease)
         }
         let ingress = try ClaudeBridgeIngress(
-            scopes: configuration.scopes, adapters: adapters, secretCorpus: secretCorpus
+            scopes: configuration.scopes, adapters: adapters, secretCorpus: secretCorpus,
+            productAccessCheck: productAccessCheck
         )
         return (ingress, ownedLeases)
     }

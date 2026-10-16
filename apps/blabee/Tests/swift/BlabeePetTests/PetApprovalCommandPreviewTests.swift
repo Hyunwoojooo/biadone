@@ -41,9 +41,10 @@ struct PetApprovalCommandPreviewTests {
         #expect(PetPanelSizePolicy.width == 460)
     }
 
-    @Test("The full approval card keeps its command scroll separate from reachable action rows")
+    @Test("The full approval card keeps its actions and shortcut badges reachable during feedback", arguments: [false, true])
     @MainActor
-    func fullApprovalCard() async throws {
+    func fullApprovalCard(feedbackActive: Bool) async throws {
+        try PetTypographyTestResources.register()
         let registry = try PetHotKeyRegistry(
             backend: PetFakeHotKeyBackend(), configuration: .defaults, approvalKeyIsPressed: { _ in false }
         ) { _ in }
@@ -56,6 +57,7 @@ struct PetApprovalCommandPreviewTests {
             )]
         ))
         vm.setPanelVisible(true)
+        vm.setFeedbackInputActive(feedbackActive)
         for dark in [false, true] {
             let view = PetRootView(viewModel: vm, usesSystemGlassSurface: false)
                 .frame(width: 460, height: 520)
@@ -75,7 +77,7 @@ struct PetApprovalCommandPreviewTests {
             })
             #expect(command !== outer)
             #expect(command.contentView.bounds.height <= 140)
-            let name = "approval-card-\(dark ? "dark" : "light")"
+            let name = "approval-card-\(feedbackActive ? "paused" : "active")-\(dark ? "dark" : "light")"
             _ = try render(host, name: name + "-start")
             scrollToEnd(command)
             scrollToEnd(outer)

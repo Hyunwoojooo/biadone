@@ -190,6 +190,11 @@ private final class NativeFixture {
         return ["boundary_id": boundaryID!, "packet_id": packet["packet_id"]!, "revision": packet["revision"]!,
                 "option_id": options[0]["option_id"]!, "selection_id": id]
     }
+    func dismissalFields() throws -> [String: Any] {
+        let value = try card(), packet = try #require(value["packet"] as? [String: Any])
+        return ["boundary_id": boundaryID!, "interaction_id": packet["interaction_id"]!,
+                "packet_id": packet["packet_id"]!, "revision": packet["revision"]!]
+    }
     @discardableResult func select() throws -> [String: Any] {
         let result = try call("select", fields: selectionFields(), role: "selector")
         #expect(result["delivery"] as? String == "awaiting_claude_claim")
@@ -220,6 +225,50 @@ private final class NativeFixture {
 
 @Suite("Native Claude session")
 struct ClaudeNativeSessionTests {
+    @Test("Native selector dismissal emits no Channel task and an old request cannot dismiss the next card")
+    func dismissalNoChannelOrExecution() throws {
+        let f = try NativeFixture()
+        try f.prepare()
+        let request = try f.dismissalFields()
+        let result = try f.call("dismiss_interaction", fields: request, role: "selector")
+        #expect(result["dismissed"] as? Bool == true)
+        #expect(result["interaction_id"] as? String == request["interaction_id"] as? String)
+        #expect((try f.snapshot()["cards"] as? [Any])?.isEmpty == true)
+        #expect(try f.poll() == nil)
+        let state = try CoordinatorSemanticReplay.replay(f.journal.load())
+        #expect(state.continuations.isEmpty)
+        #expect(state.boundaries.values.allSatisfy { $0.selection == nil && $0.closeReason == "user_dismissed" })
+
+        try f.prompt("Prepare a different proposal."); try f.emit("next"); try f.stop()
+        nativeReject("claude_session_boundary_mismatch") {
+            _ = try f.call("dismiss_interaction", fields: request, role: "selector")
+        }
+        #expect((try f.snapshot()["cards"] as? [Any])?.count == 1)
+        #expect(try f.poll() == nil)
+    }
+
+    @Test("Native dismissal requires selector authority and current readiness", arguments: ["role", "session", "readiness"])
+    func dismissalAuthorityAndReadiness(_ kind: String) throws {
+        let f = try NativeFixture()
+        try f.prepare()
+        let fields = try f.dismissalFields()
+        if kind == "readiness" {
+            f.clock.advance(5)
+            nativeReject("claude_session_readiness_required") {
+                _ = try f.call("dismiss_interaction", fields: fields, role: "selector")
+            }
+        } else {
+            var envelope = f.envelope("dismiss_interaction", fields: fields, role: kind == "role" ? "bridge" : "selector")
+            if kind == "session" { envelope["session_id"] = nativeID() }
+            nativeReject(kind == "role" ? "claude_session_forbidden" : "claude_session_unauthorized") {
+                _ = try f.controller.handle(payload: StrictJSONTransport.data(forJSONObject: envelope))
+            }
+        }
+        let state = try CoordinatorSemanticReplay.replay(f.journal.load())
+        #expect(state.continuations.isEmpty)
+        #expect(state.boundaries.values.allSatisfy { $0.selection == nil && $0.closeReason != "user_dismissed" })
+    }
+
     @Test("Canonical grants accept physical paths and reject aliases or non-directories")
     func canonicalGrantDirectory() throws {
         let f = try NativeFixture()

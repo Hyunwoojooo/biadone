@@ -26,7 +26,7 @@ private final class PetFakeSuggestionModeStore: BlabeeSuggestionModeStoring, @un
     }
 }
 
-@Test("Suggestion mode defaults to smart when no preference exists")
+@Test("Suggestion mode defaults to smart when no preference exists", .petLanguage(.korean))
 func suggestionModeStoreMissingDefaultsToSmart() {
     let (defaults, suiteName) = suggestionModeDefaults()
     defer { defaults.removePersistentDomain(forName: suiteName) }
@@ -37,7 +37,7 @@ func suggestionModeStoreMissingDefaultsToSmart() {
     #expect(result.diagnostic == nil)
 }
 
-@Test("Suggestion mode fails closed for invalid persisted values")
+@Test("Suggestion mode fails closed for invalid persisted values", .petLanguage(.korean))
 func suggestionModeStoreInvalidFailsClosed() {
     let (defaults, suiteName) = suggestionModeDefaults()
     defer { defaults.removePersistentDomain(forName: suiteName) }
@@ -49,7 +49,7 @@ func suggestionModeStoreInvalidFailsClosed() {
     #expect(result.diagnostic?.contains("작업만") == true)
 }
 
-@Test("Suggestion mode saves and restores all supported values")
+@Test("Suggestion mode saves and restores all supported values", .petLanguage(.korean))
 func suggestionModeStoreRoundTripsSupportedValues() {
     let (defaults, suiteName) = suggestionModeDefaults()
     defer { defaults.removePersistentDomain(forName: suiteName) }
@@ -63,7 +63,7 @@ func suggestionModeStoreRoundTripsSupportedValues() {
     }
 }
 
-@Test("Pet exposes invalid-mode diagnostics and saves a replacement immediately")
+@Test("Pet exposes invalid-mode diagnostics and saves a replacement immediately", .petLanguage(.korean))
 @MainActor
 func petSuggestionModeReplacesInvalidPreference() {
     let store = PetFakeSuggestionModeStore(

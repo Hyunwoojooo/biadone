@@ -211,6 +211,106 @@ struct UpdateManagedCodexObserverTests {
         #expect(observer.failure == "update_managed_persistence_diagnostic")
     }
 
+    func slowShutdownWarning(_ id: String) -> [String: Any] {
+        ["level": "WARN", "target": "codex_app_server::request_processors::thread_lifecycle",
+         "fields": ["event.name": "codex.app_server.thread_shutdown_slow",
+                    "message": "thread \(id) shutdown is taking longer than expected; continuing to wait"]]
+    }
+
+    @Test func slowShutdownProgressStillRequiresEveryPersistenceBarrier() throws {
+        var observer = try ready()
+        _ = try observer.observeServer(["method": "thread/started", "params": ["thread": thread(child)]])
+        let requests = try observer.beginPause()
+        for id in [root, child] {
+            try observer.observeDiagnostic(JSONSerialization.data(withJSONObject: slowShutdownWarning(id)))
+        }
+        #expect(observer.failure == nil)
+        #expect(observer.unsubscribeRequests.count == 2)
+        #expect(observer.closedThreads.isEmpty)
+        #expect(!observer.allThreadsClosed)
+        #expect(!observer.persistenceBarrierComplete)
+        _ = try observer.observeServer(["id": requests[0]["id"]!, "result": ["status": "unsubscribed"]])
+        _ = try observer.observeServer(["method": "thread/closed", "params": ["threadId": root]])
+        #expect(!observer.allThreadsClosed)
+        _ = try observer.observeServer(["method": "thread/closed", "params": ["threadId": child]])
+        #expect(!observer.allThreadsClosed) // Both closes still need the second ACK.
+        _ = try observer.observeServer(["id": requests[1]["id"]!, "result": ["status": "unsubscribed"]])
+        #expect(observer.allThreadsClosed)
+        #expect(!observer.persistenceBarrierComplete)
+        observer.didReachStdoutEOF()
+        #expect(!observer.persistenceBarrierComplete)
+        observer.didExitServer(0)
+        #expect(!observer.persistenceBarrierComplete)
+        observer.didReachStderrEOF()
+        #expect(observer.persistenceBarrierComplete)
+    }
+
+    @Test func slowShutdownProgressBeforeMetadataDoesNotConfirmIdentity() throws {
+        var observer = UpdateManagedCodexObserver(expectedResumeID: root, expectedCWD: cwd)
+        try observer.observeDiagnostic(JSONSerialization.data(withJSONObject: slowShutdownWarning(root)))
+        #expect(observer.failure == nil)
+        #expect(observer.rootThreadID == nil)
+        #expect(observer.threads.isEmpty)
+        #expect(observer.busy)
+        #expect(!observer.persistenceBarrierComplete)
+        #expect(throws: (any Error).self) { try observer.beginPause() }
+    }
+
+    @Test func lateSlowShutdownProgressWaitsForStderrEOF() throws {
+        var observer = try ready()
+        let request = try observer.beginPause()[0]
+        _ = try observer.observeServer(["id": request["id"]!, "result": ["status": "unsubscribed"]])
+        _ = try observer.observeServer(["method": "thread/closed", "params": ["threadId": root]])
+        observer.didExitServer(0)
+        observer.didReachStdoutEOF()
+        try observer.observeDiagnostic(JSONSerialization.data(withJSONObject: slowShutdownWarning(root)))
+        #expect(observer.failure == nil)
+        #expect(observer.allThreadsClosed)
+        #expect(!observer.persistenceBarrierComplete)
+        observer.didReachStderrEOF()
+        #expect(observer.persistenceBarrierComplete)
+    }
+
+    @Test(arguments: ["level", "target", "missingTarget", "event", "missingEvent", "message",
+                      "invalidThreadID", "noncanonicalThreadID"])
+    func shutdownProgressLookalikesStillFailClosed(_ mismatch: String) throws {
+        var observer = try ready()
+        _ = try observer.beginPause()
+        var diagnostic = slowShutdownWarning(root)
+        var fields = diagnostic["fields"] as! [String: Any]
+        switch mismatch {
+        case "level": diagnostic["level"] = "ERROR"
+        case "target": diagnostic["target"] = "codex_core::rollout"
+        case "missingTarget": diagnostic.removeValue(forKey: "target")
+        case "event": fields["event.name"] = "codex.app_server.thread_shutdown_failed"
+        case "missingEvent": fields.removeValue(forKey: "event.name")
+        case "message": fields["message"] = (fields["message"] as! String) + "; disk full"
+        case "invalidThreadID": fields = slowShutdownWarning("not-a-uuid")["fields"] as! [String: Any]
+        default: fields = slowShutdownWarning("019A1111-2222-7333-8444-555555555555")["fields"] as! [String: Any]
+        }
+        diagnostic["fields"] = fields
+        try observer.observeDiagnostic(JSONSerialization.data(withJSONObject: diagnostic))
+        #expect(observer.failure == "update_managed_persistence_diagnostic")
+        #expect(!observer.persistenceBarrierComplete)
+    }
+
+    @Test(arguments: [true, false])
+    func slowShutdownProgressNeverClearsOrMasksPersistenceFailure(failureFirst: Bool) throws {
+        var observer = try ready()
+        let request = try observer.beginPause()[0]
+        let failure = Data(#"{"level":"ERROR","fields":{"message":"failed to flush thread persistence: disk full"}}"#.utf8)
+        if failureFirst { try observer.observeDiagnostic(failure) }
+        try observer.observeDiagnostic(JSONSerialization.data(withJSONObject: slowShutdownWarning(root)))
+        if !failureFirst { try observer.observeDiagnostic(failure) }
+        _ = try observer.observeServer(["id": request["id"]!, "result": ["status": "unsubscribed"]])
+        _ = try observer.observeServer(["method": "thread/closed", "params": ["threadId": root]])
+        observer.didExitServer(0)
+        observer.didReachStdoutEOF()
+        observer.didReachStderrEOF()
+        #expect(observer.failure == "update_managed_persistence_diagnostic")
+        #expect(!observer.persistenceBarrierComplete)
+    }
+
     @Test func shutdownErrorNotificationLatchesEvenIfClosedArrives() throws {
         var observer = try ready()
         let request = try observer.beginPause()[0]
@@ -265,12 +365,12 @@ struct UpdateManagedCodexObserverTests {
         }
     }
 
-    @Test(arguments: ["0.154.0", "0.155.0", "0.155.1"])
+    @Test(arguments: ["0.154.0", "0.155.0", "0.155.1", "0.156.0", "0.156.1", "0.157.0", "0.157.1", "0.158.0", "0.159.0", "0.159.1", "0.159.2", "0.159.3", "0.160.0", "0.160.1", "0.161.0", "0.162.0", "0.162.1", "0.163.0"])
     func acceptsQualifiedLifecycleVersion(_ version: String) throws {
         try UpdateManagedCodexProfile.requireSupported(version)
     }
 
-    @Test(arguments: ["0.149.1", "0.152.1", "0.155.2", "0.155.1-alpha.1", "latest"])
+    @Test(arguments: ["0.149.1", "0.152.1", "0.155.2", "0.156.2", "0.157.2", "0.158.1", "0.159.4", "0.160.2", "0.161.1", "0.162.2", "0.163.1", "0.164.0", "0.156.1-alpha.1", "0.157.1-alpha.1", "0.159.2-alpha.1", "0.160.0-alpha.1", "0.162.1-alpha.1", "0.163.0-alpha.1", "latest"])
     func separateLifecycleProfileRejectsUnqualifiedExactVersions(_ version: String) {
         #expect(throws: (any Error).self) { try UpdateManagedCodexProfile.requireSupported(version) }
     }

@@ -1,4 +1,5 @@
 import Darwin
+import Dispatch
 import Foundation
 import CoreFoundation
 import SQLite3
@@ -41,6 +42,22 @@ public struct JournalHealth: Sendable, Equatable {
     public let journalSequence: Int64
     public let sqlite: SQLiteConfiguration
     public let integrityCheck: String
+}
+
+/// Internal work seam. No identities or bytes are exposed;
+/// production instances leave the observer nil. Observers must not reenter the
+/// journal, since preparation and validation run under its existing locks.
+enum SQLiteJournalWork: Sendable {
+    case fullValidationScan
+    /// In-function wall time, excluding actor/outer lock wait and freshness
+    /// store precheck. A completed sample does not assert validation success.
+    case fullValidationFinished(elapsedNanoseconds: UInt64)
+    case eventPreparation
+    case documentPreparation
+    case verificationPreparation
+    case strictJSONDecodingPass
+    /// Candidate rows examined by persisted sidecar matching, not SQL reads.
+    case sidecarCandidates(count: Int)
 }
 
 public final class SQLiteJournal: @unchecked Sendable {
@@ -118,12 +135,15 @@ public final class SQLiteJournal: @unchecked Sendable {
     /// Optional caller-owned admission at the durable append boundary. Parsing,
     /// replay, lock acquisition and pending freshness preparation occur first.
     /// Rejection rolls back SQLite and leaves pending freshness fail-closed.
+    /// Admission must be repeatable; an interrupted pending write can make one
+    /// exact retry within the original append. Invoke commit synchronously once.
     public typealias AppendCommitGate = @Sendable (_ commit: () throws -> Void) throws -> Void
     private let appendCommitGate: AppendCommitGate?
     private let storageProcessLock: StorageProcessLock
     private var authenticator: SidecarAuthenticator!
     private let lock = NSLock()
     private var database: OpaquePointer?
+    private var workObserver: (@Sendable (SQLiteJournalWork) -> Void)?
 
     public init(
         databaseURL: URL,
@@ -194,6 +214,18 @@ public final class SQLiteJournal: @unchecked Sendable {
         if let database { sqlite3_close_v2(database) }
     }
 
+    /// Test instrumentation is installed only after bootstrap and cannot be
+    /// changed after the initialized instance is handed to a caller.
+    convenience init(
+        databaseURL: URL,
+        keyURL: URL,
+        freshnessStore: any FreshnessAnchorStore,
+        workObserver: @escaping @Sendable (SQLiteJournalWork) -> Void
+    ) throws {
+        try self.init(databaseURL: databaseURL, keyURL: keyURL, freshnessStore: freshnessStore)
+        self.workObserver = workObserver
+    }
+
     public func health() throws -> JournalHealth {
         try synchronizedWithStorageLock {
             try withImmediateTransaction {
@@ -222,7 +254,7 @@ public final class SQLiteJournal: @unchecked Sendable {
                     databaseCheckpoint: try currentCheckpoint(),
                     allowPendingSource: false
                 )
-                let snapshot = try loadUnlocked()
+                let snapshot = try loadUnlocked().snapshot
                 try requireFreshnessReady(after: precheck)
                 return snapshot
             }
@@ -251,6 +283,40 @@ public final class SQLiteJournal: @unchecked Sendable {
         verificationRecords: [Data] = [],
         crashPoint: JournalCrashPoint? = nil
     ) throws -> JournalAppendResult {
+        try preparedAppend(
+            expectedSequence: expectedSequence, events: events, documents: documents,
+            verificationRecords: verificationRecords, crashPoint: crashPoint,
+            recoverPendingTransition: false
+        )
+    }
+
+    /// Semantic writes retain the original canonical batch only for the
+    /// duration of this call. A pending-source interruption can be recovered
+    /// once without regenerating tokens or returning effects before commit.
+    /// Reads, snapshots and startup never replay an abandoned write.
+    func appendRecoveringPendingTransition(
+        expectedSequence: Int64,
+        events: [Data],
+        documents: [Data],
+        verificationRecords: [Data],
+        validateAdmission: () throws -> Void = {}
+    ) throws -> JournalAppendResult {
+        try preparedAppend(
+            expectedSequence: expectedSequence, events: events, documents: documents,
+            verificationRecords: verificationRecords, crashPoint: nil,
+            recoverPendingTransition: true, validateAdmission: validateAdmission
+        )
+    }
+
+    private func preparedAppend(
+        expectedSequence: Int64,
+        events: [Data],
+        documents: [Data],
+        verificationRecords: [Data],
+        crashPoint: JournalCrashPoint?,
+        recoverPendingTransition: Bool,
+        validateAdmission: () throws -> Void = {}
+    ) throws -> JournalAppendResult {
         try synchronized {
             try require(expectedSequence >= 0, "journal_sequence_conflict", "expected sequence is negative")
             try require(!events.isEmpty, "journal_empty_batch")
@@ -270,15 +336,62 @@ public final class SQLiteJournal: @unchecked Sendable {
                 verificationRecords: preparedVerifications.map(\.json)
             )
             return try storageProcessLock.withLock {
-                try appendLocked(
+                var pendingWriteAttempted = false
+                // This latch belongs only to this immutable batch/call. Once
+                // admitted, its exact pending-source recovery finishes that
+                // transition even if storage later outlasts the deadline.
+                // A new call or semantic sequence-conflict retry checks again.
+                var admitted = false
+                do {
+                    return try appendLocked(
+                        expectedSequence: expectedSequence,
+                        preparedEvents: preparedEvents,
+                        preparedDocuments: preparedDocuments,
+                        preparedVerifications: preparedVerifications,
+                        batchDigest: batchDigest, crashPoint: crashPoint,
+                        pendingWriteAttempted: &pendingWriteAttempted,
+                        admitted: &admitted, validateAdmission: validateAdmission
+                    )
+                } catch {
+                    // No retry on a conflict, a rejected admission, an unknown
+                    // rollback, or a completed target. Never guess from the
+                    // error code alone whether the original CAS took effect.
+                    guard recoverPendingTransition, pendingWriteAttempted,
+                          canRecoverPendingSource(
+                              expectedSequence: expectedSequence, batchDigest: batchDigest
+                          )
+                    else { throw error }
+                }
+                // This is a single bounded retry, still under both original
+                // locks. appendLocked rechecks schema/MAC/sidecars/from/to and
+                // current commit admission. Its failure escapes without retry.
+                return try appendLocked(
                     expectedSequence: expectedSequence,
                     preparedEvents: preparedEvents,
                     preparedDocuments: preparedDocuments,
                     preparedVerifications: preparedVerifications,
                     batchDigest: batchDigest,
-                    crashPoint: crashPoint
+                    crashPoint: crashPoint,
+                    pendingWriteAttempted: &pendingWriteAttempted,
+                    admitted: &admitted, validateAdmission: validateAdmission
                 )
             }
+        }
+    }
+
+    private func canRecoverPendingSource(expectedSequence: Int64, batchDigest: Data) -> Bool {
+        guard let database, sqlite3_get_autocommit(database) != 0 else { return false }
+        do {
+            let stored = try requiredFreshnessRecord()
+            guard stored.record.state == .pending,
+                  let transition = stored.record.pendingTransition,
+                  transition.from.sequence == expectedSequence,
+                  transition.batchDigest == batchDigest,
+                  try currentCheckpoint() == transition.from
+            else { return false }
+            return true
+        } catch {
+            return false
         }
     }
 
@@ -288,8 +401,12 @@ public final class SQLiteJournal: @unchecked Sendable {
         preparedDocuments: [PreparedDocument],
         preparedVerifications: [PreparedVerification],
         batchDigest: Data,
-        crashPoint: JournalCrashPoint?
+        crashPoint: JournalCrashPoint?,
+        pendingWriteAttempted: inout Bool,
+        admitted: inout Bool,
+        validateAdmission: () throws -> Void
     ) throws -> JournalAppendResult {
+        pendingWriteAttempted = false
         var pendingStored: FreshnessStoredRecord?
         var targetCheckpoint: FreshnessCheckpoint?
         try execute("BEGIN IMMEDIATE")
@@ -309,7 +426,8 @@ public final class SQLiteJournal: @unchecked Sendable {
                     "a different freshness transition is pending"
                 )
             }
-            let currentSnapshot = try loadUnlocked()
+            let current = try loadUnlocked()
+            let currentSnapshot = current.snapshot
             let reconciliation = try finishFreshnessAfterReplay(precheck)
             switch reconciliation {
             case let .ready(stored):
@@ -331,8 +449,12 @@ public final class SQLiteJournal: @unchecked Sendable {
                     "journal_batch_sequence_not_contiguous"
                 )
             }
-            let existingEvents = try currentSnapshot.events.map { try prepareRuntimeEvent($0) }
-            let existingDocuments = try currentSnapshot.documents.map { try preparePacketDocument($0) }
+            // These are the exact rows whose MAC, canonical form, schema,
+            // head, sequence and sidecars were checked above, under this same
+            // BEGIN IMMEDIATE transaction. Never retain them across loads or
+            // writers; postcommit confirmation still performs its own scan.
+            let existingEvents = current.events
+            let existingDocuments = current.documents
             try assertSelectionUniqueness(existingEvents: existingEvents, events: preparedEvents)
             try assertQueuedActionClaimUniqueness(
                 existingEvents: existingEvents,
@@ -367,12 +489,22 @@ public final class SQLiteJournal: @unchecked Sendable {
             guard let stored = pendingStored else {
                 throw CoordinatorError("freshness_transition_mismatch", "freshness record is unavailable")
             }
+            // Admission is after the slow integrity/sidecar checks, while both
+            // locks and this transaction still protect the exact source. An
+            // ordinary expiry rolls back staged SQLite rows without starting a
+            // pending freshness transition. The provider commit gate below is
+            // separate and continues to enforce revocation on every commit.
+            if !admitted {
+                try validateAdmission()
+                admitted = true
+            }
             if case let .pendingSource(_, transition) = reconciliation {
                 try require(
                     transition.from == sourceCheckpoint && transition.to == target,
                     "freshness_transition_mismatch",
                     "pending freshness target does not match the exact retry"
                 )
+                pendingWriteAttempted = true
             } else {
                 let transition = try FreshnessPendingTransition(
                     from: sourceCheckpoint,
@@ -383,6 +515,7 @@ public final class SQLiteJournal: @unchecked Sendable {
                     storageSlot: freshnessStore.storageSlot,
                     transition: transition
                 )
+                pendingWriteAttempted = true
                 pendingStored = try freshnessStore.compareAndSwap(
                     expectedRevision: stored.revision,
                     replacement: pending
@@ -393,13 +526,25 @@ public final class SQLiteJournal: @unchecked Sendable {
                 || crashPoint == .afterFreshnessPendingBeforeSQLiteCommit {
                 _exit(crashPoint == .beforeCommit ? 85 : 87)
             }
+            var commitInvoked = false
+            var duplicateCommitInvocation = false
             do {
                 if let appendCommitGate {
-                    try appendCommitGate { try execute("COMMIT") }
+                    try appendCommitGate {
+                        if commitInvoked { duplicateCommitInvocation = true }
+                        try require(!commitInvoked, "freshness_commit_ambiguous")
+                        commitInvoked = true
+                        try execute("COMMIT")
+                    }
+                    try require(commitInvoked && !duplicateCommitInvocation, "freshness_commit_ambiguous")
                 } else {
+                    commitInvoked = true
                     try execute("COMMIT")
                 }
             } catch {
+                // A gate that refuses admission must not be retried merely
+                // because a pending record was prepared before that refusal.
+                if !commitInvoked { pendingWriteAttempted = false }
                 throw CoordinatorError(
                     "freshness_commit_ambiguous",
                     "SQLite commit outcome could not be determined"
@@ -423,7 +568,7 @@ public final class SQLiteJournal: @unchecked Sendable {
                     databaseCheckpoint: committedCheckpoint,
                     allowPendingSource: false
                 )
-                let committed = try loadUnlocked()
+                let committed = try loadUnlocked().snapshot
                 let expectedSuffix = preparedEvents.map(\.json)
                 try require(
                     committedCheckpoint == targetCheckpoint
@@ -460,8 +605,21 @@ public final class SQLiteJournal: @unchecked Sendable {
     }
 
     private func synchronized<T>(_ operation: () throws -> T) throws -> T {
-        lock.lock()
+        // Bound the instance mutex too: a second caller must not wait forever
+        // before it can reach the separately bounded cross-instance/file lock.
+        let clock = ContinuousClock()
+        let deadline = clock.now.advanced(by: .milliseconds(250))
+        while !lock.try() {
+            guard clock.now < deadline else {
+                throw CoordinatorError("freshness_lock_busy", "journal storage is in use")
+            }
+            var interval = timespec(tv_sec: 0, tv_nsec: 1_000_000)
+            _ = nanosleep(&interval, nil)
+        }
         defer { lock.unlock() }
+        guard clock.now < deadline else {
+            throw CoordinatorError("freshness_lock_busy", "journal storage is in use")
+        }
         return try operation()
     }
 
@@ -916,7 +1074,22 @@ public final class SQLiteJournal: @unchecked Sendable {
         SQL.split(whereSeparator: { $0.isWhitespace }).joined(separator: " ").lowercased()
     }
 
-    private func loadUnlocked() throws -> JournalSnapshot {
+    private struct ValidatedLoad {
+        let snapshot: JournalSnapshot
+        let events: [PreparedEvent]
+        let documents: [PreparedDocument]
+    }
+
+    private func loadUnlocked() throws -> ValidatedLoad {
+        workObserver?(.fullValidationScan)
+        let started = workObserver == nil ? nil : DispatchTime.now().uptimeNanoseconds
+        defer {
+            if let started {
+                workObserver?(.fullValidationFinished(
+                    elapsedNanoseconds: DispatchTime.now().uptimeNanoseconds &- started
+                ))
+            }
+        }
         try verifySchemaV1()
         var events: [Data] = []
         var documents: [Data] = []
@@ -1027,11 +1200,15 @@ public final class SQLiteJournal: @unchecked Sendable {
             verifications: preparedVerifications
         )
 
-        return JournalSnapshot(
-            events: events,
-            documents: documents,
-            verificationRecords: verifications,
-            journalSequence: lastSequence
+        return ValidatedLoad(
+            snapshot: JournalSnapshot(
+                events: events,
+                documents: documents,
+                verificationRecords: verifications,
+                journalSequence: lastSequence
+            ),
+            events: preparedEvents,
+            documents: preparedDocuments
         )
     }
 
@@ -1043,7 +1220,7 @@ public final class SQLiteJournal: @unchecked Sendable {
         var foreignKeyViolation = false
         try query("PRAGMA foreign_key_check") { _ in foreignKeyViolation = true }
         try require(!foreignKeyViolation, "database_integrity_failed", "SQLite foreign key check failed")
-        let snapshot = try loadUnlocked()
+        let snapshot = try loadUnlocked().snapshot
         return JournalIntegrityResult(
             integrityCheck: integrity,
             quickCheck: quick,
@@ -1077,11 +1254,16 @@ public final class SQLiteJournal: @unchecked Sendable {
     }
 
     private func prepareRuntimeEvent(_ data: Data) throws -> PreparedEvent {
+        workObserver?(.eventPreparation)
+        workObserver?(.strictJSONDecodingPass)
         let raw = try StrictJSON.object(from: data, limits: validator.limits)
         try StrictJSON.rejectRawTokenKeys(raw.value)
-        let parsed = try validator.validatedObject(data, as: .runtimeEvent)
+        let parsed = try validator.validatedObject(raw, as: .runtimeEvent)
         try secretCorpus.assertNoKnownSecret(inJSONObject: parsed.value)
         try secretCorpus.assertNoKnownSecret(in: parsed.canonicalData)
+        // Retain the strict canonical reparse: canonicalization may change byte
+        // length/number spelling. Both representations must pass the same gates.
+        workObserver?(.strictJSONDecodingPass)
         guard case let .runtimeEvent(dto) = try validator.validate(parsed.canonicalData, as: .runtimeEvent) else {
             throw CoordinatorError("contract_validation_failed")
         }
@@ -1095,11 +1277,15 @@ public final class SQLiteJournal: @unchecked Sendable {
     }
 
     private func preparePacketDocument(_ data: Data) throws -> PreparedDocument {
+        workObserver?(.documentPreparation)
+        workObserver?(.strictJSONDecodingPass)
         let raw = try StrictJSON.object(from: data, limits: validator.limits)
         try StrictJSON.rejectRawTokenKeys(raw.value)
-        let parsed = try validator.validatedObject(data, as: .decisionPacket)
+        let parsed = try validator.validatedObject(raw, as: .decisionPacket)
         try secretCorpus.assertNoKnownSecret(inJSONObject: parsed.value)
         try secretCorpus.assertNoKnownSecret(in: parsed.canonicalData)
+        // As for events, this checks the canonical representation independently.
+        workObserver?(.strictJSONDecodingPass)
         guard case let .decisionPacket(dto) = try validator.validate(parsed.canonicalData, as: .decisionPacket) else {
             throw CoordinatorError("contract_validation_failed")
         }
@@ -1118,6 +1304,8 @@ public final class SQLiteJournal: @unchecked Sendable {
     }
 
     private func prepareVerificationRecord(_ data: Data) throws -> PreparedVerification {
+        workObserver?(.verificationPreparation)
+        workObserver?(.strictJSONDecodingPass)
         let parsed = try StrictJSON.object(from: data, limits: validator.limits)
         try StrictJSON.rejectRawTokenKeys(parsed.value)
         let object = parsed.value
@@ -1187,15 +1375,18 @@ public final class SQLiteJournal: @unchecked Sendable {
         existingEvents: [PreparedEvent],
         events: [PreparedEvent]
     ) throws {
-        var claimedSelections: [PreparedEvent] = []
+        // The bucket is only a candidate index. Compare the complete binding
+        // within it, retaining cross-session distinctions and duplicate denial.
+        var claimedSelections: [String?: [PreparedEvent]] = [:]
         for selection in (existingEvents + events) where selection.type == "decision_selection_claimed" {
+            let boundaryID = selection.object["decision_boundary_id"] as? String
             try require(
-                !claimedSelections.contains {
+                !(claimedSelections[boundaryID] ?? []).contains {
                     sameDecisionBoundarySelection($0.object, selection.object)
                 },
                 "selection_already_claimed"
             )
-            claimedSelections.append(selection)
+            claimedSelections[boundaryID, default: []].append(selection)
         }
     }
 
@@ -1555,14 +1746,68 @@ public final class SQLiteJournal: @unchecked Sendable {
         }
     }
 
+    private func sidecarMatches<Element>(
+        _ candidates: [Element],
+        where predicate: (Element) -> Bool
+    ) -> [Element] {
+        workObserver?(.sidecarCandidates(count: candidates.count))
+        return candidates.filter(predicate)
+    }
+
+    // Structured keys avoid delimiter collisions in user-provided identifiers.
+    // Optional members preserve candidate matching even for a missing field;
+    // the strict schema and the original full predicates remain authoritative.
+    private struct SidecarPacketKey: Hashable {
+        let packetID: String?
+        let revision: Int64?
+    }
+
+    private struct SidecarSelectionKey: Hashable {
+        let packet: SidecarPacketKey
+        let optionID: String?
+    }
+
+    private func sidecarPacketKey(_ event: PreparedEvent) -> SidecarPacketKey {
+        SidecarPacketKey(
+            packetID: payloadString(event.object, "packet_id"),
+            revision: payloadInteger(event.object, "revision")
+        )
+    }
+
+    private func sidecarPacketKey(_ document: PreparedDocument) -> SidecarPacketKey {
+        SidecarPacketKey(packetID: document.packetID, revision: document.revision)
+    }
+
+    private func sidecarSelectionKey(_ event: PreparedEvent) -> SidecarSelectionKey {
+        SidecarSelectionKey(
+            packet: sidecarPacketKey(event),
+            optionID: payloadString(event.object, "option_id")
+        )
+    }
+
     private func verifyPersistedSidecarCompleteness(
         events: [PreparedEvent],
         documents: [PreparedDocument],
         verifications: [PreparedVerification]
     ) throws {
         let seals = events.filter { $0.type == "decision_packet_sealed" }
+        let selections = events.filter { $0.type == "decision_selection_claimed" }
+        let dispatches = events.filter { $0.type == "continuation_dispatched" }
+        // Build fresh indices from this scan's authenticated, validated rows.
+        // Never retain them across transactions/requests. Arrays intentionally
+        // keep duplicates so every original matches.count == 1 check still runs.
+        let documentsByPacket = Dictionary(grouping: documents, by: sidecarPacketKey)
+        let sealsByPacket = Dictionary(grouping: seals, by: sidecarPacketKey)
+        let selectionsByChoice = Dictionary(grouping: selections, by: sidecarSelectionKey)
+        let dispatchesByChoice = Dictionary(grouping: dispatches, by: sidecarSelectionKey)
+        let dispatchesByID = Dictionary(grouping: dispatches, by: \.eventID)
+        let verificationsByDispatch = Dictionary(grouping: verifications, by: \.dispatchEventID)
+        let closesByBoundary = Dictionary(
+            grouping: events.filter { $0.type == "decision_boundary_closed" },
+            by: { $0.object["decision_boundary_id"] as? String }
+        )
         for seal in seals {
-            let matches = documents.filter {
+            let matches = sidecarMatches(documentsByPacket[sidecarPacketKey(seal)] ?? []) {
                 $0.packetID == payloadString(seal.object, "packet_id")
                     && $0.revision == payloadInteger(seal.object, "revision")
             }
@@ -1574,7 +1819,7 @@ public final class SQLiteJournal: @unchecked Sendable {
             )
         }
         for document in documents {
-            let matches = seals.filter {
+            let matches = sidecarMatches(sealsByPacket[sidecarPacketKey(document)] ?? []) {
                 payloadString($0.object, "packet_id") == document.packetID
                     && payloadInteger($0.object, "revision") == document.revision
             }
@@ -1586,10 +1831,8 @@ public final class SQLiteJournal: @unchecked Sendable {
             )
         }
 
-        let selections = events.filter { $0.type == "decision_selection_claimed" }
-        let dispatches = events.filter { $0.type == "continuation_dispatched" }
         for selection in selections {
-            let matches = documents.filter {
+            let matches = sidecarMatches(documentsByPacket[sidecarPacketKey(selection)] ?? []) {
                 $0.packetID == payloadString(selection.object, "packet_id")
                     && $0.revision == payloadInteger(selection.object, "revision")
             }
@@ -1615,7 +1858,7 @@ public final class SQLiteJournal: @unchecked Sendable {
                 "persisted selection references a disabled packet choice"
             )
             if choice["action"] is [String: Any] {
-                let matchingDispatches = dispatches.filter {
+                let matchingDispatches = sidecarMatches(dispatchesByChoice[sidecarSelectionKey(selection)] ?? []) {
                     sameSelectionDispatch(selection: selection.object, dispatch: $0.object)
                 }
                 try require(
@@ -1629,7 +1872,7 @@ public final class SQLiteJournal: @unchecked Sendable {
                     "persisted dispatch action does not match its selected packet choice"
                 )
             } else if choice["kind"] as? String == "pause" {
-                let closes = events.filter {
+                let closes = sidecarMatches(closesByBoundary[selection.object["decision_boundary_id"] as? String] ?? []) {
                     $0.type == "decision_boundary_closed"
                         && sameTopBinding(selection.object, $0.object)
                         && payloadString($0.object, "close_reason") == "episode_paused"
@@ -1648,7 +1891,7 @@ public final class SQLiteJournal: @unchecked Sendable {
         }
 
         for dispatch in dispatches {
-            let matchingSelections = selections.filter {
+            let matchingSelections = sidecarMatches(selectionsByChoice[sidecarSelectionKey(dispatch)] ?? []) {
                 sameSelectionDispatch(selection: $0.object, dispatch: dispatch.object)
             }
             try require(
@@ -1657,7 +1900,7 @@ public final class SQLiteJournal: @unchecked Sendable {
                 "runtime_event_integrity_mismatch",
                 "persisted dispatch has no adjacent matching selection"
             )
-            let matches = verifications.filter {
+            let matches = sidecarMatches(verificationsByDispatch[dispatch.eventID] ?? []) {
                 verificationMatchesDispatch($0, dispatch: dispatch)
             }
             try require(
@@ -1667,7 +1910,7 @@ public final class SQLiteJournal: @unchecked Sendable {
             )
         }
         for verification in verifications {
-            let matches = dispatches.filter {
+            let matches = sidecarMatches(dispatchesByID[verification.dispatchEventID] ?? []) {
                 verificationMatchesDispatch(verification, dispatch: $0)
             }
             try require(

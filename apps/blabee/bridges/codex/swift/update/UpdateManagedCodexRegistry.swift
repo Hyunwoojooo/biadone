@@ -176,6 +176,31 @@ struct UpdateManagedCodexRegistry: Sendable {
         }
     }
 
+    /// Revoke only the original placeholder after a caller has proved that its
+    /// initial launch was not dispatched. A zero PID alone is not that proof:
+    /// a timed-out Terminal request may still start the host later.
+    func discardUnstarted(_ expected: UpdateManagedCodexRecord) throws {
+        try Self.validate(expected)
+        guard expected.session.state == .starting, expected.hostPID == 0,
+              expected.hostStartTime == 0, expected.transactionID == nil,
+              expected.restorationClaim == nil else {
+            throw updateManagedError("launch_record_invalid")
+        }
+        try withDirectory { directory in
+            let name = try Self.fileName(expected.session.id)
+            guard let current = try readRecord(directory: directory, name: name) else { return }
+            // Compare and delete under the same lock used by the host's CAS.
+            // If the host won, preserve it; if deletion wins, the host cannot
+            // recreate this record with save(expectedIncarnation:).
+            guard current == expected else {
+                throw updateManagedError("launch_record_changed")
+            }
+            guard unlinkat(directory, name, 0) == 0, fsync(directory) == 0 else {
+                throw updateManagedError("registry_unavailable")
+            }
+        }
+    }
+
     private static func accountDirectory() -> URL {
         var buffer = [CChar](repeating: 0, count: 16_384)
         let home: String? = buffer.withUnsafeMutableBufferPointer { buffer in
