@@ -3,7 +3,32 @@
 The landing page measures **page views by referral source** and **new beta email
 requests by their first signup source**. It does not count unique people.
 
-## Share a tagged link
+## Share a short platform link
+
+Use these addresses in public posts, profile links, and video descriptions:
+
+Short links deployed on 2026-10-17: `https://9042855d.biadone.pages.dev`.
+
+| Platform | Short link | Default content |
+|---|---|---|
+| Reddit | `https://biadone.com/blabee/reddit` | `post-01` |
+| X | `https://biadone.com/blabee/x` | `post-01` |
+| Instagram | `https://biadone.com/blabee/instagram` | `bio` |
+| YouTube | `https://biadone.com/blabee/youtube` | `video-01` |
+
+Cloudflare redirects each address to the same landing page with its existing
+campaign tags. The page captures those tags, then replaces the visible address
+with `/blabee/` without reloading or adding a browser-history entry. Other query
+parameters and anchors are preserved. With JavaScript disabled or blocked, the
+tagged destination can remain visible. Clearing the address does not erase
+the original request from browser/network history or provider logs.
+
+The short links share the `mac-beta` campaign and `social` medium. Reuse them
+for platform totals. To distinguish individual posts, use the tagged links
+below with a different `utm_content`; those tags are also removed from the
+visible address after capture. Existing long links keep working.
+
+## Optional per-post tagged links
 
 Use the same campaign name across channels, and different content names for
 different posts or placements. Values are lowercase ASCII slugs, at most 80
@@ -17,7 +42,7 @@ in tracking parameters. Invalid values are discarded, not truncated.
 | Instagram profile | `https://biadone.com/blabee/?utm_source=instagram&utm_medium=social&utm_campaign=mac-beta&utm_content=bio` |
 | YouTube video description | `https://biadone.com/blabee/?utm_source=youtube&utm_medium=social&utm_campaign=mac-beta&utm_content=video-01` |
 
-Copy the **complete URL**, including everything after `?`, when sharing it.
+For a custom per-post tagged link, copy the **complete URL**, including everything after `?`.
 Keep `utm_source` fixed for each platform. Change only `utm_content` for each
 post or placement, for example `post-02`, `story-01`, or `video-02`. The source
 identifies the tag on the shared link; if someone reposts that link elsewhere,
@@ -73,7 +98,9 @@ The private tables remain accessible only to the project owner:
   landing document within 30 minutes, allowing a policy-page round trip. Expired
   cache data is discarded when next checked, not by a background deletion timer.
   An open landing document retains its assigned source for its beta request.
-  A new tagged or externally referred entry replaces the cache. It contains only
+  Reloads/history restoration reuse valid cached tags even when the browser
+  retains the original external referrer. A new tagged or externally referred
+  navigation replaces the cache. It contains only
   source fields and an expiry, no visitor identifier; it does not track across
   tabs or devices.
 - The page sends only the four allowlisted UTM values and the referring hostname.

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { getLandingAttribution, recordLandingView } from "../blabee/js/landing-attribution.mjs";
+import { getCleanLandingPath, getLandingAttribution, recordLandingView } from "../blabee/js/landing-attribution.mjs";
 
 const CACHE_KEY = "blabee.landing-attribution.v1";
 const TTL = 30 * 60 * 1000;
@@ -13,6 +13,21 @@ const config = {
   endpoint: "https://example.supabase.co/rest/v1/rpc/record_blabee_landing_view",
   publishableKey: "sb_publishable_test",
 };
+
+test("URL cleanup removes all campaign tags while preserving other parameters and the anchor", () => {
+  const path = getCleanLandingPath(`${LANDING}?utm_source=reddit&utm_source=x&utm_medium=social&utm_campaign=mac-beta&utm_content=post-01&lang=ko&filter=a%20b#beta`);
+  const cleaned = new URL(path, LANDING);
+  assert.equal(cleaned.pathname, "/blabee/");
+  assert.equal(cleaned.hash, "#beta");
+  assert.deepEqual([...cleaned.searchParams], [["lang", "ko"], ["filter", "a b"]]);
+  assert.equal(getCleanLandingPath(`${LANDING}?utm_source=#beta`), "/blabee/#beta");
+});
+
+test("URL cleanup does nothing for untagged, invalid or non-web URLs", () => {
+  for (const url of [LANDING, `${LANDING}?lang=ko#beta`, "not a URL", undefined, "javascript:alert(1)?utm_source=x", "file:///blabee/?utm_source=x"]) {
+    assert.equal(getCleanLandingPath(url), null);
+  }
+});
 
 function memoryStorage(initial = {}) {
   const data = new Map(Object.entries(initial));
@@ -107,6 +122,19 @@ test("a new campaign or external referral replaces the prior source and renews i
   const referral = getLandingAttribution({ url: LANDING, referrer: "https://news.ycombinator.com/item?id=123", storage, now: NOW + 2000 });
   assert.deepEqual(referral, { ...EMPTY, referrer_host: "news.ycombinator.com" });
   assert.equal(JSON.parse(storage.getItem(CACHE_KEY)).expiresAt, NOW + 2000 + TTL);
+});
+
+test("reload and history restoration preserve valid UTM cache despite the original external referrer", () => {
+  const storage = memoryStorage();
+  const referrer = "https://www.reddit.com/r/example";
+  const original = getLandingAttribution({ url: `${LANDING}?utm_source=reddit&utm_campaign=mac-beta`, referrer, storage, now: NOW });
+  const cached = storage.getItem(CACHE_KEY);
+  for (const navigationType of ["reload", "back_forward"]) {
+    assert.deepEqual(getLandingAttribution({ url: LANDING, referrer, storage, now: NOW + 1000, navigationType }), original);
+    assert.equal(storage.getItem(CACHE_KEY), cached, "Restoration does not extend the cache expiry");
+  }
+  assert.deepEqual(getLandingAttribution({ url: `${LANDING}?utm_source=x`, referrer, storage, now: NOW + 2000, navigationType: "reload" }), { ...EMPTY, utm_source: "x", referrer_host: "www.reddit.com" });
+  assert.deepEqual(getLandingAttribution({ url: LANDING, referrer, storage, now: NOW + 2000 + TTL, navigationType: "reload" }), { ...EMPTY, referrer_host: "www.reddit.com" });
 });
 
 test("expired and implausibly future cache entries are discarded", () => {

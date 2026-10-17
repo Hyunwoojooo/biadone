@@ -30,6 +30,11 @@ function landingUrl(pathname = '/blabee/', params = {}) {
 async function navigate(page, url, options = {}) {
   const response = await page.goto(url, { waitUntil: 'networkidle', ...options });
   assert.equal(response.status(), 200);
+  const entry = new URL(url);
+  if (['utm_source', 'utm_medium', 'utm_campaign', 'utm_content'].some(key => entry.searchParams.has(key))) {
+    for (const key of ['utm_source', 'utm_medium', 'utm_campaign', 'utm_content']) entry.searchParams.delete(key);
+    assert.equal(page.url(), entry.href, 'Campaign tags are removed after attribution is captured');
+  }
 }
 
 async function submitBeta(page) {
@@ -42,7 +47,7 @@ async function submitBeta(page) {
 
 async function withScenario(browser, results, name, options, run) {
   const context = await browser.newContext({
-    viewport: { width: 1440, height: 1000 }, reducedMotion: 'reduce', serviceWorkers: 'block',
+    viewport: options.viewport || { width: 1440, height: 1000 }, reducedMotion: 'reduce', serviceWorkers: 'block',
   });
   context.setDefaultTimeout(15000);
   const state = { views: [], signups: [], errors: [], unexpectedExternal: [], badAssets: [] };
@@ -99,7 +104,7 @@ async function withScenario(browser, results, name, options, run) {
     assert.deepEqual(state.errors, []);
     assert.deepEqual(state.badAssets, []);
     assert.deepEqual(state.unexpectedExternal, []);
-    results.push({ name, pageviews: state.views.length, signupRequests: state.signups.length });
+    results.push({ name, url: page.url(), pageviews: state.views.length, signupRequests: state.signups.length });
   } finally {
     await context.close();
   }
@@ -109,6 +114,59 @@ async function withScenario(browser, results, name, options, run) {
   const browser = await chromium.launch({ headless: true });
   const results = [];
   try {
+    for (const [source, content] of [['reddit', 'post-01'], ['x', 'post-01'], ['instagram', 'bio'], ['youtube', 'video-01']]) {
+      for (const suffix of ['', '/']) {
+        const viewport = source === 'instagram' ? { width: 390, height: 844 } : undefined;
+        await withScenario(browser, results, `Short ${source} link${suffix ? ' with trailing slash' : ''} retains attribution and shows a clean URL`, { viewport }, async ({ page, views, signups }) => {
+          const expected = { ...emptyAttribution, utm_source: source, utm_medium: 'social', utm_campaign: 'mac-beta', utm_content: content };
+          await navigate(page, landingUrl(`/blabee/${source}${suffix}`));
+          assert.equal(page.url(), landingUrl());
+          assert.match(await page.title(), /Blabee/);
+          assert.ok(await page.locator('[data-beta-form]').count());
+          assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
+          assert.deepEqual(views, [{ p_attribution: expected }]);
+          if (!suffix && ['reddit', 'instagram'].includes(source)) {
+            await fs.mkdir(output, { recursive: true });
+            await page.screenshot({ path: `${output}/short-${source}.png` });
+          }
+          const response = await page.reload({ waitUntil: 'networkidle' });
+          assert.equal(response.status(), 200);
+          assert.equal(page.url(), landingUrl());
+          assert.deepEqual(views, [{ p_attribution: expected }, { p_attribution: expected }]);
+          await submitBeta(page);
+          assert.deepEqual(signups, [{ p_email: fixtureEmail, p_attribution: expected }]);
+        });
+      }
+    }
+
+    await withScenario(browser, results, 'A simulated retained external referrer does not replace the captured campaign on reload', {}, async ({ page, views, signups }) => {
+      const referrer = 'https://www.reddit.com/r/example';
+      const expected = { ...emptyAttribution, utm_source: 'reddit', utm_medium: 'social', utm_campaign: 'mac-beta', utm_content: 'post-01', referrer_host: 'www.reddit.com' };
+      await navigate(page, landingUrl('/blabee/', { utm_source: 'reddit', utm_medium: 'social', utm_campaign: 'mac-beta', utm_content: 'post-01' }), { referer: referrer });
+      assert.equal(page.url(), landingUrl());
+      assert.deepEqual(views, [{ p_attribution: expected }]);
+      assert.equal(await page.evaluate(() => document.referrer), referrer);
+      // Browsers vary here; explicitly exercise a retained original referrer.
+      await page.addInitScript(value => Object.defineProperty(document, 'referrer', { configurable: true, get: () => value }), referrer);
+      await page.reload({ waitUntil: 'networkidle' });
+      assert.equal(await page.evaluate(() => performance.getEntriesByType('navigation')[0].type), 'reload');
+      assert.equal(await page.evaluate(() => document.referrer), referrer);
+      assert.deepEqual(views, [{ p_attribution: expected }, { p_attribution: expected }]);
+      await submitBeta(page);
+      assert.deepEqual(signups, [{ p_email: fixtureEmail, p_attribution: expected }]);
+    });
+
+    await withScenario(browser, results, 'URL cleanup preserves unrelated query parameters, anchor, and history state', {}, async ({ page, views, signups }) => {
+      await page.context().addInitScript(() => history.replaceState({ existing: 'keep' }, '', location.href));
+      const expected = { ...emptyAttribution, utm_source: 'x' };
+      await navigate(page, landingUrl('/blabee/', { utm_source: 'x', lang: 'ko' }) + '#beta');
+      assert.equal(page.url(), landingUrl('/blabee/', { lang: 'ko' }) + '#beta');
+      assert.deepEqual(await page.evaluate(() => history.state), { existing: 'keep' });
+      assert.deepEqual(views, [{ p_attribution: expected }]);
+      await submitBeta(page);
+      assert.deepEqual(signups, [{ p_email: fixtureEmail, p_attribution: expected }]);
+    });
+
     await withScenario(browser, results, 'Only approved UTM slugs and referrer hostname are sent', {}, async ({ page, views, signups }) => {
       const expected = {
         utm_source: 'reddit', utm_medium: 'social', utm_campaign: 'mac-beta', utm_content: 'post.1', referrer_host: 'news.example.com',

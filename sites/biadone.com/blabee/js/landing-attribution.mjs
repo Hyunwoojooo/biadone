@@ -23,6 +23,15 @@ function parseUrl(value) {
   }
 }
 
+// Capture attribution first, then remove only our tags from the visible URL.
+export function getCleanLandingPath(url) {
+  const parsed = parseUrl(url);
+  if (!parsed || !["http:", "https:"].includes(parsed.protocol)
+    || !UTM_FIELDS.some((field) => parsed.searchParams.has(field))) return null;
+  for (const field of UTM_FIELDS) parsed.searchParams.delete(field);
+  return `${parsed.pathname}${parsed.search}${parsed.hash}`;
+}
+
 function canonicalHost(host) {
   return host.toLowerCase().replace(/\.$/, "");
 }
@@ -86,7 +95,7 @@ function restoreCache(storage, now, currentHost) {
 }
 
 // Only approved campaign slugs and an external hostname survive this boundary.
-export function getLandingAttribution({ url, referrer = "", storage = null, now = Date.now(), privacyEnabled = false } = {}) {
+export function getLandingAttribution({ url, referrer = "", storage = null, now = Date.now(), privacyEnabled = false, navigationType = "navigate" } = {}) {
   if (privacyEnabled) {
     removeCache(storage);
     return null;
@@ -96,6 +105,12 @@ export function getLandingAttribution({ url, referrer = "", storage = null, now 
   const currentHost = parsed ? canonicalHost(parsed.hostname) : "";
   const attribution = emptyAttribution();
   for (const field of UTM_FIELDS) attribution[field] = normalizeSlug(parsed?.searchParams.get(field));
+  // Reload/history can retain the original external referrer after URL cleanup.
+  // Reuse valid campaign metadata instead of replacing it with that hostname.
+  if (!UTM_FIELDS.some((field) => attribution[field]) && ["reload", "back_forward"].includes(navigationType)) {
+    const cached = restoreCache(storage, timestamp, currentHost);
+    if (cached) return cached;
+  }
   attribution.referrer_host = referrerHost(referrer, currentHost);
 
   if (Object.values(attribution).some(Boolean)) {

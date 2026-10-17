@@ -1,7 +1,7 @@
 import { COPY } from "./content.js?v=20261017a";
 import { BETA_SIGNUP } from "./beta-config.js?v=20261017a";
 import { requestBetaAccess } from "./beta-signup.mjs?v=20261017a";
-import { getLandingAttribution, recordLandingView } from "./landing-attribution.mjs?v=20261017a";
+import { getCleanLandingPath, getLandingAttribution, recordLandingView } from "./landing-attribution.mjs?v=20261017b";
 
 let attributionStorage = null;
 try { attributionStorage = window.sessionStorage; } catch { /* Storage may be disabled. */ }
@@ -9,8 +9,13 @@ const landingAttribution = getLandingAttribution({
   url: window.location.href,
   referrer: document.referrer,
   storage: attributionStorage,
+  navigationType: window.performance?.getEntriesByType?.("navigation")?.[0]?.type,
   privacyEnabled: navigator.globalPrivacyControl === true || navigator.doNotTrack === "1" || window.doNotTrack === "1",
 });
+try {
+  const cleanPath = getCleanLandingPath(window.location.href);
+  if (cleanPath !== null) window.history.replaceState(window.history.state, "", cleanPath);
+} catch { /* URL cleanup must not block attribution or beta signup. */ }
 
 // One best-effort count per visible page load. Analytics never gates signup.
 function recordVisibleLanding() {

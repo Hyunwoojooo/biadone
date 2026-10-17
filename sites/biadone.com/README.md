@@ -161,6 +161,7 @@ _redirects
 - 모든 사이트 내부 절대 경로와 canonical·OG URL을 `/blabee/` 기준으로 변경했습니다. 영문·한국어 정책 페이지와 `/blabee/liquid-glass/light/` 호환 경로를 포함합니다.
 - 베타 신청 폼은 이메일만 입력받습니다. Supabase의 `blabee_marketing.beta_requests`에 이메일·최초 신청 시각·선택적 유입 정보를 저장하며, 같은 이메일은 한 건만 유지합니다. 다른 신청자의 이메일은 공개 API로 조회할 수 없습니다. 계정 생성이나 안내 메일 자동 발송은 하지 않습니다.
 - 추적 링크의 UTM과 외부 참조 호스트로 경로별 페이지 조회 수·신규 베타 신청 수를 집계합니다. 방문 수는 고유 인원이 아니며, 기존 신청의 과거 유입은 알 수 없습니다. GPC/DNT 사용 시 유입 집계를 생략합니다. 운영자 조회 SQL과 플랫폼별 공유 링크는 [TRACKING.md](TRACKING.md)를 참고하세요.
+- 홍보에는 `/blabee/reddit`, `/blabee/x`, `/blabee/instagram`, `/blabee/youtube` 짧은 주소를 사용할 수 있습니다. 이동 후 유입 정보를 읽고 주소창의 UTM을 정리합니다.
 - 정책 초안 표시와 `noindex` 설정은 유지합니다. 신청 API/마이그레이션과 검증 방법은 [supabase/README.md](supabase/README.md)를 참고하세요.
 - 랜딩페이지에 삽입된 36초 시연 MP4·영문 VTT 자막·포스터를 포함합니다. 원본 `media/promos/2026-09-21/`의 한·영 15초 홍보 MP4·SRT는 원본 공개 빌드와 동일하게 배포 대상에서 제외합니다.
 - GSAP Core / ScrollTrigger 3.15.0은 원본의 자체 호스팅 파일과 라이선스 배너를 유지합니다. [GSAP Standard License](https://gsap.com/standard-license/)가 적용됩니다.

@@ -1,3 +1,38 @@
+# Blabee short promotional links — 2026-10-17
+
+- Public sharing addresses: `/blabee/reddit`, `/blabee/x`, `/blabee/instagram`,
+  and `/blabee/youtube`. Both slash variants redirect with HTTP 302 to the
+  existing campaign tags; Cloudflare parses nine total redirect rules.
+- The landing page captures attribution before using `history.replaceState`
+  to remove its four UTM fields from the visible URL. It preserves unrelated
+  query parameters, anchors, and existing history state. Cache version `b`
+  connects both landing entry points to the changed modules.
+- Reload/history restoration prefers valid cached tags over an original external
+  referrer, while fresh tagged/external navigation keeps existing precedence.
+  Review identified this potential loss after URL cleanup; the fix has unit
+  coverage. Chromium cleared the referrer on normal reload, so browser QA also
+  explicitly simulates a retained external referrer rather than claiming that
+  all browsers behave identically.
+- Unit tests: 24/24 passed. Local attribution browser checks cover eight short
+  route variants, clean URL/reload/signup, retained-referrer simulation, query/
+  anchor/history-state preservation, and the previous privacy/failure scenarios.
+  The form suite also passed at 1440, 768, and 390px plus the compatibility URL.
+- Browser plugin not available; existing Playwright 1.62.1 was used against
+  local Wrangler 4.151.1 at `http://127.0.0.1:8810`. API writes are intercepted.
+  Evidence: `/tmp/blabee-short-links-local/` and
+  `/tmp/blabee-short-links-local-form/`. No new dependency or database migration.
+- With JavaScript blocked, the tagged destination can remain visible. Cosmetic
+  URL cleanup does not erase the original network request. Without session
+  storage, a later clean reload cannot recover a previously removed campaign.
+- Production deployment: `https://9042855d.biadone.pages.dev`, Wrangler 4.151.1,
+  project `biadone`, branch `main`. All 20 attribution browser scenarios passed
+  on `https://biadone.com` with writes intercepted. The eight short-route
+  variants return 302 with the intended tags; `www` works. Three served modules
+  match local bytes and both HTML entry points serve version `20261017b`.
+  Production evidence: `/tmp/blabee-short-links-production/`.
+
+---
+
 # Blabee referral measurement — 2026-10-17
 
 ## Change
