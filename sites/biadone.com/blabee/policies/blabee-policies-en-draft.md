@@ -4,6 +4,18 @@ DRAFT · UPDATED SEPTEMBER 18, 2026
 
 > Published for review · Not yet in effect. The effective date, legal operator, provider-specific transfer details and active-account retention process are being finalized. App consent, deletion and billing flows must be verified before these policies take effect.
 
+## Website referral measurement
+
+This section describes website measurement added on October 17, 2026. The app policy drafts below remain separate.
+
+We measure landing-page views by referral source and the number of new beta requests from each source. We use four campaign labels (UTM source, medium, campaign and content), the referring website’s hostname when available, and the UTC date. Visits are stored as daily totals without a visitor identifier or an individual browsing history. A page reload can count as another view.
+
+Referral data is kept in tab-scoped session storage. If you return from the policy page within 30 minutes, the landing page can reuse it; expired data is discarded the next time the landing page checks it. An open landing page keeps its assigned source for that page’s beta request. When you request beta access, the source is stored with your email and first request time in Supabase. Repeating the request does not replace that first source. Browser Global Privacy Control or Do Not Track disables this measurement and source attachment; beta requests still work.
+
+These measurement tables do not store full referring URLs, unrelated query values, IP addresses or user-agent strings. Hosting and API providers may keep their own request logs. Missing referral information is marked as direct or unknown. Contact biadone.official@gmail.com about your beta request or its source information.
+
+---
+
 ## Privacy Notice
 
 This notice describes our planned handling of account information, optional usage statistics, diagnostics and feedback. The practices below are drafts for the future release, not a verification of the current app or website. The effective date, legal operator, business address and privacy officer are still to be confirmed.

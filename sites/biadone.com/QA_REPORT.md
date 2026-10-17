@@ -1,4 +1,98 @@
-# Blabee beta signup — 2026-09-24
+# Blabee referral measurement — 2026-10-17
+
+## Change
+
+- Added UTM/referrer-host attribution, one best-effort view request per visible
+  document, and first-signup attribution. The page remains static, uses the
+  existing public Supabase key, and adds no production dependency.
+- Added private daily counters, nullable signup attribution, two narrowly scoped
+  public submission RPCs, and an owner-only source report. Existing applicants
+  and the legacy email-only RPC are preserved.
+- Added ready-to-share Reddit, X, Instagram, and YouTube links in `TRACKING.md`.
+  Updated both landing URLs, EN/KO website measurement notices, exact CSP
+  endpoints, and private operator/test documentation.
+
+## Local verification
+
+- Unit tests: 21/21 passed for email signup and source normalization, cache,
+  privacy signals, request payloads, acknowledgements, timeout, and failure.
+- `tests/landing-sql.test.mjs`: passed in isolated PGlite with both migrations
+  and SQL fixture suites. Checks anonymous/authenticated execution, denied table
+  access, RLS, normalization, duplicate first-source preservation, old/opted-out
+  requests, and report boundaries under a non-UTC session timezone. No site
+  dependency was installed; the isolated runner lives outside the public files.
+- Browser form checks passed at 1440, 768, and 390px and the compatibility URL.
+  Ten attribution scenarios passed: UTM allowlisting, policy-page round trips,
+  campaign replacement, reload/visibility counting, analytics failure, GPC/DNT,
+  and unavailable storage. All API writes were intercepted; no real applicants
+  or views were created by these browser tests. Desktop/mobile screenshots were
+  inspected; no application errors, broken local assets, CSP failures, or
+  horizontal overflow were found.
+- Local Pages 301 `/blabee` redirect preserves all four UTM parameters.
+  Runtime: Wrangler 4.137.0, compatibility date 2026-09-28 (the cached workerd's
+  latest supported date); a later compatibility date could not start locally.
+- Independent review found one disclosure mismatch around the 30-minute cache.
+  EN/KO text now states the reuse window and next-check cleanup, rather than
+  promising timed deletion. An open page retains its assigned signup source.
+- Artifacts: `/tmp/blabee-tracking-local-form/` and
+  `/tmp/blabee-tracking-local-attribution/`.
+
+## Production database verification
+
+- Preflight confirmed the existing signup table/RPC and absence of tracking
+  objects. Applied only `202610170001_blabee_landing_attribution.sql` through
+  the existing project's SQL Editor; no credential/environment changes or
+  migration replay. Supabase CLI migration history was not changed.
+- Under the actual `anon` role, four platform sources produced four groups and
+  five views; repeated normalized email requests kept the initial Reddit source.
+  Direct anonymous table access failed. All fixture work was rolled back.
+- Owner-side checks confirmed both tables have RLS, no anon/authenticated direct
+  table privileges, the intended RPC grants, denied service-role execution, the
+  preserved legacy RPC, and zero remaining verification fixtures.
+- Browser-to-API successful insert handling is tested with intercepted responses;
+  actual database inserts/counters are tested in the rolled-back SQL transaction.
+  This distinction avoids leaving synthetic leads or analytics in production.
+
+## Production site verification
+
+- Deployed through the previously authorized Cloudflare Pages workflow,
+  Wrangler 4.151.1, project `biadone`, branch `main`:
+  `https://c9e0872f.biadone.pages.dev`. Upload contained 38 allowlisted files
+  (36 assets and two rule files); private docs/SQL/tests were excluded.
+- The actual `biadone.com` domain and `www` serve the new entry version. Eight
+  changed JavaScript/Markdown assets match local SHA-256 hashes. Both landing
+  URLs and policy URLs return 200; all four platform redirects preserve UTM.
+  JavaScript MIME, exact API CSP endpoints, `noindex`, and root header scope pass.
+- The full form suite and all ten attribution browser scenarios also passed on
+  the production domain, with every Supabase write intercepted. No application
+  errors or broken local assets. The existing Cloudflare-injected analytics
+  beacon is still blocked by the preserved CSP; the new Supabase tracking RPCs
+  are allowed and do not depend on that beacon.
+- Live HTTP to the new signup RPC returned 400 / SQLSTATE 22023 for an invalid
+  email, with working CORS; the view RPC's OPTIONS preflight returned 200.
+  No valid email or page-view event was sent by this HTTP probe.
+- Saved and reloaded the private SQL report named “Blabee 홍보 경로별 방문·베타 신청”
+  at `https://supabase.com/dashboard/project/vulnkqyqqbucvbhwjswr/sql/6d90b1e1-c936-48cd-852f-594991229a62`.
+  It runs successfully and preserves older signup rows as `unmeasured`.
+- Production browser artifacts: `/tmp/blabee-tracking-production-form/` and
+  `/tmp/blabee-tracking-production-attribution/`.
+- Inspected production mobile form and EN/KO measurement notices. Both policy
+  anchors work at 390px without horizontal overflow; no layout change was needed.
+
+## Measurement boundaries
+
+- Visits mean page views, including reloads, not unique people. Signup counts are
+  first email requests; the report is not a matched-cohort conversion rate.
+- Old/opted-out/legacy signups are `unmeasured`. Previously collected sources
+  cannot be reconstructed. Referrer omission is `direct_or_unknown`, not proof
+  of a typed URL. Copied tagged links retain their original source tag.
+- Browser blockers can lower counts; bots can inflate counts. No CAPTCHA or
+  server-side per-visitor rate limit was added. The app/legal draft terms remain
+  separate from the current factual website measurement notice.
+
+---
+
+# Historical beta signup — 2026-09-24
 
 ## Current change
 

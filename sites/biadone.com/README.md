@@ -67,7 +67,7 @@ codex --cd sites/biadone.com
 | Final CTA (+ 이메일 폼) | `#final-cta` / `#blabase-form` |
 | Footer (Docs 포함) | `#docs` |
 
-이 사이트는 정적 단일 페이지(`index.html`)로 구성되어 있으며 별도의 쿼리 파라미터나 라우팅은 없습니다.
+메인 회사 소개 페이지는 정적 단일 페이지(`index.html`)로 구성됩니다. 별도의 `/blabee/` 랜딩페이지는 홍보 경로를 구분하는 UTM 쿼리 파라미터를 지원합니다.
 
 ---
 
@@ -93,7 +93,7 @@ reference/           원본 빌드 지침 마크다운 보관용(사이트에 �
 
 ## 데이터 모델 / 저장소
 
-웹페이지는 정적 HTML/CSS/JavaScript로 제공됩니다. Blabee 베타 신청 폼은 기존 Blabee Supabase의 제한된 공개 RPC를 사용해 이메일과 최초 신청 시각을 저장합니다. 스키마·권한·운영 방법은 [supabase/README.md](supabase/README.md)에 정리했습니다.
+웹페이지는 정적 HTML/CSS/JavaScript로 제공됩니다. Blabee 베타 신청 폼은 기존 Blabee Supabase의 제한된 공개 RPC를 사용해 이메일·최초 신청 시각·선택적 유입 정보를 저장합니다. 유입별 페이지 조회 수는 개인 식별자 없이 날짜별로 집계합니다. 스키마·권한·운영 방법은 [supabase/README.md](supabase/README.md), 레딧·X·인스타그램·유튜브 홍보 링크와 집계 기준은 [TRACKING.md](TRACKING.md)에 정리했습니다.
 
 - **blabase 베타 가입 폼**은 프론트엔드에서만 동작하며, 제출 시 확인 메시지만 표시할 뿐 실제로 이메일이 저장되지 않습니다. (정적 사이트의 한계로, 실제 이메일 수집이 필요하면 Table API 또는 외부 폼 서비스 연동이 필요합니다.)
 
@@ -154,11 +154,13 @@ _redirects
 ### Blabee 하위 페이지
 
 - 공개 주소: `https://biadone.com/blabee/` (`/blabee`에서도 이동)
+- 2026-10-17 유입별 방문·신청 집계 운영 배포: `https://c9e0872f.biadone.pages.dev`. 플랫폼별 링크와 운영자 보고서는 [TRACKING.md](TRACKING.md)를 참고하세요.
 - 2026-09-24 이메일 베타 신청 기능 운영 배포: `https://fcfda27f.biadone.pages.dev`. 최초 하위 경로 배포는 2026-09-21에 완료했습니다.
 - 원본: [blabee-landing-page 브랜치](https://github.com/Hyunwoojooo/biadone/tree/blabee-landing-page/sites/blabee.com), 커밋 `cafbe8f8b2735b8592018c37ee4b01706134cba9`
 - 원본 `npm run build:public` 결과 중 HTML/CSS/JS/에셋/정책만 `blabee/`에 복사했습니다. 이 폴더는 공개 파일 전용이며 이후 갱신에도 내부 문서·스크립트·캐시를 넣지 않습니다.
 - 모든 사이트 내부 절대 경로와 canonical·OG URL을 `/blabee/` 기준으로 변경했습니다. 영문·한국어 정책 페이지와 `/blabee/liquid-glass/light/` 호환 경로를 포함합니다.
-- 베타 신청 폼은 이메일만 받습니다. Supabase의 `blabee_marketing.beta_requests`에 이메일·최초 신청 시각을 저장하며, 같은 이메일은 한 건만 유지합니다. 다른 신청자의 이메일은 공개 API로 조회할 수 없습니다. 계정 생성이나 안내 메일 자동 발송은 하지 않습니다.
+- 베타 신청 폼은 이메일만 입력받습니다. Supabase의 `blabee_marketing.beta_requests`에 이메일·최초 신청 시각·선택적 유입 정보를 저장하며, 같은 이메일은 한 건만 유지합니다. 다른 신청자의 이메일은 공개 API로 조회할 수 없습니다. 계정 생성이나 안내 메일 자동 발송은 하지 않습니다.
+- 추적 링크의 UTM과 외부 참조 호스트로 경로별 페이지 조회 수·신규 베타 신청 수를 집계합니다. 방문 수는 고유 인원이 아니며, 기존 신청의 과거 유입은 알 수 없습니다. GPC/DNT 사용 시 유입 집계를 생략합니다. 운영자 조회 SQL과 플랫폼별 공유 링크는 [TRACKING.md](TRACKING.md)를 참고하세요.
 - 정책 초안 표시와 `noindex` 설정은 유지합니다. 신청 API/마이그레이션과 검증 방법은 [supabase/README.md](supabase/README.md)를 참고하세요.
 - 랜딩페이지에 삽입된 36초 시연 MP4·영문 VTT 자막·포스터를 포함합니다. 원본 `media/promos/2026-09-21/`의 한·영 15초 홍보 MP4·SRT는 원본 공개 빌드와 동일하게 배포 대상에서 제외합니다.
 - GSAP Core / ScrollTrigger 3.15.0은 원본의 자체 호스팅 파일과 라이선스 배너를 유지합니다. [GSAP Standard License](https://gsap.com/standard-license/)가 적용됩니다.

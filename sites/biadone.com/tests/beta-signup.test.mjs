@@ -41,6 +41,19 @@ test("only an explicit successful acknowledgement counts as saved", async () => 
   }
 });
 
+test("attaches measured referral metadata without changing the acknowledgement contract", async () => {
+  const attribution = { utm_source: "x", utm_medium: "social", utm_campaign: "mac-beta", utm_content: "post-1", referrer_host: "t.co" };
+  let body;
+  await requestBetaAccess("person@example.invalid", {
+    ...config,
+    fetchImpl: async (_url, request) => {
+      body = JSON.parse(request.body);
+      return new Response('{"accepted":true}');
+    },
+  }, attribution);
+  assert.deepEqual(body, { p_email: "person@example.invalid", p_attribution: attribution });
+});
+
 test("invalid configuration or empty/overlong input never sends a request", async () => {
   let calls = 0;
   const fetchImpl = async () => { calls++; };

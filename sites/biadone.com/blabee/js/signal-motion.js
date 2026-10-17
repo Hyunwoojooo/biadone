@@ -1,4 +1,4 @@
-import { chooseDemoOption, renderDemoState, resetDemoSelection } from "./main.js?v=20260924a";
+import { chooseDemoOption, renderDemoState, resetDemoSelection } from "./main.js?v=20261017a";
 
 const page = document.documentElement;
 const demo = document.querySelector("[data-product-demo]");

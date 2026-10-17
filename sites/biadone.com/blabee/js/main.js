@@ -1,6 +1,28 @@
-import { COPY } from "./content.js?v=20260924a";
-import { BETA_SIGNUP } from "./beta-config.js?v=20260924a";
-import { requestBetaAccess } from "./beta-signup.mjs?v=20260924a";
+import { COPY } from "./content.js?v=20261017a";
+import { BETA_SIGNUP } from "./beta-config.js?v=20261017a";
+import { requestBetaAccess } from "./beta-signup.mjs?v=20261017a";
+import { getLandingAttribution, recordLandingView } from "./landing-attribution.mjs?v=20261017a";
+
+let attributionStorage = null;
+try { attributionStorage = window.sessionStorage; } catch { /* Storage may be disabled. */ }
+const landingAttribution = getLandingAttribution({
+  url: window.location.href,
+  referrer: document.referrer,
+  storage: attributionStorage,
+  privacyEnabled: navigator.globalPrivacyControl === true || navigator.doNotTrack === "1" || window.doNotTrack === "1",
+});
+
+// One best-effort count per visible page load. Analytics never gates signup.
+function recordVisibleLanding() {
+  if (document.visibilityState !== "visible") return;
+  document.removeEventListener("visibilitychange", recordVisibleLanding);
+  void recordLandingView(landingAttribution, {
+    endpoint: BETA_SIGNUP.trackingEndpoint,
+    publishableKey: BETA_SIGNUP.publishableKey,
+  }).catch(() => {});
+}
+if (document.visibilityState === "visible") recordVisibleLanding();
+else document.addEventListener("visibilitychange", recordVisibleLanding);
 
 const demo = document.querySelector("[data-product-demo]");
 const demoPrompt = document.querySelector("[data-demo-prompt]");
@@ -386,7 +408,7 @@ betaForm?.addEventListener("submit", async (event) => {
   const email = emailInput.value;
   renderFormState("loading");
   try {
-    await requestBetaAccess(email, BETA_SIGNUP);
+    await requestBetaAccess(email, BETA_SIGNUP, landingAttribution);
     renderFormState("success");
   } catch {
     renderFormState("error");

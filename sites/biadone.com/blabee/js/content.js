@@ -77,7 +77,7 @@ export const COPY = {
     "signup.emailLabel": "Email",
     "signup.submit": "Request beta access ↗",
     "signup.loading": "Sending your request…",
-    "signup.privacy": "We’ll use your email to contact you about beta access.",
+    "signup.privacy": "We’ll use your email to contact you about beta access. We also measure visits and requests by referral source.",
     "signup.error": "We couldn’t send your request. Please try again later.",
     "signup.successTitle": "Request received.",
     "signup.successBody": "We’ll contact you if you’re selected for the Mac beta.",

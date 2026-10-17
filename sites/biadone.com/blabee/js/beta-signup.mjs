@@ -4,7 +4,7 @@ export async function requestBetaAccess(email, {
   publishableKey,
   fetchImpl = globalThis.fetch,
   timeoutMs = 15000,
-}) {
+}, attribution = null) {
   const normalizedEmail = String(email ?? "").trim().toLowerCase();
   if (!normalizedEmail || normalizedEmail.length > 254) {
     throw new Error("Invalid email address");
@@ -25,7 +25,10 @@ export async function requestBetaAccess(email, {
       credentials: "omit",
       referrerPolicy: "no-referrer",
       signal: controller.signal,
-      body: JSON.stringify({ p_email: normalizedEmail }),
+      body: JSON.stringify({
+        p_email: normalizedEmail,
+        ...(attribution === null ? {} : { p_attribution: attribution }),
+      }),
     });
     if (!response.ok) throw new Error("Beta request failed");
     const result = await response.json();
