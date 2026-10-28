@@ -1,7 +1,13 @@
 import Foundation
+import Darwin
 
 @MainActor
 final class LauncherAgentClient: @unchecked Sendable {
+    private struct RetirementState {
+        let token: UUID
+        let task: Task<Bool, Never>
+    }
+
     private struct PendingRequest {
         let continuation: CheckedContinuation<Data, Error>
         let timeoutTask: Task<Void, Never>
@@ -11,6 +17,8 @@ final class LauncherAgentClient: @unchecked Sendable {
     private let processFactory: () -> Process
     private let logHandleFactory: () throws -> FileHandle
     private let requestTimeoutNanoseconds: UInt64
+    private let processTerminator:
+        (@MainActor (Process) async -> Bool)?
     private let writeQueue = DispatchQueue(
         label: "com.biadone.blabase.launcher-agent-writer"
     )
@@ -23,8 +31,12 @@ final class LauncherAgentClient: @unchecked Sendable {
     private var restartPolicy = SupervisorRestartPolicy()
     private var restartTask: Task<Void, Never>?
     private var isShuttingDown = false
+    private var lifecycleStopInProgress = false
+    private var isPermanentlyShutdown = false
+    private var lifecycleEpoch: UInt64 = 0
     private var generation = UUID()
     private var stoppingProcess: Process?
+    private var retirementState: RetirementState?
 
     init(
         configurationResolver: @escaping () throws -> LauncherRuntimeConfiguration = {
@@ -34,12 +46,15 @@ final class LauncherAgentClient: @unchecked Sendable {
         logHandleFactory: @escaping () throws -> FileHandle = {
             try LauncherAgentClient.openLogHandle()
         },
-        requestTimeoutNanoseconds: UInt64 = 20_000_000_000
+        requestTimeoutNanoseconds: UInt64 = 20_000_000_000,
+        processTerminator:
+            (@MainActor (Process) async -> Bool)? = nil
     ) {
         self.configurationResolver = configurationResolver
         self.processFactory = processFactory
         self.logHandleFactory = logHandleFactory
         self.requestTimeoutNanoseconds = requestTimeoutNanoseconds
+        self.processTerminator = processTerminator
     }
 
     func getAttention(refresh: Bool) async throws -> LauncherAttentionProjection {
@@ -47,6 +62,32 @@ final class LauncherAgentClient: @unchecked Sendable {
             method: "attention.get",
             parameters: AttentionGetParameters(refresh: refresh),
             resultType: LauncherAttentionProjection.self
+        )
+    }
+
+    func getPreferredProjection(
+        refresh: Bool
+    ) async throws -> LauncherPreferredProjection {
+        try await LauncherPreferredProjectionLoader.load(
+            refresh: refresh,
+            getWorkBoard: { refresh in
+                let data = try await self.requestData(
+                    method: "work-board.get",
+                    parameters: WorkBoardGetParameters(refresh: refresh),
+                    retireSessionOnTimeout: true
+                )
+                do {
+                    return try JSONDecoder().decode(
+                        LauncherWorkBoardProjection.self,
+                        from: data
+                    )
+                } catch {
+                    throw LauncherWorkBoardLoadError.invalidProjection
+                }
+            },
+            getAttention: { refresh in
+                try await self.getAttention(refresh: refresh)
+            }
         )
     }
 
@@ -80,35 +121,47 @@ final class LauncherAgentClient: @unchecked Sendable {
         )
     }
 
-    func shutdown() {
-        let previousProcess = stoppingProcess ?? detachProcess()
-        stoppingProcess = nil
-        if let previousProcess, previousProcess.isRunning {
-            previousProcess.terminate()
+    func shutdown() async throws {
+        if !isPermanentlyShutdown {
+            lifecycleEpoch &+= 1
+            lifecycleStopInProgress = true
+            isPermanentlyShutdown = true
+        }
+        if retirementState == nil, let previousProcess = detachProcess() {
+            beginRetirement(previousProcess)
+        }
+        guard await awaitVerifiedRetirement() else {
+            throw LauncherAgentError.invalidRuntime("agent stop timeout")
         }
     }
 
-    func stopForReconfiguration() async throws {
-        let previousProcess = stoppingProcess ?? detachProcess()
-        guard let previousProcess, previousProcess.isRunning else {
-            stoppingProcess = nil
-            resetAfterConfigurationStop()
-            return
+    func beginConfigurationStop() async throws {
+        guard
+            !isPermanentlyShutdown,
+            !lifecycleStopInProgress
+        else {
+            throw LauncherAgentError.invalidRuntime("agent shut down")
         }
-        stoppingProcess = previousProcess
-        previousProcess.terminate()
-        for _ in 0..<40 {
-            if !previousProcess.isRunning {
-                stoppingProcess = nil
-                resetAfterConfigurationStop()
-                return
-            }
-            try await Task.sleep(nanoseconds: 50_000_000)
+        lifecycleEpoch &+= 1
+        lifecycleStopInProgress = true
+        if retirementState == nil, let previousProcess = detachProcess() {
+            beginRetirement(previousProcess)
         }
-        guard !previousProcess.isRunning else {
+        if retirementState == nil { return }
+        guard await awaitVerifiedRetirement() else {
             throw LauncherAgentError.invalidRuntime("agent stop timeout")
         }
-        stoppingProcess = nil
+    }
+
+    func completeConfigurationChange() {
+        guard !isPermanentlyShutdown, lifecycleStopInProgress else { return }
+        lifecycleEpoch &+= 1
+        resetAfterConfigurationStop()
+    }
+
+    func abortConfigurationChange() {
+        guard !isPermanentlyShutdown, lifecycleStopInProgress else { return }
+        lifecycleEpoch &+= 1
         resetAfterConfigurationStop()
     }
 
@@ -117,8 +170,25 @@ final class LauncherAgentClient: @unchecked Sendable {
         parameters: Parameters,
         resultType: Result.Type
     ) async throws -> Result {
-        try startIfNeeded()
+        let resultData = try await requestData(
+            method: method,
+            parameters: parameters
+        )
+        do {
+            return try JSONDecoder().decode(resultType, from: resultData)
+        } catch {
+            throw LauncherAgentError.invalidResponse
+        }
+    }
+
+    private func requestData<Parameters: Encodable>(
+        method: String,
+        parameters: Parameters,
+        retireSessionOnTimeout: Bool = false
+    ) async throws -> Data {
+        try await startIfNeeded()
         guard let inputHandle else { throw LauncherAgentError.disconnected }
+        let requestGeneration = generation
         let requestId = LauncherIPC.requestID()
         let request = LauncherIPCRequest(
             requestId: requestId,
@@ -132,7 +202,7 @@ final class LauncherAgentClient: @unchecked Sendable {
         data.append(0x0A)
         let requestData = data
 
-        let resultData: Data = try await withTaskCancellationHandler {
+        return try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { continuation in
                 let timeoutTask = Task { [weak self] in
                     guard let self else { return }
@@ -140,7 +210,11 @@ final class LauncherAgentClient: @unchecked Sendable {
                         nanoseconds: self.requestTimeoutNanoseconds
                     )
                     guard !Task.isCancelled else { return }
-                    self.timeout(requestId: requestId)
+                    self.timeout(
+                        requestId: requestId,
+                        requestGeneration: requestGeneration,
+                        retireSession: retireSessionOnTimeout
+                    )
                 }
                 pending[requestId] = PendingRequest(
                     continuation: continuation,
@@ -170,24 +244,39 @@ final class LauncherAgentClient: @unchecked Sendable {
             }
         } onCancel: { [weak self] in
             Task { @MainActor [weak self] in
-                self?.finishPending(
+                guard let self else { return }
+                let cancellationWon = self.finishPending(
                     requestId: requestId,
                     result: .failure(CancellationError())
                 )
+                if cancellationWon && retireSessionOnTimeout {
+                    self.retireCurrentProcess(
+                        expectedGeneration: requestGeneration
+                    )
+                }
             }
-        }
-        do {
-            return try JSONDecoder().decode(resultType, from: resultData)
-        } catch {
-            throw LauncherAgentError.invalidResponse
         }
     }
 
-    private func startIfNeeded() throws {
-        if let stoppingProcess, stoppingProcess.isRunning {
+    private func startIfNeeded() async throws {
+        guard !isPermanentlyShutdown, !lifecycleStopInProgress else {
+            throw LauncherAgentError.disconnected
+        }
+        let expectedEpoch = lifecycleEpoch
+        let expectedRetirementToken = retirementState?.token
+        guard await awaitVerifiedRetirement() else {
             throw LauncherAgentError.invalidRuntime("agent still stopping")
         }
-        stoppingProcess = nil
+        try Task.checkCancellation()
+        guard
+            expectedEpoch == lifecycleEpoch,
+            !isPermanentlyShutdown,
+            !lifecycleStopInProgress,
+            retirementState == nil ||
+                retirementState?.token == expectedRetirementToken
+        else {
+            throw LauncherAgentError.disconnected
+        }
         if let process, process.isRunning { return }
         isShuttingDown = false
         restartTask?.cancel()
@@ -257,6 +346,7 @@ final class LauncherAgentClient: @unchecked Sendable {
     private func resetAfterConfigurationStop() {
         restartPolicy = SupervisorRestartPolicy()
         isShuttingDown = false
+        lifecycleStopInProgress = false
     }
 
     private func receive(_ data: Data, generation: UUID) {
@@ -269,7 +359,7 @@ final class LauncherAgentClient: @unchecked Sendable {
         if outputBuffer.count > LauncherIPC.maximumLineBytes * 2,
            !outputBuffer.contains(0x0A) {
             failAllPending(with: LauncherAgentError.responseTooLarge)
-            process?.terminate()
+            retireCurrentProcess()
             return
         }
         while let newline = outputBuffer.firstIndex(of: 0x0A) {
@@ -277,7 +367,7 @@ final class LauncherAgentClient: @unchecked Sendable {
             outputBuffer.removeSubrange(...newline)
             guard line.count <= LauncherIPC.maximumLineBytes else {
                 failAllPending(with: LauncherAgentError.responseTooLarge)
-                process?.terminate()
+                retireCurrentProcess()
                 return
             }
             processResponseLine(line)
@@ -285,62 +375,121 @@ final class LauncherAgentClient: @unchecked Sendable {
     }
 
     private func processResponseLine(_ data: Data) {
-        guard
-            let object = try? JSONSerialization.jsonObject(with: data),
-            let dictionary = object as? [String: Any],
-            let contract = dictionary["contract"] as? String,
-            contract == LauncherIPC.contract,
-            let requestId = dictionary["requestId"] as? String,
-            let ok = dictionary["ok"] as? Bool
-        else {
+        let response: LauncherIPCParsedResponse
+        do {
+            response = try LauncherIPC.parseResponseLine(data)
+        } catch {
             failAllPending(with: LauncherAgentError.invalidResponse)
-            process?.terminate()
+            retireCurrentProcess()
             return
         }
-        if ok, let result = dictionary["result"] {
-            guard JSONSerialization.isValidJSONObject(result),
-                  let resultData = try? JSONSerialization.data(withJSONObject: result)
-            else {
-                finishPending(
-                    requestId: requestId,
-                    result: .failure(LauncherAgentError.invalidResponse)
-                )
-                return
-            }
+        switch response {
+        case .success(let requestId, let resultData):
             finishPending(requestId: requestId, result: .success(resultData))
-            return
-        }
-        guard
-            let error = dictionary["error"] as? [String: Any],
-            let code = error["code"] as? String,
-            let message = error["message"] as? String
-        else {
+        case .failure(let requestId, let error):
             finishPending(
                 requestId: requestId,
-                result: .failure(LauncherAgentError.invalidResponse)
+                result: .failure(
+                    LauncherAgentError.agent(
+                        code: error.code,
+                        message: LauncherIPC.displayErrorMessage(
+                            error.message
+                        )
+                    )
+                )
             )
-            return
         }
-        finishPending(
-            requestId: requestId,
-            result: .failure(LauncherAgentError.agent(code: code, message: message))
-        )
     }
 
-    private func timeout(requestId: String) {
-        finishPending(
+    private func timeout(
+        requestId: String,
+        requestGeneration: UUID,
+        retireSession: Bool
+    ) {
+        let timeoutWon = finishPending(
             requestId: requestId,
             result: .failure(LauncherAgentError.requestTimedOut)
         )
+        if timeoutWon && retireSession {
+            retireCurrentProcess(expectedGeneration: requestGeneration)
+        }
     }
 
+    private func retireCurrentProcess(expectedGeneration: UUID? = nil) {
+        if let expectedGeneration, expectedGeneration != generation {
+            return
+        }
+        let retiredProcess = detachProcess()
+        if let retiredProcess {
+            beginRetirement(retiredProcess)
+        }
+    }
+
+    private func beginRetirement(_ process: Process) {
+        guard retirementState == nil else { return }
+        stoppingProcess = process
+        let token = UUID()
+        let task = Task { [weak self] in
+            guard let self else { return false }
+            if let processTerminator = self.processTerminator {
+                return await processTerminator(process)
+            }
+            return await self.terminateDetachedProcess(process)
+        }
+        retirementState = RetirementState(token: token, task: task)
+    }
+
+    private func awaitVerifiedRetirement() async -> Bool {
+        guard let captured = retirementState else {
+            return stoppingProcess?.isRunning != true
+        }
+        let exited = await captured.task.value
+        guard exited else { return false }
+        if retirementState?.token == captured.token {
+            retirementState = nil
+            stoppingProcess = nil
+        }
+        return true
+    }
+
+    private func terminateDetachedProcess(_ process: Process) async -> Bool {
+        guard process.isRunning else { return true }
+        process.terminate()
+        if await waitForExit(process, timeoutNanoseconds: 500_000_000) {
+            return true
+        }
+        if process.isRunning {
+            Darwin.kill(process.processIdentifier, SIGKILL)
+        }
+        return await waitForExit(
+            process,
+            timeoutNanoseconds: 500_000_000
+        )
+    }
+
+    private func waitForExit(
+        _ process: Process,
+        timeoutNanoseconds: UInt64
+    ) async -> Bool {
+        let deadline = DispatchTime.now().uptimeNanoseconds + timeoutNanoseconds
+        while process.isRunning,
+              DispatchTime.now().uptimeNanoseconds < deadline {
+            try? await Task.sleep(nanoseconds: 10_000_000)
+        }
+        return !process.isRunning
+    }
+
+    @discardableResult
     private func finishPending(
         requestId: String,
         result: Result<Data, Error>
-    ) {
-        guard let pending = pending.removeValue(forKey: requestId) else { return }
+    ) -> Bool {
+        guard let pending = pending.removeValue(forKey: requestId) else {
+            return false
+        }
         pending.timeoutTask.cancel()
         pending.continuation.resume(with: result)
+        return true
     }
 
     private func failAllPending(with error: Error) {
@@ -371,7 +520,7 @@ final class LauncherAgentClient: @unchecked Sendable {
                 try? await Task.sleep(nanoseconds: delay)
                 guard !Task.isCancelled else { return }
                 do {
-                    try self?.startIfNeeded()
+                    try await self?.startIfNeeded()
                 } catch {
                     // The next user request surfaces the bounded runtime error.
                 }

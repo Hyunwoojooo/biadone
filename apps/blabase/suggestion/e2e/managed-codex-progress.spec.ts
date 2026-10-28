@@ -51,18 +51,18 @@ import {
 
 const OBSERVED_AT = "2026-08-01T03:00:00.000Z";
 
-test("shows managed progress without refreshing the Attention decision", async ({
+test("shows managed progress without triggering an Attention source refresh", async ({
   page
 }) => {
   let managedReads = 0;
   let relationReads = 0;
-  let attentionReads = 0;
+  let attentionRefreshes = 0;
   let runOverride: Partial<ManagedCodexPublicRun> = {};
 
   page.on("request", (request) => {
     const pathname = new URL(request.url()).pathname;
-    if (request.method() === "GET" && pathname === "/api/attention") {
-      attentionReads += 1;
+    if (request.method() === "POST" && pathname === "/api/attention") {
+      attentionRefreshes += 1;
     }
   });
   await page.route("**/api/managed-codex-runs", async (route) => {
@@ -96,7 +96,7 @@ test("shows managed progress without refreshing the Attention decision", async (
     progress.getByRole("heading", { name: "Codex 실시간 진행" })
   ).toBeVisible();
   await expect(
-    progress.getByText("관찰 전용 · 추천 우선순위에 반영하지 않음", {
+    progress.getByText("정상 실행은 관찰 전용 · 검증된 실패와 설정된 후속 작업만 추천 후보", {
       exact: true
     })
   ).toBeVisible();
@@ -134,7 +134,7 @@ test("shows managed progress without refreshing the Attention decision", async (
   );
 
   await page.waitForTimeout(400);
-  const attentionReadsBeforeTransition = attentionReads;
+  const attentionRefreshesBeforeTransition = attentionRefreshes;
   const managedReadsBeforeTransition = managedReads;
   const relationReadsBeforeTransition = relationReads;
   runOverride = {
@@ -194,13 +194,13 @@ test("shows managed progress without refreshing the Attention decision", async (
   await expect
     .poll(() => relationReads)
     .toBeGreaterThan(relationReadsBeforeNewEvidence);
-  expect(attentionReads).toBe(attentionReadsBeforeTransition);
+  expect(attentionRefreshes).toBe(attentionRefreshesBeforeTransition);
 });
 
-test("shows an unresolved field conflict as observation-only without refreshing Attention", async ({
+test("shows an unresolved field conflict without triggering an Attention source refresh", async ({
   page
 }) => {
-  let attentionReads = 0;
+  let attentionRefreshes = 0;
   const managed = projection();
   const run = managed.runs[0];
   if (!run) throw new Error("Synthetic managed run is missing.");
@@ -208,10 +208,10 @@ test("shows an unresolved field conflict as observation-only without refreshing 
   const claims = conflictingClaimProjection(workRelations);
   page.on("request", (request) => {
     if (
-      request.method() === "GET" &&
+      request.method() === "POST" &&
       new URL(request.url()).pathname === "/api/attention"
     ) {
-      attentionReads += 1;
+      attentionRefreshes += 1;
     }
   });
   await page.route("**/api/managed-codex-runs", async (route) => {
@@ -234,7 +234,7 @@ test("shows an unresolved field conflict as observation-only without refreshing 
   const summary = page.locator(".claimConflictSummary");
   await expect(summary).toContainText("Cross-source 상태 판정");
   await expect(summary).toContainText(
-    "관찰 전용 · 추천 판단에는 아직 반영하지 않음"
+    "claim과 충돌 자체는 후보가 아님 · 관련 작업의 상태 검증과 확인 필요 경로에 반영"
   );
   await expect(summary).toContainText("Codex 실행 상태");
   await expect(summary).toContainText(
@@ -258,9 +258,9 @@ test("shows an unresolved field conflict as observation-only without refreshing 
     await expect(summary).not.toContainText(privateId);
   }
 
-  const attentionReadsAfterRender = attentionReads;
+  const attentionRefreshesAfterRender = attentionRefreshes;
   await page.waitForTimeout(400);
-  expect(attentionReads).toBe(attentionReadsAfterRender);
+  expect(attentionRefreshes).toBe(attentionRefreshesAfterRender);
 });
 
 test("puts unresolved conflicts first and keeps every conflict accessible", async ({
@@ -484,7 +484,7 @@ for (const scenario of relationStateScenarios) {
     await expect(relation).toContainText(scenario.expected);
     await expect(relation).toContainText("executes · 사용자가 직접 연결");
     await expect(
-      page.getByText("관찰 전용 · 추천 우선순위에 반영하지 않음", {
+      page.getByText("정상 실행은 관찰 전용 · 검증된 실패와 설정된 후속 작업만 추천 후보", {
         exact: true
       })
     ).toBeVisible();
@@ -668,8 +668,9 @@ test("shows only exact active commit and PR results without exposing repository 
   const results = page.locator(".managedCodexArtifacts");
   await expect(results.getByText("생성된 결과", { exact: true })).toBeVisible();
   await expect(results).toContainText(
-    "사용자가 직접 연결 · 추천에는 아직 사용하지 않음"
+    "결과 자체는 후보가 아님 · 후속 작업 완료 여부의 근거로 사용"
   );
+  await expect(results).toContainText("produces · 사용자가 직접 연결");
   await expect(results).toContainText("GitHub PR #17");
   await expect(results).toContainText("GitHub commit 01234567");
   await expect(results).not.toContainText("GitHub PR #99");

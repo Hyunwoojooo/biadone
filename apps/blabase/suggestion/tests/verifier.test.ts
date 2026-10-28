@@ -58,4 +58,28 @@ describe("task evidence verifier", () => {
       "DEADLINE_SOURCE_NOT_VERIFIED"
     );
   });
+
+  it("preserves an exact verified ISO timestamp", () => {
+    const deadline = "2026-08-21T12:00:00.000Z";
+    const [verified] = verifyTaskCandidates(
+      conversationFixture({ userText: `Verified deadline: ${deadline}` }),
+      [
+        rawCandidateFixture({
+          deadlineKind: "absolute",
+          deadlineText: deadline,
+          evidence: [
+            {
+              kind: "deadline",
+              messageIndex: 1,
+              quote: deadline
+            }
+          ]
+        })
+      ]
+    );
+
+    expect(verified.verificationIssues).toEqual([]);
+    expect(verified.deadlineIso).toBe(deadline);
+    expect(verified.deadlineSource).toBe(deadline);
+  });
 });

@@ -3,6 +3,7 @@ import { mkdir } from "node:fs/promises";
 
 import { resolveCodexBinary } from "../src/connectors/codex/config";
 import { resolveCodexResumeTarget } from "../src/connectors/codex/resumeTarget";
+import { createSharedLocalEnvSnapshot } from "../src/localEnv";
 import {
   LauncherService,
   parseLauncherAgentArgs,
@@ -30,6 +31,10 @@ async function main(): Promise<void> {
     process.argv.slice(2),
     process.env
   );
+  const launcherEnv = createSharedLocalEnvSnapshot(process.env, {
+    cwd: dataRoot,
+    mode: "maintain"
+  });
   await mkdir(dataRoot, { recursive: true, mode: 0o700 });
 
   const abortController = new AbortController();
@@ -40,11 +45,11 @@ async function main(): Promise<void> {
   let coordinator: ReturnType<
     typeof getRuntimeSourceSyncCoordinator
   > | null = null;
-  if (resolveLauncherSourceMode(process.env) === "managed") {
+  if (resolveLauncherSourceMode(launcherEnv) === "managed") {
     try {
       coordinator = getRuntimeSourceSyncCoordinator(
         dataRoot,
-        process.env
+        launcherEnv
       );
       await coordinator.start();
     } catch {
@@ -54,14 +59,15 @@ async function main(): Promise<void> {
     }
   }
 
-  const service = new LauncherService(dataRoot, process.env, {
+  const service = new LauncherService(dataRoot, launcherEnv, {
     warn: (code) => {
       process.stderr.write(`Launcher agent warning: ${code}\n`);
     }
   });
   const companion = startCompanion(
     dataRoot,
-    abortController.signal
+    abortController.signal,
+    launcherEnv
   );
   try {
     await runLauncherJsonlSession({
@@ -81,7 +87,8 @@ async function main(): Promise<void> {
 
 async function startCompanion(
   dataRoot: string,
-  signal: AbortSignal
+  signal: AbortSignal,
+  env: NodeJS.ProcessEnv
 ): Promise<void> {
   if (process.platform !== "darwin") return;
   const instanceId = `instance_${randomBytes(16).toString("hex")}`;
@@ -101,7 +108,7 @@ async function startCompanion(
       ),
       resolveTarget: (input) =>
         resolveCodexResumeTarget(input, { cwd: dataRoot }),
-      resolveBinary: () => resolveCodexBinary(process.env),
+      resolveBinary: () => resolveCodexBinary(env),
       signal,
       instanceId
     });

@@ -1,0 +1,8 @@
+/* Draft graphic-study values, separate from the approved design system. */
+:root {
+ --study-space-small: 12px; --study-space: 24px; --study-space-wide: 32px; --study-space-major: 48px;
+ --study-page-width: 1440px; --study-single-width: 1040px; --study-header-height: 80px; --study-logo-size: 24px;
+ --study-body-size: 16px; --study-small-size: 14px; --study-heading-size: 20px; --study-title-size: clamp(32px,3.5vw,48px);
+ --study-control-height: 48px; --study-focus-width: 3px; --study-focus-offset: 4px; --study-motion-duration: 480ms;
+ --study-svg-body: 22px; --study-svg-label: 28px; --study-svg-task-small: 26px;
+}

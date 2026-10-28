@@ -1,0 +1,31 @@
+{
+  "originals": [
+    {
+      "file": "original-concerned.png",
+      "sameAsOriginal": true,
+      "sha256": "c0bde4c2ee2855d8ab498409bf2eec7a11065c1039ca567ce405afeedf436da4"
+    },
+    {
+      "file": "original-smile.png",
+      "sameAsOriginal": true,
+      "sha256": "55b3a416a614946bcd44b997d03371fe3b8d88f5b8a101265c9f8bf622f3b88f"
+    },
+    {
+      "file": "original-thinking.png",
+      "sameAsOriginal": true,
+      "sha256": "20171e0fd388ced5375fb774090a48a72984cac3efbddcae772c86e5fe727693"
+    },
+    {
+      "file": "original-speaking.png",
+      "sameAsOriginal": true,
+      "sha256": "dfa72ab38b7da46d04c268acfb30d8ddb47d22a57dda54d2eaf1cf502686a895"
+    },
+    {
+      "file": "original-explaining.png",
+      "sameAsOriginal": true,
+      "sha256": "17759c46f3bfb31258d68c2fe9badfd86ffee2c1aee6262cbcbfc08efcc8db04"
+    }
+  ],
+  "derivative": "public/character/line-poses.png",
+  "method": "image generation from the user supplied identity references; CSS isolates poses without modifying the original PNGs"
+}

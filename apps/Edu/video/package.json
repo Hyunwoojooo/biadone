@@ -1,0 +1,56 @@
+{
+  "name": "biadone-edu-video",
+  "version": "0.1.0",
+  "private": true,
+  "description": "BiaDone Edu curriculum video workspace",
+  "scripts": {
+    "studio": "remotion studio src/index.ts --port=4340 --no-open",
+    "v5:stills": "node scripts/render-cutout-voice-v5.mjs --stills-only",
+    "v5:master": "python3 scripts/master-juhyunwoo-audio.py",
+    "v5:render": "node scripts/render-cutout-voice-v5.mjs --render-only && python3 scripts/finalize-cutout-voice-v5.py",
+    "v5:verify": "python3 scripts/verify-video.py out/BiaDone-Edu-Curriculum-v5.mp4 out/work/cutout-voice-v5/june-verification.json && python3 scripts/verify-video.py out/BiaDone-Edu-Curriculum-v5-Juhyunwoo.mp4 out/work/cutout-voice-v5/juhyunwoo-verification.json content/timeline-juhyunwoo.json",
+    "color:stills": "node scripts/render-color-characters.mjs --stills-only",
+    "color:render": "node scripts/render-color-characters.mjs --render-only && python3 scripts/merge-color-characters.py",
+    "color:verify": "python3 scripts/verify-video.py out/BiaDone-Edu-Curriculum-v4.mp4 out/work/color-characters-v4/verification.json && python3 scripts/verify-color-character-preservation.py",
+    "room:audio": "python3 scripts/build-room-film-audio.py",
+    "room:stills": "node scripts/render-room-film.mjs --stills-only",
+    "room:render": "node scripts/render-room-film.mjs --render-only && python3 scripts/finalize-room-film.py",
+    "room:verify": "python3 scripts/verify-room-film.py",
+    "dev": "npm run studio",
+    "typecheck": "tsc --noEmit",
+    "versions": "remotion versions",
+    "compositions": "remotion compositions src/index.ts",
+    "render:check": "remotion render src/index.ts SetupCheck out/setup-check.mp4 --codec=h264 --pixel-format=yuv420p",
+    "still:check": "remotion still src/index.ts SetupCheck out/setup-check.png --frame=75",
+    "content": "node scripts/export-content.mjs",
+    "timing": "node scripts/build-timing.mjs",
+    "stills": "node scripts/render-stills.mjs",
+    "render:raw": "remotion render src/index.ts CurriculumIntro out/work/BiaDone-Edu-Curriculum-render.mp4 --codec=h264 --pixel-format=yuv420p --crf=18 --concurrency=4",
+    "finalize": "python3 scripts/finalize-video.py",
+    "render": "npm run render:raw && npm run finalize",
+    "campus:check": "node scripts/check-campus-tour.mjs",
+    "campus:stills": "node scripts/render-campus-tour.mjs --stills-only",
+    "campus:render": "npm run campus:check && node scripts/render-campus-tour.mjs --render-only && python3 scripts/finalize-campus-tour.py",
+    "campus:verify": "python3 scripts/verify-video.py out/BiaDone-Edu-Campus-Tour.mp4 out/campus-tour/verification.json"
+  },
+  "dependencies": {
+    "@react-three/fiber": "9.8.2",
+    "@remotion/cli": "4.0.538",
+    "@remotion/fonts": "4.0.538",
+    "@remotion/three": "4.0.538",
+    "react": "19.3.1",
+    "react-dom": "19.3.1",
+    "remotion": "4.0.538",
+    "three": "0.186.1"
+  },
+  "devDependencies": {
+    "@types/node": "22.20.5",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "@types/three": "0.186.0",
+    "typescript": "5.9.3"
+  },
+  "engines": {
+    "node": ">=22.12.0"
+  }
+}

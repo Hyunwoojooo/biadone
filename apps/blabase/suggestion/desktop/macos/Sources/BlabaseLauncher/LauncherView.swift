@@ -128,15 +128,28 @@ struct LauncherView: View {
                 viewModel.load(refresh: false)
             }
         case .projection(let projection, let execution):
-            if let card = projection.card {
-                suggestionHome(
-                    projection: projection,
-                    card: card,
-                    execution: execution
-                )
-            } else {
-                emptyDecision(projection)
+            VStack(spacing: 8) {
+                if let message = viewModel.workBoardFallbackMessage {
+                    Text(message)
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(
+                            LauncherVisualTokens.textSecondary(colorScheme)
+                        )
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .accessibilityLabel(message)
+                }
+                if let card = projection.card {
+                    suggestionHome(
+                        projection: projection,
+                        card: card,
+                        execution: execution
+                    )
+                } else {
+                    emptyDecision(projection)
+                }
             }
+        case .workBoard(let display):
+            LauncherWorkBoardView(display: display)
         }
     }
 

@@ -1,0 +1,446 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "Blabee C4 L2 — 컨테이너 (As-Is)",
+    "output": "docs/architecture/c4/container.html",
+    "animation": "none",
+    "quality_profile": "showcase",
+    "repository": {
+      "url": "https://github.com/Hyunwoojooo/biadone.git",
+      "revision": "a352baa773e11a9be96c9d5b5aafca19aa5fb543"
+    },
+    "viewBox": [
+      1580,
+      960
+    ]
+  },
+  "components": [
+    {
+      "id": "developer",
+      "type": "external",
+      "label": "개발자",
+      "sublabel": "프롬프트·선택·승인",
+      "pos": [
+        30,
+        340
+      ],
+      "size": [
+        150,
+        72
+      ]
+    },
+    {
+      "id": "codex_cli",
+      "type": "external",
+      "label": "Codex CLI",
+      "sublabel": "기본 네이티브 경로",
+      "pos": [
+        250,
+        340
+      ],
+      "size": [
+        180,
+        72
+      ],
+      "sources": [
+        {
+          "path": "apps/blabee/TECH_SPEC.md",
+          "line": 89,
+          "end_line": 95,
+          "label": "기본 경로"
+        }
+      ]
+    },
+    {
+      "id": "plugin",
+      "type": "backend",
+      "label": "Blabee Codex Plugin",
+      "sublabel": "4 Hooks + MCP·launcher adapter",
+      "pos": [
+        510,
+        320
+      ],
+      "size": [
+        220,
+        110
+      ],
+      "sources": [
+        {
+          "path": "apps/blabee/Plugin/blabee/hooks/hooks.json",
+          "line": 1,
+          "end_line": 56,
+          "label": "Hook 등록"
+        },
+        {
+          "path": "apps/blabee/Plugin/blabee/.mcp.json",
+          "line": 1,
+          "end_line": 11,
+          "label": "MCP 등록"
+        },
+        {
+          "path": "apps/blabee/Plugin/blabee/scripts/blabee-launcher",
+          "line": 13,
+          "end_line": 35,
+          "label": "launcher adapter"
+        }
+      ]
+    },
+    {
+      "id": "coordinator",
+      "type": "backend",
+      "label": "Blabee Coordinator",
+      "sublabel": "고수준 상태기계·라우팅",
+      "tag": "authority",
+      "pos": [
+        850,
+        320
+      ],
+      "size": [
+        230,
+        110
+      ],
+      "sources": [
+        {
+          "path": "apps/blabee/src/coordinator-swift/Sources/CoordinatorSwift/CoordinatorOperationalApplication.swift",
+          "line": 539,
+          "end_line": 638,
+          "label": "운영 디스패치"
+        },
+        {
+          "path": "apps/blabee/TECH_SPEC.md",
+          "line": 114,
+          "end_line": 122,
+          "label": "UDS allowlist"
+        }
+      ]
+    },
+    {
+      "id": "pet",
+      "type": "frontend",
+      "label": "macOS Pet",
+      "sublabel": "NSStatusItem + SwiftUI/AppKit",
+      "pos": [
+        1240,
+        100
+      ],
+      "size": [
+        210,
+        82
+      ],
+      "sources": [
+        {
+          "path": "apps/blabee/src/coordinator-swift/Sources/BlabeeCoordinator/PetViewModel.swift",
+          "line": 88,
+          "end_line": 170,
+          "label": "Pet 상태"
+        },
+        {
+          "path": "apps/blabee/CODEMAP.md",
+          "line": 152,
+          "end_line": 221,
+          "label": "제품 트리"
+        }
+      ]
+    },
+    {
+      "id": "journal",
+      "type": "database",
+      "label": "SQLite Decision Journal",
+      "sublabel": "event·packet·verification",
+      "pos": [
+        1240,
+        334
+      ],
+      "size": [
+        210,
+        82
+      ],
+      "sources": [
+        {
+          "path": "apps/blabee/src/coordinator-swift/Sources/CoordinatorSwift/SQLiteJournal.swift",
+          "line": 46,
+          "end_line": 119,
+          "label": "저널 스키마"
+        },
+        {
+          "path": "apps/blabee/src/coordinator-swift/README.md",
+          "line": 468,
+          "end_line": 505,
+          "label": "무결성 경계"
+        }
+      ]
+    },
+    {
+      "id": "keychain",
+      "type": "security",
+      "label": "macOS Keychain",
+      "sublabel": "anchor CAS·rollback 탐지",
+      "pos": [
+        1240,
+        540
+      ],
+      "size": [
+        210,
+        82
+      ],
+      "sources": [
+        {
+          "path": "apps/blabee/src/coordinator-swift/Sources/CoordinatorSwift/KeychainFreshnessAnchorStore.swift",
+          "line": 1,
+          "end_line": 40,
+          "label": "freshness store"
+        }
+      ]
+    },
+    {
+      "id": "managed_bridge",
+      "type": "backend",
+      "label": "Managed Codex Bridge",
+      "sublabel": "명시적 blabee-codex 전용",
+      "tag": "experimental path",
+      "pos": [
+        510,
+        680
+      ],
+      "size": [
+        230,
+        90
+      ],
+      "sources": [
+        {
+          "path": "apps/blabee/src/coordinator-swift/Sources/BlabeeCoordinator/ManagedCodexApprovalRuntime.swift",
+          "line": 1,
+          "end_line": 80,
+          "label": "승인 runtime"
+        },
+        {
+          "path": "apps/blabee/src/coordinator-swift/docs/MANAGED_CODEX_TRUST.md",
+          "line": 7,
+          "end_line": 84,
+          "label": "신뢰 경계"
+        }
+      ]
+    },
+    {
+      "id": "app_server",
+      "type": "external",
+      "label": "Codex App Server / TUI",
+      "sublabel": "원본 요청·응답 소유",
+      "pos": [
+        230,
+        685
+      ],
+      "size": [
+        230,
+        80
+      ],
+      "sources": [
+        {
+          "path": "apps/blabee/CODEMAP.md",
+          "line": 511,
+          "end_line": 526,
+          "label": "관리형 승인 흐름"
+        }
+      ]
+    }
+  ],
+  "boundaries": [
+    {
+      "kind": "region",
+      "label": "Blabee 소프트웨어 시스템 경계",
+      "wraps": [
+        "plugin",
+        "coordinator",
+        "pet",
+        "journal",
+        "keychain",
+        "managed_bridge"
+      ],
+      "pad": 30
+    }
+  ],
+  "connections": [
+    {
+      "from": "developer",
+      "to": "codex_cli",
+      "label": "프롬프트",
+      "labelAt": [
+        215,
+        310
+      ]
+    },
+    {
+      "from": "codex_cli",
+      "to": "plugin",
+      "label": "Hook lifecycle",
+      "labelAt": [
+        470,
+        300
+      ]
+    },
+    {
+      "from": "plugin",
+      "to": "coordinator",
+      "label": "UDS v1 · same UID",
+      "variant": "security",
+      "labelAt": [
+        790,
+        300
+      ]
+    },
+    {
+      "from": "coordinator",
+      "to": "pet",
+      "label": "snapshot·focus",
+      "fromSide": "right",
+      "toSide": "left",
+      "via": [
+        [
+          1150,
+          375
+        ],
+        [
+          1150,
+          141
+        ]
+      ],
+      "labelAt": [
+        1110,
+        225
+      ]
+    },
+    {
+      "from": "pet",
+      "to": "coordinator",
+      "label": "selection·approval",
+      "variant": "emphasis",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "via": [
+        [
+          1345,
+          260
+        ],
+        [
+          965,
+          260
+        ]
+      ],
+      "labelAt": [
+        1275,
+        290
+      ]
+    },
+    {
+      "from": "coordinator",
+      "to": "journal",
+      "label": "원자 event batch",
+      "variant": "security",
+      "labelAt": [
+        1160,
+        455
+      ]
+    },
+    {
+      "from": "coordinator",
+      "to": "keychain",
+      "label": "freshness anchor CAS",
+      "variant": "security",
+      "fromSide": "bottom",
+      "toSide": "left",
+      "via": [
+        [
+          965,
+          581
+        ]
+      ],
+      "labelAt": [
+        1100,
+        605
+      ]
+    },
+    {
+      "from": "developer",
+      "to": "managed_bridge",
+      "label": "명시적 blabee-codex",
+      "variant": "dashed",
+      "fromSide": "bottom",
+      "toSide": "bottom",
+      "via": [
+        [
+          105,
+          820
+        ],
+        [
+          625,
+          820
+        ]
+      ],
+      "labelAt": [
+        305,
+        840
+      ]
+    },
+    {
+      "from": "managed_bridge",
+      "to": "app_server",
+      "label": "JSONL / WebSocket",
+      "variant": "dashed",
+      "fromSide": "left",
+      "toSide": "right",
+      "labelAt": [
+        485,
+        650
+      ]
+    },
+    {
+      "from": "managed_bridge",
+      "to": "coordinator",
+      "label": "approval + delivery ack",
+      "variant": "security",
+      "fromSide": "right",
+      "toSide": "left",
+      "via": [
+        [
+          790,
+          725
+        ],
+        [
+          790,
+          375
+        ]
+      ],
+      "labelAt": [
+        755,
+        535
+      ]
+    }
+  ],
+  "cards": [
+    {
+      "dot": "amber",
+      "title": "기본 경로",
+      "items": [
+        "일반 codex와 셸 설정은 변경하지 않는다",
+        "Hook 실패는 비어 있는 성공 응답으로 합쳐 Codex 제어를 유지한다"
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "관리형 경로",
+      "items": [
+        "App Server 중계는 사용자가 blabee-codex를 명시한 경우에만 열린다",
+        "첫 자식 시작 뒤에는 동일 요청을 네이티브로 자동 재실행하지 않는다"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "영속 권위",
+      "items": [
+        "Coordinator가 고수준 상태 전이와 정합성 검증을 소유한다",
+        "저수준 journal append는 운영 UDS에 노출되지 않는다"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,744 @@
+import Darwin
+import Foundation
+
+/// Owns only a separate PATH shim and an exact, reversible .zshrc block.
+/// The upstream Claude executable (including its updater symlink) is never changed.
+actor ClaudeAutoConnectSetup {
+    enum Issue: Equatable, Sendable {
+        case executableUnavailable, installedRuntimeUnavailable, unsupportedShell
+        case savedExecutableUnavailable, manualReview
+    }
+
+    struct Inspection: Equatable, Sendable {
+        /// Exact managed configuration is saved. This is not a session readiness result.
+        let isEnabled: Bool
+        let canEnable: Bool
+        let canDisable: Bool
+        let detail: String
+        /// The installed launcher can open a new session independently of shell setup.
+        let canLaunch: Bool
+        let shellName: String
+        /// An existing shim must still point at a qualified executable even
+        /// when a different newly discovered CLI can launch from the app.
+        let savedExecutableAvailable: Bool
+        let issue: Issue?
+        /// An exact older block is owned and removable, but needs explicit
+        /// migration before promising coverage after login-shell PATH changes.
+        let needsSetupRefresh: Bool
+
+        /// Configuration is usable in a new supported shell. This never proves
+        /// that a running Claude conversation has acknowledged its connection.
+        var automaticConnectionReady: Bool {
+            isEnabled && canLaunch && shellName == "zsh" && savedExecutableAvailable && !needsSetupRefresh
+        }
+
+        init(isEnabled: Bool, canEnable: Bool, canDisable: Bool, detail: String,
+             canLaunch: Bool = false, shellName: String = "zsh",
+             savedExecutableAvailable: Bool = true, issue: Issue? = nil, needsSetupRefresh: Bool = false) {
+            self.isEnabled = isEnabled; self.canEnable = canEnable; self.canDisable = canDisable
+            self.detail = detail; self.canLaunch = canLaunch; self.shellName = shellName
+            self.savedExecutableAvailable = savedExecutableAvailable; self.issue = issue
+            self.needsSetupRefresh = needsSetupRefresh
+        }
+    }
+
+    private enum Failure: Error { case manualReview, executableUnavailable, installedRuntimeUnavailable }
+    private let home: URL
+    private let environment: [String: String]
+    private let coordinator: URL
+    private let claude: URL
+    private let claudeCandidates: (@Sendable () -> [URL])?
+    private let shellPath: String?
+    private let requiresInstalledRuntime: Bool
+    private let beforeStartupReplace: (@Sendable () throws -> Void)?
+    private static let opening = "# >>> Blabee Claude Auto Connect v1 >>>"
+    private static let closing = "# <<< Blabee Claude Auto Connect v1 <<<"
+    private static let maximumStartupBytes = 256 * 1_024
+    static var manualReviewDetail: String { PetL10n.text("Terminal settings could not be safely verified, so auto-connect settings were not changed.", korean: "터미널 설정을 안전하게 확인할 수 없어 자동 연결 설정을 변경하지 않았습니다.") }
+
+    init(homeURL: URL, environment: [String: String] = [:], coordinatorExecutable: URL,
+         claudeExecutable: URL, requiresInstalledRuntime: Bool = false,
+         loginShell: String? = "/bin/zsh",
+         claudeCandidates: (@Sendable () -> [URL])? = nil,
+         beforeStartupReplace: (@Sendable () throws -> Void)? = nil) {
+        home = homeURL
+        self.environment = environment
+        coordinator = coordinatorExecutable
+        claude = claudeExecutable
+        self.claudeCandidates = claudeCandidates
+        shellPath = environment["SHELL"] ?? loginShell
+        self.requiresInstalledRuntime = requiresInstalledRuntime
+        self.beforeStartupReplace = beforeStartupReplace
+    }
+
+    static func live(environment: [String: String] = ProcessInfo.processInfo.environment) -> ClaudeAutoConnectSetup {
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        return ClaudeAutoConnectSetup(homeURL: home, environment: environment,
+            coordinatorExecutable: URL(fileURLWithPath: "/Applications/Blabee.app/Contents/MacOS/blabee-coordinator"),
+            claudeExecutable: home.appendingPathComponent(".local/bin/claude"), requiresInstalledRuntime: true,
+            loginShell: accountLoginShell(),
+            claudeCandidates: { PetClaudeLauncher.claudeCandidates(homeDirectory: home, environment: environment) })
+    }
+
+    func inspect() async -> Inspection {
+        inspectSavedSetup(launchFailure: qualifiedLaunch().failure)
+    }
+
+    private func inspectSavedSetup(launchFailure: Failure?) -> Inspection {
+        do {
+            let snapshot = try snapshot()
+            if let owned = snapshot.owned {
+                // A saved shim can outlive its executable, runtime or updater
+                // target. Keep cleanup available while reporting launch separately.
+                let savedExecutableAvailable = (try? validateExecutables(claudeExecutable: URL(fileURLWithPath: owned.claude))) != nil
+                return enabled(launchFailure: launchFailure, savedExecutableAvailable: savedExecutableAvailable,
+                               needsSetupRefresh: snapshot.needsBlockRefresh)
+            }
+            return disabled(launchFailure: launchFailure)
+        } catch { return rejected(error, launchFailure: launchFailure) }
+    }
+
+    func enable() async -> Inspection {
+        let launch = qualifiedLaunch(), launchFailure = launch.failure
+        // Cancellation before this actor begins the write must not create a
+        // setup simply because the caller was queued behind another operation.
+        guard !Task.isCancelled else { return inspectSavedSetup(launchFailure: launchFailure) }
+        // An account-shell change must not hide an existing exact-owned zsh
+        // configuration, but enabling for another shell never creates it.
+        guard supportsShellSetup else { return inspectSavedSetup(launchFailure: launchFailure) }
+        do {
+            // Read the user's startup first, but inspect managed ownership only
+            // under the lock: another manager can be between shim and rc writes.
+            let initial = try startupSnapshot()
+            if let launchFailure { throw launchFailure }
+            guard let claude = launch.claude else { throw Failure.executableUnavailable }
+            let root = try openDirectory(directory, create: true, privateLeaf: true)
+            defer { close(root) }
+            let bin = try openDirectory(binDirectory, create: true, privateLeaf: true)
+            defer { close(bin) }
+            let lock = try acquireLock(root)
+            defer { flock(lock, LOCK_UN); close(lock) }
+            let current = try snapshot()
+            if let owned = current.owned {
+                let savedExecutableAvailable = (try? validateExecutables(claudeExecutable: URL(fileURLWithPath: owned.claude))) != nil
+                if current.needsBlockRefresh, savedExecutableAvailable, let startup = current.startup {
+                    // Refresh only an exact legacy block, in place. Existing
+                    // shim identity, updater symlink and user suffix stay intact.
+                    guard current.startupURL == initial.url, current.startup == initial.file else { throw Failure.manualReview }
+                    try backup(startup, root: root)
+                    try replaceStartup(current, bytes: updatingBlock(in: startup.bytes), root: root)
+                    try verifyDirectory(root, at: directory)
+                    try verifyDirectory(bin, at: binDirectory)
+                    let refreshed = try snapshot()
+                    guard refreshed.shim == current.shim, !refreshed.needsBlockRefresh else { throw Failure.manualReview }
+                    return enabled(launchFailure: nil)
+                }
+                return enabled(launchFailure: nil, savedExecutableAvailable: savedExecutableAvailable,
+                               needsSetupRefresh: current.needsBlockRefresh)
+            }
+            guard current.startupURL == initial.url, current.startup == initial.file else { throw Failure.manualReview }
+            let bytes = Self.shimBytes(coordinator: coordinator.path, claude: claude.path,
+                startup: current.startupURL.path, originallyMissing: current.startup == nil)
+            let created = try writeExclusive(parent: bin, name: "claude", bytes: bytes, mode: 0o700)
+            do {
+                try backup(current.startup, root: root)
+                var newBytes = current.startup?.bytes ?? Data()
+                if current.hasOrphanedManagedBlock {
+                    newBytes = try updatingBlock(in: newBytes)
+                } else {
+                    newBytes.append(Data(Self.managedBlock(binPath: binDirectory.path).utf8))
+                }
+                // Restoring a missing shim reuses the exact block. The same
+                // atomic replacement still checks for concurrent startup edits.
+                try replaceStartup(current, bytes: newBytes, root: root)
+                try verifyDirectory(root, at: directory)
+                try verifyDirectory(bin, at: binDirectory)
+                guard let actual = try readFile(parent: bin, name: "claude", limit: 32 * 1_024),
+                      actual.matchesMoved(created), (try snapshot()).shim != nil else { throw Failure.manualReview }
+                return enabled(launchFailure: nil)
+            } catch {
+                // An orphan repair started without a shim; restore that absence
+                // even if an editor changed its pre-existing startup reference.
+                // Otherwise require no reference. Never restore startup bytes
+                // or remove a shim that no longer has our exact identity/bytes.
+                let startupHasNoReference = (try? startupSnapshot()).map {
+                    (try? requireNoManagedReference($0.file?.bytes ?? Data())) != nil
+                } ?? false
+                if current.hasOrphanedManagedBlock || startupHasNoReference {
+                    try? removeExact(parent: bin, name: "claude", expected: created, recovery: root)
+                }
+                throw error
+            }
+        } catch { return rejected(error, launchFailure: launchFailure) }
+    }
+
+    func disable() async -> Inspection {
+        let launchFailure = qualifiedLaunch().failure
+        do {
+            let initial = try snapshot()
+            guard initial.shim != nil else { return disabled(launchFailure: launchFailure) }
+            let root = try openDirectory(directory, privateLeaf: true)
+            defer { close(root) }
+            let bin = try openDirectory(binDirectory, privateLeaf: true)
+            defer { close(bin) }
+            let lock = try acquireLock(root)
+            defer { flock(lock, LOCK_UN); close(lock) }
+            let current = try snapshot()
+            guard let shim = current.shim, let startup = current.startup,
+                  let owned = current.owned else { return disabled(launchFailure: launchFailure) }
+            let remaining = try removingBlock(from: startup.bytes)
+            try backup(startup, root: root)
+            if owned.originallyMissing && remaining.isEmpty {
+                try beforeStartupReplace?()
+                let parent = try openDirectory(current.startupURL.deletingLastPathComponent())
+                defer { close(parent) }
+                try verifyDirectory(root, at: directory)
+                try removeExact(parent: parent, name: ".zshrc", expected: startup, recovery: root)
+            } else {
+                try replaceStartup(current, bytes: remaining, root: root)
+            }
+            try verifyDirectory(bin, at: binDirectory)
+            try removeExact(parent: bin, name: "claude", expected: shim, recovery: root)
+            return disabled(launchFailure: launchFailure)
+        } catch { return rejected(error, launchFailure: launchFailure) }
+    }
+
+    private var directory: URL { home.appendingPathComponent("Library/Application Support/Blabee/shell/claude-v1") }
+    private var binDirectory: URL { directory.appendingPathComponent("bin") }
+    private var shimURL: URL { binDirectory.appendingPathComponent("claude") }
+
+    private struct Identity: Sendable, Equatable {
+        let device: dev_t, inode: ino_t, mode: mode_t, owner: uid_t, group: gid_t, links: nlink_t, flags: UInt32
+        init(_ s: stat) {
+            device = s.st_dev; inode = s.st_ino; mode = s.st_mode; owner = s.st_uid; group = s.st_gid
+            links = s.st_mode & mode_t(S_IFMT) == mode_t(S_IFDIR) ? 0 : s.st_nlink
+            flags = s.st_flags
+        }
+    }
+    private struct FileSnapshot: Sendable, Equatable {
+        let identity: Identity
+        let bytes: Data
+        let modifiedSeconds: Int, modifiedNanos: Int, changedSeconds: Int, changedNanos: Int
+        init(_ s: stat, _ data: Data) {
+            identity = Identity(s); bytes = data
+            modifiedSeconds = s.st_mtimespec.tv_sec; modifiedNanos = s.st_mtimespec.tv_nsec
+            changedSeconds = s.st_ctimespec.tv_sec; changedNanos = s.st_ctimespec.tv_nsec
+        }
+        func matchesMoved(_ other: Self) -> Bool {
+            identity == other.identity && bytes == other.bytes && modifiedSeconds == other.modifiedSeconds
+                && modifiedNanos == other.modifiedNanos
+        }
+    }
+    private struct Owned: Sendable {
+        let coordinator: String, claude: String, startup: String
+        let originallyMissing: Bool
+    }
+    private struct Snapshot {
+        let startupURL: URL
+        let startup: FileSnapshot?
+        let shim: FileSnapshot?
+        let owned: Owned?
+        let hasOrphanedManagedBlock: Bool
+        let needsBlockRefresh: Bool
+    }
+
+    private func snapshot() throws -> Snapshot {
+        let startup = try startupSnapshot()
+        let root = try openDirectory(directory, allowMissing: true, privateLeaf: true)
+        defer { if root >= 0 { close(root) } }
+        var shim: FileSnapshot?
+        if root >= 0 {
+            let bin = try openDirectory(binDirectory, allowMissing: true, privateLeaf: true)
+            defer { if bin >= 0 { close(bin) } }
+            if bin >= 0 { shim = try readFile(parent: bin, name: "claude", limit: 32 * 1_024) }
+        }
+        if let shim {
+            let owned = try parseOwnedShim(shim.bytes)
+            guard owned.startup == startup.url.path, owned.coordinator == coordinator.path,
+                  shim.identity.mode & 0o777 == 0o700,
+                  let file = startup.file else { throw Failure.manualReview }
+            let block = try managedBlockRange(in: file.bytes)
+            return Snapshot(startupURL: startup.url, startup: file, shim: shim, owned: owned,
+                            hasOrphanedManagedBlock: false, needsBlockRefresh: block.legacy)
+        }
+        // Exact current bytes prove which block can be reused, not that setup
+        // is enabled. Edited/duplicate blocks or other references still fail.
+        let orphanedBlock = startup.file.flatMap { try? managedBlockRange(in: $0.bytes) }
+        let hasOrphanedManagedBlock = orphanedBlock != nil
+        if !hasOrphanedManagedBlock, let file = startup.file { try requireNoManagedReference(file.bytes) }
+        return Snapshot(startupURL: startup.url, startup: startup.file, shim: nil, owned: nil,
+                        hasOrphanedManagedBlock: hasOrphanedManagedBlock, needsBlockRefresh: orphanedBlock?.legacy ?? false)
+    }
+
+    private func startupSnapshot() throws -> (url: URL, file: FileSnapshot?) {
+        guard Self.safeAbsolutePath(home.path), home.path != "/", !home.path.contains(":") else { throw Failure.manualReview }
+        let dot: URL
+        if let configured = environment["ZDOTDIR"] {
+            guard Self.safeAbsolutePath(configured), configured == home.path || configured.hasPrefix(home.path + "/")
+            else { throw Failure.manualReview }
+            dot = URL(fileURLWithPath: configured, isDirectory: true)
+        } else { dot = home }
+        let startup = dot.appendingPathComponent(".zshrc")
+        var file: FileSnapshot?
+        // A GUI process cannot infer a dynamic ZDOTDIR assignment by running a
+        // user's startup scripts. Such setups require manual review instead.
+        for base in Set([home.path, dot.path]).sorted() {
+            let parent = try openDirectory(URL(fileURLWithPath: base, isDirectory: true))
+            defer { close(parent) }
+            for name in [".zshenv", ".zprofile", ".zlogin", ".zshrc"] {
+                guard let observed = try readFile(parent: parent, name: name, limit: Self.maximumStartupBytes) else { continue }
+                guard let text = String(data: observed.bytes, encoding: .utf8), !text.contains("ZDOTDIR") else { throw Failure.manualReview }
+                if base + "/" + name == startup.path { file = observed }
+                else { try requireNoManagedReference(observed.bytes) }
+            }
+        }
+        return (startup, file)
+    }
+
+    private func parseOwnedShim(_ bytes: Data) throws -> Owned {
+        guard let source = String(data: bytes, encoding: .utf8) else { throw Failure.manualReview }
+        let lines = source.components(separatedBy: "\n")
+        guard lines.count > 8,
+              let coordinator = Self.decode(lines[3], prefix: "# coordinator-base64: "),
+              let claude = Self.decode(lines[4], prefix: "# claude-base64: "),
+              let startup = Self.decode(lines[5], prefix: "# startup-base64: "),
+              ["# startup-origin: missing", "# startup-origin: present"].contains(lines[6]),
+              coordinator != shimURL.path, !claude.hasPrefix(directory.path + "/"),
+              bytes == Self.shimBytes(coordinator: coordinator, claude: claude, startup: startup,
+                                     originallyMissing: lines[6] == "# startup-origin: missing") else { throw Failure.manualReview }
+        return Owned(coordinator: coordinator, claude: claude, startup: startup,
+                     originallyMissing: lines[6] == "# startup-origin: missing")
+    }
+
+    private func removingBlock(from bytes: Data) throws -> Data {
+        let block = try managedBlockRange(in: bytes)
+        return Data((String(block.source[..<block.range.lowerBound]) + String(block.source[block.range.upperBound...])).utf8)
+    }
+
+    private func updatingBlock(in bytes: Data) throws -> Data {
+        let block = try managedBlockRange(in: bytes)
+        return Data((String(block.source[..<block.range.lowerBound])
+            + Self.managedBlock(binPath: binDirectory.path) + String(block.source[block.range.upperBound...])).utf8)
+    }
+
+    private func managedBlockRange(in bytes: Data) throws -> (source: String, range: Range<String.Index>, legacy: Bool) {
+        guard let source = String(data: bytes, encoding: .utf8) else { throw Failure.manualReview }
+        for legacy in [false, true] {
+            let block = legacy ? Self.legacyManagedBlock(binPath: binDirectory.path) : Self.managedBlock(binPath: binDirectory.path)
+            if let range = source.range(of: block) {
+                let remainder = Data((String(source[..<range.lowerBound]) + String(source[range.upperBound...])).utf8)
+                try requireNoManagedReference(remainder)
+                return (source, range, legacy)
+            }
+        }
+        throw Failure.manualReview
+    }
+
+    private func requireNoManagedReference(_ bytes: Data) throws {
+        guard let source = String(data: bytes, encoding: .utf8),
+              ![Self.opening, Self.closing, binDirectory.path, "shell/claude-v1", "Blabee Claude Auto Connect v1"].contains(where: { source.contains($0) })
+        else { throw Failure.manualReview }
+    }
+
+    private func validateExecutables(claudeExecutable: URL) throws {
+        for executable in [coordinator, claudeExecutable] {
+            guard Self.safeAbsolutePath(executable.path), executable.path != shimURL.path else { throw Failure.executableUnavailable }
+            let canonical = executable.resolvingSymlinksInPath()
+            var s = stat()
+            guard !canonical.path.hasPrefix(directory.path + "/"), stat(canonical.path, &s) == 0,
+                  s.st_mode & mode_t(S_IFMT) == mode_t(S_IFREG), s.st_uid == getuid() || s.st_uid == 0,
+                  s.st_mode & 0o022 == 0, s.st_mode & 0o6000 == 0,
+                  FileManager.default.isExecutableFile(atPath: executable.path) else { throw Failure.executableUnavailable }
+        }
+    }
+
+    private func validateInstalledRuntime() throws {
+        do {
+            guard coordinator.path == "/Applications/Blabee.app/Contents/MacOS/blabee-coordinator",
+                  let identity = OperationalRuntimeIdentity.installedIdentity(forExecutable: coordinator),
+                  try OperationalRuntimeIdentity.requireCurrent() == identity else { throw Failure.installedRuntimeUnavailable }
+            let pin = try ClaudeInstalledLauncher.signedManifestPin(executable: coordinator, runtimeIdentity: identity)
+            let root = coordinator.deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("Resources/claude")
+            _ = try ClaudeRuntimePayload.qualify(rootURL: root,
+                expectedArchitecture: ClaudeInstalledLauncher.runtimeArchitecture, expectedManifestSHA256: pin)
+        } catch { throw Failure.installedRuntimeUnavailable }
+    }
+
+    /// Directory descriptors anchor every mutation. No component under HOME is
+    /// followed through a symlink, and existing directories are never chmod'ed.
+    private func openDirectory(_ url: URL, allowMissing: Bool = false, create: Bool = false,
+                               privateLeaf: Bool = false) throws -> Int32 {
+        guard Self.safeAbsolutePath(home.path), home.path != "/", Self.safeAbsolutePath(url.path),
+              url.path == home.path || url.path.hasPrefix(home.path + "/") else { throw Failure.manualReview }
+        var descriptor = open("/", O_RDONLY | O_DIRECTORY | O_CLOEXEC)
+        guard descriptor >= 0 else { throw Failure.manualReview }
+        var path = ""
+        do {
+            for part in url.path.split(separator: "/") {
+                let name = String(part)
+                path += "/" + name
+                let inside = path == home.path || path.hasPrefix(home.path + "/")
+                var next = openat(descriptor, name, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
+                if next < 0 && errno == ENOENT && create && inside && path != home.path {
+                    guard mkdirat(descriptor, name, 0o700) == 0 || errno == EEXIST else { throw Failure.manualReview }
+                    next = openat(descriptor, name, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
+                }
+                if next < 0 {
+                    if allowMissing && errno == ENOENT { close(descriptor); return -1 }
+                    throw Failure.manualReview
+                }
+                close(descriptor); descriptor = next
+                let s = try metadata(descriptor)
+                let temporaryAncestor = !inside && s.st_uid == 0 && s.st_mode & mode_t(S_ISVTX) != 0
+                guard s.st_uid == getuid() || (!inside && s.st_uid == 0),
+                      s.st_mode & 0o022 == 0 || temporaryAncestor,
+                      !(try hasACL(descriptor, allowingDeny: true)) else { throw Failure.manualReview }
+            }
+            if privateLeaf {
+                let s = try metadata(descriptor)
+                guard s.st_uid == getuid(), s.st_mode & 0o077 == 0 else { throw Failure.manualReview }
+            }
+            return descriptor
+        } catch { close(descriptor); throw error }
+    }
+
+    private func verifyDirectory(_ descriptor: Int32, at url: URL) throws {
+        let actual = try openDirectory(url)
+        defer { close(actual) }
+        guard try Identity(metadata(actual)) == Identity(metadata(descriptor)) else { throw Failure.manualReview }
+    }
+
+    private func metadata(_ descriptor: Int32) throws -> stat {
+        var value = stat()
+        guard fstat(descriptor, &value) == 0 else { throw Failure.manualReview }
+        return value
+    }
+
+    private func hasACL(_ descriptor: Int32, allowingDeny: Bool) throws -> Bool {
+        errno = 0
+        guard let acl = acl_get_fd_np(descriptor, ACL_TYPE_EXTENDED) else {
+            if errno == ENOENT { return false }
+            throw Failure.manualReview
+        }
+        defer { acl_free(UnsafeMutableRawPointer(acl)) }
+        var entry: acl_entry_t?
+        var flag: Int32 = 0
+        while true {
+            let result = acl_get_entry(acl, flag, &entry)
+            if result == -1 && errno == EINVAL { return false }
+            guard result == 0, let entry else { throw Failure.manualReview }
+            var tag = acl_tag_t(0)
+            guard acl_get_tag_type(entry, &tag) == 0 else { throw Failure.manualReview }
+            if !allowingDeny || tag != ACL_EXTENDED_DENY { return true }
+            flag = -1
+        }
+    }
+
+    private func readFile(parent: Int32, name: String, limit: Int) throws -> FileSnapshot? {
+        let descriptor = openat(parent, name, O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC)
+        guard descriptor >= 0 else {
+            if errno == ENOENT { return nil }
+            throw Failure.manualReview
+        }
+        defer { close(descriptor) }
+        let before = try metadata(descriptor)
+        guard before.st_mode & mode_t(S_IFMT) == mode_t(S_IFREG), before.st_uid == getuid(),
+              before.st_nlink == 1, before.st_mode & 0o7022 == 0, before.st_flags == 0,
+              before.st_size >= 0, before.st_size <= limit, !(try hasACL(descriptor, allowingDeny: false))
+        else { throw Failure.manualReview }
+        var bytes = Data(), buffer = [UInt8](repeating: 0, count: 8_192)
+        while true {
+            let count = read(descriptor, &buffer, buffer.count)
+            if count == -1 && errno == EINTR { continue }
+            guard count >= 0 else { throw Failure.manualReview }
+            if count == 0 { break }
+            bytes.append(contentsOf: buffer.prefix(count))
+            guard bytes.count <= limit else { throw Failure.manualReview }
+        }
+        let after = try metadata(descriptor)
+        var named = stat()
+        guard fstatat(parent, name, &named, AT_SYMLINK_NOFOLLOW) == 0,
+              FileSnapshot(before, bytes) == FileSnapshot(after, bytes),
+              FileSnapshot(after, bytes) == FileSnapshot(named, bytes), bytes.count == before.st_size
+        else { throw Failure.manualReview }
+        return FileSnapshot(after, bytes)
+    }
+
+    private func writeExclusive(parent: Int32, name: String, bytes: Data, mode: mode_t) throws -> FileSnapshot {
+        let descriptor = openat(parent, name, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0o600)
+        guard descriptor >= 0 else { throw Failure.manualReview }
+        defer { close(descriptor) }
+        do {
+            try bytes.withUnsafeBytes { buffer in
+                var offset = 0
+                while offset < buffer.count {
+                    let count = write(descriptor, buffer.baseAddress!.advanced(by: offset), buffer.count - offset)
+                    if count < 0 && errno == EINTR { continue }
+                    guard count > 0 else { throw Failure.manualReview }
+                    offset += count
+                }
+            }
+            guard fchmod(descriptor, mode) == 0, fsync(descriptor) == 0 else { throw Failure.manualReview }
+            let written = FileSnapshot(try metadata(descriptor), bytes)
+            guard let actual = try readFile(parent: parent, name: name, limit: max(bytes.count, 1)), actual == written
+            else { throw Failure.manualReview }
+            return written
+        } catch {
+            // Leave an incomplete exclusive file for review; never delete a
+            // pathname that might have been replaced by another process.
+            throw error
+        }
+    }
+
+    private func backup(_ file: FileSnapshot?, root: Int32) throws {
+        guard let file else { return }
+        try verifyDirectory(root, at: directory)
+        let backups = try openDirectory(directory.appendingPathComponent("backups"), create: true, privateLeaf: true)
+        defer { close(backups) }
+        _ = try writeExclusive(parent: backups, name: "zshrc-" + UUID().uuidString.lowercased(), bytes: file.bytes, mode: 0o600)
+        guard fsync(backups) == 0 else { throw Failure.manualReview }
+    }
+
+    private func replaceStartup(_ expected: Snapshot, bytes: Data, root: Int32) throws {
+        guard bytes.count <= Self.maximumStartupBytes else { throw Failure.manualReview }
+        let parentURL = expected.startupURL.deletingLastPathComponent()
+        let parent = try openDirectory(parentURL)
+        defer { close(parent) }
+        let temporary = ".blabee-claude-" + UUID().uuidString.lowercased()
+        let mode = expected.startup.map { $0.identity.mode & 0o777 } ?? 0o600
+        let written = try writeExclusive(parent: parent, name: temporary, bytes: bytes, mode: mode)
+        defer {
+            // This only removes our still-identical staged bytes. A displaced
+            // editor file is retained for manual recovery after a race.
+            if let current = try? readFile(parent: parent, name: temporary, limit: Self.maximumStartupBytes),
+               current.matchesMoved(written) { _ = unlinkat(parent, temporary, 0) }
+        }
+        try beforeStartupReplace?()
+        try verifyDirectory(root, at: directory)
+        try verifyDirectory(parent, at: parentURL)
+        let current = try startupSnapshot()
+        guard current.url == expected.startupURL, current.file == expected.startup else { throw Failure.manualReview }
+        if let previous = expected.startup {
+            guard renameatx_np(parent, temporary, parent, ".zshrc", UInt32(RENAME_SWAP)) == 0 else { throw Failure.manualReview }
+            guard let displaced = try? readFile(parent: parent, name: temporary, limit: Self.maximumStartupBytes),
+                  displaced.matchesMoved(previous) else {
+                // An editor won the final race. Swap back only while the named
+                // startup is our exact inode/bytes; retain any further changes.
+                if let named = try? readFile(parent: parent, name: ".zshrc", limit: Self.maximumStartupBytes), named.matchesMoved(written) {
+                    _ = renameatx_np(parent, temporary, parent, ".zshrc", UInt32(RENAME_SWAP))
+                }
+                throw Failure.manualReview
+            }
+            guard let named = try readFile(parent: parent, name: ".zshrc", limit: Self.maximumStartupBytes),
+                  named.matchesMoved(written) else { throw Failure.manualReview }
+            // A private backup already contains these exact displaced bytes.
+            guard unlinkat(parent, temporary, 0) == 0 else { throw Failure.manualReview }
+        } else {
+            guard renameatx_np(parent, temporary, parent, ".zshrc", UInt32(RENAME_EXCL)) == 0 else { throw Failure.manualReview }
+        }
+        guard fsync(parent) == 0 else { throw Failure.manualReview }
+    }
+
+    private func removeExact(parent: Int32, name: String, expected: FileSnapshot, recovery: Int32) throws {
+        guard let current = try readFile(parent: parent, name: name, limit: Self.maximumStartupBytes),
+              current.matchesMoved(expected) else { throw Failure.manualReview }
+        let movedName = ".removed-" + UUID().uuidString.lowercased()
+        guard renameatx_np(parent, name, recovery, movedName, UInt32(RENAME_EXCL)) == 0 else { throw Failure.manualReview }
+        guard let moved = try? readFile(parent: recovery, name: movedName, limit: Self.maximumStartupBytes),
+              moved.matchesMoved(expected) else {
+            // Exclusive restoration never overwrites a new user file.
+            _ = renameatx_np(recovery, movedName, parent, name, UInt32(RENAME_EXCL))
+            throw Failure.manualReview
+        }
+        guard unlinkat(recovery, movedName, 0) == 0, fsync(parent) == 0, fsync(recovery) == 0 else { throw Failure.manualReview }
+    }
+
+    private func acquireLock(_ parent: Int32) throws -> Int32 {
+        let name = ".setup.lock"
+        let flags = O_RDWR | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC
+        var descriptor = openat(parent, name, flags | O_CREAT | O_EXCL, 0o600)
+        if descriptor < 0 && errno == EEXIST { descriptor = openat(parent, name, flags) }
+        guard descriptor >= 0 else { throw Failure.manualReview }
+        do {
+            let s = try metadata(descriptor)
+            guard s.st_mode & mode_t(S_IFMT) == mode_t(S_IFREG), s.st_uid == getuid(), s.st_nlink == 1,
+                  s.st_mode & 0o077 == 0, s.st_size == 0, !(try hasACL(descriptor, allowingDeny: false)) else { throw Failure.manualReview }
+            for _ in 0..<50 {
+                if flock(descriptor, LOCK_EX | LOCK_NB) == 0 {
+                    var named = stat()
+                    guard fstatat(parent, name, &named, AT_SYMLINK_NOFOLLOW) == 0,
+                          Identity(named) == Identity(s) else { throw Failure.manualReview }
+                    return descriptor
+                }
+                guard errno == EWOULDBLOCK || errno == EINTR else { throw Failure.manualReview }
+                usleep(10_000)
+            }
+            throw Failure.manualReview
+        } catch { close(descriptor); throw error }
+    }
+
+    private var shellName: String {
+        guard let shellPath, Self.safeAbsolutePath(shellPath) else { return PetL10n.text("Unknown shell", korean: "알 수 없는 셸") }
+        return URL(fileURLWithPath: shellPath).lastPathComponent
+    }
+    private var supportsShellSetup: Bool { shellName == "zsh" }
+
+    private func qualifiedLaunch() -> (claude: URL?, failure: Failure?) {
+        // Re-resolve on each user refresh/enable so installing Claude while
+        // the app is open can recover without recreating this actor. Keep the
+        // public symlink path for the shim; qualification follows its target.
+        let candidates = claudeCandidates?() ?? [claude]
+        guard let selected = candidates.first(where: { (try? validateExecutables(claudeExecutable: $0)) != nil })
+        else { return (nil, .executableUnavailable) }
+        do {
+            if requiresInstalledRuntime { try validateInstalledRuntime() }
+            return (selected, nil)
+        } catch { return (selected, (error as? Failure) ?? .installedRuntimeUnavailable) }
+    }
+
+    private static func accountLoginShell() -> String? {
+        // GUI launches often do not inherit SHELL. Read the account record
+        // without evaluating a shell profile or sourcing user configuration.
+        var entry = passwd(), result: UnsafeMutablePointer<passwd>?
+        var bytes = [CChar](repeating: 0, count: 16 * 1_024)
+        return bytes.withUnsafeMutableBufferPointer { buffer in
+            guard getpwuid_r(getuid(), &entry, buffer.baseAddress, buffer.count, &result) == 0,
+                  result != nil, let shell = entry.pw_shell else { return nil }
+            return String(cString: shell)
+        }
+    }
+
+    private static var directLaunchDetail: String { PetL10n.text("You can open a new connected Claude session from the app.", korean: "앱에서 연결된 새 Claude 세션을 열 수 있습니다.") }
+
+    private func unavailableDetail(_ failure: Failure) -> String {
+        switch failure {
+        case .executableUnavailable:
+            return PetL10n.text("Unable to find or verify Blabee or Claude Code. Check that both apps are installed, then check again.", korean: "Blabee 또는 Claude Code 실행 파일을 찾거나 확인할 수 없습니다. 두 앱이 설치되어 있는지 확인한 뒤 다시 확인해 주세요.")
+        case .installedRuntimeUnavailable:
+            return PetL10n.text("Unable to verify the installed Blabee app's Claude components. Check Blabee in Applications and try again.", korean: "설치된 Blabee의 Claude 연결 구성 요소를 확인할 수 없습니다. 응용 프로그램 폴더의 Blabee를 확인한 뒤 다시 시도해 주세요.")
+        case .manualReview: return Self.manualReviewDetail
+        }
+    }
+
+    private func issue(for failure: Failure) -> Issue {
+        switch failure {
+        case .executableUnavailable: .executableUnavailable
+        case .installedRuntimeUnavailable: .installedRuntimeUnavailable
+        case .manualReview: .manualReview
+        }
+    }
+
+    private func enabled(launchFailure: Failure?, savedExecutableAvailable: Bool = true,
+                         needsSetupRefresh: Bool = false) -> Inspection {
+        var detail = PetL10n.text("Terminal auto-connect settings were saved. The current Claude session's connection is checked separately.", korean: "터미널 자동 연결 설정이 저장되었습니다. 현재 Claude 세션의 연결 여부는 별도로 확인합니다.")
+        if needsSetupRefresh {
+            detail += PetL10n.text(" Update auto-connect settings to keep Claude connected when a new terminal changes PATH during login.",
+                korean: " 새 터미널의 로그인 과정에서 PATH가 바뀌어도 Claude가 연결되도록 자동 연결 설정을 업데이트해 주세요.")
+        }
+        if !supportsShellSetup {
+            detail += PetL10n.text(" The saved settings are for zsh and do not apply to the current \(shellName) environment.", korean: " 저장된 설정은 zsh용이며 현재 \(shellName) 환경에는 적용되지 않습니다.")
+        }
+        if let launchFailure {
+            detail += " " + unavailableDetail(launchFailure)
+        } else if !savedExecutableAvailable {
+            detail += PetL10n.text(" The previously configured Claude executable could not be verified. ", korean: " 이전에 설정한 Claude 실행 파일을 확인할 수 없습니다. ") + Self.directLaunchDetail
+        }
+        return Inspection(isEnabled: true,
+            canEnable: needsSetupRefresh && supportsShellSetup && launchFailure == nil && savedExecutableAvailable,
+            canDisable: true, detail: detail,
+            canLaunch: launchFailure == nil, shellName: shellName,
+            savedExecutableAvailable: savedExecutableAvailable,
+            issue: launchFailure.map(issue(for:))
+                ?? (!supportsShellSetup ? .unsupportedShell : (!savedExecutableAvailable ? .savedExecutableUnavailable : nil)),
+            needsSetupRefresh: needsSetupRefresh)
+    }
+
+    private func disabled(launchFailure: Failure?) -> Inspection {
+        guard supportsShellSetup else { return unsupportedShell(launchFailure: launchFailure) }
+        let detail = launchFailure.map(unavailableDetail)
+            ?? PetL10n.text("Choose Connect Claude to set up terminal auto-connect and open a new connected Claude session.", korean: "Claude 연결을 누르면 터미널 자동 연결을 설정하고 연결된 새 Claude 세션을 엽니다.")
+        return Inspection(isEnabled: false, canEnable: launchFailure == nil, canDisable: false, detail: detail,
+            canLaunch: launchFailure == nil, shellName: shellName, issue: launchFailure.map(issue(for:)))
+    }
+
+    private func unsupportedShell(launchFailure: Failure?) -> Inspection {
+        let detail = PetL10n.text("Terminal auto-connect settings do not apply to the current \(shellName) environment. ", korean: "현재 \(shellName) 환경에는 터미널 자동 연결 설정을 적용하지 않습니다. ")
+            + (launchFailure.map(unavailableDetail) ?? Self.directLaunchDetail)
+        return Inspection(isEnabled: false, canEnable: false, canDisable: false, detail: detail,
+            canLaunch: launchFailure == nil, shellName: shellName, issue: launchFailure.map(issue(for:)) ?? .unsupportedShell)
+    }
+
+    private func rejected(_ error: Error, launchFailure: Failure?) -> Inspection {
+        let detail = unavailableDetail((error as? Failure) ?? .manualReview)
+            + (launchFailure == nil ? " " + Self.directLaunchDetail : "")
+        return Inspection(isEnabled: false, canEnable: false, canDisable: false, detail: detail,
+            canLaunch: launchFailure == nil, shellName: shellName, issue: issue(for: (error as? Failure) ?? .manualReview))
+    }
+
+    private static func safeAbsolutePath(_ path: String) -> Bool {
+        path.hasPrefix("/") && !path.unicodeScalars.contains { $0.value < 32 || $0.value == 127 }
+            && !path.contains("//") && (path == "/" || !path.hasSuffix("/"))
+            && !path.split(separator: "/").contains { $0 == "." || $0 == ".." }
+    }
+    private static func decode(_ line: String, prefix: String) -> String? {
+        guard line.hasPrefix(prefix), let bytes = Data(base64Encoded: String(line.dropFirst(prefix.count))),
+              let value = String(data: bytes, encoding: .utf8), safeAbsolutePath(value),
+              bytes.base64EncodedString() == line.dropFirst(prefix.count) else { return nil }
+        return value
+    }
+    private static func quote(_ value: String) -> String { "'" + value.replacingOccurrences(of: "'", with: "'\\''") + "'" }
+
+    static func managedBlock(binPath: String) -> String {
+        let bin = quote(binPath), shim = quote(binPath + "/claude")
+        // A function, rather than an alias, permits later user function
+        // definitions without changing their parsing. PATH is scoped to each
+        // invocation; removing the shim restores ordinary upstream lookup even
+        // in an already-open shell. No arguments are evaluated as shell code.
+        let body = "PATH=" + bin + ":\"$PATH\" command claude \"$@\""
+        return "\n" + opening + "\n"
+            + "() {\n  builtin emulate -L zsh\n"
+            + "  local _blabee_claude_body=" + quote(body) + "\n"
+            + "  if (( ${+aliases[claude]} )) || { (( ${+functions[claude]} )) && [[ ${functions[claude]} != $'\\t'\"$_blabee_claude_body\" ]]; }; then\n"
+            + "    builtin print -ru2 -- '[Blabee] claude alias/function exists; automatic connection was skipped.'\n"
+            + "  elif [[ -x " + shim + " ]]; then\n"
+            + "    local _blabee_claude_entry\n    local -a _blabee_claude_remaining=()\n"
+            + "    for _blabee_claude_entry in \"${path[@]}\"; do\n"
+            + "      [[ \"$_blabee_claude_entry\" == " + bin + " ]] || _blabee_claude_remaining+=(\"$_blabee_claude_entry\")\n"
+            + "    done\n    path=(" + bin + " \"${_blabee_claude_remaining[@]}\")\n"
+            + "    export PATH\n"
+            + "    functions[claude]=\"$_blabee_claude_body\"\n"
+            + "  fi\n}\n" + closing + "\n"
+    }
+
+    /// Exact bytes emitted by earlier releases; accepted only for reversible
+    /// inspection, explicit migration and removal.
+    private static func legacyManagedBlock(binPath: String) -> String {
+        let bin = quote(binPath), shim = quote(binPath + "/claude")
+        return "\n" + opening + "\n"
+            + "if (( ${+aliases[claude]} || ${+functions[claude]} )); then\n"
+            + "  builtin print -ru2 -- '[Blabee] claude alias/function exists; automatic connection was skipped.'\n"
+            + "elif [[ -x " + shim + " ]]; then\n"
+            + "  () {\n    builtin emulate -L zsh\n"
+            + "    local _blabee_claude_entry\n    local -a _blabee_claude_remaining=()\n"
+            + "    for _blabee_claude_entry in \"${path[@]}\"; do\n"
+            + "      [[ \"$_blabee_claude_entry\" == " + bin + " ]] || _blabee_claude_remaining+=(\"$_blabee_claude_entry\")\n"
+            + "    done\n    path=(" + bin + " \"${_blabee_claude_remaining[@]}\")\n"
+            + "    export PATH\n  }\nfi\n" + closing + "\n"
+    }
+
+    static func shimBytes(coordinator: String, claude: String, startup: String, originallyMissing: Bool) -> Data {
+        let lines = [
+            "#!/bin/sh\n# Blabee Claude Auto Connect v1\n# Generated by Blabee. Do not edit.\n",
+            "# coordinator-base64: \(Data(coordinator.utf8).base64EncodedString())\n",
+            "# claude-base64: \(Data(claude.utf8).base64EncodedString())\n",
+            "# startup-base64: \(Data(startup.utf8).base64EncodedString())\n",
+            "# startup-origin: \(originallyMissing ? "missing" : "present")\n\n",
+            "if [ ! -x \(quote(claude)) ]; then\n",
+            "  printf '%s\\n' '[Blabee] Claude Code executable is unavailable.' >&2\n  exit 127\nfi\n",
+            "if [ -x \(quote(coordinator)) ]; then\n",
+            "  exec \(quote(coordinator)) claude-auto-launch --claude-bin \(quote(claude)) -- \"$@\"\nfi\n",
+            "exec \(quote(claude)) \"$@\"\n",
+        ]
+        return Data(lines.joined().utf8)
+    }
+}

@@ -1,0 +1,31 @@
+views {
+  view systemContext {
+    title '01 · System Context · 현재 구현'
+    description 'Blabase와 실제로 연결되는 사용자·외부 시스템 경계'
+    include user, blabase, chatgptShare, llmProviders, googleSheets, github, localCodex, calendar, notion
+  }
+
+  view containers of blabase {
+    title '02 · Containers · 현재 구현'
+    description '독립 Next.js 앱, local launcher, optional fetcher sidecar'
+    include blabase.*, user, chatgptShare, llmProviders, googleSheets, github, localCodex, calendar, notion
+  }
+
+  view conversationComponents of blabase.conversationApp {
+    title '03 · Components · Conversation application'
+    description '공유 URL 입력부터 추출·검증·세션 handoff까지의 live component 경계'
+    include *
+  }
+
+  view suggestionComponents of blabase.suggestionApp {
+    title '04 · Components · Work intelligence application'
+    description 'source sync, Active Attention, continuation, private local persistence와 구현됐지만 inactive·unfrozen·unwired인 private Screen Evidence ingestion, immutable store, exporter와 completed-bundle format'
+    include *
+  }
+
+  view plannedArchitecture of future {
+    title '90 · Planned · 미구현 구조와 inactive private 경계 연결 계획'
+    description '미구현 Screen Evidence 생산, destructive cleanup, protection, freeze, A/B/C wiring, activation과 현재 inactive store, exporter, bundle, ingestion 사이의 planned-only 관계 및 기타 운영·배포 계획'
+    include *, blabase.suggestionApp.screenEvidenceIngestion, blabase.suggestionApp.privateScreenEvidenceStore, blabase.suggestionApp.screenEvidenceExporter, blabase.suggestionApp.completedScreenEvidenceBundle
+  }
+}

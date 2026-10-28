@@ -1,0 +1,169 @@
+{
+  "trace_version": "1.0",
+  "name": "stale_selection_prior_boundary",
+  "valid": false,
+  "expected_error_code": "stale_decision_boundary",
+  "events": [
+    {
+      "schema_version": "1.0",
+      "kind": "blabee_runtime_event",
+      "event_id": "event_trace_stale_001",
+      "event_sequence": 1,
+      "event_type": "decision_boundary_opened",
+      "event_category": "decision_lifecycle",
+      "occurred_at": "2026-01-15T11:00:00Z",
+      "project_id": "project_fixture_stale",
+      "session_id": "session_fixture_stale",
+      "source_turn_id": "turn_fixture_stale_shared_001",
+      "source_prompt_id": "prompt_fixture_stale_001",
+      "episode_id": "episode_fixture_stale",
+      "episode_root_prompt_id": "prompt_fixture_stale_001",
+      "episode_baseline_checkpoint_id": "checkpoint_fixture_stale_001",
+      "decision_boundary_id": "boundary_fixture_stale_001",
+      "boundary_sequence": 1,
+      "payload": {
+        "proposal_id": "proposal_fixture_stale_001"
+      }
+    },
+    {
+      "schema_version": "1.0",
+      "kind": "blabee_runtime_event",
+      "event_id": "event_trace_stale_002",
+      "event_sequence": 2,
+      "event_type": "decision_packet_sealed",
+      "event_category": "decision_lifecycle",
+      "occurred_at": "2026-01-15T11:00:01Z",
+      "project_id": "project_fixture_stale",
+      "session_id": "session_fixture_stale",
+      "source_turn_id": "turn_fixture_stale_shared_001",
+      "source_prompt_id": "prompt_fixture_stale_001",
+      "episode_id": "episode_fixture_stale",
+      "episode_root_prompt_id": "prompt_fixture_stale_001",
+      "episode_baseline_checkpoint_id": "checkpoint_fixture_stale_001",
+      "decision_boundary_id": "boundary_fixture_stale_001",
+      "boundary_sequence": 1,
+      "payload": {
+        "interaction_id": "interaction_fixture_stale_001",
+        "packet_id": "packet_fixture_stale_001",
+        "revision": 1,
+        "expires_at": "2026-01-15T11:02:01Z"
+      }
+    },
+    {
+      "schema_version": "1.0",
+      "kind": "blabee_runtime_event",
+      "event_id": "event_trace_stale_003",
+      "event_sequence": 3,
+      "event_type": "decision_selection_claimed",
+      "event_category": "decision_lifecycle",
+      "occurred_at": "2026-01-15T11:00:02Z",
+      "project_id": "project_fixture_stale",
+      "session_id": "session_fixture_stale",
+      "source_turn_id": "turn_fixture_stale_shared_001",
+      "source_prompt_id": "prompt_fixture_stale_001",
+      "episode_id": "episode_fixture_stale",
+      "episode_root_prompt_id": "prompt_fixture_stale_001",
+      "episode_baseline_checkpoint_id": "checkpoint_fixture_stale_001",
+      "decision_boundary_id": "boundary_fixture_stale_001",
+      "boundary_sequence": 1,
+      "payload": {
+        "selection_id": "selection_fixture_stale_001",
+        "interaction_id": "interaction_fixture_stale_001",
+        "packet_id": "packet_fixture_stale_001",
+        "revision": 1,
+        "option_id": "option_fixture_stale_001"
+      }
+    },
+    {
+      "schema_version": "1.0",
+      "kind": "blabee_runtime_event",
+      "event_id": "event_trace_stale_004",
+      "event_sequence": 4,
+      "event_type": "decision_boundary_closed",
+      "event_category": "decision_lifecycle",
+      "occurred_at": "2026-01-15T11:00:03Z",
+      "project_id": "project_fixture_stale",
+      "session_id": "session_fixture_stale",
+      "source_turn_id": "turn_fixture_stale_shared_001",
+      "source_prompt_id": "prompt_fixture_stale_001",
+      "episode_id": "episode_fixture_stale",
+      "episode_root_prompt_id": "prompt_fixture_stale_001",
+      "episode_baseline_checkpoint_id": "checkpoint_fixture_stale_001",
+      "decision_boundary_id": "boundary_fixture_stale_001",
+      "boundary_sequence": 1,
+      "payload": {
+        "close_reason": "selection_claimed"
+      }
+    },
+    {
+      "schema_version": "1.0",
+      "kind": "blabee_runtime_event",
+      "event_id": "event_trace_stale_005",
+      "event_sequence": 5,
+      "event_type": "decision_boundary_opened",
+      "event_category": "decision_lifecycle",
+      "occurred_at": "2026-01-15T11:00:04Z",
+      "project_id": "project_fixture_stale",
+      "session_id": "session_fixture_stale",
+      "source_turn_id": "turn_fixture_stale_shared_001",
+      "source_prompt_id": "prompt_fixture_stale_001",
+      "episode_id": "episode_fixture_stale",
+      "episode_root_prompt_id": "prompt_fixture_stale_001",
+      "episode_baseline_checkpoint_id": "checkpoint_fixture_stale_001",
+      "decision_boundary_id": "boundary_fixture_stale_002",
+      "boundary_sequence": 2,
+      "payload": {
+        "proposal_id": "proposal_fixture_stale_002"
+      }
+    },
+    {
+      "schema_version": "1.0",
+      "kind": "blabee_runtime_event",
+      "event_id": "event_trace_stale_006",
+      "event_sequence": 6,
+      "event_type": "decision_packet_sealed",
+      "event_category": "decision_lifecycle",
+      "occurred_at": "2026-01-15T11:00:05Z",
+      "project_id": "project_fixture_stale",
+      "session_id": "session_fixture_stale",
+      "source_turn_id": "turn_fixture_stale_shared_001",
+      "source_prompt_id": "prompt_fixture_stale_001",
+      "episode_id": "episode_fixture_stale",
+      "episode_root_prompt_id": "prompt_fixture_stale_001",
+      "episode_baseline_checkpoint_id": "checkpoint_fixture_stale_001",
+      "decision_boundary_id": "boundary_fixture_stale_002",
+      "boundary_sequence": 2,
+      "payload": {
+        "interaction_id": "interaction_fixture_stale_002",
+        "packet_id": "packet_fixture_stale_002",
+        "revision": 1,
+        "expires_at": "2026-01-15T11:02:05Z"
+      }
+    },
+    {
+      "schema_version": "1.0",
+      "kind": "blabee_runtime_event",
+      "event_id": "event_trace_stale_007",
+      "event_sequence": 7,
+      "event_type": "decision_selection_claimed",
+      "event_category": "decision_lifecycle",
+      "occurred_at": "2026-01-15T11:00:06Z",
+      "project_id": "project_fixture_stale",
+      "session_id": "session_fixture_stale",
+      "source_turn_id": "turn_fixture_stale_shared_001",
+      "source_prompt_id": "prompt_fixture_stale_001",
+      "episode_id": "episode_fixture_stale",
+      "episode_root_prompt_id": "prompt_fixture_stale_001",
+      "episode_baseline_checkpoint_id": "checkpoint_fixture_stale_001",
+      "decision_boundary_id": "boundary_fixture_stale_001",
+      "boundary_sequence": 1,
+      "payload": {
+        "selection_id": "selection_fixture_stale_late_001",
+        "interaction_id": "interaction_fixture_stale_001",
+        "packet_id": "packet_fixture_stale_001",
+        "revision": 1,
+        "option_id": "option_fixture_stale_001"
+      }
+    }
+  ]
+}

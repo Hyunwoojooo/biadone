@@ -1,0 +1,41 @@
+/* Design Tokens - Auto-generated */
+/* Do not edit directly - modify tokens.json instead */
+
+/* === PRIMITIVES === */
+:root {
+  --primitive-edu-space-fine: 12px;
+  --primitive-edu-space-viewer: 20px;
+  --primitive-edu-picker-width: 190px;
+  --primitive-edu-checkbox-size: 18px;
+  --primitive-edu-page-number-width: 96px;
+  --primitive-edu-cover-copy-max: 1240px;
+  --primitive-edu-visually-hidden-size: 1px;
+  --primitive-edu-disabled-opacity: 0.45;
+}
+
+/* === SEMANTIC === */
+:root {
+  --edu-layout-fine-gap: 12px;
+  --edu-layout-viewer-inset: 20px;
+  --edu-layout-picker-width: 190px;
+  --edu-layout-checkbox-size: 18px;
+  --edu-layout-page-number-width: 96px;
+  --edu-layout-cover-copy-max: 1240px;
+  --edu-layout-visually-hidden-size: 1px;
+  --edu-layout-disabled-opacity: 0.45;
+}
+
+/* === COMPONENTS === */
+:root {
+  --edu-viewer-inset-block: 20px;
+  --edu-label-gap: 12px;
+  --edu-source-gap: 12px;
+  --edu-notice-inset-block: 12px;
+  --edu-picker-width: 190px;
+  --edu-checkbox-size: 18px;
+  --edu-footer-inset: 20px;
+  --edu-page-number-width: 96px;
+  --edu-cover-copy-max: 1240px;
+  --edu-visually-hidden-size: 1px;
+  --edu-disabled-opacity: 0.45;
+}

@@ -1,0 +1,5 @@
+[
+  {"id":"a","title":"이름 중심","description":"심벌을 작게 붙여 이름이 먼저 읽히는 조합.","symbolRatio":0.6666666667,"gapRatio":0.25},
+  {"id":"b","title":"균형형","description":"심벌과 이름의 존재감을 고르게 맞춘 조합.","symbolRatio":0.9166666667,"gapRatio":0.3333333333},
+  {"id":"c","title":"심벌 중심","description":"심벌을 크게 두고 이름과 여유 있게 연결한 조합.","symbolRatio":1.1666666667,"gapRatio":0.4166666667}
+]

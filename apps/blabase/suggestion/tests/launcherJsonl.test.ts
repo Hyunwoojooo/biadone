@@ -54,6 +54,36 @@ describe("launcher JSONL IPC", () => {
     );
   });
 
+  it("parses the additive work-board.get method in the unchanged v1 envelope", async () => {
+    const result = {
+      contract: "blabase-launcher-work-board-v1" as const,
+      generatedAt: "2026-08-13T09:00:00.000Z",
+      mode: "full" as const,
+      prominentLane: "none" as const,
+      continuationStatus: "empty" as const,
+      items: []
+    };
+    const service: Pick<LauncherService, "handle"> = {
+      handle: vi.fn(async () => result)
+    };
+    const request = {
+      contract: LAUNCHER_IPC_CONTRACT,
+      requestId: "request-work-board",
+      method: "work-board.get" as const,
+      params: { refresh: false }
+    };
+
+    await expect(
+      processLauncherIpcLine(JSON.stringify(request), service)
+    ).resolves.toEqual({
+      contract: LAUNCHER_IPC_CONTRACT,
+      requestId: "request-work-board",
+      ok: true,
+      result
+    });
+    expect(service.handle).toHaveBeenCalledWith(request);
+  });
+
   it("rejects invalid JSON without reflecting private input", async () => {
     const service = serviceStub();
     const privateText = "private-prompt-that-must-not-be-reflected";
@@ -104,6 +134,15 @@ describe("launcher JSONL IPC", () => {
       request: {
         ...statusRequest("request-status-extra"),
         params: { dataRoot: "/private/root" }
+      }
+    },
+    {
+      label: "extra Work Board parameters",
+      request: {
+        contract: LAUNCHER_IPC_CONTRACT,
+        requestId: "request-work-board-extra",
+        method: "work-board.get",
+        params: { refresh: false, itemRef: "private" }
       }
     }
   ])("rejects $label", async ({ request }) => {

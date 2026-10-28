@@ -1,0 +1,36 @@
+/* Review-shell tokens. Candidate specimen values are generated separately. */
+:root {
+  --primitive-review-white: #FFFFFF;
+  --primitive-review-canvas: #F2F4F7;
+  --primitive-review-ink: #243249;
+  --primitive-review-muted: #536177;
+  --primitive-review-border: #CCD3DD;
+  --color-background: var(--primitive-review-canvas);
+  --color-surface: var(--primitive-review-white);
+  --color-text: var(--primitive-review-ink);
+  --color-muted: var(--primitive-review-muted);
+  --color-brand: var(--primitive-review-ink);
+  --color-focus: var(--primitive-review-ink);
+  --color-border: var(--primitive-review-border);
+  --button-bg: var(--color-text);
+  --button-fg: var(--color-surface);
+  --button-hover-bg: var(--color-muted);
+  --button-border: var(--color-text);
+  --button-radius: var(--radius-control);
+  --review-content-max: 96rem;
+  --review-preview-height: 56.25rem;
+  --review-phone-width: 24.375rem;
+  --review-h1: 1.125rem;
+  --review-h2: 1.625rem;
+  --review-control-type: 0.875rem;
+  --sample-title: clamp(1.5rem, 3.6vw, 3.5rem);
+  --sample-social-title: clamp(1.5rem, 3vw, 3rem);
+  --sample-small: clamp(.65rem, 1.2vw, 1rem);
+  --review-control-radius: .5rem;
+  --review-preview-radius: .75rem;
+  --sample-bg: #FFFFFF;
+  --sample-text: #172D39;
+  --sample-brand: #D7435B;
+  --sample-soft: #F1D7DC;
+}
+

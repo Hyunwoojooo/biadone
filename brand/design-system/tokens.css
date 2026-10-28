@@ -1,0 +1,46 @@
+/* Design Tokens - Auto-generated */
+/* Do not edit directly - modify tokens.json instead */
+
+/* === PRIMITIVES === */
+:root {
+  --primitive-color-blue: #2858F0;
+  --primitive-color-blueTint: #EEF5FF;
+  --primitive-color-ink: #23314D;
+  --primitive-color-white: #FFFFFF;
+  --primitive-logo-symbol-ratio: 0.9166666667;
+  --primitive-logo-gap-ratio: 0.3333333333;
+  --primitive-logo-font-weight: 600;
+  --primitive-logo-letter-spacing: -0.04em;
+  --primitive-font-pretendard: "Pretendard", "Apple SD Gothic Neo", sans-serif;
+  --primitive-font-suite: "SUITE", "Pretendard", "Apple SD Gothic Neo", sans-serif;
+}
+
+/* === SEMANTIC === */
+:root {
+  --brand-logo-symbol-ratio: 0.9166666667;
+  --brand-logo-gap-ratio: 0.3333333333;
+  --brand-logo-font-weight: 600;
+  --brand-logo-letter-spacing: -0.04em;
+  --color-brand: #2858F0;
+  --color-on-brand: #FFFFFF;
+  --color-background: #FFFFFF;
+  --color-background-tint: #EEF5FF;
+  --color-text-primary: #23314D;
+  --font-primary: "Pretendard", "Apple SD Gothic Neo", sans-serif;
+  --font-heading: "SUITE", "Pretendard", "Apple SD Gothic Neo", sans-serif;
+  --font-logo: "Pretendard", "Apple SD Gothic Neo", sans-serif;
+}
+
+/* === COMPONENTS === */
+:root {
+  --logo-symbol-ratio: 0.9166666667;
+  --logo-gap-ratio: 0.3333333333;
+  --logo-font-weight: 600;
+  --logo-letter-spacing: -0.04em;
+  --logo-font-family: "Pretendard", "Apple SD Gothic Neo", sans-serif;
+  --logo-text-color: #23314D;
+  --heading-font-family: "SUITE", "Pretendard", "Apple SD Gothic Neo", sans-serif;
+  --button-bg: #2858F0;
+  --button-fg: #FFFFFF;
+  --button-font-family: "Pretendard", "Apple SD Gothic Neo", sans-serif;
+}

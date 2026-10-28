@@ -1,0 +1,73 @@
+{
+  "schema_version": "1.0",
+  "kind": "blabee_decision_packet",
+  "interaction_id": "interaction_fixture_invalid_slot_001",
+  "packet_id": "packet_fixture_invalid_slot_001",
+  "revision": 1,
+  "project_id": "project_fixture_alpha",
+  "session_id": "session_fixture_alpha",
+  "source_turn_id": "turn_fixture_001",
+  "source_prompt_id": "prompt_fixture_001",
+  "episode_id": "episode_fixture_alpha",
+  "episode_root_prompt_id": "prompt_fixture_001",
+  "episode_baseline_checkpoint_id": "checkpoint_fixture_before_prompt_001",
+  "decision_boundary_id": "boundary_fixture_invalid_slot_001",
+  "boundary_sequence": 1,
+  "valid_after_event_sequence": 10,
+  "sealed_at": "2026-01-15T09:01:00Z",
+  "expires_at": "2026-01-15T09:03:00Z",
+  "summary": "This packet assigns alternative semantics to fixed slot one.",
+  "evidence": [],
+  "risk": {
+    "level": "low",
+    "reasons": [
+      "fixture_only"
+    ]
+  },
+  "checkpoint": {
+    "id": "checkpoint_fixture_before_prompt_001",
+    "coverage": "contract_only"
+  },
+  "choices": [
+    {
+      "slot": 1,
+      "kind": "alternative_action",
+      "enabled": true,
+      "disabled_reason": null,
+      "option_id": "option_fixture_wrong_slot_001",
+      "action_id": "action_fixture_wrong_slot_001",
+      "action": {
+        "title": "Misplaced fictional alternative",
+        "objective": "This alternative must not occupy fixed slot one.",
+        "constraints": [],
+        "done_when": [
+          "The fixture is rejected."
+        ]
+      }
+    },
+    {
+      "slot": 2,
+      "kind": "alternative_action",
+      "enabled": false,
+      "disabled_reason": "no_safe_meaningful_alternative",
+      "option_id": "option_fixture_alternative_invalid_slot_001",
+      "action_id": null
+    },
+    {
+      "slot": 3,
+      "kind": "pause",
+      "enabled": true,
+      "disabled_reason": null,
+      "option_id": "option_fixture_pause_invalid_slot_001",
+      "action_id": "action_fixture_pause_invalid_slot_001"
+    },
+    {
+      "slot": 4,
+      "kind": "rollback",
+      "enabled": false,
+      "disabled_reason": "rollback_not_enabled_in_build",
+      "option_id": "option_fixture_rollback_invalid_slot_001",
+      "action_id": null
+    }
+  ]
+}

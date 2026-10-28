@@ -1,0 +1,39 @@
+views {
+  dynamic view shareUrlFlow {
+    title '10 · Dynamic · ChatGPT 공유 URL 분석'
+    user -> blabase.conversationApp.webUi '공유 URL 제출'
+    blabase.conversationApp.webUi -> blabase.conversationApp.analysisApi 'POST /api/analyses'
+    blabase.conversationApp.analysisApi -> blabase.conversationApp.shareAdapter 'importChatGPTShareUrl'
+    blabase.conversationApp.shareAdapter -> chatgptShare 'HTML과 React Flight payload fetch'
+    blabase.conversationApp.shareAdapter -> blabase.conversationApp.normalizer 'restore + normalize'
+    blabase.conversationApp.analysisApi -> blabase.conversationApp.ruleExtractor 'extractMockStructure'
+    blabase.conversationApp.analysisApi -> blabase.conversationApp.shadowExtractor 'runShadowExtraction (optional)'
+    blabase.conversationApp.shadowExtractor -> llmProviders 'provider request (enabled only)'
+    blabase.conversationApp.shadowExtractor -> blabase.conversationApp.evidenceVerifier 'verifyLlmEvidence'
+    blabase.conversationApp.analysisApi -> blabase.conversationApp.analysisStore 'createCompleted'
+    blabase.conversationApp.webUi <- blabase.conversationApp.analysisApi 'monitor payload 반환'
+    blabase.conversationApp.webUi -> blabase.conversationApp.browserCache 'session handoff 저장'
+  }
+
+  dynamic view attentionFlow {
+    title '11 · Dynamic · Active Attention 평가'
+    user -> blabase.suggestionApp.workCockpit 'Work Cockpit 열기 또는 refresh'
+    blabase.suggestionApp.workCockpit -> blabase.suggestionApp.localApis 'attention/work-board 요청'
+    blabase.suggestionApp.localApis -> blabase.suggestionApp.syncCoordinator 'source sync 조정'
+    blabase.suggestionApp.syncCoordinator -> blabase.suggestionApp.connectors 'bounded source collection'
+    blabase.suggestionApp.syncCoordinator -> blabase.suggestionApp.localStores 'private snapshot commit'
+    blabase.suggestionApp.localApis -> blabase.suggestionApp.attentionEngine 'capture + route + eligibility + rank'
+    blabase.suggestionApp.attentionEngine -> blabase.suggestionApp.continuation 'sealed Active projection'
+    blabase.suggestionApp.workCockpit <- blabase.suggestionApp.localApis 'public bounded response'
+  }
+
+  dynamic view fixtureAnalysisFlow {
+    title '12 · Dynamic · Deterministic fixture test'
+    description 'live fixture mode가 아니라 Vitest에서 injected fetchHtml을 사용하는 테스트 경로'
+    user -> blabase.conversationApp.analysisApi 'Vitest integration request'
+    blabase.conversationApp.analysisApi -> blabase.conversationApp.shareAdapter 'privacy-safe HTML fixture 주입'
+    blabase.conversationApp.shareAdapter -> blabase.conversationApp.normalizer 'canonical messages'
+    blabase.conversationApp.analysisApi -> blabase.conversationApp.ruleExtractor 'deterministic result'
+    blabase.conversationApp.analysisApi -> blabase.conversationApp.analysisStore 'test-process memory store'
+  }
+}

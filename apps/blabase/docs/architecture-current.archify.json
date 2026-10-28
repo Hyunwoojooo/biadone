@@ -1,0 +1,301 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "Blabase main conversation 현재 호출 흐름",
+    "quality_profile": "showcase",
+    "views": [
+      {
+        "id": "ingestion-flow",
+        "label": "대화 수집 경로",
+        "focus": [
+          "user",
+          "web-ui",
+          "analysis-api",
+          "chatgpt-share",
+          "share-adapter",
+          "normalizer"
+        ],
+        "note": "공유 URL이 ChatGPT HTML·Flight payload 복원과 정규화를 거치는 구현 경로입니다."
+      },
+      {
+        "id": "extraction-flow",
+        "label": "추출·검증 경로",
+        "focus": [
+          "analysis-api",
+          "rule-extractor",
+          "llm-extractor",
+          "ai-provider",
+          "evidence-validator",
+          "web-ui"
+        ],
+        "note": "규칙 결과를 먼저 만들고 그 결과를 optional LLM shadow에 전달하며, evidence 검증은 LLM 후보에만 적용합니다."
+      },
+      {
+        "id": "storage-boundary",
+        "label": "저장 경계",
+        "focus": ["web-ui", "analysis-api", "memory-store", "browser-cache"],
+        "note": "서버 process memory와 브라우저 session handoff는 서로 다른 비영속 수명입니다."
+      }
+    ]
+  },
+  "components": [
+    {
+      "id": "user",
+      "type": "external",
+      "label": "사용자",
+      "sublabel": "브라우저",
+      "pos": [20, 272],
+      "size": [120, 64]
+    },
+    {
+      "id": "web-ui",
+      "type": "frontend",
+      "label": "Next.js Web UI",
+      "sublabel": "App Router",
+      "pos": [180, 270],
+      "size": [150, 68]
+    },
+    {
+      "id": "analysis-api",
+      "type": "backend",
+      "label": "POST /api/analyses",
+      "sublabel": "동기 orchestration",
+      "pos": [380, 270],
+      "size": [160, 68]
+    },
+    {
+      "id": "chatgpt-share",
+      "type": "external",
+      "label": "ChatGPT Share",
+      "sublabel": "HTML · Flight payload",
+      "pos": [595, 60],
+      "size": [160, 68]
+    },
+    {
+      "id": "share-adapter",
+      "type": "backend",
+      "label": "Share Adapter",
+      "sublabel": "검증·복원",
+      "pos": [600, 270],
+      "size": [150, 68]
+    },
+    {
+      "id": "normalizer",
+      "type": "backend",
+      "label": "Conversation Normalizer",
+      "sublabel": "대화 턴 정규화",
+      "pos": [820, 270],
+      "size": [170, 68]
+    },
+    {
+      "id": "rule-extractor",
+      "type": "backend",
+      "label": "Rule Extractor",
+      "sublabel": "결정론적 추출",
+      "pos": [1040, 100],
+      "size": [150, 68]
+    },
+    {
+      "id": "llm-extractor",
+      "type": "backend",
+      "label": "LLM Extractor",
+      "sublabel": "shadow extraction",
+      "pos": [1040, 300],
+      "size": [150, 68]
+    },
+    {
+      "id": "ai-provider",
+      "type": "external",
+      "label": "AI Provider",
+      "sublabel": "외부 모델 API",
+      "pos": [1040, 480],
+      "size": [150, 68]
+    },
+    {
+      "id": "evidence-validator",
+      "type": "security",
+      "label": "Evidence Validator",
+      "sublabel": "근거·상태 검증",
+      "pos": [1240, 300],
+      "size": [160, 68]
+    },
+    {
+      "id": "memory-store",
+      "type": "database",
+      "label": "Analysis Store",
+      "sublabel": "globalThis Map",
+      "pos": [1430, 100],
+      "size": [150, 68]
+    },
+    {
+      "id": "browser-cache",
+      "type": "database",
+      "label": "Browser Cache",
+      "sublabel": "sessionStorage handoff",
+      "pos": [175, 480],
+      "size": [160, 68]
+    }
+  ],
+  "boundaries": [
+    {
+      "kind": "region",
+      "label": "Blabase 저장소에서 확인할 구현 경계",
+      "wraps": [
+        "web-ui",
+        "analysis-api",
+        "share-adapter",
+        "normalizer",
+        "rule-extractor",
+        "llm-extractor",
+        "evidence-validator",
+        "memory-store",
+        "browser-cache"
+      ],
+      "pad": 24
+    }
+  ],
+  "connections": [
+    {
+      "id": "user-input",
+      "from": "user",
+      "to": "web-ui",
+      "label": "ChatGPT 공유 URL",
+      "variant": "emphasis",
+      "route": "straight",
+      "fromSide": "right",
+      "toSide": "left",
+      "labelAt": [160, 252]
+    },
+    {
+      "id": "ui-request",
+      "from": "web-ui",
+      "to": "analysis-api",
+      "label": "HTTP POST",
+      "route": "straight",
+      "fromSide": "right",
+      "toSide": "left",
+      "labelAt": [355, 252]
+    },
+    {
+      "id": "adapter-call",
+      "from": "analysis-api",
+      "to": "share-adapter",
+      "label": "복원",
+      "route": "straight",
+      "fromSide": "right",
+      "toSide": "left",
+      "labelAt": [570, 252]
+    },
+    {
+      "id": "source-fetch",
+      "from": "share-adapter",
+      "to": "chatgpt-share",
+      "label": "HTML fetch",
+      "variant": "dashed",
+      "route": "straight",
+      "fromSide": "top",
+      "toSide": "bottom",
+      "labelAt": [675, 198]
+    },
+    {
+      "id": "normalize-call",
+      "from": "share-adapter",
+      "to": "normalizer",
+      "label": "정규화",
+      "route": "straight",
+      "fromSide": "right",
+      "toSide": "left",
+      "labelAt": [785, 252]
+    },
+    {
+      "id": "rule-call",
+      "from": "analysis-api",
+      "to": "rule-extractor",
+      "label": "deterministic 추출",
+      "fromSide": "top",
+      "toSide": "top",
+      "via": [
+        [460, 30],
+        [1115, 30]
+      ],
+      "labelAt": [900, 20]
+    },
+    {
+      "id": "llm-call",
+      "from": "analysis-api",
+      "to": "llm-extractor",
+      "label": "optional shadow",
+      "fromSide": "bottom",
+      "toSide": "bottom",
+      "via": [
+        [460, 410],
+        [1115, 410]
+      ],
+      "labelAt": [820, 400]
+    },
+    {
+      "id": "provider-call",
+      "from": "llm-extractor",
+      "to": "ai-provider",
+      "label": "모델 요청",
+      "variant": "dashed",
+      "route": "straight",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "labelAt": [1115, 452]
+    },
+    {
+      "id": "llm-evidence",
+      "from": "llm-extractor",
+      "to": "evidence-validator",
+      "label": "LLM 후보 검증",
+      "route": "straight",
+      "fromSide": "right",
+      "toSide": "left",
+      "labelAt": [1215, 282]
+    },
+    {
+      "id": "memory-persist",
+      "from": "analysis-api",
+      "to": "memory-store",
+      "label": "completed result",
+      "fromSide": "bottom",
+      "toSide": "bottom",
+      "via": [
+        [460, 590],
+        [1505, 590]
+      ],
+      "labelAt": [820, 580]
+    },
+    {
+      "id": "session-persist",
+      "from": "web-ui",
+      "to": "browser-cache",
+      "label": "navigation handoff",
+      "variant": "dashed",
+      "route": "straight",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "labelAt": [255, 438]
+    }
+  ],
+  "cards": [
+    {
+      "dot": "emerald",
+      "title": "현재 구현 기준",
+      "items": [
+        "POST /api/analyses는 전체 pipeline을 동기 실행",
+        "rule engine 이름은 Mock이지만 live path에서 사용"
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "현재 한계",
+      "items": [
+        "review edit·accept·reject mutation과 durable store는 미구현",
+        "AppMap은 실제 대화가 아닌 deterministic fixture만 기록"
+      ]
+    }
+  ]
+}

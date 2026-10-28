@@ -1,0 +1,79 @@
+model {
+  future = system 'Blabase planned architecture' {
+    #planned
+    description '아직 구현되지 않은 Screen Evidence 생산, destructive cleanup, protection, freeze, A/B/C wiring과 production activation 계획 및 현재 inactive private 경계에 대한 planned-only 연결'
+
+    screenEvidenceCapture = component 'Blabase screen capture + preprocessing' {
+      #planned #sensitive
+      description 'Dayflow runtime이나 source에 의존하지 않고 Blabase가 소유하는 capture, OCR, privacy-minimized observation 생성 계획'
+    }
+
+    screenEvidenceCleanup = component 'Destructive cleanup + retention authority' {
+      #planned #sensitive
+      description '구현된 metadata-only inventory를 입력으로 retention과 deletion eligibility를 결정하고 실제 삭제와 deletion evidence를 관리하는 별도 authority 계획'
+    }
+
+    screenEvidenceProtection = component 'Screen Evidence authentication + encryption' {
+      #planned #sensitive
+      description 'private store와 completed bundle의 access authentication, encryption at rest와 key lifecycle을 정의하는 계획'
+    }
+
+    screenEvidenceFreeze = component 'Screen Evidence contract freeze' {
+      #planned
+      description 'resource limits, wire identities, byte grammar와 compatibility policy를 별도 검토 후 동결하는 계획'
+    }
+
+    screenEvidenceAblation = component 'Shared-engine A/B/C input assembler' {
+      #planned #sensitive
+      description 'A는 structured, B는 structured+screen, C는 screen evidence만 조합하고 동일 adapter, model, prompt, config, ranking, guardrail, engine과 output schema를 사용하는 계획'
+    }
+
+    screenEvidenceActivation = component 'Screen Evidence production activation' {
+      #planned #sensitive
+      description '검증, protection, freeze와 Colin 승인 이후에만 producer, store, exporter, ingestion과 A/B/C 경로를 production에 연결하는 계획'
+    }
+
+    conflictResolver = component 'Rule·LLM conflict resolver' {
+      #planned
+      description '선택 이유와 unresolved review mutation을 영속화하는 Sprint 5C 계획'
+      link ../docs/CODEX_IMPLEMENTATION_PLAN.md 'plan'
+    }
+
+    durableAnalysisStore = datastore 'Durable analysis store' {
+      #planned
+      description 'process·isolate·browser 경계를 넘는 보존, ownership, deletion 정책'
+      link ../docs/CODEX_IMPLEMENTATION_PLAN.md 'plan'
+    }
+
+    humanGolden = datastore 'Human-reviewed Golden + holdout' {
+      #planned
+      description 'Semantic v1·cross-source용 독립 review, adjudication, frozen version/hash'
+      link ../docs/ENGINE_DEVELOPMENT_RECORDS.md 'recordkeeping rules'
+    }
+
+    durableScheduler = component 'Durable scheduler + exclusive lease' {
+      #planned
+      description 'multi-process single writer와 takeover를 보장하는 production ownership'
+      link ../suggestion/docs/CROSS_SOURCE_SUGGESTION_IMPLEMENTATION_PLAN.md 'plan'
+    }
+
+    signedDistribution = component 'Signed launcher distribution' {
+      #planned
+      description 'Developer ID, hardened runtime, notarization, external-beta validation'
+      link ../suggestion/docs/LOCAL_LAUNCHER_CONTRACT.md 'release gates'
+    }
+  }
+
+  future.screenEvidenceCapture -> blabase.suggestionApp.privateScreenEvidenceStore 'planned only: persist immutable revisions and minimized observations after producer approval'
+  blabase.suggestionApp.screenEvidenceExporter -> blabase.suggestionApp.privateScreenEvidenceStore 'planned only: select eligible exact snapshots after separate wiring approval'
+  blabase.suggestionApp.screenEvidenceExporter -> blabase.suggestionApp.completedScreenEvidenceBundle 'planned only: publish canonical completed bundles after separate wiring approval'
+  blabase.suggestionApp.screenEvidenceIngestion -> blabase.suggestionApp.completedScreenEvidenceBundle 'planned only: consume completed bundles after separate wiring approval'
+  future.screenEvidenceCleanup -> blabase.suggestionApp.privateScreenEvidenceStore 'planned only: apply retention decisions and destructive deletion outside the read-only inventory operation'
+  future.screenEvidenceProtection -> blabase.suggestionApp.privateScreenEvidenceStore 'planned only: authenticate access and encrypt stored evidence'
+  future.screenEvidenceProtection -> blabase.suggestionApp.completedScreenEvidenceBundle 'planned only: protect completed bundles and encryption keys'
+  future.screenEvidenceFreeze -> blabase.suggestionApp.screenEvidenceExporter 'planned only: freeze exporter limits and wire grammar before activation'
+  future.screenEvidenceFreeze -> blabase.suggestionApp.screenEvidenceIngestion 'planned only: freeze accepted contract before activation'
+  future.screenEvidenceAblation -> blabase.suggestionApp.screenEvidenceIngestion 'planned only: depend on qualified screen evidence after separate wiring approval'
+  future.screenEvidenceActivation -> future.screenEvidenceCapture 'planned only: activate approved native producer'
+  future.screenEvidenceActivation -> future.screenEvidenceAblation 'planned only: activate approved shared-engine experiment wiring'
+}

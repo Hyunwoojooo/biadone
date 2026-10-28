@@ -12,8 +12,13 @@ import {
   type SemanticContinuationWorkBoardResponse
 } from "../../../src/semanticContinuation";
 import {
-  evaluateLiveSemanticWorkSuggestionBoard
+  evaluateLiveSemanticWorkSuggestionBoard,
+  evaluateLiveSemanticWorkSuggestionBoardWithMonitoringAuthority
 } from "../../../src/suggestionBoard/liveShadow";
+import {
+  createWorkBoardMonitoringReceipt,
+  WORK_BOARD_MONITORING_RECEIPT_HEADER
+} from "../../../src/suggestionBoard/monitoring";
 import type { WorkBoardApiResponse } from "../../../src/suggestionBoard/monitoringSchema";
 
 export const runtime = "nodejs";
@@ -79,6 +84,34 @@ export async function GET(request: Request) {
     );
   }
   try {
+    if (process.env.BLABASE_WORK_BOARD_MONITORING_ENABLED === "true") {
+      const evaluated =
+        await evaluateLiveSemanticWorkSuggestionBoardWithMonitoringAuthority();
+      const response = semanticContinuationWorkBoardResponseSchema.parse(
+        evaluated.response
+      );
+      const receipt = (() => {
+        try {
+          return evaluated.monitoringAuthority === null
+            ? null
+            : createWorkBoardMonitoringReceipt({
+                authority: evaluated.monitoringAuthority
+              });
+        } catch {
+          return null;
+        }
+      })();
+      return json(
+        response,
+        200,
+        receipt === null
+          ? {}
+          : {
+              [WORK_BOARD_MONITORING_RECEIPT_HEADER]:
+                receipt.headerValue
+            }
+      );
+    }
     const response = semanticContinuationWorkBoardResponseSchema.parse(
       await evaluateLiveSemanticWorkSuggestionBoard()
     );

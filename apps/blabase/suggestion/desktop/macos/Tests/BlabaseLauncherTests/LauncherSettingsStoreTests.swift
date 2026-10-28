@@ -32,6 +32,20 @@ final class LauncherSettingsStoreTests: XCTestCase {
         )
     }
 
+    func testDataRootRetryStopsEvenWhenActivityFlagIsFalse() throws {
+        XCTAssertEqual(
+            LauncherSettingsApplyPlan.make(
+                previousChoice: .managedDefault,
+                nextChoice: .existingReadOnly(path: "/private/tmp/blabase"),
+                isAgentActive: false
+            ),
+            LauncherSettingsApplyPlan(
+                stopCurrentAgent: true,
+                loadAttention: true
+            )
+        )
+    }
+
     func testSettingsTransactionStopsBeforePersistAndLoad() async throws {
         var events: [String] = []
 

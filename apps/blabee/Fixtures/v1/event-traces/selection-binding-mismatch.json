@@ -1,0 +1,78 @@
+{
+  "trace_version": "1.0",
+  "name": "selection_binding_mismatch",
+  "valid": false,
+  "expected_error_code": "decision_boundary_binding_mismatch",
+  "events": [
+    {
+      "schema_version": "1.0",
+      "kind": "blabee_runtime_event",
+      "event_id": "event_trace_binding_mismatch_001",
+      "event_sequence": 1,
+      "event_type": "decision_boundary_opened",
+      "event_category": "decision_lifecycle",
+      "occurred_at": "2026-01-15T13:00:00Z",
+      "project_id": "project_fixture_binding",
+      "session_id": "session_fixture_binding",
+      "source_turn_id": "turn_fixture_binding_001",
+      "source_prompt_id": "prompt_fixture_binding_001",
+      "episode_id": "episode_fixture_binding",
+      "episode_root_prompt_id": "prompt_fixture_binding_001",
+      "episode_baseline_checkpoint_id": "checkpoint_fixture_binding_001",
+      "decision_boundary_id": "boundary_fixture_binding_001",
+      "boundary_sequence": 1,
+      "payload": {
+        "proposal_id": "proposal_fixture_binding_001"
+      }
+    },
+    {
+      "schema_version": "1.0",
+      "kind": "blabee_runtime_event",
+      "event_id": "event_trace_binding_mismatch_002",
+      "event_sequence": 2,
+      "event_type": "decision_packet_sealed",
+      "event_category": "decision_lifecycle",
+      "occurred_at": "2026-01-15T13:00:01Z",
+      "project_id": "project_fixture_binding",
+      "session_id": "session_fixture_binding",
+      "source_turn_id": "turn_fixture_binding_001",
+      "source_prompt_id": "prompt_fixture_binding_001",
+      "episode_id": "episode_fixture_binding",
+      "episode_root_prompt_id": "prompt_fixture_binding_001",
+      "episode_baseline_checkpoint_id": "checkpoint_fixture_binding_001",
+      "decision_boundary_id": "boundary_fixture_binding_001",
+      "boundary_sequence": 1,
+      "payload": {
+        "interaction_id": "interaction_fixture_binding_001",
+        "packet_id": "packet_fixture_binding_001",
+        "revision": 1,
+        "expires_at": "2026-01-15T13:02:01Z"
+      }
+    },
+    {
+      "schema_version": "1.0",
+      "kind": "blabee_runtime_event",
+      "event_id": "event_trace_binding_mismatch_003",
+      "event_sequence": 3,
+      "event_type": "decision_selection_claimed",
+      "event_category": "decision_lifecycle",
+      "occurred_at": "2026-01-15T13:00:02Z",
+      "project_id": "project_fixture_binding",
+      "session_id": "session_fixture_binding",
+      "source_turn_id": "turn_fixture_binding_001",
+      "source_prompt_id": "prompt_fixture_binding_other",
+      "episode_id": "episode_fixture_binding",
+      "episode_root_prompt_id": "prompt_fixture_binding_001",
+      "episode_baseline_checkpoint_id": "checkpoint_fixture_binding_001",
+      "decision_boundary_id": "boundary_fixture_binding_001",
+      "boundary_sequence": 1,
+      "payload": {
+        "selection_id": "selection_fixture_binding_001",
+        "interaction_id": "interaction_fixture_binding_001",
+        "packet_id": "packet_fixture_binding_001",
+        "revision": 1,
+        "option_id": "option_fixture_binding_001"
+      }
+    }
+  ]
+}

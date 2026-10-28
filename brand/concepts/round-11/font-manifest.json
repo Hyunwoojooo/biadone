@@ -1,0 +1,63 @@
+{
+  "pretendard": {
+    "name": "Pretendard",
+    "label": "기준 · Pretendard",
+    "family": "\"Pretendard\", sans-serif",
+    "face": "Pretendard",
+    "headingWeight": 700,
+    "weights": [
+      400,
+      700
+    ]
+  },
+  "suite": {
+    "name": "SUITE",
+    "label": "A · SUITE",
+    "family": "\"Study SUITE\", sans-serif",
+    "face": "Study SUITE",
+    "headingWeight": 700,
+    "weights": [
+      700
+    ]
+  },
+  "gmarket": {
+    "name": "Gmarket Sans",
+    "label": "B · Gmarket Sans",
+    "family": "\"Study Gmarket\", sans-serif",
+    "face": "Study Gmarket",
+    "headingWeight": 500,
+    "weights": [
+      500
+    ]
+  },
+  "maru": {
+    "name": "마루 부리",
+    "label": "C · 마루 부리",
+    "family": "\"Study Maru\", serif",
+    "face": "Study Maru",
+    "headingWeight": 700,
+    "weights": [
+      700
+    ]
+  },
+  "gowun": {
+    "name": "고운돋움",
+    "label": "D · 고운돋움",
+    "family": "\"Study Gowun\", sans-serif",
+    "face": "Study Gowun",
+    "headingWeight": 400,
+    "weights": [
+      400
+    ]
+  },
+  "dohyeon": {
+    "name": "도현",
+    "label": "E · 도현",
+    "family": "\"Study Dohyeon\", sans-serif",
+    "face": "Study Dohyeon",
+    "headingWeight": 400,
+    "weights": [
+      400
+    ]
+  }
+}

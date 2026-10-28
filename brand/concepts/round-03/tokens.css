@@ -1,0 +1,98 @@
+/* Design Tokens - Auto-generated */
+/* Do not edit directly - modify tokens.json instead */
+
+/* === PRIMITIVES === */
+:root {
+  --primitive-color-white: #FFFFFF;
+  --primitive-color-ink: #23314D;
+  --primitive-color-muted: #536079;
+  --primitive-color-line: #DCE4F0;
+  --primitive-color-blue: #2858F0;
+  --primitive-color-blueHover: #1F46C6;
+  --primitive-color-blueSoft: #EEF5FF;
+  --primitive-color-blueLight: #C9E7FF;
+  --primitive-color-jade: #17D2A4;
+  --primitive-color-jadeHover: #34E0B5;
+  --primitive-color-jadeSoft: #EBFFF7;
+  --primitive-color-jadeInk: #124438;
+  --primitive-color-coral: #FF846B;
+  --primitive-color-coralHover: #FF9D89;
+  --primitive-color-coralSoft: #FFF1E8;
+  --primitive-color-coralInk: #4A241C;
+  --primitive-font-control: "BrandControl", "Apple SD Gothic Neo", sans-serif;
+  --primitive-font-wanted: "BrandWanted", "BrandControl", sans-serif;
+  --primitive-font-suite: "BrandSuite", "BrandControl", sans-serif;
+  --primitive-space-0: 0rem;
+  --primitive-space-1: 0.25rem;
+  --primitive-space-2: 0.5rem;
+  --primitive-space-3: 0.75rem;
+  --primitive-space-4: 1rem;
+  --primitive-space-5: 1.25rem;
+  --primitive-space-6: 1.5rem;
+  --primitive-space-8: 2rem;
+  --primitive-space-10: 2.5rem;
+  --primitive-space-12: 3rem;
+  --primitive-space-16: 4rem;
+  --primitive-space-20: 5rem;
+  --primitive-type-small: .875rem;
+  --primitive-type-body: 1rem;
+  --primitive-type-lead: 1.125rem;
+  --primitive-type-title: clamp(1.75rem, 3vw, 2.75rem);
+  --primitive-type-sample: clamp(1.75rem, 2.5vw, 2.25rem);
+  --primitive-type-section: clamp(1.5rem, 2.3vw, 2rem);
+  --primitive-type-label: .75rem;
+  --primitive-radius-card: 1.25rem;
+  --primitive-radius-control: .625rem;
+  --primitive-dimension-max: 90rem;
+  --primitive-dimension-control: 3rem;
+  --primitive-dimension-focus: 3px;
+  --primitive-dimension-focusOffset: 4px;
+  --primitive-dimension-sampleHeight: 26rem;
+  --primitive-duration-feedback: 160ms;
+}
+
+/* === SEMANTIC === */
+:root {
+  --color-background: #FFFFFF;
+  --color-surface: #FFFFFF;
+  --color-text: #23314D;
+  --color-muted: #536079;
+  --color-border: #DCE4F0;
+  --color-brand: #2858F0;
+  --color-focus: #23314D;
+  --font-interface: "BrandControl", "Apple SD Gothic Neo", sans-serif;
+  --font-control: "BrandControl", "Apple SD Gothic Neo", sans-serif;
+  --font-wanted: "BrandWanted", "BrandControl", sans-serif;
+  --font-suite: "BrandSuite", "BrandControl", sans-serif;
+  --radius-panel: 1.25rem;
+  --radius-control: .625rem;
+}
+
+/* === COMPONENTS === */
+:root {
+  --palette-sky-text: #23314D;
+  --palette-sky-base: #FFFFFF;
+  --palette-sky-background: #EEF5FF;
+  --palette-sky-brand: #2858F0;
+  --palette-sky-soft: #C9E7FF;
+  --palette-sky-onBrand: #FFFFFF;
+  --palette-sky-hover: #1F46C6;
+  --palette-jade-text: #23314D;
+  --palette-jade-base: #FFFFFF;
+  --palette-jade-background: #EBFFF7;
+  --palette-jade-brand: #17D2A4;
+  --palette-jade-soft: #EBFFF7;
+  --palette-jade-onBrand: #124438;
+  --palette-jade-hover: #34E0B5;
+  --palette-coral-text: #23314D;
+  --palette-coral-base: #FFFFFF;
+  --palette-coral-background: #FFF1E8;
+  --palette-coral-brand: #FF846B;
+  --palette-coral-soft: #FFF1E8;
+  --palette-coral-onBrand: #4A241C;
+  --palette-coral-hover: #FF9D89;
+  --button-bg: #2858F0;
+  --button-fg: #FFFFFF;
+  --button-hover: #1F46C6;
+  --button-radius: .625rem;
+}

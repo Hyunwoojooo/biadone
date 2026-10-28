@@ -1,0 +1,495 @@
+{
+  "createdAt": "2026-10-24T02:06:59.799Z",
+  "origin": "http://127.0.0.1:4317",
+  "projectId": "project-d93fec82-85e7-4612-bf94-e465f3179f21",
+  "title": "[검증] 5분 32초 나레이션",
+  "projectRevision": 3,
+  "durationInFrames": 9986,
+  "fps": 30,
+  "expectedDurationSeconds": 332.8666666666667,
+  "width": 1920,
+  "height": 1080,
+  "sceneCount": 21,
+  "captionCount": 78,
+  "wordCount": 496,
+  "audioAssetId": "7ac01662-6102-445e-b908-0bc98148d829",
+  "audioDuration": 332.85,
+  "projectDirectory": "/Users/joo/BiaDone/apps/Edu/editor/data/projects/project-d93fec82-85e7-4612-bf94-e465f3179f21",
+  "sourceAudio": {
+    "path": "/Users/joo/BiaDone/apps/Edu/Sources/audio/ElevenLabs_Untitled_project.mp3",
+    "bytes": 7989820,
+    "sha256": "7f9b966587c7715749457f7d881e9f86ade95f5e1ac98a60d337cda47330f7b5"
+  },
+  "sourceTranscript": {
+    "path": "/Users/joo/BiaDone/apps/Edu/.video-build/transcript.json",
+    "bytes": 85698,
+    "sha256": "04de91e7234eb9b7534ed75f8eaa521e395f68a2564dadfcb24c75aa408c85cd"
+  },
+  "quality": {
+    "ok": true,
+    "summary": {
+      "scenes": 21,
+      "captions": 78,
+      "durationSeconds": 332.8666666666667,
+      "errors": 0,
+      "warnings": 8
+    },
+    "issues": [
+      {
+        "id": "TEXT_DENSE-scene-5ff8c3aa-2267-40ba-9450-3bac195594b2-0",
+        "code": "TEXT_DENSE",
+        "severity": "warning",
+        "sceneId": "scene-5ff8c3aa-2267-40ba-9450-3bac195594b2"
+      },
+      {
+        "id": "TEXT_DENSE-scene-abb60a2e-0544-47f9-a04c-42921b38d225-1",
+        "code": "TEXT_DENSE",
+        "severity": "warning",
+        "sceneId": "scene-abb60a2e-0544-47f9-a04c-42921b38d225"
+      },
+      {
+        "id": "TEXT_DENSE-scene-99b7befd-bc42-476f-960d-def386f4d79e-2",
+        "code": "TEXT_DENSE",
+        "severity": "warning",
+        "sceneId": "scene-99b7befd-bc42-476f-960d-def386f4d79e"
+      },
+      {
+        "id": "TEXT_DENSE-scene-99b7befd-bc42-476f-960d-def386f4d79e-3",
+        "code": "TEXT_DENSE",
+        "severity": "warning",
+        "sceneId": "scene-99b7befd-bc42-476f-960d-def386f4d79e"
+      },
+      {
+        "id": "TEXT_DENSE-scene-26bcdf6c-ad14-4ebf-a596-71c79825f7aa-4",
+        "code": "TEXT_DENSE",
+        "severity": "warning",
+        "sceneId": "scene-26bcdf6c-ad14-4ebf-a596-71c79825f7aa"
+      },
+      {
+        "id": "TEXT_DENSE-scene-55f32beb-727f-49ee-a9d9-15fe3a512c13-5",
+        "code": "TEXT_DENSE",
+        "severity": "warning",
+        "sceneId": "scene-55f32beb-727f-49ee-a9d9-15fe3a512c13"
+      },
+      {
+        "id": "TEXT_DENSE-scene-55f32beb-727f-49ee-a9d9-15fe3a512c13-6",
+        "code": "TEXT_DENSE",
+        "severity": "warning",
+        "sceneId": "scene-55f32beb-727f-49ee-a9d9-15fe3a512c13"
+      },
+      {
+        "id": "TEXT_DENSE-scene-55f32beb-727f-49ee-a9d9-15fe3a512c13-7",
+        "code": "TEXT_DENSE",
+        "severity": "warning",
+        "sceneId": "scene-55f32beb-727f-49ee-a9d9-15fe3a512c13"
+      }
+    ]
+  },
+  "jobId": "a52aeefc-b0a3-4b86-b14e-1d29d9547b43",
+  "outputDirectory": "/Users/joo/BiaDone/apps/Edu/editor/data/jobs/a52aeefc-b0a3-4b86-b14e-1d29d9547b43/output",
+  "lastPolledAt": "2026-10-24T02:18:50.225Z",
+  "job": {
+    "id": "a52aeefc-b0a3-4b86-b14e-1d29d9547b43",
+    "projectId": "project-d93fec82-85e7-4612-bf94-e465f3179f21",
+    "type": "render",
+    "status": "completed",
+    "progress": 1,
+    "message": "영상 출력과 파일 검증을 마쳤습니다.",
+    "createdAt": "2026-10-24T02:06:59.808Z",
+    "updatedAt": "2026-10-24T02:18:49.499Z",
+    "projectRevision": 3,
+    "outputUrl": "/api/outputs/a52aeefc-b0a3-4b86-b14e-1d29d9547b43/video.mp4",
+    "verification": {
+      "status": "passed",
+      "projectId": "project-d93fec82-85e7-4612-bf94-e465f3179f21",
+      "projectRevision": 3,
+      "width": 1920,
+      "height": 1080,
+      "fps": 30,
+      "durationSeconds": 332.866,
+      "expectedDurationSeconds": 332.8666666666667,
+      "decodedFrames": 9986,
+      "expectedFrames": 9986,
+      "videoCodec": "h264",
+      "audioCodec": "aac",
+      "faststart": true,
+      "fullDecode": true,
+      "narration": {
+        "status": "passed",
+        "method": "PCM correlation (1 kHz analysis, first/middle/last windows)",
+        "windows": [
+          {
+            "startSeconds": 1,
+            "lengthSeconds": 6,
+            "correlation": 0.9988,
+            "offsetMs": 0,
+            "silent": false,
+            "outputSilent": false,
+            "insufficient": false
+          },
+          {
+            "startSeconds": 163.433,
+            "lengthSeconds": 6,
+            "correlation": 0.9994,
+            "offsetMs": 0,
+            "silent": false,
+            "outputSilent": false,
+            "insufficient": false
+          },
+          {
+            "startSeconds": 326.867,
+            "lengthSeconds": 6,
+            "correlation": 0.9992,
+            "offsetMs": 0,
+            "silent": false,
+            "outputSilent": false,
+            "insufficient": false
+          }
+        ]
+      },
+      "metadataMethod": "PyAV",
+      "frameRange": {
+        "startFrame": 0,
+        "endFrame": 9986
+      },
+      "audioNormalized": true,
+      "checkedAt": "2026-10-24T02:18:49.497Z"
+    }
+  },
+  "pollHistory": [
+    {
+      "at": "2026-10-24T02:08:05.108Z",
+      "status": "running",
+      "progress": 0.1611,
+      "message": "장면 출력 중 · 922 / 9,986 프레임"
+    },
+    {
+      "at": "2026-10-24T02:08:20.115Z",
+      "status": "running",
+      "progress": 0.1769,
+      "message": "장면 출력 중 · 1,141 / 9,986 프레임"
+    },
+    {
+      "at": "2026-10-24T02:08:35.121Z",
+      "status": "running",
+      "progress": 0.1927,
+      "message": "장면 출력 중 · 1,359 / 9,986 프레임"
+    },
+    {
+      "at": "2026-10-24T02:08:50.124Z",
+      "status": "running",
+      "progress": 0.2085,
+      "message": "장면 출력 중 · 1,578 / 9,986 프레임"
+    },
+    {
+      "at": "2026-10-24T02:09:05.127Z",
+      "status": "running",
+      "progress": 0.2243,
+      "message": "장면 출력 중 · 1,797 / 9,986 프레임"
+    },
+    {
+      "at": "2026-10-24T02:09:20.129Z",
+      "status": "running",
+      "progress": 0.2401,
+      "message": "장면 출력 중 · 2,014 / 9,986 프레임"
+    },
+    {
+      "at": "2026-10-24T02:09:35.131Z",
+      "status": "running",
+      "progress": 0.2559,
+      "message": "장면 출력 중 · 2,233 / 9,986 프레임"
+    },
+    {
+      "at": "2026-10-24T02:09:50.133Z",
+      "status": "running",
+      "progress": 0.27170000000000005,
+      "message": "장면 출력 중 · 2,452 / 9,986 프레임"
+    },
+    {
+      "at": "2026-10-24T02:10:05.137Z",
+      "status": "running",
+      "progress": 0.2875,
+      "message": "장면 출력 중 · 2,670 / 9,986 프레임"
+    },
+    {
+      "at": "2026-10-24T02:10:20.139Z",
+      "status": "running",
+      "progress": 0.3033,
+      "message": "장면 출력 중 · 2,887 / 9,986 프레임"
+    },
+    {
+      "at": "2026-10-24T02:10:35.141Z",
+      "status": "running",
+      "progress": 0.3191,
+      "message": "장면 출력 중 · 3,106 / 9,986 프레임"
+    },
+    {
+      "at": "2026-10-24T02:10:50.143Z",
+      "status": "running",
+      "progress": 0.3349,
+      "message": "장면 출력 중 · 3,325 / 9,986 프레임"
+    },
+    {
+      "at": "2026-10-24T02:11:05.146Z",
+      "status": "running",
+      "progress": 0.3507,
+      "message": "장면 출력 중 · 3,543 / 9,986 프레임"
+    },
+    {
+      "at": "2026-10-24T02:11:20.148Z",
+      "status": "running",
+      "progress": 0.36649999999999994,
+      "message": "장면 출력 중 · 3,758 / 9,986 프레임"
+    },
+    {
+      "at": "2026-10-24T02:11:35.150Z",
+      "status": "running",
+      "progress": 0.3823,
+      "message": "장면 출력 중 · 3,977 / 9,986 프레임"
+    },
+    {
+      "at": "2026-10-24T02:11:50.151Z",
+      "status": "running",
+      "progress": 0.3981,
+      "message": "장면 출력 중 · 4,195 / 9,986 프레임"
+    },
+    {
+      "at": "2026-10-24T02:12:05.154Z",
+      "status": "running",
+      "progress": 0.41390000000000005,
+      "message": "장면 출력 중 · 4,414 / 9,986 프레임"
+    },
+    {
+      "at": "2026-10-24T02:12:20.157Z",
+      "status": "running",
+      "progress": 0.4376,
+      "message": "장면 출력 중 · 4,633 / 9,986 프레임"
+    },
+    {
+      "at": "2026-10-24T02:12:35.160Z",
+      "status": "running",
+      "progress": 0.4534,
+      "message": "장면 출력 중 · 4,853 / 9,986 프레임"
+    },
+    {
+      "at": "2026-10-24T02:12:50.162Z",
+      "status": "running",
+      "progress": 0.46919999999999995,
+      "message": "장면 출력 중 · 5,072 / 9,986 프레임"
+    },
+    {
+      "at": "2026-10-24T02:13:05.164Z",
+      "status": "running",
+      "progress": 0.485,
+      "message": "장면 출력 중 · 5,290 / 9,986 프레임"
+    },
+    {
+      "at": "2026-10-24T02:13:20.166Z",
+      "status": "running",
+      "progress": 0.5008,
+      "message": "장면 출력 중 · 5,509 / 9,986 프레임"
+    },
+    {
+      "at": "2026-10-24T02:13:35.169Z",
+      "status": "running",
+      "progress": 0.5166000000000001,
+      "message": "장면 출력 중 · 5,729 / 9,986 프레임"
+    },
+    {
+      "at": "2026-10-24T02:13:50.172Z",
+      "status": "running",
+      "progress": 0.5324000000000001,
+      "message": "장면 출력 중 · 5,947 / 9,986 프레임"
+    },
+    {
+      "at": "2026-10-24T02:14:05.176Z",
+      "status": "running",
+      "progress": 0.5482,
+      "message": "장면 출력 중 · 6,164 / 9,986 프레임"
+    },
+    {
+      "at": "2026-10-24T02:14:20.179Z",
+      "status": "running",
+      "progress": 0.564,
+      "message": "장면 출력 중 · 6,383 / 9,986 프레임"
+    },
+    {
+      "at": "2026-10-24T02:14:35.182Z",
+      "status": "running",
+      "progress": 0.5798,
+      "message": "장면 출력 중 · 6,602 / 9,986 프레임"
+    },
+    {
+      "at": "2026-10-24T02:14:50.183Z",
+      "status": "running",
+      "progress": 0.5956,
+      "message": "장면 출력 중 · 6,821 / 9,986 프레임"
+    },
+    {
+      "at": "2026-10-24T02:15:05.186Z",
+      "status": "running",
+      "progress": 0.6114,
+      "message": "장면 출력 중 · 7,040 / 9,986 프레임"
+    },
+    {
+      "at": "2026-10-24T02:15:20.189Z",
+      "status": "running",
+      "progress": 0.6272,
+      "message": "장면 출력 중 · 7,259 / 9,986 프레임"
+    },
+    {
+      "at": "2026-10-24T02:15:35.191Z",
+      "status": "running",
+      "progress": 0.6429999999999999,
+      "message": "장면 출력 중 · 7,477 / 9,986 프레임"
+    },
+    {
+      "at": "2026-10-24T02:15:50.193Z",
+      "status": "running",
+      "progress": 0.6587999999999999,
+      "message": "장면 출력 중 · 7,696 / 9,986 프레임"
+    },
+    {
+      "at": "2026-10-24T02:16:05.196Z",
+      "status": "running",
+      "progress": 0.6746,
+      "message": "장면 출력 중 · 7,913 / 9,986 프레임"
+    },
+    {
+      "at": "2026-10-24T02:16:20.200Z",
+      "status": "running",
+      "progress": 0.6904,
+      "message": "장면 출력 중 · 8,132 / 9,986 프레임"
+    },
+    {
+      "at": "2026-10-24T02:16:35.203Z",
+      "status": "running",
+      "progress": 0.7141000000000001,
+      "message": "장면 출력 중 · 8,350 / 9,986 프레임"
+    },
+    {
+      "at": "2026-10-24T02:16:50.205Z",
+      "status": "running",
+      "progress": 0.7299,
+      "message": "장면 출력 중 · 8,569 / 9,986 프레임"
+    },
+    {
+      "at": "2026-10-24T02:17:05.207Z",
+      "status": "running",
+      "progress": 0.7456999999999999,
+      "message": "장면 출력 중 · 8,782 / 9,986 프레임"
+    },
+    {
+      "at": "2026-10-24T02:17:20.209Z",
+      "status": "running",
+      "progress": 0.7615,
+      "message": "장면 출력 중 · 9,000 / 9,986 프레임"
+    },
+    {
+      "at": "2026-10-24T02:17:35.211Z",
+      "status": "running",
+      "progress": 0.7773,
+      "message": "장면 출력 중 · 9,219 / 9,986 프레임"
+    },
+    {
+      "at": "2026-10-24T02:17:50.215Z",
+      "status": "running",
+      "progress": 0.7931,
+      "message": "장면 출력 중 · 9,436 / 9,986 프레임"
+    },
+    {
+      "at": "2026-10-24T02:18:05.218Z",
+      "status": "running",
+      "progress": 0.8089000000000001,
+      "message": "장면 출력 중 · 9,655 / 9,986 프레임"
+    },
+    {
+      "at": "2026-10-24T02:18:20.220Z",
+      "status": "running",
+      "progress": 0.8247,
+      "message": "장면 출력 중 · 9,873 / 9,986 프레임"
+    },
+    {
+      "at": "2026-10-24T02:18:35.223Z",
+      "status": "running",
+      "progress": 0.8326,
+      "message": "장면 출력 중 · 9,986 / 9,986 프레임"
+    },
+    {
+      "at": "2026-10-24T02:18:50.225Z",
+      "status": "completed",
+      "progress": 1,
+      "message": "영상 출력과 파일 검증을 마쳤습니다."
+    }
+  ],
+  "browserPlayback": {
+    "status": "passed",
+    "method": "local headless Chrome HTML5 video playback",
+    "metadata": {
+      "duration": 332.9,
+      "width": 1920,
+      "height": 1080,
+      "readyState": 4
+    },
+    "samples": [
+      {
+        "seekSeconds": 1,
+        "currentTime": 1.417016,
+        "readyState": 4,
+        "width": 1920,
+        "height": 1080,
+        "mediaError": null,
+        "screenshot": "/tmp/biadone-longform-playback-1.png"
+      },
+      {
+        "seekSeconds": 166,
+        "currentTime": 166.413597,
+        "readyState": 4,
+        "width": 1920,
+        "height": 1080,
+        "mediaError": null,
+        "screenshot": "/tmp/biadone-longform-playback-166.png"
+      },
+      {
+        "seekSeconds": 329,
+        "currentTime": 329.411816,
+        "readyState": 4,
+        "width": 1920,
+        "height": 1080,
+        "mediaError": null,
+        "screenshot": "/tmp/biadone-longform-playback-329.png"
+      }
+    ],
+    "screenshot": "/tmp/biadone-longform-player.png"
+  },
+  "finalVerifiedAt": "2026-10-24T02:27:07.721Z",
+  "httpDownload": {
+    "status": "passed",
+    "url": "http://127.0.0.1:4317/api/outputs/a52aeefc-b0a3-4b86-b14e-1d29d9547b43/video.mp4",
+    "statusCode": 200,
+    "contentType": "video/mp4",
+    "expectedBytes": 14224489,
+    "bytes": 14224489,
+    "localOutputSha256": "18385ab500355af216757a18c63371f7fd50132da2ec39de5e1e63f672d71ebd",
+    "downloadedSha256": "18385ab500355af216757a18c63371f7fd50132da2ec39de5e1e63f672d71ebd",
+    "downloadedFile": "/tmp/biadone-longform-http.mp4"
+  },
+  "sourcePreservation": {
+    "status": "passed",
+    "audioSha256": "7f9b966587c7715749457f7d881e9f86ade95f5e1ac98a60d337cda47330f7b5",
+    "transcriptSha256": "04de91e7234eb9b7534ed75f8eaa521e395f68a2564dadfcb24c75aa408c85cd"
+  },
+  "visualReview": {
+    "inspectedPositionsSeconds": [
+      1,
+      166,
+      329
+    ],
+    "layoutConsistent": true,
+    "fontsLoaded": true,
+    "noMissingMedia": true,
+    "safeAreaObserved": true,
+    "note": "Three actual playback frames inspected. Automatic grouping remains a draft; preflight reported 8 TEXT_DENSE warnings."
+  },
+  "renderElapsedSeconds": 709.691
+}

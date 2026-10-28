@@ -1,0 +1,602 @@
+[
+  {
+    "old": "ui-demos/air-v1/.gitignore",
+    "new": "dev/ui-demos/air-v1/.gitignore",
+    "role": "development-asset"
+  },
+  {
+    "old": "ui-demos/air-v1/QA_REPORT.md",
+    "new": "dev/ui-demos/air-v1/QA_REPORT.md",
+    "role": "development-asset"
+  },
+  {
+    "old": "ui-demos/air-v1/README.md",
+    "new": "dev/ui-demos/air-v1/README.md",
+    "role": "development-asset"
+  },
+  {
+    "old": "ui-demos/air-v1/app.js",
+    "new": "dev/ui-demos/air-v1/app.js",
+    "role": "development-asset"
+  },
+  {
+    "old": "ui-demos/air-v1/components.js",
+    "new": "dev/ui-demos/air-v1/components.js",
+    "role": "development-asset"
+  },
+  {
+    "old": "ui-demos/air-v1/data.js",
+    "new": "dev/ui-demos/air-v1/data.js",
+    "role": "development-asset"
+  },
+  {
+    "old": "ui-demos/air-v1/design/air-concept.png",
+    "new": "dev/ui-demos/air-v1/design/air-concept.png",
+    "role": "development-asset"
+  },
+  {
+    "old": "ui-demos/air-v1/icons.js",
+    "new": "dev/ui-demos/air-v1/icons.js",
+    "role": "development-asset"
+  },
+  {
+    "old": "ui-demos/air-v1/index.html",
+    "new": "dev/ui-demos/air-v1/index.html",
+    "role": "development-asset"
+  },
+  {
+    "old": "ui-demos/air-v1/native/Preview.swift",
+    "new": "dev/ui-demos/air-v1/native/Preview.swift",
+    "role": "development-asset"
+  },
+  {
+    "old": "ui-demos/air-v1/native/build.py",
+    "new": "dev/ui-demos/air-v1/native/build.py",
+    "role": "development-asset"
+  },
+  {
+    "old": "ui-demos/air-v1/qa/desktop-dark.jpg",
+    "new": "dev/ui-demos/air-v1/qa/desktop-dark.jpg",
+    "role": "development-asset"
+  },
+  {
+    "old": "ui-demos/air-v1/qa/desktop-light.jpg",
+    "new": "dev/ui-demos/air-v1/qa/desktop-light.jpg",
+    "role": "development-asset"
+  },
+  {
+    "old": "ui-demos/air-v1/qa/layout-results.json",
+    "new": "dev/ui-demos/air-v1/qa/layout-results.json",
+    "role": "development-asset"
+  },
+  {
+    "old": "ui-demos/air-v1/qa/native-selected.png",
+    "new": "dev/ui-demos/air-v1/qa/native-selected.png",
+    "role": "development-asset"
+  },
+  {
+    "old": "ui-demos/air-v1/studio.css",
+    "new": "dev/ui-demos/air-v1/studio.css",
+    "role": "development-asset"
+  },
+  {
+    "old": "ui-demos/air-v1/studio.js",
+    "new": "dev/ui-demos/air-v1/studio.js",
+    "role": "development-asset"
+  },
+  {
+    "old": "ui-demos/air-v1/style.css",
+    "new": "dev/ui-demos/air-v1/style.css",
+    "role": "development-asset"
+  },
+  {
+    "old": "recording-demos/link-shelf/PROJECT_PLAN.md",
+    "new": "dev/recording/examples/link-shelf/PROJECT_PLAN.md",
+    "role": "development-asset"
+  },
+  {
+    "old": "recording-demos/link-shelf/app.js",
+    "new": "dev/recording/examples/link-shelf/app.js",
+    "role": "development-asset"
+  },
+  {
+    "old": "recording-demos/link-shelf/design/first-screen-concept.png",
+    "new": "dev/recording/examples/link-shelf/design/first-screen-concept.png",
+    "role": "development-asset"
+  },
+  {
+    "old": "recording-demos/link-shelf/design/first-screen-concept.txt",
+    "new": "dev/recording/examples/link-shelf/design/first-screen-concept.txt",
+    "role": "development-asset"
+  },
+  {
+    "old": "recording-demos/link-shelf/design/first-screen-mobile-preview.png",
+    "new": "dev/recording/examples/link-shelf/design/first-screen-mobile-preview.png",
+    "role": "development-asset"
+  },
+  {
+    "old": "recording-demos/link-shelf/design/first-screen-preview.png",
+    "new": "dev/recording/examples/link-shelf/design/first-screen-preview.png",
+    "role": "development-asset"
+  },
+  {
+    "old": "recording-demos/link-shelf/index.html",
+    "new": "dev/recording/examples/link-shelf/index.html",
+    "role": "development-asset"
+  },
+  {
+    "old": "recording-demos/link-shelf/styles.css",
+    "new": "dev/recording/examples/link-shelf/styles.css",
+    "role": "development-asset"
+  },
+  {
+    "old": "recording-sandbox/link-shelf/PROJECT_PLAN.md",
+    "new": "dev/recording/sandbox/link-shelf/PROJECT_PLAN.md",
+    "role": "development-asset"
+  },
+  {
+    "old": "recording-sandbox/link-shelf/app.js",
+    "new": "dev/recording/sandbox/link-shelf/app.js",
+    "role": "development-asset"
+  },
+  {
+    "old": "recording-sandbox/link-shelf/design/first-screen-concept.png",
+    "new": "dev/recording/sandbox/link-shelf/design/first-screen-concept.png",
+    "role": "development-asset"
+  },
+  {
+    "old": "recording-sandbox/link-shelf/design/first-screen-concept.txt",
+    "new": "dev/recording/sandbox/link-shelf/design/first-screen-concept.txt",
+    "role": "development-asset"
+  },
+  {
+    "old": "recording-sandbox/link-shelf/design/first-screen-mobile-preview.png",
+    "new": "dev/recording/sandbox/link-shelf/design/first-screen-mobile-preview.png",
+    "role": "development-asset"
+  },
+  {
+    "old": "recording-sandbox/link-shelf/design/first-screen-preview.png",
+    "new": "dev/recording/sandbox/link-shelf/design/first-screen-preview.png",
+    "role": "development-asset"
+  },
+  {
+    "old": "recording-sandbox/link-shelf/index.html",
+    "new": "dev/recording/sandbox/link-shelf/index.html",
+    "role": "development-asset"
+  },
+  {
+    "old": "recording-sandbox/link-shelf/styles.css",
+    "new": "dev/recording/sandbox/link-shelf/styles.css",
+    "role": "development-asset"
+  },
+  {
+    "old": "spikes/m1/runtime-qualification/README.md",
+    "new": "dev/spikes/m1/runtime-qualification/README.md",
+    "role": "development-asset"
+  },
+  {
+    "old": "spikes/m1/runtime-qualification/fixtures/minimal-journal.ndjson",
+    "new": "dev/spikes/m1/runtime-qualification/fixtures/minimal-journal.ndjson",
+    "role": "development-asset"
+  },
+  {
+    "old": "spikes/m1/runtime-qualification/lib/ndjson-client.mjs",
+    "new": "dev/spikes/m1/runtime-qualification/lib/ndjson-client.mjs",
+    "role": "development-asset"
+  },
+  {
+    "old": "spikes/m1/runtime-qualification/runtimes/c/coordinator.c",
+    "new": "dev/spikes/m1/runtime-qualification/runtimes/c/coordinator.c",
+    "role": "development-asset"
+  },
+  {
+    "old": "spikes/m1/runtime-qualification/runtimes/node/coordinator.mjs",
+    "new": "dev/spikes/m1/runtime-qualification/runtimes/node/coordinator.mjs",
+    "role": "development-asset"
+  },
+  {
+    "old": "spikes/m1/runtime-qualification/runtimes/swift/Coordinator.swift",
+    "new": "dev/spikes/m1/runtime-qualification/runtimes/swift/Coordinator.swift",
+    "role": "development-asset"
+  },
+  {
+    "old": "spikes/m1/runtime-qualification/scripts/qualify-runtimes.mjs",
+    "new": "dev/spikes/m1/runtime-qualification/scripts/qualify-runtimes.mjs",
+    "role": "development-asset"
+  },
+  {
+    "old": "AGENT_TASKS.md",
+    "new": "docs/history/planning/AGENT_TASKS.md",
+    "role": "documentation"
+  },
+  {
+    "old": "APP_OWNED_SERVICE_PLAN_KO.md",
+    "new": "docs/features/APP_OWNED_SERVICE_PLAN_KO.md",
+    "role": "documentation"
+  },
+  {
+    "old": "APP_UPDATES.md",
+    "new": "docs/features/APP_UPDATES.md",
+    "role": "documentation"
+  },
+  {
+    "old": "CI_CD_DESIGN.md",
+    "new": "docs/development/CI_CD_DESIGN.md",
+    "role": "documentation"
+  },
+  {
+    "old": "CODEMAP.md",
+    "new": "docs/architecture/CODEMAP.md",
+    "role": "documentation"
+  },
+  {
+    "old": "CODEX_COMPATIBILITY_QUALIFICATION.md",
+    "new": "docs/features/CODEX_COMPATIBILITY_QUALIFICATION.md",
+    "role": "documentation"
+  },
+  {
+    "old": "CODEX_LEGACY_RECOVERY_KO.md",
+    "new": "docs/features/CODEX_LEGACY_RECOVERY_KO.md",
+    "role": "documentation"
+  },
+  {
+    "old": "CODEX_UPDATE_RESILIENCE_PLAN_KO.md",
+    "new": "docs/features/CODEX_UPDATE_RESILIENCE_PLAN_KO.md",
+    "role": "documentation"
+  },
+  {
+    "old": "CONNECTION_STATUS_UI_KO.md",
+    "new": "docs/features/CONNECTION_STATUS_UI_KO.md",
+    "role": "documentation"
+  },
+  {
+    "old": "IMPLEMENTATION_PLAN.md",
+    "new": "docs/history/planning/IMPLEMENTATION_PLAN.md",
+    "role": "documentation"
+  },
+  {
+    "old": "INSTALLATION_RECOVERY_PLAN_KO.md",
+    "new": "docs/features/INSTALLATION_RECOVERY_PLAN_KO.md",
+    "role": "documentation"
+  },
+  {
+    "old": "INSTALLER_RUNTIME_LEASE_KO.md",
+    "new": "docs/features/INSTALLER_RUNTIME_LEASE_KO.md",
+    "role": "documentation"
+  },
+  {
+    "old": "INTERNAL_DMG_PACKAGING.md",
+    "new": "docs/development/INTERNAL_DMG_PACKAGING.md",
+    "role": "documentation"
+  },
+  {
+    "old": "INTERNAL_DMG_R14_RELEASE_KO.md",
+    "new": "docs/releases/internal/INTERNAL_DMG_R14_RELEASE_KO.md",
+    "role": "documentation"
+  },
+  {
+    "old": "INTERNAL_DMG_R17_RELEASE_KO.md",
+    "new": "docs/releases/internal/INTERNAL_DMG_R17_RELEASE_KO.md",
+    "role": "documentation"
+  },
+  {
+    "old": "INTERNAL_DMG_R18_RELEASE_KO.md",
+    "new": "docs/releases/internal/INTERNAL_DMG_R18_RELEASE_KO.md",
+    "role": "documentation"
+  },
+  {
+    "old": "INTERNAL_DMG_R19_RELEASE_KO.md",
+    "new": "docs/releases/internal/INTERNAL_DMG_R19_RELEASE_KO.md",
+    "role": "documentation"
+  },
+  {
+    "old": "INTERNAL_DMG_R21_RELEASE_KO.md",
+    "new": "docs/releases/internal/INTERNAL_DMG_R21_RELEASE_KO.md",
+    "role": "documentation"
+  },
+  {
+    "old": "INTERNAL_TEST_INSTALL_GUIDE.md",
+    "new": "docs/guides/INTERNAL_TEST_INSTALL_GUIDE.md",
+    "role": "documentation"
+  },
+  {
+    "old": "KNOWN_ISSUES.md",
+    "new": "docs/history/KNOWN_ISSUES.md",
+    "role": "documentation"
+  },
+  {
+    "old": "M1_RUNTIME_REPORT.md",
+    "new": "docs/history/validation/M1_RUNTIME_REPORT.md",
+    "role": "documentation"
+  },
+  {
+    "old": "PERMISSION_CARD_APPROVAL_KO.md",
+    "new": "docs/features/PERMISSION_CARD_APPROVAL_KO.md",
+    "role": "documentation"
+  },
+  {
+    "old": "QA_REPORT.md",
+    "new": "docs/history/validation/QA_REPORT.md",
+    "role": "documentation"
+  },
+  {
+    "old": "R18_LOCAL_ACCEPTANCE_KO.md",
+    "new": "docs/history/validation/R18_LOCAL_ACCEPTANCE_KO.md",
+    "role": "documentation"
+  },
+  {
+    "old": "R19_INSTALLATION_ACCEPTANCE_KO.md",
+    "new": "docs/history/validation/R19_INSTALLATION_ACCEPTANCE_KO.md",
+    "role": "documentation"
+  },
+  {
+    "old": "R20_SETTINGS_UI_ACCEPTANCE_KO.md",
+    "new": "docs/history/validation/R20_SETTINGS_UI_ACCEPTANCE_KO.md",
+    "role": "documentation"
+  },
+  {
+    "old": "R21_LOCAL_ACCEPTANCE_KO.md",
+    "new": "docs/history/validation/R21_LOCAL_ACCEPTANCE_KO.md",
+    "role": "documentation"
+  },
+  {
+    "old": "R22_SETTINGS_STATUS_ACCEPTANCE_KO.md",
+    "new": "docs/history/validation/R22_SETTINGS_STATUS_ACCEPTANCE_KO.md",
+    "role": "documentation"
+  },
+  {
+    "old": "RELEASE_DMG_PACKAGING.md",
+    "new": "docs/development/RELEASE_DMG_PACKAGING.md",
+    "role": "documentation"
+  },
+  {
+    "old": "RESEARCH.md",
+    "new": "docs/history/planning/RESEARCH.md",
+    "role": "documentation"
+  },
+  {
+    "old": "SMART_FOLLOW_UP_POLICY.md",
+    "new": "docs/features/SMART_FOLLOW_UP_POLICY.md",
+    "role": "documentation"
+  },
+  {
+    "old": "T010_NATIVE_PET_REPORT.md",
+    "new": "docs/history/validation/T010_NATIVE_PET_REPORT.md",
+    "role": "documentation"
+  },
+  {
+    "old": "T011_OPERATIONAL_ADAPTER_REPORT.md",
+    "new": "docs/history/validation/T011_OPERATIONAL_ADAPTER_REPORT.md",
+    "role": "documentation"
+  },
+  {
+    "old": "T012_APP_BUNDLE_REPORT.md",
+    "new": "docs/history/validation/T012_APP_BUNDLE_REPORT.md",
+    "role": "documentation"
+  },
+  {
+    "old": "T012_DOCTOR_REPORT.md",
+    "new": "docs/history/validation/T012_DOCTOR_REPORT.md",
+    "role": "documentation"
+  },
+  {
+    "old": "T012_ONBOARDING_REPORT.md",
+    "new": "docs/history/validation/T012_ONBOARDING_REPORT.md",
+    "role": "documentation"
+  },
+  {
+    "old": "T012_PROJECT_SETTINGS_REPORT.md",
+    "new": "docs/history/validation/T012_PROJECT_SETTINGS_REPORT.md",
+    "role": "documentation"
+  },
+  {
+    "old": "T012_SERVICE_BOOTSTRAP_REPORT.md",
+    "new": "docs/history/validation/T012_SERVICE_BOOTSTRAP_REPORT.md",
+    "role": "documentation"
+  },
+  {
+    "old": "TASK_STATUS.md",
+    "new": "docs/history/planning/TASK_STATUS.md",
+    "role": "documentation"
+  },
+  {
+    "old": "TECH_SPEC.md",
+    "new": "docs/architecture/TECH_SPEC.md",
+    "role": "documentation"
+  },
+  {
+    "old": "TESTER_RESULT_TEMPLATE_KO.md",
+    "new": "docs/guides/TESTER_RESULT_TEMPLATE_KO.md",
+    "role": "documentation"
+  },
+  {
+    "old": "TESTER_START_HERE_KO.md",
+    "new": "docs/guides/TESTER_START_HERE_KO.md",
+    "role": "documentation"
+  },
+  {
+    "old": "src/coordinator-swift/docs/ACCOUNT_LOGIN.md",
+    "new": "docs/features/ACCOUNT_LOGIN.md",
+    "role": "documentation"
+  },
+  {
+    "old": "src/coordinator-swift/docs/APPROVAL_THREAD_ROUTING_AND_DISMISS.md",
+    "new": "docs/features/APPROVAL_THREAD_ROUTING_AND_DISMISS.md",
+    "role": "documentation"
+  },
+  {
+    "old": "src/coordinator-swift/docs/DOCTOR_DIAGNOSTICS.md",
+    "new": "docs/features/DOCTOR_DIAGNOSTICS.md",
+    "role": "documentation"
+  },
+  {
+    "old": "src/coordinator-swift/docs/EVENT_NAVIGATION.md",
+    "new": "docs/features/EVENT_NAVIGATION.md",
+    "role": "documentation"
+  },
+  {
+    "old": "src/coordinator-swift/docs/FIRST_RUN_ONBOARDING.md",
+    "new": "docs/features/FIRST_RUN_ONBOARDING.md",
+    "role": "documentation"
+  },
+  {
+    "old": "src/coordinator-swift/docs/INSTALLATION_LOCATION_RECOVERY.md",
+    "new": "docs/features/INSTALLATION_LOCATION_RECOVERY.md",
+    "role": "documentation"
+  },
+  {
+    "old": "src/coordinator-swift/docs/MANAGED_CODEX_TRUST.md",
+    "new": "docs/features/MANAGED_CODEX_TRUST.md",
+    "role": "documentation"
+  },
+  {
+    "old": "src/coordinator-swift/docs/PROMPT_BINDING_RESTART_V2.md",
+    "new": "docs/features/PROMPT_BINDING_RESTART_V2.md",
+    "role": "documentation"
+  },
+  {
+    "old": "src/coordinator-swift/docs/RESOURCE_STABILITY.md",
+    "new": "docs/features/RESOURCE_STABILITY.md",
+    "role": "documentation"
+  },
+  {
+    "old": "src/coordinator-swift/docs/STORAGE_RECOVERY_AND_HOOK_READINESS.md",
+    "new": "docs/features/STORAGE_RECOVERY_AND_HOOK_READINESS.md",
+    "role": "documentation"
+  },
+  {
+    "old": "src/coordinator-swift/README.md",
+    "new": "docs/development/SWIFT_RUNTIME.md",
+    "role": "documentation"
+  },
+  {
+    "old": "claude/AGENTS.md",
+    "new": "bridges/claude/AGENTS.md",
+    "role": "documentation"
+  },
+  {
+    "old": "claude/APP_SEPARATION.md",
+    "new": "dev/claude-standalone/docs/APP_SEPARATION.md",
+    "role": "documentation"
+  },
+  {
+    "old": "claude/CLAUDE.md",
+    "new": "bridges/claude/CLAUDE.md",
+    "role": "documentation"
+  },
+  {
+    "old": "claude/COMMON_PET.md",
+    "new": "docs/bridges/claude/COMMON_PET.md",
+    "role": "documentation"
+  },
+  {
+    "old": "claude/IMPLEMENTATION_PLAN.md",
+    "new": "dev/claude-standalone/docs/IMPLEMENTATION_PLAN.md",
+    "role": "documentation"
+  },
+  {
+    "old": "claude/NATIVE_SESSION.md",
+    "new": "docs/bridges/claude/NATIVE_SESSION.md",
+    "role": "documentation"
+  },
+  {
+    "old": "claude/PRODUCT_INGRESS.md",
+    "new": "docs/bridges/claude/PRODUCT_INGRESS.md",
+    "role": "documentation"
+  },
+  {
+    "old": "claude/Plugin/README.md",
+    "new": "docs/bridges/claude/Plugin/README.md",
+    "role": "documentation"
+  },
+  {
+    "old": "claude/Plugin/skills/blabee-claude-workflow/SKILL.md",
+    "new": "docs/bridges/claude/Plugin/skills/blabee-claude-workflow/SKILL.md",
+    "role": "documentation"
+  },
+  {
+    "old": "claude/QA_REPORT.md",
+    "new": "dev/claude-standalone/docs/QA_REPORT.md",
+    "role": "documentation"
+  },
+  {
+    "old": "claude/README.md",
+    "new": "docs/history/claude/README_PRE_LAYOUT.md",
+    "role": "documentation"
+  },
+  {
+    "old": "claude/RESEARCH.md",
+    "new": "docs/bridges/claude/RESEARCH.md",
+    "role": "documentation"
+  },
+  {
+    "old": "claude/SHARED_ENGINE_INTEGRATION.md",
+    "new": "docs/bridges/claude/SHARED_ENGINE_INTEGRATION.md",
+    "role": "documentation"
+  },
+  {
+    "old": "claude/SHARED_ENGINE_PLAN.md",
+    "new": "docs/bridges/claude/SHARED_ENGINE_PLAN.md",
+    "role": "documentation"
+  },
+  {
+    "old": "claude/TASK_STATUS.md",
+    "new": "docs/bridges/claude/TASK_STATUS.md",
+    "role": "documentation"
+  },
+  {
+    "old": "claude/docs/product-connection/AGENT_TASKS.md",
+    "new": "docs/bridges/claude/product-connection/AGENT_TASKS.md",
+    "role": "documentation"
+  },
+  {
+    "old": "claude/docs/product-connection/CODEMAP.md",
+    "new": "docs/bridges/claude/product-connection/CODEMAP.md",
+    "role": "documentation"
+  },
+  {
+    "old": "claude/docs/product-connection/IMPLEMENTATION_PLAN.md",
+    "new": "docs/bridges/claude/product-connection/IMPLEMENTATION_PLAN.md",
+    "role": "documentation"
+  },
+  {
+    "old": "claude/docs/product-connection/PRODUCT_WIRE.md",
+    "new": "docs/bridges/claude/product-connection/PRODUCT_WIRE.md",
+    "role": "documentation"
+  },
+  {
+    "old": "claude/docs/product-connection/RESEARCH.md",
+    "new": "docs/bridges/claude/product-connection/RESEARCH.md",
+    "role": "documentation"
+  },
+  {
+    "old": "claude/docs/product-connection/SESSION_AUTHORITY.md",
+    "new": "docs/bridges/claude/product-connection/SESSION_AUTHORITY.md",
+    "role": "documentation"
+  },
+  {
+    "old": "claude/docs/product-connection/SESSION_LIFECYCLE.md",
+    "new": "docs/bridges/claude/product-connection/SESSION_LIFECYCLE.md",
+    "role": "documentation"
+  },
+  {
+    "old": "claude/docs/product-connection/SESSION_LIFETIME.md",
+    "new": "docs/bridges/claude/product-connection/SESSION_LIFETIME.md",
+    "role": "documentation"
+  },
+  {
+    "old": "claude/docs/product-connection/SESSION_REGISTRATION.md",
+    "new": "docs/bridges/claude/product-connection/SESSION_REGISTRATION.md",
+    "role": "documentation"
+  },
+  {
+    "old": "claude/docs/product-connection/TASK_STATUS.md",
+    "new": "docs/bridges/claude/product-connection/TASK_STATUS.md",
+    "role": "documentation"
+  },
+  {
+    "old": "claude/docs/product-connection/TECH_SPEC.md",
+    "new": "docs/bridges/claude/product-connection/TECH_SPEC.md",
+    "role": "documentation"
+  }
+]

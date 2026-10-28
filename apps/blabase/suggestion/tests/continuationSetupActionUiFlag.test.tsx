@@ -36,7 +36,8 @@ describe("Continuation Setup action UI flag", () => {
 
     expect(mocks.workCockpit).toHaveBeenCalledOnce();
     expect(mocks.workCockpit.mock.calls[0]?.[0]).toEqual({
-      setupActionEnabled: expected
+      setupActionEnabled: expected,
+      monitoringEnabled: false
     });
   });
 

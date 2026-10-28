@@ -2,6 +2,7 @@ import type { AttentionCodeProvenance } from "../attention/codeProvenance";
 import type { WorkSuggestionBoardPublic } from "../suggestionBoard/contracts";
 import { workSuggestionBoardPublicSchema } from "../suggestionBoard/contracts";
 import {
+  SEMANTIC_CONTINUATION_INTENT_CONTRACT,
   SEMANTIC_CONTINUATION_PRESENTATION_CONTRACT,
   SEMANTIC_CONTINUATION_PRESENTATION_SCHEMA_VERSION,
   semanticContinuationConfirmationTargetSchema,
@@ -45,6 +46,8 @@ export function findSemanticContinuationConfirmationTarget(
   const target = semanticContinuationConfirmationTargetSchema.safeParse({
     itemRef: entry.item.itemRef,
     workContextRef: entry.item.workContextRef,
+    candidateKind: entry.item.kind,
+    evidenceBand: entry.item.evidenceBand,
     observedAt: entry.item.observedAt,
     candidateExpiresAt: entry.item.expiresAt
   });
@@ -82,41 +85,40 @@ export function buildSemanticContinuationTitlePresentation(input: {
     )
     .sort(compareCurrentDecision)
     .reverse();
-  const overlays = boardEntries(base.data).flatMap((entry) => {
-    if (
-      entry.lane !== "continuation" ||
-      entry.item.workContextRef === null ||
-      entry.item.observedAt === null ||
-      entry.item.expiresAt === null ||
-      entry.item.capability !== "display" ||
-      entry.item.action !== null
-    ) {
-      return [];
-    }
-    const decision = current.find(
-      (candidate) =>
-        candidate.itemRef === entry.item.itemRef &&
-        candidate.workContextRef === entry.item.workContextRef &&
-        candidate.targetObservedAt === entry.item.observedAt &&
-        candidate.targetCandidateExpiresAt === entry.item.expiresAt
+  const allEntries = boardEntries(base.data);
+  const entries = allEntries.filter(isOverlayEligibleEntry);
+  const matches = current.flatMap((decision) => {
+    const match = matchSemanticContinuationDecision(
+      decision,
+      entries,
+      allEntries,
+      base.data.generatedAt
     );
-    return decision === undefined
+    return match === null ? [] : [{ decision, ...match }];
+  });
+  const overlays = entries.flatMap((entry) => {
+    const match = matches.find(
+      (candidate) => candidate.entry.item.itemRef === entry.item.itemRef
+    );
+    return match === undefined
       ? []
       : [
           {
             itemRef: entry.item.itemRef,
             displayTitle:
+              match.kind === "exact" &&
               input.validationStore !== undefined &&
               input.validationStore !== null &&
               input.currentCodeProvenance !== undefined &&
               input.currentCodeProvenance !== null
                 ? resolveSemanticValidationDisplayTitle({
                     store: input.validationStore,
-                    intent: decision,
+                    intent: match.decision,
                     currentCodeProvenance: input.currentCodeProvenance,
                     asOf: base.data.generatedAt
-                  }) ?? semanticContinuationTitle(decision.subjectLabel)
-                : semanticContinuationTitle(decision.subjectLabel)
+                  }) ??
+                  semanticContinuationTitle(match.decision.subjectLabel)
+                : semanticContinuationTitle(match.decision.subjectLabel)
           }
         ];
   });
@@ -134,6 +136,63 @@ function boardEntries(board: WorkSuggestionBoardPublic) {
     ...(board.primary === null ? [] : [board.primary]),
     ...board.alternatives
   ];
+}
+
+type BoardEntry = ReturnType<typeof boardEntries>[number];
+
+function isOverlayEligibleEntry(entry: BoardEntry): boolean {
+  return (
+    entry.lane === "continuation" &&
+    entry.item.workContextRef !== null &&
+    entry.item.observedAt !== null &&
+    entry.item.expiresAt !== null &&
+    entry.item.capability === "display" &&
+    entry.item.action === null
+  );
+}
+
+function matchSemanticContinuationDecision(
+  decision: SemanticContinuationIntentDecision,
+  entries: BoardEntry[],
+  allEntries: BoardEntry[],
+  generatedAt: string
+): { kind: "exact" | "rebound"; entry: BoardEntry } | null {
+  const exact = entries.find(
+    (entry) =>
+      decision.itemRef === entry.item.itemRef &&
+      decision.workContextRef === entry.item.workContextRef &&
+      decision.targetObservedAt === entry.item.observedAt &&
+      decision.targetCandidateExpiresAt === entry.item.expiresAt &&
+      (decision.contract !== SEMANTIC_CONTINUATION_INTENT_CONTRACT ||
+        (decision.targetCandidateKind === entry.item.kind &&
+          decision.targetEvidenceBand === entry.item.evidenceBand))
+  );
+  if (exact !== undefined) return { kind: "exact", entry: exact };
+  if (
+    decision.contract !== SEMANTIC_CONTINUATION_INTENT_CONTRACT ||
+    decision.targetCandidateKind !== "linked_workstream" ||
+    decision.targetEvidenceBand !== "corroborated" ||
+    allEntries.some((entry) => entry.item.itemRef === decision.itemRef)
+  ) {
+    return null;
+  }
+  const candidates = entries.filter(
+    (entry) =>
+      entry.lane === "continuation" &&
+      entry.item.kind === "linked_workstream" &&
+      entry.item.evidenceBand === "corroborated" &&
+      entry.item.workContextRef === decision.workContextRef &&
+      entry.item.expiresAt === decision.targetCandidateExpiresAt &&
+      entry.item.observedAt !== null &&
+      Date.parse(entry.item.observedAt) >
+        Date.parse(decision.targetObservedAt) &&
+      Date.parse(entry.item.observedAt) <= Date.parse(generatedAt) &&
+      entry.item.expiresAt !== null &&
+      Date.parse(generatedAt) < Date.parse(entry.item.expiresAt)
+  );
+  return candidates.length === 1
+    ? { kind: "rebound", entry: candidates[0]! }
+    : null;
 }
 
 function compareCurrentDecision(

@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="ko" data-tone="light">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Biadone 현재 대비 간격 70% 축소 비교</title><link rel="icon" href="data:,">
+<link rel="preload" href="../round-03/assets/fonts/PretendardVariable.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="brand.tokens.css"><link rel="stylesheet" href="layout.tokens.css"><link rel="stylesheet" href="styles.css"><link rel="stylesheet" href="b-refinement.css">
+<script src="b-refinement.js" defer></script>
+</head>
+<body>
+<a class="skip-link" href="#comparison">비교 화면으로 건너뛰기</a>
+<header class="board-header"><span>Biadone</span><p>현재 대비 간격 70% 축소</p><a href="b-refinement.html">앞선 수정 기록 보기</a></header>
+<main class="board">
+<section class="intro"><div><h1>지금보다 더 가깝게.</h1><p>현재 틈 2.83에서 70%를 줄인 0.85 간격의 비교안입니다.<br>두 버전 모두 정사각형 외곽은 그대로입니다. 수치는 SVG 내부 좌표입니다.</p></div>
+<div class="tone-controls" role="group" aria-label="비교 로고의 배경과 색상"><button type="button" data-tone-choice="light" aria-pressed="true">밝은 바탕</button><button type="button" data-tone-choice="blue" aria-pressed="false">블루 바탕</button><button type="button" data-tone-choice="mono" aria-pressed="false">단색</button></div></section>
+<section id="comparison" class="refinement-grid" aria-label="현재 심벌과 현재 대비 간격을 70% 줄인 비교안">
+<article class="symbol-card"><header class="card-title"><h2>현재</h2><p>기준 간격 2.83.</p></header><div class="main-lockup"><span class="refinement-mark"><img data-logo-base="symbol-b-r2" src="assets/symbol-b-r2.svg" width="64" height="64" alt="현재 간격 2.83의 B 심벌"></span><span class="wordmark">Biadone</span></div><p class="geometry-note">바깥 크기 48 × 48</p></article>
+<article class="symbol-card"><header class="card-title"><h2>70% 더 축소</h2><p>현재 틈의 30%인 0.85.</p></header><div class="main-lockup"><span class="refinement-mark"><img data-logo-base="symbol-b-gap70" src="assets/symbol-b-gap70.svg" width="64" height="64" alt="현재 대비 틈을 70% 줄인 간격 0.85의 B 심벌"></span><span class="wordmark">Biadone</span></div><p class="geometry-note">바깥 크기 48 × 48</p></article>
+</section>
+<section class="size-section" aria-labelledby="size-title"><h2 id="size-title">작은 크기에서도 비교하면.</h2><table class="size-table"><colgroup><col class="size-label"><col><col><col><col></colgroup><thead><tr><th scope="col">크기</th><th scope="col">16px</th><th scope="col">24px</th><th scope="col">32px</th><th scope="col">48px</th></tr></thead><tbody>
+<tr><th scope="row">현재</th><td><img src="assets/symbol-b-r2.svg" width="16" height="16" alt="현재 B 16픽셀"></td><td><img src="assets/symbol-b-r2.svg" width="24" height="24" alt="현재 B 24픽셀"></td><td><img src="assets/symbol-b-r2.svg" width="32" height="32" alt="현재 B 32픽셀"></td><td><img src="assets/symbol-b-r2.svg" width="48" height="48" alt="현재 B 48픽셀"></td></tr>
+<tr><th scope="row">축소</th><td><img src="assets/symbol-b-gap70.svg" width="16" height="16" alt="70% 축소 B 16픽셀"></td><td><img src="assets/symbol-b-gap70.svg" width="24" height="24" alt="70% 축소 B 24픽셀"></td><td><img src="assets/symbol-b-gap70.svg" width="32" height="32" alt="70% 축소 B 32픽셀"></td><td><img src="assets/symbol-b-gap70.svg" width="48" height="48" alt="70% 축소 B 48픽셀"></td></tr>
+</tbody></table></section>
+<div class="refinement-links"><a href="assets/symbol-b-gap70.svg" target="_blank" rel="noopener">70% 축소 블루 SVG</a><a href="assets/symbol-b-gap70-white.svg" target="_blank" rel="noopener">흰색 SVG</a><a href="assets/symbol-b-gap70-ink.svg" target="_blank" rel="noopener">단색 SVG</a></div>
+<p id="refinement-status" class="sr-only" role="status" aria-live="polite">밝은 바탕으로 현재와 70% 축소안을 비교합니다.</p>
+<footer class="board-footer"><p>2026-10-27 사용자는 간격 2.83 버전을 확정했습니다.</p><a href="DESIGN_NOTES.md">설계 기록 보기</a></footer>
+</main>
+</body>
+</html>

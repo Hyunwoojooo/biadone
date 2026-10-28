@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex, nofollow">
+  <meta name="theme-color" content="#ffffff">
+  <meta name="color-scheme" content="light">
+  <title>관리자 로그인 · Blabee</title>
+  <link rel="icon" href="./mark.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="./styles.css">
+  <script type="module" src="./app.mjs"></script>
+</head>
+<body>
+  <main id="login-screen" class="login-screen" aria-labelledby="login-title" aria-busy="true">
+    <section class="login-card">
+      <h1 id="login-title" class="login-brand-name">Blabee</h1>
+      <button id="google-login" class="button login-provider" disabled>Google로 로그인</button>
+      <div id="login-message" class="login-message" role="status" aria-live="polite" hidden></div>
+      <noscript><p class="fineprint">로그인하려면 JavaScript를 허용해 주세요.</p></noscript>
+    </section>
+  </main>
+  <div id="dashboard-screen" hidden inert>
+    <a class="skip-link" href="#main">본문으로 이동</a>
+    <header class="topbar">
+      <div class="topbar-inner">
+        <a class="brand" href="./" aria-label="Blabee 대시보드"><span class="brand-dot" aria-hidden="true"></span>Blabee</a>
+        <span class="current-page">대시보드</span>
+        <div class="account"><span id="mode-label">관리자</span><button id="account-button" class="avatar" aria-label="로그아웃">B</button></div>
+      </div>
+    </header>
+    <main id="main" class="main-container">
+      <h1 class="sr-only">Blabee 유입 분석</h1>
+      <section class="filters" aria-label="조회 기간">
+        <div class="periods" role="group" aria-label="UTC 날짜 범위">
+          <button data-days="1" aria-pressed="false">오늘</button><button data-days="7" aria-pressed="true">7일</button><button data-days="30" aria-pressed="false">30일</button><button id="custom-period" aria-pressed="false">직접 선택</button>
+        </div>
+        <div class="filter-right">
+          <button id="date-range" class="button date-range" aria-label="날짜 범위 변경"><svg class="icon" aria-hidden="true"><use href="#i-calendar"></use></svg><span id="range-label"></span></button>
+          <span class="timezone">UTC</span>
+          <button id="refresh" class="icon-button" aria-label="데이터 새로 조회"><svg class="icon" aria-hidden="true"><use href="#i-refresh"></use></svg></button>
+        </div>
+      </section>
+      <p id="demo-status" class="demo-status" hidden>샘플 데이터 · 실제 유입 및 신청 기록이 아닙니다.</p>
+      <p id="analytics-status" class="source-status" role="status" hidden></p>
+      <section class="metrics" aria-label="주요 지표">
+        <article class="metric"><div class="metric-content"><h2>페이지 조회수</h2><div class="metric-value"><strong id="pageviews">—</strong><span id="views-change" class="metric-change"></span></div><p id="views-status" class="metric-caption">Cloudflare</p></div><div id="views-sparkline" class="sparkline" aria-hidden="true"></div></article>
+        <article class="metric"><div class="metric-content"><h2>Visits</h2><div class="metric-value"><strong id="visits">—</strong><span id="visits-change" class="metric-change"></span></div><p id="visits-status" class="metric-caption">Cloudflare · 고유 인원수와 다름</p></div><div id="visits-sparkline" class="sparkline" aria-hidden="true"></div></article>
+        <article class="metric"><div class="metric-content"><h2>신규 베타 신청</h2><div class="metric-value"><strong id="signups">—</strong><span id="signups-status" class="metric-quality"></span></div><p id="attribution-label" class="metric-caption">Supabase</p></div><div id="signups-sparkline" class="sparkline" aria-hidden="true"></div></article>
+      </section>
+      <section class="time-panels" aria-label="시간별 추이">
+        <article class="panel trend-panel"><div class="panel-heading"><h2>페이지 조회수 추이</h2><span id="views-grain" class="panel-meta">UTC</span></div><div id="views-chart" class="time-chart"></div></article>
+        <article class="panel trend-panel"><div class="panel-heading"><h2>Visits 추이</h2><span id="visits-grain" class="panel-meta">UTC</span></div><div id="visits-chart" class="time-chart"></div></article>
+      </section>
+      <section class="panel hours-panel" aria-labelledby="hours-title">
+        <div class="panel-heading"><div><h2 id="hours-title">시간대별 유입</h2><p class="panel-meta">선택한 기간의 UTC 시각별 합계</p><p id="hours-status" class="component-status" hidden></p></div><label class="select-wrap"><span class="sr-only">시간대별 지표</span><select id="hours-metric"><option value="page_views">페이지 조회수</option><option value="visits">Visits</option></select><svg class="icon" aria-hidden="true"><use href="#i-chevron"></use></svg></label></div>
+        <div id="hours-chart" class="hours-chart"></div>
+      </section>
+      <section class="rankings" aria-label="유입 환경">
+        <article class="panel ranking-panel"><div class="panel-heading"><h2>국가</h2><span class="panel-meta">페이지 조회수</span></div><div id="countries"></div></article>
+        <article class="panel ranking-panel"><div class="panel-heading"><h2>브라우저</h2><span class="panel-meta">페이지 조회수</span></div><div id="browsers"></div></article>
+        <article class="panel ranking-panel"><div class="panel-heading"><h2>운영체제</h2><span class="panel-meta">페이지 조회수</span></div><div id="operating-systems"></div></article>
+      </section>
+      <section class="supplement" aria-labelledby="supplement-title">
+        <div class="supplement-heading"><div><h2 id="supplement-title">유입 경로·베타 신청</h2><p class="panel-meta">Supabase · 기본·호환 랜딩 합산이며 Cloudflare와 별개입니다. 아래 필터는 이 표에만 적용됩니다.</p></div><div class="supplement-filters">
+          <label class="select-wrap"><span class="sr-only">유입 채널</span><select id="channel"><option value="__all__">모든 채널</option></select><svg class="icon" aria-hidden="true"><use href="#i-chevron"></use></svg></label>
+          <label class="select-wrap"><span class="sr-only">캠페인</span><select id="campaign"><option value="__all__">모든 캠페인</option></select><svg class="icon" aria-hidden="true"><use href="#i-chevron"></use></svg></label>
+        </div></div>
+        <div class="records-toolbar"><div class="tabs" role="tablist" aria-label="신청 집계 보기"><button role="tab" id="tab-dates" data-tab="dates" aria-selected="true" aria-controls="table-panel">날짜별</button><button role="tab" id="tab-channels" data-tab="channels" aria-selected="false" aria-controls="table-panel" tabindex="-1">유입 채널별</button></div><button id="sort" class="text-button"><svg class="icon" aria-hidden="true"><use href="#i-sort"></use></svg><span>최신순</span></button></div>
+        <p id="supplement-status" class="supplement-status"></p>
+        <div id="table-panel" role="tabpanel" aria-labelledby="tab-dates" class="table-scroll" tabindex="0"></div>
+      </section>
+      <footer class="page-footer"><span id="source-label">Cloudflare · Supabase · UTC</span><button id="data-info" class="text-button">집계 기준<svg class="icon" aria-hidden="true"><use href="#i-info"></use></svg></button></footer>
+    </main>
+    <dialog id="period-dialog" class="modal small-modal" aria-labelledby="period-title"><form id="period-form"><div class="dialog-heading"><h2 id="period-title">조회 기간 선택</h2><button type="button" data-close="period-dialog" class="icon-button" aria-label="닫기"><svg class="icon"><use href="#i-close"></use></svg></button></div><p class="dialog-description">UTC 날짜 기준으로 최대 90일을 조회합니다. 제공자 보존 기간은 다를 수 있습니다.</p><div class="form-row"><label>시작일<input name="start" type="date" required></label><label>종료일<input name="end" type="date" required></label></div><p id="period-error" class="form-error" role="alert"></p><div class="dialog-actions"><button type="button" data-close="period-dialog" class="button">취소</button><button class="button primary">적용</button></div></form></dialog>
+    <dialog id="info-dialog" class="modal info-modal" aria-labelledby="info-title"><div class="dialog-heading"><h2 id="info-title">집계 기준</h2><button data-close="info-dialog" class="icon-button" aria-label="닫기"><svg class="icon"><use href="#i-close"></use></svg></button></div><div id="info-content"></div></dialog>
+  </div>
+  <svg class="icon-defs" aria-hidden="true" xmlns="http://www.w3.org/2000/svg"><defs>
+    <symbol id="i-chevron" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></symbol>
+    <symbol id="i-calendar" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M16 3v4M8 3v4M3 11h18"/></symbol>
+    <symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7v.1"/></symbol>
+    <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M20 10a8 8 0 1 0-2 8M20 4v6h-6"/></symbol>
+    <symbol id="i-sort" viewBox="0 0 24 24"><path d="M8 4v16m-4-4 4 4 4-4M16 20V4m-4 4 4-4 4 4"/></symbol>
+    <symbol id="i-close" viewBox="0 0 24 24"><path d="m6 6 12 12M6 18 18 6"/></symbol>
+  </defs></svg>
+</body>
+</html>

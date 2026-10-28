@@ -1,0 +1,334 @@
+{
+  "schema_version": "1.0",
+  "created_at_utc": "2026-10-27T16:28:32.072969+00:00",
+  "scope": "04-thinking / 08-explaining / 07-thumbs-up 세 포즈의 v4 회색 배경 제거",
+  "skill": "/Users/joo/.codex/skills/.system/imagegen/SKILL.md",
+  "tool_mode": "built-in",
+  "image_edit_calls_total": 3,
+  "image_edit_retries_total": 0,
+  "api_key_requested": false,
+  "original_source_files_modified": false,
+  "local_tools_used_only_for": [
+    "도구 출력 파일 복사",
+    "읽기 전용 PNG 디코딩·alpha 및 RGB 차이 검사",
+    "SHA-256",
+    "JSON 기록"
+  ],
+  "inspection_notes": [
+    "세 출력은 모두1254×1254 RGBA이며 실제 alpha0 배경을 포함한다.",
+    "상단 두 모서리는 모두 alpha0이다. 하단에서 원래 셔츠·팔이 프레임까지 닿는 경우 그 부분은 불투명하게 남겼다.",
+    "도구 출력은 캐릭터 내부 alpha252~254로 약0.4~1.2%의 불투명도 오차가 있다. 루트는 흰 영상 배경에서 차이가 미미하다고 판단해 재생성 없이 원본 수치 그대로 전달하도록 했다.",
+    "로컬 검사 코드는 PNG를 읽기만 하며 알파·RGB 픽셀을 편집하거나 재인코딩하지 않았다.",
+    "얼굴 보존은 시각 검토 결과이며 원본 RGB와 픽셀 단위로 동일한 편집이라고 주장하지 않는다."
+  ],
+  "white_video_background_edge_review": {
+    "status": "passed",
+    "reviewed_scenes": [
+      "intro",
+      "approach",
+      "closing"
+    ],
+    "versions": [
+      "June",
+      "주현우"
+    ],
+    "evidence": "out/work/cutout-voice-v5/preservation-and-visual.json",
+    "notes": "Actual encoded RGB samples outside every character equal [255,255,255]. Face, hair, white shirt, and hand edges were visually inspected on white."
+  },
+  "assets": [
+    {
+      "name": "04-thinking.png",
+      "source": "video/public/character/color-v4/04-thinking.png",
+      "output": "video/public/character/cutout-v5/04-thinking.png",
+      "tool_saved_original": "/Users/joo/.codex/generated_images/01a176dd-b3d5-7750-b67c-dcd3e4a6c2e5/exec-c04e690f-185c-42cc-a891-e43bc5d70c98.png",
+      "source_sha256": "be1c111602d8b7f92e3bbcf1ba12d74209a478231faeb982a4b7f3251e18205e",
+      "output_sha256": "d871440c8e1dd2f4d577d8187d4ab39f857a7185d898dc04e98018fb3946e493",
+      "image_edit_calls": 1,
+      "retries": 0,
+      "tool": "built-in image_gen.imagegen",
+      "use_case": "background-extraction",
+      "transparent_background_requested": true,
+      "reference_images": [
+        "/Users/joo/BiaDone/apps/Edu/video/public/character/color-v4/04-thinking.png"
+      ],
+      "prompt": "Use case: background-extraction. Edit target: the single referenced 04-thinking.png. Remove ONLY its pale gray background and return a clean cutout with genuine RGBA transparency (alpha=0 outside the character). Preserve the original character exactly: same face, eyes, eyebrows, gaze to the side, closed mouth, chin-touching thinking hand and fingers, pose, brown hair, hair highlights, peach skin, fully opaque white T-shirt and original gray shirt folds. Preserve original illustration style, black outlines, colors, framing, proportions, position and 1254x1254 square canvas as closely as possible. Do not reinterpret, redraw, beautify, relight, add detail, change identity or expression, or move the figure. The white shirt, white eyes, skin and any enclosed internal character areas must stay fully opaque: do not punch transparent holes through them. Delete gray background and any edge halo completely, including genuine background between loose hair strands, while retaining every hair outline. No shadow, semi-transparent gray fringe, checkerboard baked into pixels, white rectangle or replacement background. Only background extraction; all character details remain unchanged.",
+      "inspection": {
+        "source": "video/public/character/color-v4/04-thinking.png",
+        "output": "video/public/character/cutout-v5/04-thinking.png",
+        "source_sha256": "be1c111602d8b7f92e3bbcf1ba12d74209a478231faeb982a4b7f3251e18205e",
+        "output_sha256": "d871440c8e1dd2f4d577d8187d4ab39f857a7185d898dc04e98018fb3946e493",
+        "source_size": [
+          1254,
+          1254
+        ],
+        "output_size": [
+          1254,
+          1254
+        ],
+        "output_mode": "RGBA",
+        "alpha_min": 0,
+        "alpha_max": 255,
+        "transparent_pixels": 742673,
+        "opaque_pixels": 1705,
+        "partial_alpha_pixels": 828138,
+        "corner_alpha": {
+          "top_left": 0,
+          "top_right": 0,
+          "bottom_left": 1,
+          "bottom_right": 2
+        },
+        "inspection_only": true,
+        "face": {
+          "bounds": [
+            500,
+            390,
+            755,
+            550
+          ],
+          "alpha_min": 253,
+          "alpha_max": 254,
+          "fully_opaque": false,
+          "near_opaque_alpha_250_or_more": true,
+          "rgb_mean_absolute_difference": 4.541192810457517,
+          "rgb_max_difference": 122
+        },
+        "mouth": {
+          "bounds": [
+            575,
+            545,
+            680,
+            610
+          ],
+          "alpha_min": 253,
+          "alpha_max": 254,
+          "fully_opaque": false,
+          "near_opaque_alpha_250_or_more": true,
+          "rgb_mean_absolute_difference": 4.870720390720391,
+          "rgb_max_difference": 70
+        },
+        "shirt": {
+          "bounds": [
+            700,
+            950,
+            950,
+            1200
+          ],
+          "alpha_min": 253,
+          "alpha_max": 254,
+          "fully_opaque": false,
+          "near_opaque_alpha_250_or_more": true,
+          "rgb_mean_absolute_difference": 1.6201226666666666,
+          "rgb_max_difference": 17
+        }
+      },
+      "visual_review": {
+        "method": "view_image 원본·편집본 직접 확인",
+        "identity_and_colors": "같은 얼굴·갈색 머리·피부·흰 셔츠·회색 주름 표현을 육안상 유지. 픽셀 단위 동일성은 주장하지 않음.",
+        "pose": "생각하는 시선·턱을 짚은 손·닫힌 입을 유지",
+        "background": "넓은 회색 배경과 사각 바탕이 제거된 실제 alpha PNG 확인. 흰 영상 배경 위의 최종 미세 테두리 검토는 루트가 진행.",
+        "interior": "얼굴·입·셔츠 검사 영역에 alpha0 구멍 없음. 내부 alpha는252~254 수준의 근소한 불투명도 오차가 남아 수치를 그대로 기록."
+      },
+      "postprocessing": {
+        "copied_from_tool_output_without_pixel_edit": true,
+        "local_pixel_editing": false,
+        "source_file_modified": false
+      }
+    },
+    {
+      "name": "08-explaining.png",
+      "source": "video/public/character/color-v4/08-explaining.png",
+      "output": "video/public/character/cutout-v5/08-explaining.png",
+      "tool_saved_original": "/Users/joo/.codex/generated_images/01a176dd-b3d5-7750-b67c-dcd3e4a6c2e5/exec-e60377af-5829-438f-9c19-535e8283e1c1.png",
+      "source_sha256": "3b0bb69b2c454d1aa85c628de3d4dfb107f241b7b98770f0bae7dc88b94428e0",
+      "output_sha256": "81dc4da73fbaed3526b2a2a71903b97a4142460f51ceda825c40bd5bbed8e589",
+      "image_edit_calls": 1,
+      "retries": 0,
+      "tool": "built-in image_gen.imagegen",
+      "use_case": "background-extraction",
+      "transparent_background_requested": true,
+      "reference_images": [
+        "/Users/joo/BiaDone/apps/Edu/video/public/character/color-v4/08-explaining.png"
+      ],
+      "prompt": "Use case: background-extraction. Edit ONLY the background of the referenced 08-explaining.png. Return the SAME character as a genuine transparent PNG RGBA cutout. Remove all pale gray background to alpha=0 outside the figure. Keep every part of the character fully opaque at alpha=255, especially the white T-shirt, eye whites/highlights, skin, teeth and interior drawing. Preserve the exact original identity, face, eyes, eyebrows, cheerful open mouth, brown hair and highlights, skin tones, white shirt and gray fold shading, open explaining palm, all fingers, body pose, black linework, original colors, framing, proportions and position. Keep the original1254x1254 square dimensions as closely as possible. No redrawing or new interpretation, no style, expression, color, pose or composition change. Do NOT make internal transparent holes. Remove only actual outside background, including genuine spaces outside/between hair outlines or fingers. No gray halo, semi-transparent gray fringe, shadow, white rectangle, checkerboard baked into pixels or replacement backdrop. This is only careful background removal with fully opaque character interior and clean anti-aliased outer alpha.",
+      "inspection": {
+        "source": "video/public/character/color-v4/08-explaining.png",
+        "output": "video/public/character/cutout-v5/08-explaining.png",
+        "source_sha256": "3b0bb69b2c454d1aa85c628de3d4dfb107f241b7b98770f0bae7dc88b94428e0",
+        "output_sha256": "81dc4da73fbaed3526b2a2a71903b97a4142460f51ceda825c40bd5bbed8e589",
+        "source_size": [
+          1254,
+          1254
+        ],
+        "output_size": [
+          1254,
+          1254
+        ],
+        "output_mode": "RGBA",
+        "alpha_min": 0,
+        "alpha_max": 255,
+        "transparent_pixels": 726005,
+        "opaque_pixels": 1870,
+        "partial_alpha_pixels": 844641,
+        "corner_alpha": {
+          "top_left": 0,
+          "top_right": 0,
+          "bottom_left": 254,
+          "bottom_right": 254
+        },
+        "inspection_only": true,
+        "face": {
+          "bounds": [
+            500,
+            390,
+            755,
+            550
+          ],
+          "alpha_min": 253,
+          "alpha_max": 254,
+          "fully_opaque": false,
+          "near_opaque_alpha_250_or_more": true,
+          "rgb_mean_absolute_difference": 7.0820179738562095,
+          "rgb_max_difference": 212
+        },
+        "mouth": {
+          "bounds": [
+            575,
+            545,
+            680,
+            610
+          ],
+          "alpha_min": 253,
+          "alpha_max": 254,
+          "fully_opaque": false,
+          "near_opaque_alpha_250_or_more": true,
+          "rgb_mean_absolute_difference": 15.234969474969475,
+          "rgb_max_difference": 175
+        },
+        "shirt": {
+          "bounds": [
+            700,
+            950,
+            950,
+            1200
+          ],
+          "alpha_min": 253,
+          "alpha_max": 254,
+          "fully_opaque": false,
+          "near_opaque_alpha_250_or_more": true,
+          "rgb_mean_absolute_difference": 1.0764266666666666,
+          "rgb_max_difference": 17
+        }
+      },
+      "visual_review": {
+        "method": "view_image 원본·편집본 직접 확인",
+        "identity_and_colors": "같은 얼굴·갈색 머리·피부·흰 셔츠·회색 주름 표현을 육안상 유지. 픽셀 단위 동일성은 주장하지 않음.",
+        "pose": "열린 입·설명하는 손바닥·손가락 포즈를 유지",
+        "background": "넓은 회색 배경과 사각 바탕이 제거된 실제 alpha PNG 확인. 흰 영상 배경 위의 최종 미세 테두리 검토는 루트가 진행.",
+        "interior": "얼굴·입·셔츠 검사 영역에 alpha0 구멍 없음. 내부 alpha는252~254 수준의 근소한 불투명도 오차가 남아 수치를 그대로 기록."
+      },
+      "postprocessing": {
+        "copied_from_tool_output_without_pixel_edit": true,
+        "local_pixel_editing": false,
+        "source_file_modified": false
+      }
+    },
+    {
+      "name": "07-thumbs-up.png",
+      "source": "video/public/character/color-v4/07-thumbs-up.png",
+      "output": "video/public/character/cutout-v5/07-thumbs-up.png",
+      "tool_saved_original": "/Users/joo/.codex/generated_images/01a176dd-b3d5-7750-b67c-dcd3e4a6c2e5/exec-0f84ebc6-6610-43c7-9225-7d43271b1b31.png",
+      "source_sha256": "6242cbb1031ad0bba761e04b927229694fc22fe12b361f8a3edc3e33004b59f4",
+      "output_sha256": "08c9083f8d5d70c8e021f6de92d6b911aa84d66d3829b6349ef47574bf591677",
+      "image_edit_calls": 1,
+      "retries": 0,
+      "tool": "built-in image_gen.imagegen",
+      "use_case": "background-extraction",
+      "transparent_background_requested": true,
+      "reference_images": [
+        "/Users/joo/BiaDone/apps/Edu/video/public/character/color-v4/07-thumbs-up.png"
+      ],
+      "prompt": "Use case: background-extraction. Edit only the pale gray background of the single referenced 07-thumbs-up.png. Create a genuine RGBA transparent cutout with alpha=0 everywhere outside the existing character. Preserve exactly the original identity, face, eyes, eyebrows, gentle closed-mouth smile, brown hair and highlights, peach skin, original white T-shirt with its gray fold shading, raised thumbs-up hand and every finger, line art, colors, body pose, square framing, size and position. Keep the1254x1254 original canvas as closely as possible. All character interior must remain opaque (alpha255), including shirt white, eyes, skin highlights and interior gaps bounded by the figure. Do not redraw, reinterpret, beautify, change expression, alter the hand, restyle or recolor anything. Remove actual background only, including real outside spaces between loose hair outlines. Do not leave gray matte or halo, semi-transparent gray fringe, shadows, white rectangular backdrop, or a baked-in checkerboard. No added content. This is a precise background removal, preserving the original illustration and opaque clothing.",
+      "inspection": {
+        "source": "video/public/character/color-v4/07-thumbs-up.png",
+        "output": "video/public/character/cutout-v5/07-thumbs-up.png",
+        "source_sha256": "6242cbb1031ad0bba761e04b927229694fc22fe12b361f8a3edc3e33004b59f4",
+        "output_sha256": "08c9083f8d5d70c8e021f6de92d6b911aa84d66d3829b6349ef47574bf591677",
+        "source_size": [
+          1254,
+          1254
+        ],
+        "output_size": [
+          1254,
+          1254
+        ],
+        "output_mode": "RGBA",
+        "alpha_min": 0,
+        "alpha_max": 255,
+        "transparent_pixels": 703527,
+        "opaque_pixels": 1928,
+        "partial_alpha_pixels": 867061,
+        "corner_alpha": {
+          "top_left": 0,
+          "top_right": 0,
+          "bottom_left": 254,
+          "bottom_right": 253
+        },
+        "inspection_only": true,
+        "face": {
+          "bounds": [
+            500,
+            390,
+            755,
+            550
+          ],
+          "alpha_min": 253,
+          "alpha_max": 254,
+          "fully_opaque": false,
+          "near_opaque_alpha_250_or_more": true,
+          "rgb_mean_absolute_difference": 3.9166830065359477,
+          "rgb_max_difference": 173
+        },
+        "mouth": {
+          "bounds": [
+            575,
+            545,
+            680,
+            610
+          ],
+          "alpha_min": 253,
+          "alpha_max": 254,
+          "fully_opaque": false,
+          "near_opaque_alpha_250_or_more": true,
+          "rgb_mean_absolute_difference": 3.8634432234432237,
+          "rgb_max_difference": 61
+        },
+        "shirt": {
+          "bounds": [
+            700,
+            950,
+            950,
+            1200
+          ],
+          "alpha_min": 252,
+          "alpha_max": 254,
+          "fully_opaque": false,
+          "near_opaque_alpha_250_or_more": true,
+          "rgb_mean_absolute_difference": 1.2512586666666667,
+          "rgb_max_difference": 22
+        }
+      },
+      "visual_review": {
+        "method": "view_image 원본·편집본 직접 확인",
+        "identity_and_colors": "같은 얼굴·갈색 머리·피부·흰 셔츠·회색 주름 표현을 육안상 유지. 픽셀 단위 동일성은 주장하지 않음.",
+        "pose": "엄지손 포즈·닫힌 미소를 유지",
+        "background": "넓은 회색 배경과 사각 바탕이 제거된 실제 alpha PNG 확인. 흰 영상 배경 위의 최종 미세 테두리 검토는 루트가 진행.",
+        "interior": "얼굴·입·셔츠 검사 영역에 alpha0 구멍 없음. 내부 alpha는252~254 수준의 근소한 불투명도 오차가 남아 수치를 그대로 기록."
+      },
+      "postprocessing": {
+        "copied_from_tool_output_without_pixel_edit": true,
+        "local_pixel_editing": false,
+        "source_file_modified": false
+      }
+    }
+  ]
+}

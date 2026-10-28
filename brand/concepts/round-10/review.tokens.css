@@ -1,0 +1,41 @@
+/* Design Tokens - Auto-generated */
+/* Do not edit directly - modify tokens.json instead */
+
+/* === PRIMITIVES === */
+:root {
+  --primitive-review-specimen-title: 48px;
+  --primitive-review-specimen-mobile-title: 32px;
+  --primitive-review-control-inset: 12px;
+  --primitive-review-web-width: 1280px;
+  --primitive-review-web-initial-height: 1200px;
+  --primitive-review-preview-min-height: 96px;
+  --primitive-review-wanted-family: "Review Wanted", sans-serif;
+  --primitive-review-neo-family: "Review Neo", sans-serif;
+  --primitive-review-line-family: "Review LINE", sans-serif;
+}
+
+/* === SEMANTIC === */
+:root {
+  --review-specimen-title: 48px;
+  --review-specimen-mobile-title: 32px;
+  --review-control-inset: 12px;
+  --review-web-width: 1280px;
+  --review-web-initial-height: 1200px;
+  --review-preview-min-height: 96px;
+  --review-wanted-family: "Review Wanted", sans-serif;
+  --review-neo-family: "Review Neo", sans-serif;
+  --review-line-family: "Review LINE", sans-serif;
+}
+
+/* === COMPONENTS === */
+:root {
+  --review-specimen-title: 48px;
+  --review-specimen-mobile-title: 32px;
+  --review-control-inset: 12px;
+  --review-web-width: 1280px;
+  --review-web-initial-height: 1200px;
+  --review-preview-min-height: 96px;
+  --review-wanted-family: "Review Wanted", sans-serif;
+  --review-neo-family: "Review Neo", sans-serif;
+  --review-line-family: "Review LINE", sans-serif;
+}

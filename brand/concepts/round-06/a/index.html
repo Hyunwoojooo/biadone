@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Biadone</title>
+  <link rel="stylesheet" href="../shared/common.css">
+  <link rel="stylesheet" href="tokens.css">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body class="web-page">
+  <header class="site-header page-width">
+    <a href="#vision" data-brand-logo></a>
+    <nav class="site-nav" aria-label="주요 메뉴">
+      <a href="#vision" data-copy="nav.vision"></a>
+      <a href="#projects" data-copy="nav.projects"></a>
+      <a href="#edu" data-copy="nav.edu"></a>
+    </nav>
+  </header>
+
+  <main>
+    <section class="vision page-width" id="vision" aria-labelledby="vision-title">
+      <h1 id="vision-title" data-copy="web.title"></h1>
+      <div class="vision-support">
+        <p class="vision-description" data-copy="web.description"></p>
+        <div class="vision-actions">
+          <a class="primary-action" href="#projects" data-copy="web.primary"></a>
+          <a class="secondary-action" href="#edu" data-copy="web.secondary"></a>
+        </div>
+      </div>
+
+      <ol class="vision-flow">
+        <li class="flow-step">
+          <span class="flow-node" aria-hidden="true"></span>
+          <p data-copy="concept.understand"></p>
+        </li>
+        <li class="flow-step">
+          <span class="flow-node" aria-hidden="true"></span>
+          <p data-copy="concept.act"></p>
+        </li>
+        <li class="flow-step">
+          <span class="flow-node" aria-hidden="true"></span>
+          <p data-copy="concept.finish"></p>
+        </li>
+      </ol>
+    </section>
+
+    <section class="projects page-width" id="projects" aria-labelledby="projects-title">
+      <h2 id="projects-title" data-copy="web.projectsTitle"></h2>
+      <div class="project-list">
+        <article class="project-row">
+          <h3 data-copy="web.blabeeTitle"></h3>
+          <p class="project-description" data-copy="web.blabeeDescription"></p>
+        </article>
+        <article class="project-row" id="edu">
+          <h3 data-copy="web.eduTitle"></h3>
+          <p class="project-description" data-copy="web.eduDescription"></p>
+          <p class="project-status" data-copy="web.eduStatus"></p>
+        </article>
+      </div>
+    </section>
+  </main>
+
+  <footer class="site-footer page-width">Biadone</footer>
+  <script src="../shared/content.js" defer></script>
+</body>
+</html>

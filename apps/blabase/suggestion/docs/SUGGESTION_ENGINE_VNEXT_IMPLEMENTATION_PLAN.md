@@ -2,8 +2,8 @@
 
 | 항목 | 값 |
 | --- | --- |
-| Status | **Implementation in progress — A-001 PR-002 coherent preserve capture implemented and validated locally; manual browser/privacy review, production G2/G3, and release remain blocked** |
-| Date | 2026-08-13 |
+| Status | **Q-001 `automated_checkpoint_passed`; SC-001R currentness correction validated; release `blocked_pending_human_review`** |
+| Date | 2026-08-15 |
 | Owner | User (product decision and release approver); Codex (AI implementation executor and record author) |
 | Authority | `SUGGESTION_ENGINE_VNEXT_TECH_SPEC.md` |
 
@@ -30,8 +30,10 @@
 - mapping 부재와 partial coverage가 현재 제품에서 전체 추천 실패처럼 보인다.
 - 기존 historical exact-resumption 계획은 broad source-local Continuation MVP와 분리되지 않았다.
 - E-001 v0.3 revision 3 scaffold와 authenticated resolver/Board integration, S-001, R-001, R-002, R-003, B-001의 pure synthetic regression checkpoint가 구현·검증됐다. 12 contract oracle, 9 resolver behavior row와 1 Board behavior row가 모두 통과해 22/22 measured/pass이고 deferred는 0이다. A-001은 그 exact core를 바꾸지 않고 단일 live capture를 실제 `S1 → R1 → R2 → R3 → B1` chain으로 통과시키는 action-disabled local shadow slice를 연결한다. PR-002는 PR-001 preserve readers를 Work Board에 연결하고 mutating Work Resumption lease를 preserve-only authority snapshot으로 대체했다. Work Board GET/intent의 base evaluation은 one-asOf `attention-preserve-capture-v0.1` 안에서 connector, context, workflow, binding, managed observability와 attribution을 함께 검증한다. `/api/attention`은 default `maintain`으로 기존 동작을 유지한다. Production G2/G3, manual browser/privacy review 및 release는 여전히 blocked다.
+- Q-001은 base `e2fc9f56066b5d731fddcf9cc1837424a740b450`에서 전체 자동 matrix와 독립 advisory QA를 수행하고, monitoring replay/deletion, Semantic Continuation intent authority/least privilege/browser currentness 및 stale E2E assertions를 보정한다. Exact initial/final evidence와 manual residual은 `SUGGESTION_ENGINE_VNEXT_QA_REPORT.md`에 기록한다. 최종 automated checkpoint literal과 무관하게 release는 `blocked_pending_human_review`다.
+- SC-001R은 live Codex 관측 시각 전진으로 동일한 linked WorkContext의 public `itemRef`가 바뀌면 확인된 QA 제목이 즉시 사라지던 currentness 결함을 보정한다. 신규 v0.2 intent만 `linked_workstream + corroborated`, 동일 registry/context/expiry, strictly-newer 단일 후보에 display-only 제목을 재연결한다. Legacy v0.1 intent와 SC-002 validation authority는 exact-only이며, 기존 intent는 한 번 명시적으로 재확인해야 새 정책을 사용한다.
 
-이 상태는 아래 task별 기록과 2026-08-13 KST automated validation 결과를 함께 반영하며, production activation이나 release를 의미하지 않는다.
+이 상태는 아래 task별 기록과 2026-08-14 KST Q-001 automated validation 결과를 함께 반영하며, production activation이나 release를 의미하지 않는다.
 
 ## 3. 구현 원칙
 
@@ -80,7 +82,7 @@ D-001 Product decisions + draft ECR
                                             X-001 Explicit actions
                                                      │
                                                      ▼
-                                            L-001 Launcher v3
+                              L-001 Launcher Work Board v1 [default-off]
 
 M-001 Monitoring/replay/feedback spans all runtime phases after C-001.
 
@@ -117,7 +119,7 @@ MVP의 mapping/session CTA는 설정 또는 선택 화면으로 navigation만 �
 - external source mutation
 - MVP prompt draft auto-fill, automatic prompt send, command, retry
 - implicit feedback 기반 ranking 학습
-- macOS Launcher v3 기본 활성화
+- macOS Launcher Work Board flag 기본 활성화
 - LLM ranking 또는 semantic unfinished inference
 
 ## 6. 단계별 계획
@@ -204,13 +206,20 @@ MVP의 mapping/session CTA는 설정 또는 선택 화면으로 navigation만 �
 - `Attention.no_action`을 전체 추천 실패로 표현하지 않는다.
 - source-local 후보는 bounded copy와 evidence band를 표시한다.
 
-**Semantic Continuation v0.1 status (2026-08-13):** A-001의 additive local
+**Semantic Continuation status (SC-001R currentness correction 2026-08-15):** A-001의 additive local
 display-only follow-up으로 구현됐다. `POST /api/work-board/intent`는 local,
 same-origin, configured Basic auth, default-off flag 뒤에서 explicit `QA_RUN`
 confirmation만 받고 freshly evaluated unoverlaid `ready/full` Board의 mapped
-display-only Continuation target을 재검증한다. Private `.local` v0.1 store는
-refs/registry/observedAt/candidate expiry/confirmedAt/effective expiry와
-supersession을 0700/0600 atomic storage에 보존하고 read는 pure하다.
+display-only Continuation target을 재검증한다. SC-001R에서 신규 intent/schema와 overlay
+policy를 v0.2, private store/schema/hash/HMAC domain을 v0.3으로 올렸다. Current secret은
+`.local/semantic-continuation/<authKeyId>/intent-store.json`만 직접 열며 fixed-root v0.1은
+자동 migrate/reuse하지 않는다. refs/registry/observedAt/candidate expiry/confirmedAt/
+effective expiry와 supersession을 0700/0600 no-follow atomic storage에 보존하고 read는
+pure하다. Pure read가 exact orphan temp sentinel을 보면 삭제하지 않고 fail closed하며,
+다음 authorized POST만 shared lease 아래 fixed legacy root와 모든 canonical
+current/inactive `authKeyId` namespace를 검증하고 exact regular/same-owner/0600 temp
+pattern을 복구할 수 있다. Rotated namespace의 safe orphan은 current overlay를 막지
+않고, symlink/wrong-mode namespace 또는 temp는 삭제하지 않은 채 fail closed한다.
 GET도 configured Basic auth를 직접 검증한 뒤에만 private state를 읽는다.
 Additive response는 기존 schema-valid WorkBoardApiResponse를 byte-identical
 `base`로 보존하고, 별도 versioned `semanticPresentation`의 `displayTitle`만
@@ -218,7 +227,19 @@ UI가 render-time에 사용한다. Missing/corrupt/stale/mismatch는
 `semanticPresentation=null`과 unchanged generic base를 반환한다. Targeted
 label safety는 NFKC/구분자 정규화 뒤의 camelCase/concatenated
 pass/fail/completion/result/apply claim도 fail closed한다.
-Vitest 8 files/35 tests, typecheck와 lint가 pass했다. Core
+Legacy intent v0.1/store v0.2는 pure-read/exact-only이며 GET/sync가 승격하지 않는다.
+다음 explicit confirmation만 history/supersession을 보존해 v0.3으로 atomic upgrade한다.
+신규 v0.2는 stored/current 모두 linked/corroborated이고 registry/context/expiry가 같으며
+observedAt만 strictly newer인 단일 display-only 후보에 original TTL 안에서 제목을
+rebind한다. SC-002 receipt title/start/terminal은 kind/evidence를 포함한 exact target만
+허용하고 rebound에서는 provenance/profile/subprocess 전에 fail closed한다.
+Intent POST는 Board read flag 외에 separate exact default-off
+`BLABASE_SEMANTIC_CONTINUATION_WRITE_ENABLED === "true"`를 요구하고, exact JSON
+content type/length와 8,192-byte declared/streamed cap을 semantic evaluation보다 먼저
+검증한다. UI는 이 server capability가 없으면 form을 렌더하지 않는다. Form은 exact
+item/context/base-generatedAt target으로 remount되고 request generation과 edit reset으로
+late completion이나 이전 label confirmation이 새 target에 남지 않는다.
+SC-001R Vitest 10 files/77 tests, typecheck, full lint와 production build가 pass했다. Core
 engine/E-001 tuple이 불변이므로 baseline은 N/A이며 production/release는
 승인되지 않았다.
 
@@ -250,7 +271,10 @@ SHA-256 append revision chain으로 인증한다. Store는
 atomic하게 저장되며 최대 512개다. TTL은 24시간, intent expiry와 candidate
 expiry 중 가장 이른 시점이다. Invalid tail은 whole-store rejection이며
 salvage하지 않는다. New running event는 즉시 authoritative하여 이전 pass를
-숨기고, stale dead lease는 `RUN_ABANDONED/inconclusive`로 닫는다.
+숨기고, stale dead lease는 `RUN_ABANDONED/inconclusive`로 닫는다. Q-001은 pure
+GET cleanup을 추가하지 않고, shared authenticated mutation lease 아래에서만 exact
+`receipts.json.<pid>.<16hex>.tmp` regular/same-owner/0600/no-follow orphan을
+inode 재검증 뒤 복구한다. Symlink/wrong mode는 삭제하지 않고 fail closed한다.
 
 Presentation-only overlay는 base Board bytes/schema/order/lane/evidence/
 capability/action/execution policy를 바꾸지 않는다. Separate presentation
@@ -295,21 +319,63 @@ manual follow-up으로 남는다.
 
 **Exit gate:** auto-fill은 reviewable draft만 만들며 전송과 실행은 사용자의 별도 명시적 행동 전에는 0건이다.
 
-### Phase 9. Launcher v3
+### Phase 9. Launcher Work Board v1
 
-- `L-001`에서 optional Continuation/Board projection을 launcher v3에 추가한다.
-- older decoder/read compatibility를 유지한다.
-- web rollout의 안전성과 품질 gate를 통과한 뒤 별도 flag로 활성화한다.
+- `L-001`은 IPC envelope v1과 기존 `attention.get`/Attention projection v2를
+  그대로 유지하면서 별도 strict `work-board.get {refresh:boolean}`과
+  `blabase-launcher-work-board-v1`을 추가한다.
+- Exact `BLABASE_LAUNCHER_WORK_BOARD_ENABLED === "true"` flag만 새 method를
+  활성화한다. Managed explicit refresh는 sync 한 번 뒤 canonical preserve Work
+  Board를 한 번 평가하고, read-only는 refresh 요청에도 sync하지 않는다.
+- Projection은 Board primary+alternatives 순서의 최대 3개 display-only row와 exact
+  semantic overlay title만 담는다. Attention dueAt은 visibility TTL이 아니므로
+  `expiresAt:null`로 투영하고, Continuation/Setup expiry만 native timer가 60초 이하
+  chunk로 제거한다.
+- Full zero-item Board는 terminal이다. Active-only/완료된 Board failure/schema
+  rejection은 legacy Attention을 `refresh:false`로 한 번만 호출하며 unsupported
+  method만 원래 refresh를 보존한다. Timeout/disconnect/malformed envelope은 hung
+  process generation을 retire하고 같은 연결에서 fallback하지 않는다. Pending Board
+  cancellation도 해당 generation을 retire해 다음 load가 serial queue 뒤에 막히지 않으며,
+  config-stop/app shutdown은 MainActor를 막지 않는 quarantine task에서 bounded SIGTERM
+  grace 뒤 SIGKILL로 child 종료를 확인한다. 미확인 process는 replacement를 차단하며,
+  lifecycle epoch/retirement token/permanent shutdown gate가 await 중 config-root race를
+  차단한다. Config stop/새 root activation/complete의 명시적 handshake 동안 gate를
+  유지하고 실패는 abort하므로 stop 반환과 activation 사이 old-root launch도 불가능하다.
+  Root-change retry의 stop 여부는 `isAgentActive`가 아니라 root equality로만 결정한다.
+- Full Board row는 action이 없고, Active-only fallback 뒤 기존 Attention 화면의
+  기존 Active action만 유지한다. X-001 Setup action은 launcher에 연결하지 않는다.
 
-**Exit gate:** launcher에서 unknown schema가 fail closed하며 Active-only fallback이 동작한다.
+**Status (2026-08-14):** 구현 및 local automated validation checkpoint. Default-off이며
+manual old-agent/package/accessibility gate와 release 승인은 남아 있다.
+
+**Exit gate:** strict unknown/private/actionful schema fail-closed, one-shot Active
+fallback, no-double-sync, request/expiry generation currentness 및 existing Attention v2
+compatibility가 자동 회귀로 고정된다.
 
 ### Phase 10. Monitoring, replay, feedback
 
-- `M-001`에서 lane별 provenance, error, conflict, latency, deterministic replay를 기록한다.
-- explicit feedback taxonomy와 resettable bounded preference를 추가한다.
-- click/no-click은 analytics로만 보존하고 Gold 승격을 금지한다.
+- `M-001a`는 default-off local web dogfood 범위에서 최종 Work Board 응답에
+  5분 이내 HMAC receipt header를 더하고, 명시적 consent 뒤 실제 commit된
+  `render_confirmed`와 Continuation/Setup의 explicit useful/not-useful/reset만 기록한다.
+- Current installation key namespace의 private append-only store는 승인된 30일 lazy
+  retention을 사용하고 다음 authorized mutation에서 expired prefix를 정리한다. 별도
+  all-data purge는 current config/secret 유무와 무관하게 root lock 아래 안전한 모든
+  current/inactive canonical key namespace를 삭제하며 unexpected/symlink entry는 fail
+  closed한다. 공개 상태·CLI는 제목이나 identifier 없는 aggregate/history와 aggregate
+  replay만 제공한다.
+- Normal read는 stored aggregate mismatch를 계속 reject한다. Replay read는 authenticated
+  schema/event/store HMAC chain을 먼저 검증한 뒤 aggregate를 재계산하므로 mismatch를
+  deterministic CLI failure로 보고할 수 있다. Background cleanup은 없다.
+- 이 slice의 모든 record는 `reviewState=candidate`, `appliedToRanking=false`,
+  `goldEligible=false`, `releaseGateEligible=false`다. click/dwell/no-click,
+  Launcher/offline, Attention feedback 복제와 production engine replay는 수집하지 않는다.
 
-**Exit gate:** critical safety metric과 privacy sentinel을 release review에서 확인할 수 있다.
+**Status (2026-08-14):** `M-001a` Q-001 hardening checkpoint implemented. Default-off,
+30일 lazy retention과 explicit all-namespace purge만 구현됐으며 broader
+M-001/ranking/Gold/release promotion은 미구현·미승인이다.
+
+**Exit gate:** strict receipt/API/store/replay/privacy와 GET byte/no-write, browser
+commit/currentness가 자동 회귀로 고정되고 수동 privacy/copy 검토가 완료돼야 한다.
 
 ### Phase 11. 검토, dataset freeze, rollout
 
@@ -335,9 +401,10 @@ manual follow-up으로 남는다.
 | `A-001` | Continuation/Board API | API owner | `B-001` | local Work Board wrapper/route, PR-001 preserve readers, PR-002 coherent preserve capture, formal display-only Continuation GET; future action route | **Display-read milestone implemented locally:** Work Board remains forced preserve/no refresh; formal `GET /api/continuation` reuses the exact authenticated R3 decision from one request-local capture and exposes only strict `continuation-read-api-v0.1` display data. No code-controlled cleanup/lease/recovery/permission repair/retention write occurs in the read path. Public Work Board/SC response and core contracts are unchanged | 2026-08-13 KST: PR-002 21 files/150 tests plus the Continuation-read targeted regression recorded in ECR; typecheck, lint and diff-check pass. Baseline N/A because core engine semantics, Board bytes and E-001 data are unchanged | Manual authenticated browser/privacy smoke and G2/G3 remain required. Action/open/UI/public rollout, dataset freeze and release remain blocked |
 | `U-001` | 웹 UI | Web owner | `A-001` | `app/WorkSuggestionBoardPanel.tsx`, `app/WorkCockpit.tsx`, browser-safe Work Board client parser | **Display-only slice implemented locally:** fixed Attention/Continuation/Setup lanes, server order/overlay preservation, bounded evidence/caveat copy, expiry filtering, strict whole-feed fail-close, canonical Work Board-only fetch with monotonic request gate. No CTA/link/button/form/action | Focused component/client/integration tests plus typecheck/lint/diff-check recorded in ECR; engine/UI baseline N/A because only existing public projection is rendered | Manual 320px/200% zoom, keyboard/VoiceOver/Safari, copy/privacy and G2/G3 approval remain required |
 | `X-001` | Action gateway | Security + Runtime owner | `A-001`, `R-001`, `U-001` | `src/continuation/actions/*`, `/api/continuation/offers`, `/api/continuation/open`, Setup CTA | **Setup-only slice implemented locally:** wire API/action policy v0.1, internal authority v0.1, private offer/event/store/schema and revalidation/retention v0.2; 30초 HMAC offer, current-secret namespace, candidate-expiry+24시간 retention, fixed `/projects` destination | explicit click only; issue/open capture는 shared root lock 안에서 직렬화; 자동 실행/재시도/mapping 저장/mutation 없음; invalid offer 409 | Contract/store/tamper/restart/secret-rotation/race/expiry/cap/gate/privacy/client/UI targeted regression과 ECR 기록 | Human approval is limited to Setup surface; `open_source`, exact resume and release remain blocked |
-| `L-001` | Launcher v3 projection | macOS owner | `X-001`, web rollout evidence | launcher TS/Swift projection and presentation files | optional Continuation board, older reader compatibility | unknown version fail closed, Active fallback 유지 | Decoder/Swift tests, manual launcher check | Launcher rollout approval required |
-| `M-001` | Monitor, replay, feedback | Observability + Evaluation owner | `C-001`, then each runtime phase | monitoring/replay schema, feedback store | provenance, lane metrics, explicit feedback | implicit signal Gold 금지, resettable preference | Schema/replay/privacy tests | Retention/feedback approval required |
-| `Q-001` | 통합 QA 및 회귀 검토 | QA reviewer | `E-001`~`M-001` applicable scope | tests, QA report, private run artifacts | test report, risk findings, manual checklist | critical error 0 후보 기준 검증, unresolved risk 명시 | 전체 승인 test matrix | Human QA sign-off required |
+| `L-001` | Launcher Work Board v1 projection | macOS owner | canonical preserve Work Board | launcher TS/Swift projection, client, state and presentation files | default-off display-only Board, unchanged IPC v1/Attention v2; data-root-bound shared-env parity | **Runtime parity correction implemented 2026-08-16:** one resolved startup snapshot is shared by source mode, scheduler, service and Companion; downstream legacy reload is exact-object blocked; strict schema, no-double-sync, one fallback, expiry/currentness and Active compatibility remain unchanged | Focused env/startup/service Vitest 3 files/26 tests, typecheck and full lint pass; prior TS projection and Swift checkpoints remain recorded; manual old-agent/accessibility check pending | Launcher rollout approval required |
+| `M-001` | Monitor, replay, feedback | Observability + Evaluation owner | `C-001`, then each runtime phase | `src/suggestionBoard/monitoring/*`, Work Board receipt/API, web UI, aggregate CLI | **M-001a Q-001 hardened locally:** 5분 HMAC receipt, consent/render acknowledgement, Continuation/Setup explicit feedback/reset, authenticated aggregate replay, current-key operation store와 config-independent all-namespace purge | default-off web-only; 30일 lazy retention/no background cleanup; implicit signal/Attention/Launcher/ranking/Gold/release 영향 없음 | Contract/HMAC/tamper/TTL/store/concurrency/rotation purge/disconnect/replay mismatch/route/client/UI/CLI/privacy/preserve tests and opt-in browser test; ECR evidence | 30일 local dogfood와 explicit deletion 범위만 approved; privacy/copy and broader M-001/release remain pending |
+| `SC-001R` | Semantic intent currentness correction | Continuation + Security owner | `SC-001`, Q-001 | private intent contract/store, title overlay, validation preflight | intent/schema v0.2, overlay policy v0.2, store/schema v0.3; legacy exact-only; linked/corroborated strictly-newer display rebinding | Core Board/rank/action 불변, original TTL 불변, SC-002 exact-only/no-spawn | 10 files/77 targeted tests, typecheck, lint, build, independent read-only QA | **Implemented/validated 2026-08-15; existing v0.1 intent requires explicit reconfirmation; release remains blocked** |
+| `Q-001` | 통합 QA 및 회귀 검토 | QA reviewer | `E-001`~`M-001` applicable scope | tests, `SUGGESTION_ENGINE_VNEXT_QA_REPORT.md`, private run artifacts | initial/final exact matrix, blocker corrections, risk findings, manual checklist | **`automated_checkpoint_passed` on 2026-08-14.** Final exact root architecture gate pass(7.39s, warnings only/0 errors); mutable contract checkpoint만 인정하고 unresolved risk 명시 | Unit 1,327, full E2E 27 pass/2 skip, 22/22 baseline, opt-in monitoring/race, Launcher build-package와 architecture matrix pass; exact evidence는 QA report 참조 | **Release `blocked_pending_human_review`; human QA/privacy/accessibility/dataset/release sign-off required** |
 | `P-001` | Freeze와 단계적 rollout | Product + Engine + Security owner | `Q-001` | dataset records, ECR, rollout/release record | human-reviewed frozen dataset, recorded hashes/run IDs, rollout decision | 실제 provenance와 rollback owner가 기록됨 | Locked holdout + staged observation | **Required for every promotion stage** |
 
 Owner role은 task 책임 범주다. 실제 governance는 User가 product decision/release approver, Codex가 AI implementation executor/record author, `qa_reviewer` agent가 advisory technical reviewer이며 human dataset reviewers/adjudicator는 pending이다.
@@ -483,6 +550,17 @@ continuationAction: disabled -> link_only -> explicit_resume
 boardComposer: legacy -> dual_lane
 ```
 
+현재 local exact flags는 모두 default-off이며 문자열 `true`만 활성화한다.
+
+```text
+BLABASE_WORK_BOARD_SHADOW_READ_ENABLED
+BLABASE_CONTINUATION_READ_ENABLED
+BLABASE_SEMANTIC_CONTINUATION_WRITE_ENABLED
+BLABASE_CONTINUATION_SETUP_ACTION_ENABLED
+BLABASE_WORK_BOARD_MONITORING_ENABLED
+BLABASE_LAUNCHER_WORK_BOARD_ENABLED
+```
+
 ### 12.2 Promotion 순서
 
 1. `continuationResolution=shadow`
@@ -523,7 +601,7 @@ Rollback은 Active Attention을 수정하거나 재배포하지 않고 수행할
 - Local Git v2 collector와 local continuity 세부 규칙
 - commit subject 또는 changed-file category의 opt-in 수집
 - exact Codex resume와 work resumption protocol v2
-- Launcher v3 기본 활성화
+- Launcher Work Board flag 기본 활성화
 - cross-device WorkContext sync
 - semantic clustering 또는 LLM-assisted labeling
 - organization/shared project identity
@@ -584,7 +662,7 @@ Deferred 항목은 이 문서의 MVP acceptance에 포함하지 않는다. 각 �
 - `qa_reviewer` agent의 검토는 advisory AI review이며 human review, regulatory certification 또는 release decision이 아니다.
 - 실행하지 않은 검사는 `not_run`, 증거가 없는 값은 `unknown` 또는 `pending`으로 기록한다.
 
-## 17. 현재 작업 상태 (2026-08-13)
+## 17. 현재 작업 상태 (2026-08-14)
 
 - `D-001`, `C-001`, `S-001`, `R-001`, `R-002`, `R-003`, `B-001` core와 E-001 v0.3 revision 3의 synthetic checkpoint가 완료됐다. A-001 action-disabled local shadow slice도 구현·current-head 검증되어 한 번의 live capture를 실제 `S1 → R1 → R2 → R3 → B1` chain으로 통과시키고 public Board v0.1 display-only projection만 wrapper/route/Attention Lab에 노출한다.
 - Exact internal tuple은 private adapter batch v0.4, R-001 identity input/result/schema/hash v0.4, R-002 envelope/result/schema/hash v0.3와 rule/config v0.2, R-003 scoring result/schema/resolver/scoring policy v0.1, resolution envelope/schema v0.1, distinct resolved-decision artifact/schema/hash v0.1, B-001 Board input/result/schema/hash v0.3, E-001 dataset/case/config/run/evaluator policy v0.3다. Base Decision v0.2는 nested body일 뿐 authenticity marker가 아니다. Public Board는 v0.1, Board composer/precedence/ID policy는 v0.1을 그대로 유지한다.
@@ -600,3 +678,17 @@ Deferred 항목은 이 문서의 MVP acceptance에 포함하지 않는다. 각 �
 - 2026-08-13 KST PR-002 validation에서 `npm run typecheck`, targeted Vitest 21 files/150 tests, `npm run lint`와 `git diff --check`가 pass했다. Filesystem evidence는 atime을 제외한 content/type/mode/uid/gid/dev/ino/nlink/size/mtime/ctime/hash, scope isolation, one retry, lock/temp/settlement/corrupt/replacement, missing-state no-create, fixed clock, maintain compatibility, route 503/overlay fallback과 실제 non-empty full-Board whole-cwd fixture를 포함한다. Core engine ranking/input/output semantics와 E-001 v0.3 dataset은 바뀌지 않아 baseline은 N/A다.
 - PR-002 automated gate는 통과했지만 manual authenticated browser/Attention Lab smoke, default-off/on privacy review, production G2/G3와 human release approval은 남아 있다. Public action, Board-result persistence, dataset freeze 또는 release readiness는 승인되지 않았다.
 - 새 production dependency는 추가하지 않았다.
+- Q-001 initial matrix는 unit/typecheck/lint/build/baseline, monitoring browser,
+  Launcher bundle/smoke/build/package/verify를 통과했지만 full E2E의 stale copy assertion과
+  root architecture dependency configuration에서 실패를 발견했다. `swift test`는 선택된
+  Command Line Tools SDK의 `XCTest` 부재로 test execution 전에 실패했으며 정확히 한 번만
+  시도했다. 발견된 product blockers와 regression correction은 QA report/ECR에 기록했다.
+- Final exact matrix는 unit 158 files/1,327 tests, typecheck/lint/build,
+  Continuation 22/22, full E2E 27 pass/2 skip, monitoring/race opt-in browser,
+  Launcher bundle/smoke/build/package/verify와 root `arch:check`를 통과했다. Exact
+  run/artifact hashes와 duration은 `SUGGESTION_ENGINE_VNEXT_QA_REPORT.md`에 있다.
+  Automated checkpoint는 `automated_checkpoint_passed`이고 release는
+  `blocked_pending_human_review`다. Real unmocked authenticated browser chain,
+  human privacy/copy/accessibility, full Xcode XCTest, old/new Launcher package
+  compatibility, notarization, HTML nonce CSP, crash-left manual recovery, G2/G3,
+  dataset freeze/holdout와 explicit release record가 남아 있다.

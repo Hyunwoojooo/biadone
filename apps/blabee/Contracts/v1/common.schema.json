@@ -1,0 +1,170 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.blabee.local/contracts/v1/common.schema.json",
+  "title": "Blabee v1 common definitions",
+  "description": "Shared scalar and binding definitions for the Blabee v1 local contract.",
+  "$defs": {
+    "identifier": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 512
+    },
+    "opaque_token": {
+      "type": "string",
+      "minLength": 16,
+      "maxLength": 1024,
+      "pattern": "^[A-Za-z0-9_-]+$"
+    },
+    "stable_code": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[a-z][a-z0-9_]*$"
+    },
+    "non_empty_string": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 8192
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "^\\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\\d|3[01])T(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d{1,9})?(?:Z|[+-](?:[01]\\d|2[0-3]):[0-5]\\d)$"
+    },
+    "positive_sequence": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "revision": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "string_list": {
+      "type": "array",
+      "maxItems": 128,
+      "items": {
+        "$ref": "#/$defs/non_empty_string"
+      }
+    },
+    "episode_binding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "project_id",
+        "session_id",
+        "source_turn_id",
+        "source_prompt_id",
+        "episode_id",
+        "episode_root_prompt_id",
+        "episode_baseline_checkpoint_id"
+      ],
+      "properties": {
+        "project_id": {
+          "$ref": "#/$defs/identifier"
+        },
+        "session_id": {
+          "$ref": "#/$defs/identifier"
+        },
+        "source_turn_id": {
+          "$ref": "#/$defs/identifier"
+        },
+        "source_prompt_id": {
+          "$ref": "#/$defs/identifier"
+        },
+        "episode_id": {
+          "$ref": "#/$defs/identifier"
+        },
+        "episode_root_prompt_id": {
+          "$ref": "#/$defs/identifier"
+        },
+        "episode_baseline_checkpoint_id": {
+          "$ref": "#/$defs/identifier"
+        }
+      }
+    },
+    "decision_boundary_binding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "project_id",
+        "session_id",
+        "source_turn_id",
+        "source_prompt_id",
+        "episode_id",
+        "episode_root_prompt_id",
+        "episode_baseline_checkpoint_id",
+        "decision_boundary_id",
+        "boundary_sequence"
+      ],
+      "properties": {
+        "project_id": {
+          "$ref": "#/$defs/identifier"
+        },
+        "session_id": {
+          "$ref": "#/$defs/identifier"
+        },
+        "source_turn_id": {
+          "$ref": "#/$defs/identifier"
+        },
+        "source_prompt_id": {
+          "$ref": "#/$defs/identifier"
+        },
+        "episode_id": {
+          "$ref": "#/$defs/identifier"
+        },
+        "episode_root_prompt_id": {
+          "$ref": "#/$defs/identifier"
+        },
+        "episode_baseline_checkpoint_id": {
+          "$ref": "#/$defs/identifier"
+        },
+        "decision_boundary_id": {
+          "$ref": "#/$defs/identifier"
+        },
+        "boundary_sequence": {
+          "$ref": "#/$defs/positive_sequence"
+        }
+      }
+    },
+    "rollback_policy": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "enabled",
+            "disabled_reason"
+          ],
+          "properties": {
+            "enabled": {
+              "const": false
+            },
+            "disabled_reason": {
+              "$ref": "#/$defs/stable_code"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "enabled",
+            "disabled_reason",
+            "target_checkpoint_id"
+          ],
+          "properties": {
+            "enabled": {
+              "const": true
+            },
+            "disabled_reason": {
+              "type": "null"
+            },
+            "target_checkpoint_id": {
+              "$ref": "#/$defs/identifier"
+            }
+          }
+        }
+      ]
+    }
+  }
+}

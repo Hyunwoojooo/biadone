@@ -1,0 +1,16 @@
+{
+  "schema_version": "1.0",
+  "kind": "blabee_selection_request",
+  "selection_id": "selection_fixture_missing_boundary_001",
+  "interaction_id": "interaction_fixture_001",
+  "project_id": "project_fixture_alpha",
+  "session_id": "session_fixture_alpha",
+  "source_turn_id": "turn_fixture_001",
+  "source_prompt_id": "prompt_fixture_001",
+  "episode_id": "episode_fixture_alpha",
+  "episode_root_prompt_id": "prompt_fixture_001",
+  "episode_baseline_checkpoint_id": "checkpoint_fixture_before_prompt_001",
+  "packet_id": "packet_fixture_001",
+  "revision": 1,
+  "option_id": "option_fixture_recommended_001"
+}

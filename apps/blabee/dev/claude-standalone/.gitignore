@@ -1,0 +1,5 @@
+# Keep generated files inside this workspace and out of Git.
+!/build/
+/build/*
+!/build/.gitkeep
+/node_modules/

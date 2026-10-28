@@ -67,7 +67,7 @@ codex --cd sites/biadone.com
 | Final CTA (+ 이메일 폼) | `#final-cta` / `#blabase-form` |
 | Footer (Docs 포함) | `#docs` |
 
-이 사이트는 정적 단일 페이지(`index.html`)로 구성되어 있으며 별도의 쿼리 파라미터나 라우팅은 없습니다.
+메인 회사 소개 페이지는 정적 단일 페이지(`index.html`)로 구성됩니다. 별도의 `/blabee/` 랜딩페이지는 홍보 경로를 구분하는 UTM 쿼리 파라미터를 지원합니다.
 
 ---
 
@@ -76,6 +76,9 @@ codex --cd sites/biadone.com
 ```
 index.html          메인 페이지 (모든 섹션 포함)
 blabase/index.html      blabase 하위 페이지
+blabee/             Blabee 랜딩페이지와 공개 에셋 (시연 영상·자막·정책 초안 포함)
+_headers            /blabee/에만 적용되는 보안·캐시·검색 차단 헤더
+_redirects          /blabee → /blabee/ 정규화
 css/style.css        커스텀 스타일 (디자인 토큰, 카드, 애니메이션, 반응형)
 js/main.js           모바일 메뉴, 스크롤 reveal, 오디언스 탭 전환, 폼 처리
 reference/           원본 빌드 지침 마크다운 보관용(사이트에 노출되지 않음)
@@ -90,7 +93,7 @@ reference/           원본 빌드 지침 마크다운 보관용(사이트에 �
 
 ## 데이터 모델 / 저장소
 
-현재 이 프로젝트는 **정적 콘텐츠 전용**이며 백엔드 데이터베이스나 Table API를 사용하지 않습니다.
+웹페이지는 정적 HTML/CSS/JavaScript로 제공됩니다. Blabee 베타 신청 폼은 기존 Blabee Supabase의 제한된 공개 RPC를 사용해 이메일·최초 신청 시각·선택적 유입 정보를 저장합니다. 유입별 페이지 조회 수는 개인 식별자 없이 날짜별로 집계합니다. 스키마·권한·운영 방법은 [supabase/README.md](supabase/README.md), 레딧·X·인스타그램·유튜브 홍보 링크와 집계 기준은 [TRACKING.md](TRACKING.md)에 정리했습니다.
 
 - **blabase 베타 가입 폼**은 프론트엔드에서만 동작하며, 제출 시 확인 메시지만 표시할 뿐 실제로 이메일이 저장되지 않습니다. (정적 사이트의 한계로, 실제 이메일 수집이 필요하면 Table API 또는 외부 폼 서비스 연동이 필요합니다.)
 
@@ -98,7 +101,7 @@ reference/           원본 빌드 지침 마크다운 보관용(사이트에 �
 
 ## 아직 구현되지 않은 기능 / 알려진 제한
 
-- 실제 이메일 수집·저장 기능 없음 (원할 경우 RESTful Table API로 `leads` 테이블을 만들어 연동 가능)
+- 메인 페이지의 blabase 폼은 실제 이메일을 저장하지 않습니다. `/blabee/` 신청 폼은 Supabase에 연결합니다.
 - 실제 소셜 증빙(고객 후기, 베타 사용자 수 등) 자료 없음 — 지침서에 따라 확인되지 않은 수치/후기는 넣지 않음
 - 실제 인테그레이션 로고/딥링크 없음 — 카테고리 카드로만 안내 (과장 클레임 방지)
 - 다국어(예: 한국어 버전) 미구현 — 지침에 따라 전체 카피는 영어로만 작성됨
@@ -108,7 +111,7 @@ reference/           원본 빌드 지침 마크다운 보관용(사이트에 �
 
 ## 다음 개발 단계 제안
 
-1. **리드 수집 연동**: `leads` 테이블 스키마(email, source, created_at)를 정의하고 Table API로 실제 베타 가입자 저장
+1. **blabase 리드 수집 연동**: 메인 페이지의 blabase 폼에도 별도 저장 기능 연결
 2. **실제 스크린샷/제품 데모 영상** 삽입 (현재는 CSS/SVG 기반 목업)
 3. **Docs 하위 페이지** 별도 제작 (현재는 Footer 앵커로만 연결됨)
 4. **다국어 버전** (예: 한국어) 필요 시 별도 페이지(`index-ko.html`) 형태로 확장
@@ -141,9 +144,42 @@ index.html
 css/
 js/
 blabase/
+blabee/
+_headers
+_redirects
 ```
 
 `README.md`, `reference/`, `.wrangler/` 같은 문서/로컬 캐시 파일은 공개 배포 대상에 포함하지 않습니다.
+
+### Blabee 하위 페이지
+
+- 공개 주소: `https://biadone.com/blabee/` (`/blabee`에서도 이동)
+- 2026-10-17 유입별 방문·신청 집계 운영 배포: `https://c9e0872f.biadone.pages.dev`. 플랫폼별 링크와 운영자 보고서는 [TRACKING.md](TRACKING.md)를 참고하세요.
+- 2026-09-24 이메일 베타 신청 기능 운영 배포: `https://fcfda27f.biadone.pages.dev`. 최초 하위 경로 배포는 2026-09-21에 완료했습니다.
+- 원본: [blabee-landing-page 브랜치](https://github.com/Hyunwoojooo/biadone/tree/blabee-landing-page/sites/blabee.com), 커밋 `cafbe8f8b2735b8592018c37ee4b01706134cba9`
+- 원본 `npm run build:public` 결과 중 HTML/CSS/JS/에셋/정책만 `blabee/`에 복사했습니다. 이 폴더는 공개 파일 전용이며 이후 갱신에도 내부 문서·스크립트·캐시를 넣지 않습니다.
+- 모든 사이트 내부 절대 경로와 canonical·OG URL을 `/blabee/` 기준으로 변경했습니다. 영문·한국어 정책 페이지와 `/blabee/liquid-glass/light/` 호환 경로를 포함합니다.
+- 베타 신청 폼은 이메일만 입력받습니다. Supabase의 `blabee_marketing.beta_requests`에 이메일·최초 신청 시각·선택적 유입 정보를 저장하며, 같은 이메일은 한 건만 유지합니다. 다른 신청자의 이메일은 공개 API로 조회할 수 없습니다. 계정 생성이나 안내 메일 자동 발송은 하지 않습니다.
+- 추적 링크의 UTM과 외부 참조 호스트로 경로별 페이지 조회 수·신규 베타 신청 수를 집계합니다. 방문 수는 고유 인원이 아니며, 기존 신청의 과거 유입은 알 수 없습니다. GPC/DNT 사용 시 유입 집계를 생략합니다. 운영자 조회 SQL과 플랫폼별 공유 링크는 [TRACKING.md](TRACKING.md)를 참고하세요.
+- 홍보에는 `/blabee/reddit`, `/blabee/x`, `/blabee/instagram`, `/blabee/youtube` 짧은 주소를 사용할 수 있습니다. 이동 후 유입 정보를 읽고 주소창의 UTM을 정리합니다.
+- 정책 초안 표시와 `noindex` 설정은 유지합니다. 신청 API/마이그레이션과 검증 방법은 [supabase/README.md](supabase/README.md)를 참고하세요.
+- 랜딩페이지에 삽입된 36초 시연 MP4·영문 VTT 자막·포스터를 포함합니다. 원본 `media/promos/2026-09-21/`의 한·영 15초 홍보 MP4·SRT는 원본 공개 빌드와 동일하게 배포 대상에서 제외합니다.
+- GSAP Core / ScrollTrigger 3.15.0은 원본의 자체 호스팅 파일과 라이선스 배너를 유지합니다. [GSAP Standard License](https://gsap.com/standard-license/)가 적용됩니다.
+
+로컬에서는 별도 설치나 빌드 없이 사이트 루트에서 실행합니다.
+
+```bash
+python3 -m http.server 8000
+# http://localhost:8000/blabee/
+```
+
+실제 배포 파일만 먼저 준비하려면 아래 명령을 사용합니다. 네트워크 업로드 없이 임시 폴더 경로를 출력하며, 검토 후 해당 폴더는 직접 정리합니다.
+
+```bash
+./scripts/deploy-cloudflare.sh --prepare-only
+```
+
+단순 Python 서버는 Cloudflare `_headers`/`_redirects` 및 영상 byte-range 처리를 재현하지 않습니다. 실제 배포 후 `/blabee` 이동, 헤더, 영상 재생·탐색을 확인해야 합니다. 배포는 사용자 명시 승인 후 기존 배포 명령으로 실행합니다.
 
 ### DNS 설정
 

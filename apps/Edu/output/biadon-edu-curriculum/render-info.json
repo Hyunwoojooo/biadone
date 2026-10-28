@@ -1,0 +1,12 @@
+{
+  "width": 1920,
+  "height": 1080,
+  "fps": 30,
+  "duration": 100,
+  "frames": 3000,
+  "video": "H.264",
+  "audio": "AAC stereo 44.1kHz",
+  "fullDecode": true,
+  "frameRenderer": "motion.html?render=1 -> window.renderAt(seconds)",
+  "originalScore": true
+}

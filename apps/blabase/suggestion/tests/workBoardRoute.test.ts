@@ -1,12 +1,26 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("../src/suggestionBoard/liveShadow", () => ({
-  evaluateLiveSemanticWorkSuggestionBoard: vi.fn()
+  evaluateLiveSemanticWorkSuggestionBoard: vi.fn(),
+  evaluateLiveSemanticWorkSuggestionBoardWithMonitoringAuthority: vi.fn()
 }));
 
 import { GET } from "../app/api/work-board/route";
 import { PreserveCaptureError } from "../src/attention/preserveCapture";
-import { evaluateLiveSemanticWorkSuggestionBoard } from "../src/suggestionBoard/liveShadow";
+import { semanticContinuationWorkBoardResponseSchema } from "../src/semanticContinuation";
+import {
+  evaluateLiveSemanticWorkSuggestionBoard,
+  evaluateLiveSemanticWorkSuggestionBoardWithMonitoringAuthority
+} from "../src/suggestionBoard/liveShadow";
+import {
+  WORK_BOARD_MONITORING_RECEIPT_HEADER,
+  verifyWorkBoardMonitoringReceipt
+} from "../src/suggestionBoard/monitoring";
+import {
+  MONITORING_NOW,
+  MONITORING_SECRET,
+  monitoringAuthority
+} from "./fixtures/workBoardMonitoringFixture";
 
 const readyResponse = {
   status: "ready",
@@ -37,6 +51,7 @@ const semanticReadyResponse = {
 afterEach(() => {
   vi.clearAllMocks();
   vi.unstubAllEnvs();
+  vi.useRealTimers();
 });
 
 describe("GET /api/work-board", () => {
@@ -126,6 +141,51 @@ describe("GET /api/work-board", () => {
     expect(body).toEqual(semanticReadyResponse);
     expect(JSON.stringify(body.base)).toBe(JSON.stringify(readyResponse));
     expect(evaluateLiveSemanticWorkSuggestionBoard).toHaveBeenCalledOnce();
+    expect(
+      evaluateLiveSemanticWorkSuggestionBoardWithMonitoringAuthority
+    ).not.toHaveBeenCalled();
+    expect(
+      response.headers.get(WORK_BOARD_MONITORING_RECEIPT_HEADER)
+    ).toBeNull();
+  });
+
+  it("adds only a bounded receipt header while preserving exact JSON bytes", async () => {
+    vi.stubEnv("NODE_ENV", "development");
+    vi.stubEnv("BLABASE_WORK_BOARD_SHADOW_READ_ENABLED", "true");
+    vi.stubEnv("BLABASE_WORK_BOARD_MONITORING_ENABLED", "true");
+    vi.stubEnv("SUGGESTION_ACCESS_PASSWORD", "test-password");
+    const authority = monitoringAuthority();
+    vi.mocked(
+      evaluateLiveSemanticWorkSuggestionBoardWithMonitoringAuthority
+    ).mockResolvedValue({
+      response: authority.response,
+      monitoringAuthority: authority
+    });
+    vi.useFakeTimers();
+    vi.setSystemTime(MONITORING_NOW);
+
+    const response = await GET(localRequest(true));
+    const expectedBytes = JSON.stringify(
+      semanticContinuationWorkBoardResponseSchema.parse(authority.response)
+    );
+    const receipt = response.headers.get(
+      WORK_BOARD_MONITORING_RECEIPT_HEADER
+    );
+
+    expect(response.status).toBe(200);
+    await expect(response.text()).resolves.toBe(expectedBytes);
+    expect(receipt).not.toBeNull();
+    expect(
+      verifyWorkBoardMonitoringReceipt({
+        receipt: receipt!,
+        installationSecret: MONITORING_SECRET,
+        now: MONITORING_NOW
+      })
+    ).not.toBeNull();
+    expect(evaluateLiveSemanticWorkSuggestionBoard).not.toHaveBeenCalled();
+    expect(
+      evaluateLiveSemanticWorkSuggestionBoardWithMonitoringAuthority
+    ).toHaveBeenCalledOnce();
   });
 
   it("keeps the GET bytes actionless when the separate Setup action flag is enabled", async () => {

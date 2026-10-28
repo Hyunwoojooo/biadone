@@ -1,0 +1,12 @@
+# Local media tooling and intermediate repair files.
+/.video-build/
+/.pptx-repair/
+
+# Export packages and rendered media. Keep the authored web projects below.
+/output/*
+!/output/biadon-edu-campus/
+!/output/biadon-edu-curriculum/
+/output/biadon-edu-campus/preview*.png
+/output/biadon-edu-curriculum/*.mp4
+/output/biadon-edu-curriculum/design/implementation-*.png
+/output/biadon-edu-curriculum/design/motion-preview.png

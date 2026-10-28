@@ -1,0 +1,388 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "Blabee 로컬 배포·신뢰 경계 (As-Is)",
+    "output": "docs/architecture/c4/local-deployment.html",
+    "animation": "none",
+    "quality_profile": "showcase",
+    "repository": {
+      "url": "https://github.com/Hyunwoojooo/biadone.git",
+      "revision": "a352baa773e11a9be96c9d5b5aafca19aa5fb543"
+    },
+    "viewBox": [
+      1600,
+      960
+    ]
+  },
+  "components": [
+    {
+      "id": "codex",
+      "type": "external",
+      "label": "Codex CLI / host",
+      "sublabel": "사용자 네이티브 실행 경로",
+      "pos": [
+        30,
+        330
+      ],
+      "size": [
+        190,
+        80
+      ],
+      "sources": [
+        {
+          "path": "apps/blabee/TECH_SPEC.md",
+          "line": 89,
+          "end_line": 95,
+          "label": "Native Codex Preservation"
+        }
+      ]
+    },
+    {
+      "id": "plugin",
+      "type": "backend",
+      "label": "Installed Plugin Adapter",
+      "sublabel": "Hooks·MCP·launcher subprocess",
+      "pos": [
+        280,
+        320
+      ],
+      "size": [
+        220,
+        100
+      ],
+      "sources": [
+        {
+          "path": "apps/blabee/Plugin/blabee/hooks/hooks.json",
+          "line": 4,
+          "end_line": 54,
+          "label": "4 Hooks"
+        },
+        {
+          "path": "apps/blabee/Plugin/blabee/.mcp.json",
+          "line": 1,
+          "end_line": 11,
+          "label": "local MCP"
+        },
+        {
+          "path": "apps/blabee/src/coordinator-swift/Sources/BlabeeCoordinator/CodexPluginSetup.swift",
+          "line": 1331,
+          "end_line": 1362,
+          "label": "이전 설치 확인 후 명시적 전환"
+        }
+      ]
+    },
+    {
+      "id": "coordinator",
+      "type": "backend",
+      "label": "Coordinator Service",
+      "sublabel": "장기 daemon·UDS authority",
+      "pos": [
+        690,
+        300
+      ],
+      "size": [
+        230,
+        110
+      ],
+      "sources": [
+        {
+          "path": "apps/blabee/src/coordinator-swift/Sources/BlabeeCoordinator/main.swift",
+          "line": 772,
+          "end_line": 828,
+          "label": "service mode"
+        },
+        {
+          "path": "apps/blabee/scripts/build-internal-dmg.mjs",
+          "line": 1410,
+          "end_line": 1486,
+          "label": "앱 바이너리·빌드 번호 고정"
+        }
+      ]
+    },
+    {
+      "id": "pet",
+      "type": "frontend",
+      "label": "Pet UI Process",
+      "sublabel": "NSStatusItem·SwiftUI/AppKit",
+      "pos": [
+        700,
+        80
+      ],
+      "size": [
+        210,
+        80
+      ],
+      "sources": [
+        {
+          "path": "apps/blabee/src/coordinator-swift/Sources/BlabeeCoordinator/PetApplication.swift",
+          "line": 178,
+          "end_line": 188,
+          "label": "Pet process"
+        },
+        {
+          "path": "apps/blabee/src/coordinator-swift/README.md",
+          "line": 139,
+          "end_line": 142,
+          "label": "UDS-only access"
+        }
+      ]
+    },
+    {
+      "id": "managed",
+      "type": "backend",
+      "label": "Managed Bridge Process",
+      "sublabel": "명시적 blabee-codex 전용",
+      "tag": "experimental · live gate",
+      "pos": [
+        690,
+        650
+      ],
+      "size": [
+        230,
+        90
+      ],
+      "sources": [
+        {
+          "path": "apps/blabee/src/coordinator-swift/Sources/BlabeeCoordinator/main.swift",
+          "line": 1455,
+          "end_line": 1499,
+          "label": "managed-codex mode"
+        },
+        {
+          "path": "apps/blabee/src/coordinator-swift/docs/MANAGED_CODEX_TRUST.md",
+          "line": 7,
+          "end_line": 84,
+          "label": "trust boundary"
+        }
+      ]
+    },
+    {
+      "id": "private_codex",
+      "type": "external",
+      "label": "Private Codex Children",
+      "sublabel": "App Server stdio + TUI loopback",
+      "pos": [
+        1110,
+        650
+      ],
+      "size": [
+        240,
+        90
+      ],
+      "sources": [
+        {
+          "path": "apps/blabee/src/coordinator-swift/Sources/BlabeeCoordinator/ManagedCodexLauncher.swift",
+          "line": 245,
+          "end_line": 285,
+          "label": "시간 제한이 있는 자식 종료"
+        },
+        {
+          "path": "apps/blabee/src/coordinator-swift/Sources/BlabeeCoordinator/ManagedCodexLauncher.swift",
+          "line": 1369,
+          "end_line": 1578,
+          "label": "private 자식 실행·종료"
+        }
+      ]
+    },
+    {
+      "id": "journal",
+      "type": "database",
+      "label": "Application Support State",
+      "sublabel": "SQLite + external 0600 HMAC key",
+      "pos": [
+        1110,
+        300
+      ],
+      "size": [
+        240,
+        90
+      ],
+      "sources": [
+        {
+          "path": "apps/blabee/src/coordinator-swift/Sources/CoordinatorSwift/SQLiteJournal.swift",
+          "line": 240,
+          "end_line": 448,
+          "label": "journal commit"
+        }
+      ]
+    },
+    {
+      "id": "keychain",
+      "type": "security",
+      "label": "macOS Keychain",
+      "sublabel": "freshness anchor CAS",
+      "pos": [
+        1110,
+        480
+      ],
+      "size": [
+        240,
+        85
+      ],
+      "sources": [
+        {
+          "path": "apps/blabee/src/coordinator-swift/Sources/CoordinatorSwift/KeychainFreshnessAnchorStore.swift",
+          "line": 29,
+          "end_line": 156,
+          "label": "anchor store"
+        }
+      ]
+    }
+  ],
+  "boundaries": [
+    {
+      "kind": "region",
+      "label": "하나의 Blabee.app artifact · 서로 다른 process mode",
+      "wraps": [
+        "pet",
+        "coordinator",
+        "managed"
+      ],
+      "pad": 30
+    }
+  ],
+  "connections": [
+    {
+      "from": "codex",
+      "to": "plugin",
+      "label": "Hook / MCP spawn",
+      "labelAt": [
+        250,
+        300
+      ]
+    },
+    {
+      "from": "plugin",
+      "to": "coordinator",
+      "label": "UDS v1 · same UID · signed identity",
+      "variant": "security",
+      "labelAt": [
+        595,
+        285
+      ]
+    },
+    {
+      "from": "coordinator",
+      "to": "pet",
+      "label": "snapshot·focus",
+      "fromSide": "top",
+      "toSide": "bottom",
+      "labelAt": [
+        740,
+        225
+      ]
+    },
+    {
+      "from": "pet",
+      "to": "coordinator",
+      "label": "exact selection",
+      "variant": "emphasis",
+      "fromSide": "right",
+      "toSide": "right",
+      "via": [
+        [
+          970,
+          120
+        ],
+        [
+          970,
+          355
+        ]
+      ],
+      "labelAt": [
+        1020,
+        235
+      ]
+    },
+    {
+      "from": "coordinator",
+      "to": "journal",
+      "label": "atomic event batch",
+      "variant": "security",
+      "labelAt": [
+        1015,
+        435
+      ]
+    },
+    {
+      "from": "coordinator",
+      "to": "keychain",
+      "label": "freshness anchor CAS",
+      "variant": "security",
+      "fromSide": "bottom",
+      "toSide": "left",
+      "via": [
+        [
+          805,
+          522.5
+        ]
+      ],
+      "labelAt": [
+        970,
+        550
+      ]
+    },
+    {
+      "from": "managed",
+      "to": "coordinator",
+      "label": "approval + delivery ack",
+      "variant": "security",
+      "fromSide": "left",
+      "toSide": "left",
+      "via": [
+        [
+          620,
+          695
+        ],
+        [
+          620,
+          355
+        ]
+      ],
+      "labelAt": [
+        565,
+        530
+      ]
+    },
+    {
+      "from": "managed",
+      "to": "private_codex",
+      "label": "stdio JSONL + authenticated loopback WS",
+      "variant": "dashed",
+      "labelAt": [
+        1015,
+        625
+      ]
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "앱과 내부 DMG",
+      "items": [
+        "Pet·Coordinator·Managed Bridge는 같은 앱 번들의 executable을 공유",
+        "fresh 소스에서 빌드하고 arm64·CFBundleVersion을 대조",
+        "checksum·DMG 게시와 복구는 같은 빌드 identity에 결속"
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "로컬이 곧 완전 신뢰는 아님",
+      "items": [
+        "Plugin 설정은 신뢰 재검증·작업별 deadline·명시적 이전 설치 확인",
+        "UDS는 same UID·signed identity·operation allowlist를 검증",
+        "same-UID 키 접근·alias/hard-link는 잔여 위험"
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "내부 r8와 남은 게이트",
+      "items": [
+        "한 개발 Mac 설치·service 복구 기록은 제한된 과거 LIVE",
+        "깨끗한 Mac·Hook/Pet·관리형 왕복은 별도 검증 필요",
+        "ad-hoc 내부 DMG는 Developer ID·공증·공개 배포 승인이 아님"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,26 @@
+{
+  "schema_version": "1.0",
+  "kind": "blabee_runtime_event",
+  "event_id": "event_fixture_timeout_unknown_001",
+  "event_sequence": 36,
+  "event_type": "continuation_transport_timed_out_unknown",
+  "event_category": "transport",
+  "occurred_at": "2026-01-15T09:16:00Z",
+  "project_id": "project_fixture_alpha",
+  "session_id": "session_fixture_alpha",
+  "source_turn_id": "turn_fixture_001",
+  "source_prompt_id": "prompt_fixture_001",
+  "episode_id": "episode_fixture_alpha",
+  "episode_root_prompt_id": "prompt_fixture_001",
+  "episode_baseline_checkpoint_id": "checkpoint_fixture_before_prompt_001",
+  "decision_boundary_id": "boundary_fixture_timeout_001",
+  "boundary_sequence": 3,
+  "payload": {
+    "continuation_id": "continuation_fixture_timeout_001",
+    "transport_status": "timed_out_unknown",
+    "work_outcome_status": "unknown",
+    "automatic_retry": false,
+    "cancellation_inferred": false,
+    "failure_inferred": false
+  }
+}

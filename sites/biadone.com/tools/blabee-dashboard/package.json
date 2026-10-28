@@ -1,0 +1,13 @@
+{
+  "name": "blabee-dashboard",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "node scripts/dev.mjs",
+    "test": "node --test tests/server.test.mjs tests/analytics.test.mjs tests/client-data.test.mjs tests/auth.test.mjs tests/paths.test.mjs tests/dev-routing.test.mjs tests/route-package.test.mjs",
+    "test:database": "node --test tests/database.test.mjs",
+    "test:all": "node --test tests/*.test.mjs",
+    "prepare:deploy": "node scripts/prepare-site.mjs"
+  }
+}

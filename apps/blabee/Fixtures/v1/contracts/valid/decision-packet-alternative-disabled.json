@@ -1,0 +1,73 @@
+{
+  "schema_version": "1.0",
+  "kind": "blabee_decision_packet",
+  "interaction_id": "interaction_fixture_002",
+  "packet_id": "packet_fixture_002",
+  "revision": 1,
+  "project_id": "project_fixture_alpha",
+  "session_id": "session_fixture_alpha",
+  "source_turn_id": "turn_fixture_001",
+  "source_prompt_id": "prompt_fixture_001",
+  "episode_id": "episode_fixture_alpha",
+  "episode_root_prompt_id": "prompt_fixture_001",
+  "episode_baseline_checkpoint_id": "checkpoint_fixture_before_prompt_001",
+  "decision_boundary_id": "boundary_fixture_002",
+  "boundary_sequence": 2,
+  "valid_after_event_sequence": 20,
+  "sealed_at": "2026-01-15T09:02:00Z",
+  "expires_at": "2026-01-15T09:04:00Z",
+  "summary": "The fictional review is complete and has no safe alternative action.",
+  "evidence": [],
+  "risk": {
+    "level": "info",
+    "reasons": []
+  },
+  "checkpoint": {
+    "id": "checkpoint_fixture_before_prompt_001",
+    "coverage": "contract_only"
+  },
+  "choices": [
+    {
+      "slot": 1,
+      "kind": "recommended_action",
+      "enabled": true,
+      "disabled_reason": null,
+      "option_id": "option_fixture_recommended_002",
+      "action_id": "action_fixture_recommended_002",
+      "action": {
+        "title": "Record the fictional review result",
+        "objective": "Store the fictional review result in the local test journal.",
+        "constraints": [
+          "Do not contact external services."
+        ],
+        "done_when": [
+          "The local journal contains the fictional review result."
+        ]
+      }
+    },
+    {
+      "slot": 2,
+      "kind": "alternative_action",
+      "enabled": false,
+      "disabled_reason": "no_safe_meaningful_alternative",
+      "option_id": "option_fixture_alternative_002",
+      "action_id": null
+    },
+    {
+      "slot": 3,
+      "kind": "pause",
+      "enabled": true,
+      "disabled_reason": null,
+      "option_id": "option_fixture_pause_002",
+      "action_id": "action_fixture_pause_002"
+    },
+    {
+      "slot": 4,
+      "kind": "rollback",
+      "enabled": false,
+      "disabled_reason": "rollback_not_enabled_in_build",
+      "option_id": "option_fixture_rollback_002",
+      "action_id": null
+    }
+  ]
+}

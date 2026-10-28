@@ -38,6 +38,44 @@ describe("cross-conversation task lineage", () => {
     expect(merged).toHaveLength(2);
   });
 
+  it("merges a credential task expressed with bounded cross-source synonyms", () => {
+    const merged = mergeTaskLineage([
+      verifiedCandidateFixture({
+        conversationId: "structured",
+        canonicalKey: "공급자 샌드박스 자격 증명 교체 완료",
+        title: "공급자 샌드박스 자격 증명 교체"
+      }),
+      verifiedCandidateFixture({
+        conversationId: "screen",
+        canonicalKey: "샌드박스 공급자 테스트 비밀값을 교체한다",
+        title: "샌드박스 공급자 테스트 비밀값 교체"
+      })
+    ]);
+
+    expect(merged).toHaveLength(1);
+    expect(merged[0]?.sourceConversationIds).toEqual([
+      "screen",
+      "structured"
+    ]);
+  });
+
+  it("does not merge production and staging credential rotations", () => {
+    const merged = mergeTaskLineage([
+      verifiedCandidateFixture({
+        conversationId: "production",
+        canonicalKey: "프로덕션 자격 증명 교체",
+        title: "프로덕션 자격 증명 교체"
+      }),
+      verifiedCandidateFixture({
+        conversationId: "staging",
+        canonicalKey: "스테이징 환경 비밀값 교체",
+        title: "스테이징 환경 비밀값 교체"
+      })
+    ]);
+
+    expect(merged).toHaveLength(2);
+  });
+
   it("uses a later explicit completed state to suppress old open state", () => {
     const merged = mergeTaskLineage([
       verifiedCandidateFixture({
@@ -49,6 +87,23 @@ describe("cross-conversation task lineage", () => {
         conversationId: "conversation-b",
         conversationEndedAt: "2026-07-20T00:00:00.000Z",
         state: "completed"
+      })
+    ]);
+
+    expect(merged[0]?.state).toBe("completed");
+  });
+
+  it("keeps a terminal state over a later stale open observation", () => {
+    const merged = mergeTaskLineage([
+      verifiedCandidateFixture({
+        conversationId: "structured-completion",
+        conversationEndedAt: "2026-07-01T00:00:00.000Z",
+        state: "completed"
+      }),
+      verifiedCandidateFixture({
+        conversationId: "stale-screen-open",
+        conversationEndedAt: "2026-07-20T00:00:00.000Z",
+        state: "not_started"
       })
     ]);
 

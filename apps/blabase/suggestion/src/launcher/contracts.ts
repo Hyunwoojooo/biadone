@@ -5,11 +5,14 @@ import {
   rootSyncRevisionSchema
 } from "../rootContext/contracts";
 import { currentFocusReasonCodeSchema } from "../currentFocus/contracts";
+import { isLauncherWorkBoardPublicTitleSafe } from "./workBoardTextSafety";
 
 export const LAUNCHER_IPC_CONTRACT =
   "blabase-launcher-ipc-v1" as const;
 export const LAUNCHER_ATTENTION_CONTRACT =
   "blabase-launcher-attention-v2" as const;
+export const LAUNCHER_WORK_BOARD_CONTRACT =
+  "blabase-launcher-work-board-v1" as const;
 export const LAUNCHER_EXECUTION_CONTRACT =
   "blabase-launcher-execution-v1" as const;
 export const LAUNCHER_STATUS_CONTRACT =
@@ -40,6 +43,14 @@ export const launcherAttentionGetRequestSchema = z
   .object({
     ...launcherRequestEnvelopeShape,
     method: z.literal("attention.get"),
+    params: z.object({ refresh: z.boolean() }).strict()
+  })
+  .strict();
+
+export const launcherWorkBoardGetRequestSchema = z
+  .object({
+    ...launcherRequestEnvelopeShape,
+    method: z.literal("work-board.get"),
     params: z.object({ refresh: z.boolean() }).strict()
   })
   .strict();
@@ -78,6 +89,7 @@ export const launcherIpcRequestSchema = z.discriminatedUnion(
   "method",
   [
     launcherAttentionGetRequestSchema,
+    launcherWorkBoardGetRequestSchema,
     launcherAttentionExecuteRequestSchema,
     launcherCommandGetRequestSchema,
     launcherStatusGetRequestSchema
@@ -445,6 +457,178 @@ export const launcherAttentionProjectionSchema = z
     }
   });
 
+export const launcherWorkBoardCaveatCodeSchema = z.enum([
+  "CAVEAT_CANDIDATE_SET_INCOMPLETE",
+  "CAVEAT_DEFAULT_TIE_BREAK_USED",
+  "CAVEAT_GITHUB_PR_ACTIONABILITY_PARTIAL",
+  "CAVEAT_MANAGED_FAILURE_INSPECTION_ONLY",
+  "CAVEAT_REVIEW_DRAFT_UNKNOWN",
+  "CAVEAT_UPSTREAM_OBJECTS_REMAIN_NON_CANDIDATES",
+  "EXPLICIT_MAPPING_CONFIRMATION_REQUIRED",
+  "IDENTITY_CLARIFICATION_REQUIRED",
+  "SOURCE_COVERAGE_PARTIAL",
+  "SOURCE_COVERAGE_UNKNOWN",
+  "SOURCE_METADATA_ONLY",
+  "TERMINAL_STATE_UNKNOWN"
+]);
+
+export const launcherWorkBoardItemSchema = z
+  .object({
+    lane: z.enum(["attention", "continuation", "setup"]),
+    title: z
+      .string()
+      .min(1)
+      .max(120)
+      .refine(isLauncherWorkBoardPublicTitleSafe, {
+        message: "Launcher Work Board title is not public-safe."
+      }),
+    evidenceBand: z.enum([
+      "verified_attention",
+      "exact",
+      "corroborated",
+      "single_source",
+      "setup"
+    ]),
+    caveatCodes: z
+      .array(launcherWorkBoardCaveatCodeSchema)
+      .max(8),
+    expiresAt: z
+      .string()
+      .datetime({ precision: 3 })
+      .nullable(),
+    capability: z.literal("display"),
+    action: z.null()
+  })
+  .strict()
+  .superRefine((item, context) => {
+    const evidenceMatchesLane =
+      (item.lane === "attention" &&
+        item.evidenceBand === "verified_attention") ||
+      (item.lane === "setup" && item.evidenceBand === "setup") ||
+      (item.lane === "continuation" &&
+        ["exact", "corroborated", "single_source"].includes(
+          item.evidenceBand
+        ));
+    if (!evidenceMatchesLane) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["evidenceBand"],
+        message: "Launcher Work Board lane and evidence must agree."
+      });
+    }
+    if (
+      (item.lane === "attention" && item.expiresAt !== null) ||
+      (item.lane !== "attention" && item.expiresAt === null)
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["expiresAt"],
+        message:
+          "Only Continuation and Setup launcher items use visibility expiry."
+      });
+    }
+    if (
+      new Set(item.caveatCodes).size !== item.caveatCodes.length ||
+      item.caveatCodes.join("|") !==
+        [...item.caveatCodes].sort().join("|")
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["caveatCodes"],
+        message: "Launcher Work Board caveats must be canonical and unique."
+      });
+    }
+  });
+
+export const launcherWorkBoardProjectionSchema = z
+  .object({
+    contract: z.literal(LAUNCHER_WORK_BOARD_CONTRACT),
+    generatedAt: z.string().datetime({ precision: 3 }),
+    mode: z.enum(["full", "active_only_fallback"]),
+    prominentLane: z.enum([
+      "attention",
+      "continuation",
+      "setup",
+      "none"
+    ]),
+    continuationStatus: z.enum([
+      "available",
+      "empty",
+      "unavailable"
+    ]),
+    items: z.array(launcherWorkBoardItemSchema).max(3)
+  })
+  .strict()
+  .superRefine((projection, context) => {
+    if (
+      projection.prominentLane === "none"
+        ? projection.items.length !== 0
+        : projection.items[0]?.lane !== projection.prominentLane
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["items"],
+        message: "Launcher Work Board primary lane is inconsistent."
+      });
+    }
+    const hasContinuation = projection.items.some(
+      (item) => item.lane === "continuation" || item.lane === "setup"
+    );
+    if (
+      (hasContinuation &&
+        projection.continuationStatus !== "available") ||
+      (!hasContinuation &&
+        projection.continuationStatus === "available" &&
+        projection.items.length === 0)
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["continuationStatus"],
+        message: "Launcher Work Board continuation status is inconsistent."
+      });
+    }
+    if (
+      projection.items.some(
+        (item) =>
+          item.expiresAt !== null &&
+          Date.parse(item.expiresAt) <= Date.parse(projection.generatedAt)
+      )
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["items"],
+        message: "Launcher Work Board items must expire after generation."
+      });
+    }
+    if (
+      projection.mode === "active_only_fallback" &&
+      (projection.continuationStatus !== "unavailable" ||
+        projection.items.some((item) => item.lane !== "attention"))
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["mode"],
+        message:
+          "Launcher active-only fallback can expose only unavailable Attention."
+      });
+    }
+    const laneRanks = { attention: 0, continuation: 1, setup: 2 } as const;
+    if (
+      projection.items.some(
+        (item, index) =>
+          index > 0 &&
+          laneRanks[projection.items[index - 1]!.lane] >
+            laneRanks[item.lane]
+      )
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["items"],
+        message: "Launcher Work Board item order is not canonical."
+      });
+    }
+  });
+
 export const launcherExecutionProjectionSchema = z
   .object({
     contract: z.literal(LAUNCHER_EXECUTION_CONTRACT),
@@ -502,6 +686,7 @@ export const launcherIpcSuccessResponseSchema = z
     ok: z.literal(true),
     result: z.union([
       launcherAttentionProjectionSchema,
+      launcherWorkBoardProjectionSchema,
       launcherExecutionProjectionSchema,
       launcherStatusProjectionSchema
     ])
@@ -527,6 +712,9 @@ export type LauncherIpcRequest = z.infer<
 >;
 export type LauncherAttentionGetRequest = z.infer<
   typeof launcherAttentionGetRequestSchema
+>;
+export type LauncherWorkBoardGetRequest = z.infer<
+  typeof launcherWorkBoardGetRequestSchema
 >;
 export type LauncherAttentionExecuteRequest = z.infer<
   typeof launcherAttentionExecuteRequestSchema
@@ -563,6 +751,15 @@ export type LauncherSourceDiagnostic = z.infer<
 >;
 export type LauncherAttentionProjection = z.infer<
   typeof launcherAttentionProjectionSchema
+>;
+export type LauncherWorkBoardCaveatCode = z.infer<
+  typeof launcherWorkBoardCaveatCodeSchema
+>;
+export type LauncherWorkBoardItem = z.infer<
+  typeof launcherWorkBoardItemSchema
+>;
+export type LauncherWorkBoardProjection = z.infer<
+  typeof launcherWorkBoardProjectionSchema
 >;
 export type LauncherExecutionProjection = z.infer<
   typeof launcherExecutionProjectionSchema

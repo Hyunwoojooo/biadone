@@ -43,7 +43,11 @@ import {
   wakeSourceSyncStatus
 } from "../sync/useSourceSync";
 
-export function AttentionLab() {
+export function AttentionLab({
+  semanticWriteEnabled = false
+}: {
+  semanticWriteEnabled?: boolean;
+}) {
   const [current, setCurrent] = useState<AttentionApiResponse | null>(
     null
   );
@@ -298,6 +302,7 @@ export function AttentionLab() {
         }
         panelRef={continuationSuggestionRef}
         onIntentConfirmed={() => loadPreview(true)}
+        semanticWriteEnabled={semanticWriteEnabled}
       />
       <CurrentFocusDiagnosticsPanel response={current} />
       <EligibilityShadowPanel
@@ -342,7 +347,8 @@ export function ContinuationShadowPanel({
   activeDecisionStatus,
   panelRef,
   onIntentConfirmed,
-  semanticPresentation = null
+  semanticPresentation = null,
+  semanticWriteEnabled = false
 }: {
   response: WorkBoardApiResponse | null;
   loadFailed: boolean;
@@ -350,6 +356,7 @@ export function ContinuationShadowPanel({
   panelRef?: RefObject<HTMLElement | null>;
   onIntentConfirmed?: () => Promise<void> | void;
   semanticPresentation?: SemanticContinuationTitlePresentation | null;
+  semanticWriteEnabled?: boolean;
 }) {
   const state = continuationShadowState(response, loadFailed);
   const suggestionLabel = continuationSuggestionLabel(response, state.label);
@@ -401,6 +408,7 @@ export function ContinuationShadowPanel({
           response={response}
           semanticPresentation={semanticPresentation}
           onIntentConfirmed={onIntentConfirmed}
+          semanticWriteEnabled={semanticWriteEnabled}
         />
       ) : (
         <p className="labEmpty" role={loadFailed ? "alert" : "status"}>
@@ -414,11 +422,13 @@ export function ContinuationShadowPanel({
 function WorkBoardPreview({
   response,
   semanticPresentation,
-  onIntentConfirmed
+  onIntentConfirmed,
+  semanticWriteEnabled
 }: {
   response: WorkBoardReadyResponse;
   semanticPresentation: SemanticContinuationTitlePresentation | null;
   onIntentConfirmed?: () => Promise<void> | void;
+  semanticWriteEnabled: boolean;
 }) {
   const { board } = response;
   const primaryDisplayTitle =
@@ -481,9 +491,11 @@ function WorkBoardPreview({
         <p className="labEmpty">현재 Board에 표시할 primary가 없습니다.</p>
       )}
 
-      {semanticIntentEligiblePrimary(response) ? (
+      {semanticWriteEnabled && semanticIntentEligiblePrimary(response) ? (
         <SemanticContinuationIntentForm
+          key={`${response.board.primary.item.itemRef}:${response.board.primary.item.workContextRef}:${board.generatedAt}`}
           item={response.board.primary}
+          baseGeneratedAt={board.generatedAt}
           onConfirmed={onIntentConfirmed}
         />
       ) : null}
@@ -522,17 +534,30 @@ function WorkBoardPreview({
 
 function SemanticContinuationIntentForm({
   item,
+  baseGeneratedAt,
   onConfirmed
 }: {
   item: WorkBoardDisplayItem;
+  baseGeneratedAt: string;
   onConfirmed?: () => Promise<void> | void;
 }) {
   const [subjectLabel, setSubjectLabel] = useState("");
   const [state, setState] = useState<
     "idle" | "saving" | "confirmed" | "error"
   >("idle");
+  const requestGenerationRef = useRef(0);
+  const mountedRef = useRef(true);
   const previewTitle = semanticContinuationTitlePreview(subjectLabel);
   const workContextRef = item.item.workContextRef;
+  const targetGeneration = `${item.item.itemRef}:${workContextRef ?? "none"}:${baseGeneratedAt}`;
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      requestGenerationRef.current += 1;
+    };
+  }, [targetGeneration]);
   if (
     item.lane !== "continuation" ||
     workContextRef === null
@@ -543,6 +568,7 @@ function SemanticContinuationIntentForm({
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    const requestGeneration = ++requestGenerationRef.current;
     setState("saving");
     try {
       const response = await confirmWorkBoardIntent({
@@ -552,6 +578,12 @@ function SemanticContinuationIntentForm({
         workContextRef: confirmedWorkContextRef,
         explicitUserConfirmation: true
       });
+      if (
+        !mountedRef.current ||
+        requestGenerationRef.current !== requestGeneration
+      ) {
+        return;
+      }
       if (response.status !== "confirmed") {
         setState("error");
         return;
@@ -559,6 +591,12 @@ function SemanticContinuationIntentForm({
       setState("confirmed");
       await onConfirmed?.();
     } catch {
+      if (
+        !mountedRef.current ||
+        requestGenerationRef.current !== requestGeneration
+      ) {
+        return;
+      }
       setState("error");
     }
   }
@@ -573,7 +611,11 @@ function SemanticContinuationIntentForm({
           id="semantic-continuation-subject"
           name="subjectLabel"
           value={subjectLabel}
-          onChange={(event) => setSubjectLabel(event.target.value)}
+          onChange={(event) => {
+            requestGenerationRef.current += 1;
+            setSubjectLabel(event.target.value);
+            setState("idle");
+          }}
           minLength={1}
           maxLength={80}
           autoComplete="off"

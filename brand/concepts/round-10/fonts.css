@@ -1,0 +1,36 @@
+/* Review aliases only. Original font binaries are unmodified. */
+@font-face {
+  font-family: "Review Wanted";
+  src: url("../round-03/assets/fonts/wanted-sans-variable.woff2") format("woff2");
+  font-weight: 400 1000;
+  font-style: normal;
+  font-display: block;
+}
+@font-face {
+  font-family: "Review Neo";
+  src: url("./assets/fonts/NanumSquareNeoTTF-bRg.woff2") format("woff2");
+  font-weight: 400;
+  font-style: normal;
+  font-display: block;
+}
+@font-face {
+  font-family: "Review Neo";
+  src: url("./assets/fonts/NanumSquareNeoTTF-cBd.woff2") format("woff2");
+  font-weight: 700;
+  font-style: normal;
+  font-display: block;
+}
+@font-face {
+  font-family: "Review LINE";
+  src: url("./assets/fonts/LINESeedKR-Rg.woff2") format("woff2");
+  font-weight: 400;
+  font-style: normal;
+  font-display: block;
+}
+@font-face {
+  font-family: "Review LINE";
+  src: url("./assets/fonts/LINESeedKR-Bd.woff2") format("woff2");
+  font-weight: 700;
+  font-style: normal;
+  font-display: block;
+}

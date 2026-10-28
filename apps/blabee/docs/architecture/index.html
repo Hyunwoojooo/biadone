@@ -1,0 +1,1358 @@
+<!doctype html>
+<html lang="ko" data-theme="light">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <meta name="blabee-snapshot-revision" content="a352baa773e11a9be96c9d5b5aafca19aa5fb543">
+  <meta name="blabee-snapshot-date" content="2026-09-07">
+  <meta name="blabee-snapshot-basis" content="committed-git-blobs">
+  <link rel="icon" href="../../Packaging/macos/Resources/BlabeeMenuBar.svg" type="image/svg+xml">
+  <title>Blabee Architecture</title>
+  <meta name="description" content="Blabee의 C4, runtime, arc42, ADR, evidence를 한곳에서 읽는 As-Is 아키텍처 포털">
+  <style>
+    :root {
+      --brand: #f8b900;
+      --brand-strong: #d88900;
+      --brand-soft: #fff7dc;
+      --canvas: #f6f8fb;
+      --surface: #ffffff;
+      --surface-muted: #f9fafc;
+      --text: #102039;
+      --text-soft: #526178;
+      --text-faint: #64748b;
+      --line: #dce3ec;
+      --line-strong: #bcc8d7;
+      --shadow: 0 14px 34px rgba(20, 39, 66, 0.08);
+      --cyan: #0a9eb6;
+      --emerald: #099979;
+      --rose: #df4166;
+      --violet: #7757dc;
+      --focus: #f8b900;
+      --sidebar: 288px;
+      --header: 72px;
+      --sans: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      --mono: "SFMono-Regular", Menlo, Monaco, Consolas, monospace;
+    }
+
+    html[data-theme="dark"] {
+      --brand: #fee715;
+      --brand-strong: #fee715;
+      --brand-soft: #2b2a08;
+      --canvas: #020712;
+      --surface: #08111f;
+      --surface-muted: #0d1828;
+      --text: #f3f6fb;
+      --text-soft: #bac4d4;
+      --text-faint: #9aa9bd;
+      --line: #203049;
+      --line-strong: #3a4b65;
+      --shadow: none;
+      --cyan: #22d3ee;
+      --emerald: #34d399;
+      --rose: #fb7185;
+      --violet: #a78bfa;
+      --focus: #fee715;
+    }
+
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      min-width: 320px;
+      min-height: 100svh;
+      overflow-x: hidden;
+      color: var(--text);
+      background: var(--canvas);
+      font-family: var(--sans);
+      font-size: 1.125rem;
+      line-height: 1.65;
+      -webkit-font-smoothing: antialiased;
+    }
+    button, input, a { font: inherit; }
+    button { color: inherit; }
+    a { color: inherit; }
+    img { display: block; max-width: 100%; }
+
+    :focus-visible {
+      outline: 3px solid var(--focus);
+      outline-offset: 3px;
+    }
+
+    .skip-link {
+      position: fixed;
+      z-index: 100;
+      top: 12px;
+      left: 12px;
+      transform: translateY(-160%);
+      padding: 10px 14px;
+      color: #111;
+      background: var(--brand);
+      border-radius: 8px;
+      font-weight: 750;
+    }
+    .skip-link:focus { transform: translateY(0); }
+
+    .app-shell {
+      display: grid;
+      grid-template-columns: var(--sidebar) minmax(0, 1fr);
+      min-height: 100svh;
+    }
+
+    .sidebar {
+      position: sticky;
+      top: 0;
+      z-index: 30;
+      display: flex;
+      flex-direction: column;
+      width: var(--sidebar);
+      height: 100svh;
+      overflow-y: auto;
+      background: var(--surface);
+      border-right: 1px solid var(--line);
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      width: 100%;
+      min-height: var(--header);
+      padding: 14px 18px;
+      border: 0;
+      border-bottom: 1px solid var(--line);
+      color: inherit;
+      background: var(--surface);
+      text-align: left;
+      text-decoration: none;
+      cursor: pointer;
+    }
+    .brand-plate {
+      display: grid;
+      place-items: center;
+      width: 42px;
+      height: 38px;
+      flex: 0 0 auto;
+      background: var(--brand);
+      clip-path: polygon(25% 0, 75% 0, 100% 50%, 75% 100%, 25% 100%, 0 50%);
+    }
+    .brand-plate img { width: 25px; height: 22px; }
+    .brand-copy { min-width: 0; }
+    .brand-name { display: block; font-size: 18px; font-weight: 820; letter-spacing: -0.025em; }
+    .brand-sub { display: block; margin-top: 3px; color: var(--text-faint); font-size: 0.8125rem; line-height: 1.5; }
+
+    .nav-scroll { padding: 18px 10px 28px; }
+    .nav-group + .nav-group { margin-top: 18px; }
+    .nav-heading {
+      margin: 0 10px 7px;
+      color: var(--text-faint);
+      font-family: var(--mono);
+      font-size: 0.8125rem;
+      font-weight: 750;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+    }
+    .nav-item {
+      position: relative;
+      display: flex;
+      align-items: center;
+      width: 100%;
+      min-height: 44px;
+      padding: 9px 12px 9px 18px;
+      border: 0;
+      border-radius: 8px;
+      color: var(--text-soft);
+      background: transparent;
+      text-align: left;
+      cursor: pointer;
+      transition: color 150ms ease, background 150ms ease;
+    }
+    .nav-item:hover { color: var(--text); background: var(--surface-muted); }
+    .nav-item[aria-current="page"] {
+      color: var(--text);
+      background: var(--brand-soft);
+      font-weight: 760;
+    }
+    .nav-item[aria-current="page"]::before {
+      content: "";
+      position: absolute;
+      inset: 8px auto 8px 0;
+      width: 3px;
+      border-radius: 99px;
+      background: var(--brand-strong);
+    }
+    .nav-code {
+      min-width: 36px;
+      margin-right: 8px;
+      color: var(--text-faint);
+      font-family: var(--mono);
+      font-size: 0.8125rem;
+      font-weight: 700;
+    }
+    .nav-item[aria-current="page"] .nav-code { color: var(--brand-strong); }
+
+    .sidebar-footer {
+      margin-top: auto;
+      padding: 14px 18px 20px;
+      color: var(--text-faint);
+      border-top: 1px solid var(--line);
+      font-family: var(--mono);
+      font-size: 0.8125rem;
+      line-height: 1.7;
+    }
+
+    .main-shell { min-width: 0; }
+    .topbar {
+      position: sticky;
+      top: 0;
+      z-index: 20;
+      display: flex;
+      align-items: center;
+      min-height: var(--header);
+      padding: 12px clamp(18px, 3vw, 38px);
+      background: color-mix(in srgb, var(--surface) 94%, transparent);
+      border-bottom: 1px solid var(--line);
+      backdrop-filter: blur(14px);
+    }
+    .mobile-menu { display: none; }
+    .breadcrumb {
+      min-width: 0;
+      margin-right: auto;
+      color: var(--text-faint);
+      font-family: var(--mono);
+      font-size: 0.875rem;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .breadcrumb strong { color: var(--text); font-weight: 730; }
+
+    .top-actions { display: flex; align-items: center; gap: 10px; }
+    .search-wrap { position: relative; width: min(32vw, 330px); }
+    .search-input {
+      width: 100%;
+      min-height: 44px;
+      padding: 10px 40px 10px 40px;
+      color: var(--text);
+      background: var(--surface-muted);
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      font-size: 1rem;
+    }
+    .search-input::placeholder { color: var(--text-faint); }
+    .search-icon {
+      position: absolute;
+      top: 50%;
+      left: 14px;
+      width: 15px;
+      height: 15px;
+      transform: translateY(-50%);
+      color: var(--text-faint);
+      pointer-events: none;
+    }
+    .search-key {
+      position: absolute;
+      top: 50%;
+      right: 10px;
+      transform: translateY(-50%);
+      color: var(--text-faint);
+      font-family: var(--mono);
+      font-size: 10px;
+    }
+    .search-results {
+      position: absolute;
+      z-index: 50;
+      top: calc(100% + 8px);
+      right: 0;
+      left: 0;
+      max-height: min(430px, 60vh);
+      overflow-y: auto;
+      padding: 6px;
+      background: var(--surface);
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      box-shadow: var(--shadow);
+    }
+    .search-results[hidden] { display: none; }
+    .search-result {
+      display: block;
+      width: 100%;
+      padding: 10px;
+      border: 0;
+      border-radius: 7px;
+      color: var(--text);
+      background: transparent;
+      text-align: left;
+      cursor: pointer;
+    }
+    .search-result:hover, .search-result:focus-visible { background: var(--surface-muted); }
+    .search-result small { display: block; margin-top: 3px; color: var(--text-faint); }
+    .search-empty { padding: 18px 12px; color: var(--text-soft); font-size: 1rem; }
+
+    .icon-button {
+      display: inline-grid;
+      place-items: center;
+      min-width: 44px;
+      height: 44px;
+      padding: 0 12px;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      color: var(--text);
+      background: var(--surface);
+      cursor: pointer;
+    }
+    .icon-button:hover { border-color: var(--line-strong); background: var(--surface-muted); }
+    .icon-button.mobile-menu { display: none; }
+    .theme-label { margin-left: 7px; font-size: 0.9375rem; font-weight: 700; }
+
+    .content { padding: 24px clamp(18px, 3vw, 38px) 54px; }
+    .snapshot-notice {
+      display: flex;
+      align-items: center;
+      gap: 12px 20px;
+      margin-bottom: 20px;
+      padding: 14px 18px;
+      border: 1px solid var(--line);
+      border-left: 3px solid var(--brand-strong);
+      border-radius: 10px;
+      background: var(--brand-soft);
+    }
+    .snapshot-copy { min-width: 0; }
+    .snapshot-title { margin-bottom: 4px; font-size: 0.9375rem; font-weight: 780; line-height: 1.5; }
+    .snapshot-detail { margin-bottom: 0; color: var(--text-soft); font-size: 0.9375rem; line-height: 1.6; }
+    .snapshot-link {
+      display: inline-flex;
+      align-items: center;
+      flex: 0 0 auto;
+      min-height: 44px;
+      margin-left: auto;
+      font-size: 1rem;
+      font-weight: 740;
+      text-underline-offset: 3px;
+    }
+    .view[hidden] { display: none !important; }
+    .view { animation: enter 180ms ease-out both; }
+    @keyframes enter { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+
+    .page-heading {
+      display: flex;
+      align-items: flex-start;
+      gap: 22px;
+      margin-bottom: 22px;
+    }
+    .page-heading-copy { min-width: 0; margin-right: auto; }
+    .page-kicker {
+      margin: 0 0 7px;
+      color: var(--cyan);
+      font-family: var(--mono);
+      font-size: 0.8125rem;
+      font-weight: 800;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+    }
+    h1, h2, h3, p { margin-top: 0; }
+    h1 { margin-bottom: 8px; font-size: clamp(26px, 3vw, 40px); line-height: 1.2; letter-spacing: -0.045em; }
+    h2 { margin-bottom: 8px; font-size: clamp(22px, 2.4vw, 31px); line-height: 1.3; letter-spacing: -0.035em; }
+    h3 { font-size: 1.25rem; line-height: 1.4; letter-spacing: -0.02em; }
+    .lede { max-width: 80ch; margin-bottom: 0; color: var(--text-soft); font-size: 1.125rem; line-height: 1.8; }
+
+    .button, .text-link {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 44px;
+      gap: 8px;
+      padding: 10px 15px;
+      border: 1px solid var(--line);
+      border-radius: 9px;
+      color: var(--text);
+      background: var(--surface);
+      text-decoration: none;
+      font-size: 1rem;
+      font-weight: 740;
+      cursor: pointer;
+    }
+    .button:hover, .text-link:hover { border-color: var(--line-strong); background: var(--surface-muted); }
+    .button.primary { color: #151515; background: var(--brand); border-color: var(--brand); }
+    .button:disabled { opacity: 0.45; cursor: not-allowed; }
+
+    .overview-hero {
+      display: grid;
+      grid-template-columns: minmax(0, 1.15fr) minmax(360px, 0.85fr);
+      min-height: 360px;
+      overflow: hidden;
+      background: var(--surface);
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      box-shadow: var(--shadow);
+    }
+    .overview-copy { padding: clamp(28px, 4vw, 58px); align-self: center; }
+    .overview-copy h1 { max-width: 720px; font-size: clamp(34px, 4.5vw, 62px); }
+    .overview-copy .lede { max-width: 680px; font-size: 1.125rem; }
+    .overview-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 26px; }
+    .overview-signal {
+      position: relative;
+      min-height: 360px;
+      background:
+        linear-gradient(var(--line) 1px, transparent 1px),
+        linear-gradient(90deg, var(--line) 1px, transparent 1px),
+        var(--surface-muted);
+      background-size: 34px 34px;
+      border-left: 1px solid var(--line);
+    }
+    .signal-node {
+      position: absolute;
+      display: grid;
+      place-items: center;
+      min-width: 112px;
+      min-height: 66px;
+      padding: 12px;
+      color: var(--text);
+      background: var(--surface);
+      border: 1px solid var(--line-strong);
+      border-radius: 10px;
+      font-family: var(--mono);
+      font-size: 0.8125rem;
+      text-align: center;
+    }
+    .signal-node.core { inset: 42% auto auto 50%; transform: translate(-50%, -50%); border-color: var(--emerald); }
+    .signal-node.codex { top: 44px; left: 50%; transform: translateX(-50%); }
+    .signal-node.pet { bottom: 42px; left: 48px; border-color: var(--cyan); }
+    .signal-node.journal { right: 42px; bottom: 42px; border-color: var(--violet); }
+    .signal-line { position: absolute; background: var(--emerald); opacity: 0.8; }
+    .signal-line.v { top: 110px; left: 50%; width: 1px; height: 62px; }
+    .signal-line.h { top: 58%; left: 23%; width: 54%; height: 1px; }
+
+    .fact-rail {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      margin-top: 18px;
+      background: var(--surface);
+      border: 1px solid var(--line);
+      border-radius: 12px;
+    }
+    .fact { padding: 19px 22px; }
+    .fact + .fact { border-left: 1px solid var(--line); }
+    .fact strong { display: block; font-family: var(--mono); font-size: 26px; }
+    .fact span { display: block; margin-top: 5px; color: var(--text-soft); font-size: 0.9375rem; }
+
+    .section-block { margin-top: 34px; }
+    .section-title-row { display: flex; align-items: end; gap: 16px; margin-bottom: 14px; }
+    .section-title-row h2 { margin: 0; }
+    .section-title-row p { margin: 0 0 3px auto; color: var(--text-faint); font-size: 0.9375rem; }
+    .reading-path {
+      display: grid;
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+      background: var(--surface);
+      border-block: 1px solid var(--line);
+    }
+    .path-step {
+      position: relative;
+      min-height: 118px;
+      padding: 22px 18px;
+      border: 0;
+      color: var(--text);
+      background: transparent;
+      text-align: left;
+      cursor: pointer;
+    }
+    .path-step + .path-step { border-left: 1px solid var(--line); }
+    .path-step:hover { background: var(--surface-muted); }
+    .path-number {
+      display: grid;
+      place-items: center;
+      width: 31px;
+      height: 31px;
+      margin-bottom: 12px;
+      border: 1px solid var(--line-strong);
+      border-radius: 50%;
+      font-family: var(--mono);
+      font-size: 11px;
+    }
+    .path-step:first-child .path-number { color: #151515; border-color: var(--brand); background: var(--brand); }
+    .path-step strong { display: block; font-size: 1rem; }
+    .path-step small { display: block; margin-top: 4px; color: var(--text-faint); font-size: 0.9375rem; line-height: 1.5; }
+
+    .principles {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 0;
+      border-block: 1px solid var(--line);
+    }
+    .principle { padding: 24px 22px; }
+    .principle + .principle { border-left: 1px solid var(--line); }
+    .principle-marker { width: 22px; height: 3px; margin-bottom: 17px; background: var(--emerald); }
+    .principle:nth-child(2) .principle-marker { background: var(--cyan); }
+    .principle:nth-child(3) .principle-marker { background: var(--rose); }
+    .principle p { margin-bottom: 0; color: var(--text-soft); font-size: 1.0625rem; line-height: 1.8; }
+
+    .diagram-layout {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr);
+      gap: 16px;
+      align-items: stretch;
+    }
+    .diagram-stage { min-width: 0; }
+    .diagram-zoom { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 10px; }
+    .diagram-zoom output { min-width: 145px; margin-left: auto; color: var(--text-soft); font-family: var(--mono); font-size: 0.9375rem; text-align: right; }
+    .diagram-hint { margin-bottom: 14px; color: var(--text-soft); font-size: 0.9375rem; line-height: 1.7; }
+    .diagram-frame {
+      position: relative;
+      height: clamp(560px, 72svh, 900px);
+      min-height: 560px;
+      overflow: hidden;
+      background: var(--surface);
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      box-shadow: var(--shadow);
+    }
+    .diagram-frame iframe { width: 100%; height: 100%; border: 0; background: var(--surface); }
+    .iframe-fallback {
+      display: inline-block;
+      margin-top: 12px;
+      padding: 8px 10px;
+      color: var(--text-soft);
+      background: var(--surface);
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      font-size: 0.875rem;
+    }
+    .diagram-controls {
+      display: grid;
+      grid-template-columns: 1fr auto 1fr;
+      align-items: center;
+      gap: 12px;
+      margin-top: 12px;
+    }
+    .diagram-controls .button:last-child { justify-self: end; }
+    .diagram-position { color: var(--text-faint); font-family: var(--mono); font-size: 0.875rem; text-align: center; }
+
+    .context-card {
+      min-width: 0;
+      padding: 20px;
+      background: var(--surface);
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      box-shadow: var(--shadow);
+    }
+    .context-card summary { min-height: 44px; font-weight: 760; cursor: pointer; }
+    .context-content { margin-top: 18px; }
+    .context-card p, .context-card li, .context-links { overflow-wrap: anywhere; }
+    .context-card h3 { margin-bottom: 10px; }
+    .context-card p, .context-card li { color: var(--text-soft); font-size: 1.0625rem; line-height: 1.8; }
+    .context-card ul { margin: 0; padding-left: 18px; }
+    .context-card hr { height: 1px; margin: 18px 0; border: 0; background: var(--line); }
+    .evidence-list { display: grid; gap: 10px; }
+    .evidence-item { display: grid; grid-template-columns: 9px 1fr; gap: 9px; align-items: start; }
+    .evidence-dot { width: 8px; height: 8px; margin-top: 4px; border-radius: 50%; background: var(--cyan); }
+    .evidence-item:nth-child(2) .evidence-dot { background: var(--emerald); }
+    .evidence-item:nth-child(3) .evidence-dot { background: var(--rose); }
+    .context-links { display: grid; gap: 8px; margin-top: 18px; }
+    .context-links .text-link { justify-content: flex-start; width: 100%; }
+
+    .document-view { max-width: 1080px; }
+    .document-toolbar { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 16px; }
+    .doc-list { border-top: 1px solid var(--line); }
+    .doc-row { border-bottom: 1px solid var(--line); }
+    .doc-row summary {
+      display: grid;
+      grid-template-columns: minmax(110px, 0.2fr) minmax(0, 1fr) auto;
+      align-items: center;
+      gap: 18px;
+      min-height: 70px;
+      padding: 14px 4px;
+      list-style: none;
+      cursor: pointer;
+    }
+    .doc-row summary::-webkit-details-marker { display: none; }
+    .doc-index { color: var(--text-faint); font-family: var(--mono); font-size: 0.875rem; }
+    .doc-title { font-weight: 740; line-height: 1.4; }
+    .doc-chevron { color: var(--text-faint); transition: transform 150ms ease; }
+    .doc-row[open] .doc-chevron { transform: rotate(180deg); }
+    .doc-body { max-width: 940px; padding: 4px 4px 28px 128px; color: var(--text-soft); font-size: 1.125rem; line-height: 1.85; overflow-wrap: anywhere; }
+    .doc-body p:last-child { margin-bottom: 0; }
+    .doc-meta { margin-top: 16px; color: var(--text-faint); font-family: var(--mono); font-size: 0.875rem; line-height: 1.7; }
+    .inline-link { color: var(--cyan); text-underline-offset: 3px; }
+
+    .metadata-band {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      margin: 18px 0 28px;
+      border-block: 1px solid var(--line);
+    }
+    .metadata-cell { min-width: 0; padding: 14px 16px; }
+    .metadata-cell + .metadata-cell { border-left: 1px solid var(--line); }
+    .metadata-cell small { display: block; margin-bottom: 6px; color: var(--text-faint); font-family: var(--mono); font-size: 0.8125rem; letter-spacing: 0.06em; text-transform: uppercase; }
+    .metadata-cell strong { display: block; font-family: var(--mono); font-size: 0.9375rem; line-height: 1.6; overflow-wrap: anywhere; }
+
+    .evidence-vocabulary {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      border-block: 1px solid var(--line);
+    }
+    .evidence-definition { padding: 22px 18px; }
+    .evidence-definition + .evidence-definition { border-left: 1px solid var(--line); }
+    .evidence-definition dt { display: flex; align-items: center; gap: 9px; margin-bottom: 10px; font-family: var(--mono); font-size: 0.9375rem; font-weight: 800; }
+    .evidence-definition dt::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--cyan); }
+    .evidence-definition:nth-child(2) dt::before { background: var(--emerald); }
+    .evidence-definition:nth-child(3) dt::before { background: var(--violet); }
+    .evidence-definition:nth-child(4) dt::before { background: var(--rose); }
+    .evidence-definition dd { margin: 0; color: var(--text-soft); font-size: 1.0625rem; line-height: 1.8; }
+
+    .validation-table { width: 100%; border-collapse: collapse; font-size: 1rem; line-height: 1.7; }
+    .validation-table th, .validation-table td { padding: 13px 12px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; }
+    .validation-table th { color: var(--text-faint); font-family: var(--mono); font-size: 0.8125rem; letter-spacing: 0.06em; text-transform: uppercase; }
+    .validation-table td:first-child { font-family: var(--mono); font-weight: 700; }
+    .status-pass { color: var(--emerald); font-weight: 780; }
+    .status-gate { color: var(--rose); font-weight: 780; }
+
+    .gate-list { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); border-block: 1px solid var(--line); }
+    .gate-item { padding: 21px 18px; }
+    .gate-item + .gate-item { border-left: 1px solid var(--line); }
+    .gate-item strong { display: block; margin-bottom: 8px; font-size: 1.0625rem; }
+    .gate-item p { margin: 0; color: var(--text-soft); font-size: 1.0625rem; line-height: 1.8; }
+
+    .noscript {
+      margin: 24px;
+      padding: 22px;
+      background: var(--surface);
+      border: 1px solid var(--rose);
+    }
+    .noscript ul { columns: 2; }
+    .drawer-overlay { display: none; }
+    .mobile-route { display: none; }
+
+    @media (max-width: 1120px) {
+      :root { --sidebar: 268px; }
+      .diagram-layout { grid-template-columns: minmax(0, 1fr); }
+      .context-card { box-shadow: none; }
+      .context-card summary { display: block; min-height: 44px; font-weight: 760; cursor: pointer; }
+      .context-content { margin-top: 16px; }
+      .overview-hero { grid-template-columns: 1fr; }
+      .overview-signal { min-height: 320px; border-top: 1px solid var(--line); border-left: 0; }
+    }
+
+    @media (max-width: 800px) {
+      :root { --header: 60px; }
+      .app-shell { display: block; }
+      .sidebar {
+        position: fixed;
+        inset: 0 auto 0 0;
+        z-index: 60;
+        width: min(86vw, 320px);
+        transform: translateX(-105%);
+        box-shadow: 18px 0 40px rgba(0, 0, 0, 0.18);
+        transition: transform 180ms ease;
+      }
+      body[data-drawer="open"] .sidebar { transform: translateX(0); }
+      .drawer-overlay {
+        position: fixed;
+        inset: 0;
+        z-index: 55;
+        display: block;
+        visibility: hidden;
+        opacity: 0;
+        border: 0;
+        background: rgba(0, 7, 18, 0.48);
+        transition: opacity 180ms ease, visibility 180ms ease;
+      }
+      body[data-drawer="open"] .drawer-overlay { visibility: visible; opacity: 1; }
+      .topbar { padding: 8px 14px; }
+      .icon-button.mobile-menu { display: inline-grid; margin-right: 10px; }
+      .breadcrumb { display: none; }
+      .top-actions { width: 100%; }
+      .search-wrap { flex: 1; width: auto; }
+      .search-key { display: none; }
+      .theme-label { display: none; }
+      .content { padding: 16px 14px 42px; }
+      .snapshot-notice { align-items: flex-start; flex-direction: column; gap: 4px; margin-bottom: 16px; padding: 12px 14px; }
+      .snapshot-link { margin-left: 0; }
+      .mobile-route {
+        display: flex;
+        align-items: center;
+        width: 100%;
+        min-height: 48px;
+        margin-bottom: 16px;
+        padding: 11px 14px;
+        border: 1px solid var(--line);
+        border-radius: 9px;
+        color: var(--text);
+        background: var(--surface);
+        font-weight: 730;
+        text-align: left;
+      }
+      .mobile-route span:last-child { margin-left: auto; color: var(--brand-strong); }
+      .page-heading { display: block; margin-bottom: 16px; }
+      .page-heading .button { width: 100%; margin-top: 14px; }
+      h1 { font-size: 30px; }
+      .overview-hero { min-height: 0; border-radius: 12px; }
+      .overview-copy { padding: 26px 20px; }
+      .overview-copy h1 { font-size: 37px; }
+      .overview-signal { min-height: 280px; }
+      .signal-node { min-width: 104px; min-height: 64px; padding: 8px; font-size: 0.8125rem; }
+      .signal-node.pet { left: 20px; }
+      .signal-node.journal { right: 20px; }
+      .fact-rail { grid-template-columns: repeat(2, 1fr); }
+      .fact:nth-child(3) { border-top: 1px solid var(--line); border-left: 0; }
+      .fact:nth-child(4) { border-top: 1px solid var(--line); }
+      .reading-path { grid-template-columns: 1fr; }
+      .path-step { min-height: 76px; display: grid; grid-template-columns: 38px 1fr; align-content: center; column-gap: 10px; }
+      .path-step + .path-step { border-top: 1px solid var(--line); border-left: 0; }
+      .path-number { grid-row: 1 / span 2; margin: 0; }
+      .principles { grid-template-columns: 1fr; }
+      .principle + .principle { border-top: 1px solid var(--line); border-left: 0; }
+      .diagram-frame { height: 64svh; min-height: 460px; border-radius: 9px; }
+      .diagram-controls { grid-template-columns: 1fr 1fr; }
+      .diagram-position { grid-column: 1 / -1; grid-row: 1; }
+      .diagram-controls .button { width: 100%; }
+      .context-card { margin-top: 0; padding: 16px; }
+      .doc-row summary { grid-template-columns: 82px minmax(0, 1fr) auto; gap: 10px; }
+      .doc-body { padding-left: 4px; }
+      .metadata-band, .evidence-vocabulary, .gate-list { grid-template-columns: 1fr; }
+      .metadata-cell + .metadata-cell, .evidence-definition + .evidence-definition, .gate-item + .gate-item { border-top: 1px solid var(--line); border-left: 0; }
+      .validation-table, .validation-table tbody, .validation-table tr, .validation-table td { display: block; }
+      .validation-table thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+      .validation-table tr { padding: 12px 0; border-bottom: 1px solid var(--line); }
+      .validation-table td { padding: 4px 0; border: 0; }
+      .validation-table td::before { content: attr(data-label); display: inline-block; width: 112px; color: var(--text-faint); font-family: var(--mono); font-size: 0.8125rem; text-transform: uppercase; }
+      .noscript ul { columns: 1; }
+    }
+
+    @media (max-width: 470px) {
+      .search-input { padding-right: 10px; }
+      .top-actions { gap: 7px; }
+      .icon-button { padding: 0 10px; }
+      .overview-actions .button { width: 100%; }
+      .fact { padding: 16px; }
+      .diagram-frame { height: 64svh; min-height: 460px; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after { scroll-behavior: auto !important; animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
+    }
+  </style>
+</head>
+<body>
+  <a class="skip-link" href="#main-content">본문으로 건너뛰기</a>
+  <div class="app-shell">
+    <aside class="sidebar" id="sidebar" aria-label="아키텍처 자료 탐색">
+      <button class="brand" type="button" data-route="overview" aria-label="Blabee Architecture 개요로 이동">
+        <span class="brand-plate"><img src="../../Packaging/macos/Resources/BlabeeMenuBar.svg" alt=""></span>
+        <span class="brand-copy"><span class="brand-name">Blabee Architecture</span><span class="brand-sub">As-Is architecture workspace</span></span>
+      </button>
+      <nav class="nav-scroll">
+        <div class="nav-group">
+          <p class="nav-heading">Start</p>
+          <button class="nav-item" type="button" data-route="overview"><span class="nav-code">00</span>개요</button>
+        </div>
+        <div class="nav-group">
+          <p class="nav-heading">C4 Model</p>
+          <button class="nav-item" type="button" data-route="c4-system"><span class="nav-code">L1</span>시스템 컨텍스트</button>
+          <button class="nav-item" type="button" data-route="c4-container"><span class="nav-code">L2</span>컨테이너</button>
+          <button class="nav-item" type="button" data-route="c4-components"><span class="nav-code">L3</span>Coordinator</button>
+          <button class="nav-item" type="button" data-route="deployment"><span class="nav-code">DEP</span>로컬 배포·신뢰</button>
+        </div>
+        <div class="nav-group">
+          <p class="nav-heading">Runtime</p>
+          <button class="nav-item" type="button" data-route="runtime-decision"><span class="nav-code">SEQ</span>결정 연속 진행</button>
+          <button class="nav-item" type="button" data-route="runtime-permission"><span class="nav-code">SEQ</span>PermissionRequest</button>
+          <button class="nav-item" type="button" data-route="runtime-managed"><span class="nav-code">SEQ</span>Managed 승인</button>
+          <button class="nav-item" type="button" data-route="runtime-lifecycle"><span class="nav-code">LIFE</span>Decision lifecycle</button>
+        </div>
+        <div class="nav-group">
+          <p class="nav-heading">Documents</p>
+          <button class="nav-item" type="button" data-route="arc42"><span class="nav-code">12</span>arc42-lite</button>
+          <button class="nav-item" type="button" data-route="adr"><span class="nav-code">8</span>ADR</button>
+          <button class="nav-item" type="button" data-route="evidence"><span class="nav-code">4</span>Evidence</button>
+        </div>
+      </nav>
+      <div class="sidebar-footer">Snapshot · 2026-09-07<br>Commit · a352baa · 작업 트리 제외<br>As-Is · Tier 2 verification</div>
+    </aside>
+
+    <button class="drawer-overlay" id="drawer-overlay" type="button" aria-label="탐색 메뉴 닫기"></button>
+
+    <div class="main-shell" id="main-shell">
+      <header class="topbar">
+        <button class="icon-button mobile-menu" id="menu-button" type="button" aria-controls="sidebar" aria-expanded="false" aria-label="탐색 메뉴 열기">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+        </button>
+        <div class="breadcrumb" id="breadcrumb">Architecture / <strong>Overview</strong></div>
+        <div class="top-actions">
+          <div class="search-wrap">
+            <svg class="search-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true"><circle cx="11" cy="11" r="6.5" stroke="currentColor" stroke-width="1.8"/><path d="m16 16 4 4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+            <label class="sr-only" for="search">아키텍처 자료 검색</label>
+            <input class="search-input" id="search" type="search" autocomplete="off" placeholder="자료 검색…" aria-controls="search-results">
+            <span class="search-key" aria-hidden="true">/</span>
+            <div class="search-results" id="search-results" role="region" aria-label="검색 결과" hidden></div>
+            <div id="search-status" class="sr-only" aria-live="polite"></div>
+          </div>
+          <button class="icon-button" id="theme-button" type="button" aria-label="다크 모드로 전환">
+            <svg id="theme-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M12 3v2.2M12 18.8V21M3 12h2.2M18.8 12H21M5.64 5.64l1.56 1.56M16.8 16.8l1.56 1.56M18.36 5.64 16.8 7.2M7.2 16.8l-1.56 1.56" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/><circle cx="12" cy="12" r="4" stroke="currentColor" stroke-width="1.7"/></svg>
+            <span class="theme-label" id="theme-label">Dark</span>
+          </button>
+        </div>
+      </header>
+
+      <main class="content" id="main-content" tabindex="-1">
+        <aside class="snapshot-notice" role="note" aria-labelledby="snapshot-title">
+          <div class="snapshot-copy">
+            <p class="snapshot-title" id="snapshot-title">고정 스냅샷 · 2026-09-07 검증</p>
+            <p class="snapshot-detail">커밋 <code title="a352baa773e11a9be96c9d5b5aafca19aa5fb543">a352baa</code> 기준 · 작업 트리 변경 제외. 저장소 변경은 자동 확인하지 않습니다.</p>
+          </div>
+          <a class="snapshot-link" href="#evidence" data-route="evidence">근거·변경 이력 보기 →</a>
+        </aside>
+        <button class="mobile-route" id="mobile-route" type="button"><span id="mobile-route-label">개요</span><span aria-hidden="true">›</span></button>
+
+        <section class="view" id="view-overview" data-view="overview">
+          <div class="overview-hero">
+            <div class="overview-copy">
+              <p class="page-kicker">Blabee Architecture</p>
+              <h1>흩어진 구조를<br>하나의 읽기 흐름으로.</h1>
+              <p class="lede">2026-09-07에 확인한 커밋 <code>a352baa</code>의 C4 정적 구조, runtime 순서, arc42 품질 맥락, ADR 선택 이유와 evidence 자격 경계를 한곳에서 탐색합니다.</p>
+              <div class="overview-actions">
+                <button class="button primary" type="button" data-route="c4-system">L1부터 읽기</button>
+                <button class="button" type="button" data-route="evidence">증거 기준 보기</button>
+              </div>
+            </div>
+            <div class="overview-signal" aria-label="Codex, Blabee, Pet, Journal의 관계를 추상화한 장식 도식">
+              <span class="signal-node codex">Codex</span>
+              <span class="signal-node core">Blabee<br>Coordinator</span>
+              <span class="signal-node pet">macOS Pet</span>
+              <span class="signal-node journal">Decision Journal</span>
+              <span class="signal-line v"></span><span class="signal-line h"></span>
+            </div>
+          </div>
+
+          <div class="fact-rail" aria-label="자료 구성">
+            <div class="fact"><strong>8</strong><span>검증된 대화형 도식</span></div>
+            <div class="fact"><strong>12</strong><span>arc42-lite 섹션</span></div>
+            <div class="fact"><strong>8</strong><span>회고형 ADR</span></div>
+            <div class="fact"><strong>4</strong><span>증거 성숙도 어휘</span></div>
+          </div>
+
+          <div class="section-block">
+            <div class="section-title-row"><h2>권장 읽기 순서</h2><p>구조 → 동작 → 결정의 이유</p></div>
+            <div class="reading-path">
+              <button class="path-step" type="button" data-route="c4-system"><span class="path-number">1</span><strong>L1</strong><small>System Context</small></button>
+              <button class="path-step" type="button" data-route="c4-container"><span class="path-number">2</span><strong>L2</strong><small>Containers</small></button>
+              <button class="path-step" type="button" data-route="c4-components"><span class="path-number">3</span><strong>L3</strong><small>Coordinator</small></button>
+              <button class="path-step" type="button" data-route="runtime-decision"><span class="path-number">4</span><strong>Runtime</strong><small>Decision flow</small></button>
+              <button class="path-step" type="button" data-route="adr"><span class="path-number">5</span><strong>ADR</strong><small>Key decisions</small></button>
+            </div>
+          </div>
+
+          <div class="section-block">
+            <div class="section-title-row"><h2>해석의 기준</h2></div>
+            <div class="principles">
+              <article class="principle"><div class="principle-marker"></div><h3>Native Codex Preservation</h3><p>일반 <code>codex</code>의 권한·입출력·종료 의미를 Blabee 장애 때문에 바꾸지 않습니다.</p></article>
+              <article class="principle"><div class="principle-marker"></div><h3>Local authority</h3><p>상태와 결정 원장은 Coordinator, SQLite journal, Keychain 신뢰 경계 안에 둡니다.</p></article>
+              <article class="principle"><div class="principle-marker"></div><h3>Evidence separation</h3><p>선택 receipt, transport write, downstream 소비, 실제 작업 결과를 서로 다른 증거로 읽습니다.</p></article>
+            </div>
+          </div>
+        </section>
+
+        <section class="view" id="view-diagram" data-view="diagram" hidden>
+          <div class="page-heading">
+            <div class="page-heading-copy"><p class="page-kicker" id="diagram-kicker">C4 · L1</p><h1 id="diagram-title">시스템 컨텍스트</h1><p class="lede" id="diagram-summary"></p></div>
+            <a class="button" id="diagram-open" href="c4/system-context.html" target="_blank" rel="noopener">독립 보기 ↗</a>
+          </div>
+          <div class="diagram-layout">
+            <div class="diagram-stage">
+              <div class="diagram-zoom" role="group" aria-label="도식 글씨 크기">
+                <button class="button" type="button" data-diagram-zoom="out" aria-label="도식 축소" disabled>− 축소</button>
+                <button class="button" type="button" data-diagram-zoom="in" aria-label="도식 확대" disabled>+ 확대</button>
+                <button class="button" type="button" data-diagram-zoom="read" disabled>읽기 크기</button>
+                <button class="button" type="button" data-diagram-zoom="fit" disabled>전체 보기</button>
+                <output id="diagram-scale" aria-live="polite">불러오는 중</output>
+              </div>
+              <p class="diagram-hint" id="diagram-hint">기본 2배 확대 · 전체 구조는 ‘전체 보기’로 확인하세요.</p>
+              <div class="diagram-frame">
+                <iframe id="diagram-iframe" title="Blabee C4 L1 시스템 컨텍스트 도식" loading="eager"></iframe>
+              </div>
+              <a class="iframe-fallback" id="iframe-fallback" href="c4/system-context.html" target="_blank" rel="noopener">도식이 보이지 않거나 화면이 좁으면 독립 보기 ↗</a>
+              <div class="diagram-controls">
+                <button class="button" id="diagram-prev" type="button">← 이전</button>
+                <span class="diagram-position" id="diagram-position">1 / 8</span>
+                <button class="button primary" id="diagram-next" type="button">다음 →</button>
+              </div>
+            </div>
+            <details class="context-card" open>
+              <summary>도식 설명과 근거</summary>
+              <div class="context-content">
+                <h3>목적</h3><p id="context-purpose"></p><hr>
+                <h3>핵심 경계</h3><ul id="context-boundaries"></ul><hr>
+                <h3>Evidence</h3>
+                <div class="evidence-list">
+                  <div class="evidence-item"><span class="evidence-dot"></span><span>Source map 연결</span></div>
+                  <div class="evidence-item"><span class="evidence-dot"></span><span>Showcase 9/9 · 자동 검증 PASS</span></div>
+                  <div class="evidence-item"><span class="evidence-dot"></span><span>수동 검토는 EVIDENCE 기록 참조</span></div>
+                </div>
+                <div class="context-links">
+                  <a class="text-link" id="diagram-spec" href="c4/system-context.archify.json" target="_blank" rel="noopener">재생성 spec</a>
+                  <a class="text-link" id="diagram-proof" href="c4/system-context.visual-check.html" target="_blank" rel="noopener">시각 검증 proof</a>
+                  <a class="text-link" href="EVIDENCE.md" target="_blank" rel="noopener">전체 evidence map</a>
+                </div>
+              </div>
+            </details>
+          </div>
+        </section>
+
+        <section class="view document-view" id="view-arc42" data-view="arc42" hidden>
+          <div class="page-heading"><div class="page-heading-copy"><p class="page-kicker">arc42-lite</p><h1>구조를 설명하는 12개의 관점</h1><p class="lede">다이어그램이 무엇을 보여 주는지, 왜 그렇게 나뉘었는지, 어떤 위험과 품질 목표가 남아 있는지를 연결합니다.</p><div class="document-toolbar"><a class="button" href="README.md" target="_blank" rel="noopener">원문 Markdown ↗</a></div></div></div>
+          <div class="doc-list">
+            <details class="doc-row" open><summary><span class="doc-index">01</span><span class="doc-title">소개와 목표</span><span class="doc-chevron">⌄</span></summary><div class="doc-body"><p>Blabee는 결정 경계에서 근거와 연결된 선택을 보여 주고, 사용자가 고른 작업을 같은 Codex 세션의 새 사용자 턴으로 이어 주는 로컬 개발 보조 시스템입니다.</p></div></details>
+            <details class="doc-row"><summary><span class="doc-index">02</span><span class="doc-title">아키텍처 제약</span><span class="doc-chevron">⌄</span></summary><div class="doc-body"><p>macOS, Codex Plugin, 제한된 Hook fail-open, 로컬 SQLite·Keychain, 명시적 관리형 경로라는 제약 아래 비밀과 원문 token을 확산하지 않습니다.</p></div></details>
+            <details class="doc-row"><summary><span class="doc-index">03</span><span class="doc-title">컨텍스트와 범위</span><span class="doc-chevron">⌄</span></summary><div class="doc-body"><p>제품 경계에는 Plugin, Coordinator, Pet, 인증된 원장이 있고 Codex와 macOS Keychain은 외부 actor·시스템으로 상호작용합니다. Blabee cloud inference backend는 없습니다.</p></div></details>
+            <details class="doc-row"><summary><span class="doc-index">04</span><span class="doc-title">해결 전략</span><span class="doc-chevron">⌄</span></summary><div class="doc-body"><p>Plugin-first ingress, 단일 Coordinator authority, 표시와 권한의 분리, 인증된 원장, 정확히 한 번의 연속 진행, 경로별 실패 정책을 조합합니다.</p></div></details>
+            <details class="doc-row"><summary><span class="doc-index">05</span><span class="doc-title">빌딩 블록 뷰</span><span class="doc-chevron">⌄</span></summary><div class="doc-body"><p>Plugin, Coordinator, Pet, Decision Journal, Keychain, 선택형 Managed Codex bridge의 실행 책임과 Coordinator 내부 계층을 C4로 나눕니다. Plugin 설치·복구는 사용자 확인, 작업 기한과 신뢰 재검증을 갖는 별도 경계입니다.</p></div></details>
+            <details class="doc-row"><summary><span class="doc-index">06</span><span class="doc-title">런타임 뷰</span><span class="doc-chevron">⌄</span></summary><div class="doc-body"><p>결정 연속 진행, Hook 권한 요청, 관리형 승인, 결정 경계 lifecycle에서 요청·선택·receipt·작업 결과를 분리합니다.</p></div></details>
+            <details class="doc-row"><summary><span class="doc-index">07</span><span class="doc-title">배포 뷰</span><span class="doc-chevron">⌄</span></summary><div class="doc-body"><p>한 사용자 Mac의 Plugin, UDS, Coordinator service, SQLite, Keychain과 명시적 <code>blabee-codex</code> child tree를 배치합니다. 내부 DMG는 빌드 번호를 앱과 배포 파일명에 맞추며, r8의 기존 단일 개발자 Mac 설치·서비스 복구 기록과 추가 설치·공개 배포 자격을 구분합니다.</p></div></details>
+            <details class="doc-row"><summary><span class="doc-index">08</span><span class="doc-title">횡단 관심사</span><span class="doc-chevron">⌄</span></summary><div class="doc-body"><p>runtime identity, exactly-once, monotonic time, 개인정보, 관측성과 증거 성숙도가 모든 흐름을 가로지릅니다.</p></div></details>
+            <details class="doc-row"><summary><span class="doc-index">09</span><span class="doc-title">아키텍처 결정</span><span class="doc-chevron">⌄</span></summary><div class="doc-body"><p>현재 소스에서 역추적한 선택은 회고형 ADR로 기록하고, 알 수 없는 최초 결정일이나 검토하지 않은 대안을 만들어내지 않습니다.</p></div></details>
+            <details class="doc-row"><summary><span class="doc-index">10</span><span class="doc-title">품질 요구사항</span><span class="doc-chevron">⌄</span></summary><div class="doc-body"><p>네이티브 지속성, 안전한 선택, 중복 방지, 영속 무결성, 프라이버시, 연속 진행을 시나리오와 증거 수준으로 연결합니다.</p></div></details>
+            <details class="doc-row"><summary><span class="doc-index">11</span><span class="doc-title">위험과 기술 부채</span><span class="doc-chevron">⌄</span></summary><div class="doc-body"><p>설치본 App Server 자격, Codex 버전 결합, 배포 신뢰 사슬, Hook 관측 한계와 same-UID 잔여 위험이 남아 있습니다. 문서는 확인한 커밋에 고정되며, 이후 커밋이나 작업 트리 변경은 재검증이 필요합니다.</p></div></details>
+            <details class="doc-row"><summary><span class="doc-index">12</span><span class="doc-title">용어집</span><span class="doc-chevron">⌄</span></summary><div class="doc-body"><p>Decision boundary, Packet, Episode, queued_next_turn, Runtime identity, Delivery ack, Freshness anchor와 As-Is/GATE의 정확한 뜻을 고정합니다.</p></div></details>
+          </div>
+        </section>
+
+        <section class="view document-view" id="view-adr" data-view="adr" hidden>
+          <div class="page-heading"><div class="page-heading-copy"><p class="page-kicker">Architecture Decision Records</p><h1>현재 구조를 만든 8개의 결정</h1><p class="lede"><code>Accepted (Retrospective)</code>는 현재 코드가 결정을 따르고 있다는 뜻이며, 원래 토론 기록이 완전하다는 뜻은 아닙니다.</p><div class="document-toolbar"><a class="button" href="adr/README.md" target="_blank" rel="noopener">ADR 인덱스 ↗</a></div></div></div>
+          <div class="doc-list">
+            <details class="doc-row" id="adr-0001"><summary><span class="doc-index">ADR-0001</span><span class="doc-title">Hook-first Plugin과 로컬 MCP를 기본 Codex 통합 경계로 사용</span><span class="doc-chevron">⌄</span></summary><div class="doc-body"><p>네 종류 Hook과 로컬 MCP를 기본 진입면으로 둡니다. Pre/PostToolUse와 사용자 설치본 Hook 신뢰는 현재 완료 범위가 아닙니다.</p><p class="doc-meta">Accepted · Retrospective · Plugin boundary</p><p><a class="inline-link" href="adr/ADR-0001-hook-first-plugin-and-local-mcp.md" target="_blank" rel="noopener">원문 열기 ↗</a></p></div></details>
+            <details class="doc-row" id="adr-0002"><summary><span class="doc-index">ADR-0002</span><span class="doc-title">Swift Coordinator를 제품 런타임으로 사용</span><span class="doc-chevron">⌄</span></summary><div class="doc-body"><p>macOS UI·Keychain·UDS·SQLite를 결합하는 제품 권위 런타임을 Swift Coordinator로 구성하고 의미·라우팅·운영 계층을 분리합니다.</p><p class="doc-meta">Accepted · Retrospective · Runtime boundary</p><p><a class="inline-link" href="adr/ADR-0002-swift-coordinator-as-product-runtime.md" target="_blank" rel="noopener">원문 열기 ↗</a></p></div></details>
+            <details class="doc-row" id="adr-0003"><summary><span class="doc-index">ADR-0003</span><span class="doc-title">same-UID UDS, runtime identity, 요청 allowlist를 결합</span><span class="doc-chevron">⌄</span></summary><div class="doc-body"><p>로컬 socket 권한만으로 신뢰를 완료하지 않고 packaged runtime identity와 operation allowlist를 함께 검증합니다.</p><p class="doc-meta">Accepted · Retrospective · Trust boundary</p><p><a class="inline-link" href="adr/ADR-0003-same-uid-uds-and-runtime-identity.md" target="_blank" rel="noopener">원문 열기 ↗</a></p></div></details>
+            <details class="doc-row" id="adr-0004"><summary><span class="doc-index">ADR-0004</span><span class="doc-title">외부 키 인증 SQLite journal과 Keychain freshness를 사용</span><span class="doc-chevron">⌄</span></summary><div class="doc-body"><p>MAC chain, 외부 키, Keychain high-water를 결합해 손상과 과거 snapshot 복원의 모호성을 실패 폐쇄합니다.</p><p class="doc-meta">Accepted · Retrospective · Persistence</p><p><a class="inline-link" href="adr/ADR-0004-authenticated-sqlite-journal.md" target="_blank" rel="noopener">원문 열기 ↗</a></p></div></details>
+            <details class="doc-row" id="adr-0005"><summary><span class="doc-index">ADR-0005</span><span class="doc-title">Native Codex Preservation과 비대칭 실패 정책을 불변 조건으로 둠</span><span class="doc-chevron">⌄</span></summary><div class="doc-body"><p>일반 Hook 보조 기능은 제한적으로 fail-open하지만 MCP·영속 mutation·관리형 실행의 신뢰 경계는 불확실성을 성공으로 만들지 않습니다.</p><p class="doc-meta">Accepted · Retrospective · Failure policy</p><p><a class="inline-link" href="adr/ADR-0005-native-codex-preservation.md" target="_blank" rel="noopener">원문 열기 ↗</a></p></div></details>
+            <details class="doc-row" id="adr-0006"><summary><span class="doc-index">ADR-0006</span><span class="doc-title">exact identity 전역 FIFO와 queued-next-turn 전달을 사용</span><span class="doc-chevron">⌄</span></summary><div class="doc-body"><p>Pet의 선두 요청과 사용자의 exact 선택을 묶고, 같은 Codex session의 queue <code>--message</code>에 참조 envelope를 전달합니다. 정확한 <code>UserPromptSubmit</code> 재진입에서 journal의 sealed action을 한 번 claim해 Hook context로 제공합니다.</p><p class="doc-meta">Accepted · Retrospective · queued_next_turn</p><p><a class="inline-link" href="adr/ADR-0006-global-fifo-and-queued-next-turn.md" target="_blank" rel="noopener">원문 열기 ↗</a></p></div></details>
+            <details class="doc-row" id="adr-0007"><summary><span class="doc-index">ADR-0007</span><span class="doc-title">App Server 권한 중계를 명시적 opt-in 관리형 실험으로 격리</span><span class="doc-chevron">⌄</span></summary><div class="doc-body"><p>고권한 App Server 승인 중계는 사용자가 시작한 <code>blabee-codex</code>에만 열고 일반 <code>codex</code> 경로와 격리합니다. 종료 시 해당 App Server·TUI child를 제한된 시간 안에 정리합니다. 일반 Plugin CLI 호환성과 관리형 실행 자격은 별개이며, 설치본 승인 live 왕복은 <span class="status-gate">GATE</span>입니다.</p><p class="doc-meta">Accepted · Retrospective · Managed approval</p><p><a class="inline-link" href="adr/ADR-0007-opt-in-managed-codex-app-server.md" target="_blank" rel="noopener">원문 열기 ↗</a></p></div></details>
+            <details class="doc-row" id="adr-0008"><summary><span class="doc-index">ADR-0008</span><span class="doc-title">Coordinator, Plugin, 계약, 서비스 정의를 macOS 앱에 함께 패키징</span><span class="doc-chevron">⌄</span></summary><div class="doc-body"><p>실행 파일과 frozen contracts, Plugin, 서비스 계약을 한 bundle에 묶고 앱·DMG의 빌드 번호를 일치시킵니다. 내부 arm64·ad-hoc r8의 한 개발자 Mac 설치·서비스 복구는 기존 <code>LIVE</code> 기록이며 이번 문서 갱신에서 재실행하지 않았습니다. 깨끗한 다른 Mac, Hook·Pet 왕복, Developer ID·공증은 <span class="status-gate">GATE</span>입니다.</p><p class="doc-meta">Accepted · Retrospective · Packaging</p><p><a class="inline-link" href="adr/ADR-0008-bundled-macos-app-and-service.md" target="_blank" rel="noopener">원문 열기 ↗</a></p></div></details>
+          </div>
+        </section>
+
+        <section class="view document-view" id="view-evidence" data-view="evidence" hidden>
+          <div class="page-heading"><div class="page-heading-copy"><p class="page-kicker">Evidence</p><h1>구현과 자격을 섞지 않는 기준</h1><p class="lede">소스에 존재하는가, 자동으로 검증했는가, 실제 환경에서 관찰했는가, 별도 승인이 남았는가를 분리합니다.</p><div class="document-toolbar"><a class="button" href="EVIDENCE.md" target="_blank" rel="noopener">전체 evidence map ↗</a></div></div></div>
+          <div class="metadata-band" aria-label="근거 스냅샷">
+            <div class="metadata-cell"><small>검증 기준일</small><strong>2026-09-07 · KST</strong></div>
+            <div class="metadata-cell"><small>Branch</small><strong title="feat/common-lineage-v01-verifier">feat/common-lineage-v01-verifier</strong></div>
+            <div class="metadata-cell"><small>확인한 커밋</small><strong title="a352baa773e11a9be96c9d5b5aafca19aa5fb543">a352baa773e11…</strong></div>
+            <div class="metadata-cell"><small>범위 / 검증</small><strong>커밋 기준 · Tier 2</strong></div>
+          </div>
+          <p class="lede">2026-09-05의 <code>b334de1</code> 및 당시 작업 트리를 반영한 이전 자료에서, <code>a352baa</code> 커밋 기준으로 다시 확인했습니다. 커밋되지 않은 변경은 이번 근거 범위에 포함하지 않으며, 이전 기준과 변경 영향은 <a class="inline-link" href="EVIDENCE.md" target="_blank" rel="noopener">EVIDENCE 변경 이력 ↗</a>에 기록합니다.</p>
+          <dl class="evidence-vocabulary">
+            <div class="evidence-definition"><dt>SOURCE</dt><dd>제품 소스·계약·설정에 구조와 동작이 존재하며 직접 확인한 상태입니다.</dd></div>
+            <div class="evidence-definition"><dt>AUTOMATED</dt><dd>관련 자동 테스트·정적 검증·계약 검증의 범위와 결과가 기록된 상태입니다.</dd></div>
+            <div class="evidence-definition"><dt>LIVE</dt><dd>특정 로컬 환경과 버전에서 실제 프로세스 왕복 또는 사용자 흐름을 관찰한 상태입니다.</dd></div>
+            <div class="evidence-definition"><dt>GATE</dt><dd>설치본·지원 버전·보안·사람 검수·공개 배포 등 별도 통과가 필요한 조건입니다.</dd></div>
+          </dl>
+          <div class="section-block">
+            <div class="section-title-row"><h2>도식 검증</h2><p>상세 SHA-256은 원문에서 관리</p></div>
+            <table class="validation-table">
+              <thead><tr><th>산출물</th><th>Showcase</th><th>Viewport</th><th>수동 검토</th></tr></thead>
+              <tbody>
+                <tr><td data-label="산출물">C4 · L1</td><td data-label="Showcase" class="status-pass">9/9 PASS</td><td data-label="Viewport">containment 4/4</td><td data-label="수동 검토">EVIDENCE 기록</td></tr>
+                <tr><td data-label="산출물">C4 · L2</td><td data-label="Showcase" class="status-pass">9/9 PASS</td><td data-label="Viewport">containment 4/4</td><td data-label="수동 검토">EVIDENCE 기록</td></tr>
+                <tr><td data-label="산출물">C4 · L3</td><td data-label="Showcase" class="status-pass">9/9 PASS</td><td data-label="Viewport">containment 4/4</td><td data-label="수동 검토">EVIDENCE 기록</td></tr>
+                <tr><td data-label="산출물">Deployment</td><td data-label="Showcase" class="status-pass">9/9 PASS</td><td data-label="Viewport">containment 4/4</td><td data-label="수동 검토">EVIDENCE 기록</td></tr>
+                <tr><td data-label="산출물">Decision sequence</td><td data-label="Showcase" class="status-pass">9/9 PASS</td><td data-label="Viewport">containment 4/4</td><td data-label="수동 검토">EVIDENCE 기록</td></tr>
+                <tr><td data-label="산출물">Permission sequence</td><td data-label="Showcase" class="status-pass">9/9 PASS</td><td data-label="Viewport">containment 4/4</td><td data-label="수동 검토">EVIDENCE 기록</td></tr>
+                <tr><td data-label="산출물">Managed sequence</td><td data-label="Showcase" class="status-pass">9/9 PASS</td><td data-label="Viewport">containment 4/4</td><td data-label="수동 검토">EVIDENCE 기록</td></tr>
+                <tr><td data-label="산출물">Decision lifecycle</td><td data-label="Showcase" class="status-pass">9/9 PASS</td><td data-label="Viewport">containment 4/4</td><td data-label="수동 검토">EVIDENCE 기록</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="section-block">
+            <div class="section-title-row"><h2>열린 Gate</h2></div>
+            <div class="gate-list">
+              <article class="gate-item"><strong>Managed App Server 설치본</strong><p>소스·자동 자격과 설치된 signed Pet↔실제 App Server 왕복을 분리합니다.</p></article>
+              <article class="gate-item"><strong>추가 설치·복구 자격</strong><p>기존 r8 기록은 한 개발자 Mac의 설치·서비스 복구 LIVE입니다. 깨끗한 다른 Mac과 Hook·Pet 왕복은 미검증입니다.</p></article>
+              <article class="gate-item"><strong>공개 배포 신뢰 사슬</strong><p>Developer ID 서명, 공증, Gatekeeper, 깨끗한 다른 Mac 설치는 별도 승인입니다.</p></article>
+            </div>
+          </div>
+        </section>
+
+        <noscript>
+          <div class="noscript">
+            <h2>JavaScript 없이 자료 열기</h2>
+            <p>포털 탐색은 JavaScript를 사용하지만 원본 자료는 그대로 열 수 있습니다.</p>
+            <ul>
+              <li><a href="c4/system-context.html">C4 L1 시스템 컨텍스트</a></li><li><a href="c4/container.html">C4 L2 컨테이너</a></li><li><a href="c4/coordinator-components.html">C4 L3 Coordinator</a></li><li><a href="c4/local-deployment.html">로컬 배포</a></li>
+              <li><a href="runtime/decision-continuation.html">결정 연속 진행</a></li><li><a href="runtime/hook-permission.html">PermissionRequest</a></li><li><a href="runtime/managed-approval.html">Managed 승인</a></li><li><a href="runtime/decision-boundary.html">Decision lifecycle</a></li>
+              <li><a href="README.md">arc42-lite</a></li><li><a href="adr/README.md">ADR</a></li><li><a href="EVIDENCE.md">Evidence</a></li>
+            </ul>
+          </div>
+        </noscript>
+      </main>
+    </div>
+  </div>
+
+  <style>.sr-only{position:absolute!important;width:1px!important;height:1px!important;padding:0!important;margin:-1px!important;overflow:hidden!important;clip:rect(0,0,0,0)!important;white-space:nowrap!important;border:0!important}</style>
+  <script>
+    (() => {
+      "use strict";
+
+      const diagrams = [
+        {
+          route: "c4-system", group: "C4 Model", code: "C4 · L1", title: "시스템 컨텍스트", fullTitle: "Blabee C4 L1 — 시스템 컨텍스트 (As-Is)",
+          path: "c4/system-context.html", spec: "c4/system-context.archify.json", proof: "c4/system-context.visual-check.html",
+          summary: "Blabee가 개발자와 Codex 사이에서 어떤 책임을 맡고, 무엇을 외부 권한으로 남기는지 보여 줍니다.",
+          purpose: "제품 경계와 외부 actor를 가장 먼저 이해하는 진입점입니다.",
+          boundaries: ["일반 Codex의 권한 체계는 외부에 유지", "Pet은 표시와 선택만 담당", "Blabee cloud inference backend 없음"],
+          keywords: "context developer codex pet local first cloud inference"
+        },
+        {
+          route: "c4-container", group: "C4 Model", code: "C4 · L2", title: "컨테이너", fullTitle: "Blabee C4 L2 — 컨테이너 (As-Is)",
+          path: "c4/container.html", spec: "c4/container.archify.json", proof: "c4/container.visual-check.html",
+          summary: "Plugin, Coordinator, Pet, journal, Keychain과 선택형 Managed bridge의 실행 책임을 나눕니다.",
+          purpose: "실행 단위와 데이터·권한 경계를 한 화면에서 비교합니다.",
+          boundaries: ["Coordinator가 고수준 상태 전이의 단일 authority", "Pet은 DB·키를 직접 열지 않음", "Managed bridge는 명시적 opt-in"],
+          keywords: "container plugin coordinator sqlite journal keychain managed bridge"
+        },
+        {
+          route: "c4-components", group: "C4 Model", code: "C4 · L3", title: "Coordinator 컴포넌트", fullTitle: "Blabee C4 L3 — Coordinator 컴포넌트 (As-Is)",
+          path: "c4/coordinator-components.html", spec: "c4/coordinator-components.archify.json", proof: "c4/coordinator-components.visual-check.html",
+          summary: "Coordinator 서비스의 transport, routing, semantic, persistence 책임을 보여 줍니다. Plugin 설정은 같은 실행 파일의 별도 Pet 경로입니다.",
+          purpose: "Coordinator 안에서 transport, 조정, 의미, 영속 권위가 어떻게 분리되는지 읽습니다.",
+          boundaries: ["UDS는 독립 제품이 아닌 transport adapter", "Routing이 foreground·FIFO·시간 경계 소유", "Semantic accept 뒤에만 effect 반환", "Plugin 설정·이전 설치 전환은 별도 Pet 경로"],
+          keywords: "component uds operational routing semantic fifo cas persistence plugin setup repair"
+        },
+        {
+          route: "deployment", group: "C4 Model", code: "Deployment", title: "로컬 배포·신뢰 경계", fullTitle: "Blabee 로컬 배포·신뢰 경계 (As-Is)",
+          path: "c4/local-deployment.html", spec: "c4/local-deployment.archify.json", proof: "c4/local-deployment.visual-check.html",
+          summary: "한 사용자 Mac에서 실제 프로세스, UDS, SQLite, Keychain과 관리형 child tree가 놓이는 위치를 보여 줍니다.",
+          purpose: "논리 컨테이너를 실제 로컬 프로세스와 저장소 배치로 연결합니다.",
+          boundaries: ["same UID만으로 신뢰 완료 아님", "runtime identity와 operation binding 결합", "r8 설치·복구 LIVE는 한 개발자 Mac에 한정", "추가 설치·Developer ID·공증은 별도 GATE"],
+          keywords: "deployment mac process uds runtime identity signing notarization dmg build r8"
+        },
+        {
+          route: "runtime-decision", group: "Runtime", code: "Sequence", title: "결정에서 다음 Codex 턴까지", fullTitle: "Blabee 런타임 — 결정에서 다음 Codex 턴까지 (As-Is)",
+          path: "runtime/decision-continuation.html", spec: "runtime/decision-continuation.sequence.json", proof: "runtime/decision-continuation.visual-check.html",
+          summary: "emit_decision에서 packet을 봉인하고 Stop에서 선택을 게시합니다. 선택 후 참조 envelope를 전달하고 exact UserPromptSubmit 재진입에서 action을 제공합니다.",
+          purpose: "선택이 같은 Codex session의 새 사용자 턴으로 이어지는 exact-once 흐름입니다.",
+          boundaries: ["초기 UserPromptSubmit binding은 process-local; 영속 open·seal은 emit_decision", "Stop은 sealed→waiting 전환과 선택 게시", "queue에는 참조 envelope; exact 재진입에서 journal의 sealed action을 1회 claim", "queue receipt와 작업 성공 구분 · 자동 재전송 없음"],
+          keywords: "decision continuation queued next turn emit decision seal stop waiting receipt prompt episode reference envelope claim"
+        },
+        {
+          route: "runtime-permission", group: "Runtime", code: "Sequence", title: "Hook PermissionRequest", fullTitle: "Blabee 런타임 — Hook PermissionRequest (As-Is)",
+          path: "runtime/hook-permission.html", spec: "runtime/hook-permission.sequence.json", proof: "runtime/hook-permission.visual-check.html",
+          summary: "짧은 안전 단일 행 Bash에 대해 deny 또는 Codex 직접 결정만 제공하고, 불확실하면 native 흐름에 맡깁니다.",
+          purpose: "Hook 권한 보조가 Codex의 최종 승인 권위를 침범하지 않는 경계를 봅니다.",
+          boundaries: ["Hook allow를 만들지 않음", "deny 또는 direct decision만", "timeout·불확실성은 native defer"],
+          keywords: "permission request hook deny native direct decision bash"
+        },
+        {
+          route: "runtime-managed", group: "Runtime", code: "Sequence", title: "선택형 Managed Codex 승인", fullTitle: "Blabee 런타임 — 선택형 Managed Codex 승인 (As-Is)",
+          path: "runtime/managed-approval.html", spec: "runtime/managed-approval.sequence.json", proof: "runtime/managed-approval.visual-check.html",
+          summary: "명시적 blabee-codex에서 App Server request ID, Pet 선택, response stream write와 실제 명령 결과를 분리합니다.",
+          purpose: "고권한 승인 중계의 exact binding과 설치본 live gate를 함께 읽습니다.",
+          boundaries: ["명시적 opt-in · 승인 resolution·delivery claim은 process-local", "write 완료는 App Server 소비 증명이 아님", "신뢰 통과 후 첫 child 전 준비 실패만 fallback", "종료 시 해당 App Server·TUI만 제한 시간 내 정리"],
+          keywords: "managed app server approval request id response write consumption blabee codex"
+        },
+        {
+          route: "runtime-lifecycle", group: "Runtime", code: "Lifecycle", title: "Decision Boundary 생명주기", fullTitle: "Blabee Decision Boundary 생명주기 (As-Is)",
+          path: "runtime/decision-boundary.html", spec: "runtime/decision-boundary.lifecycle.json", proof: "runtime/decision-boundary.visual-check.html",
+          summary: "Activating부터 Sealed, Waiting, Dispatched, Delivery Pending과 exact 전달 증거에 따른 terminal outcome까지 상태 전이를 보여 줍니다.",
+          purpose: "durable lifecycle과 transport 불확실성을 성공으로 뭉개지 않는 상태 모델입니다.",
+          boundaries: ["exact queue receipt 또는 봉인된 queued prompt와 일치하는 재진입으로 Closed", "receipt·exact 재진입 증거가 모두 없으면 완료로 확정하지 않음", "임의의 새 사용자 입력은 완료 증거가 아님", "staged·reminder·expiry를 별도 표현"],
+          keywords: "lifecycle sealed waiting dispatched delivery pending closed unknown receipt exact queued prompt reentry"
+        }
+      ];
+
+      const documents = [
+        { route: "overview", group: "Start", title: "개요", keywords: "overview architecture views" },
+        { route: "arc42", group: "Documents", title: "arc42-lite · 12개 관점", keywords: "goal constraint context building runtime deployment risk glossary quality" },
+        { route: "adr", group: "Documents", title: "ADR · 8개 결정", keywords: "decision retrospective accepted hook swift uds keychain native fifo managed package" },
+        { route: "evidence", group: "Documents", title: "Evidence · 성숙도와 Gate", keywords: "source automated live gate tier validation receipt" }
+      ];
+
+      const adrs = [
+        ["ADR-0001", "Hook-first Plugin과 로컬 MCP", "hook plugin mcp pretool posttool"],
+        ["ADR-0002", "Swift Coordinator 제품 런타임", "swift coordinator runtime"],
+        ["ADR-0003", "same-UID UDS와 runtime identity", "uds runtime identity allowlist"],
+        ["ADR-0004", "SQLite journal과 Keychain freshness", "sqlite keychain journal freshness"],
+        ["ADR-0005", "Native Codex Preservation", "native codex fail open fail closed"],
+        ["ADR-0006", "전역 FIFO와 queued-next-turn", "fifo queued next turn receipt"],
+        ["ADR-0007", "opt-in Managed Codex App Server", "managed app server approval gate"],
+        ["ADR-0008", "macOS 앱과 서비스 패키징", "package macos service signing notarization"]
+      ].map(([id, title, keywords]) => ({ route: "adr", group: "ADR", title: `${id} · ${title}`, keywords, target: id.toLowerCase() }));
+
+      const routeNames = {
+        overview: ["Start", "개요"], arc42: ["Documents", "arc42-lite"], adr: ["Documents", "ADR"], evidence: ["Documents", "Evidence"]
+      };
+
+      const $ = (selector, root = document) => root.querySelector(selector);
+      const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
+      const iframe = $("#diagram-iframe");
+      let currentRoute = "overview";
+      let currentTheme = "light";
+      let previousFocus = null;
+      let diagramView = null;
+      let diagramObserver = null;
+      let preferredDiagramScale = 2;
+
+      function disconnectDiagramView() {
+        if (diagramObserver) diagramObserver.disconnect();
+        diagramObserver = null;
+        diagramView = null;
+        $$("[data-diagram-zoom]").forEach(button => button.disabled = true);
+        $("#diagram-scale").textContent = "불러오는 중";
+      }
+
+      function syncDiagramScale() {
+        if (!diagramView) return;
+        const scale = diagramView.state().scale;
+        if (!Number.isFinite(scale) || scale < 1 || scale > 3) throw new Error("Unsupported diagram scale");
+        preferredDiagramScale = scale;
+        const label = `${Math.round(scale * 100)}% · 화면 맞춤 기준`;
+        if ($("#diagram-scale").textContent !== label) $("#diagram-scale").textContent = label;
+        $$("[data-diagram-zoom]").forEach(button => {
+          button.disabled = (button.dataset.diagramZoom === "out" && scale <= 1) ||
+            (button.dataset.diagramZoom === "in" && scale >= 3);
+        });
+      }
+
+      function setDiagramScale(target) {
+        if (!diagramView) return;
+        diagramView.reset();
+        for (let step = 1; step < target; step += 0.25) diagramView.zoomIn();
+        syncDiagramScale();
+      }
+
+      function diagramViewUnavailable() {
+        disconnectDiagramView();
+        $("#diagram-scale").textContent = "독립 보기 이용";
+        $("#diagram-hint").textContent = "이 환경에서는 확대 기능을 연결할 수 없습니다. 독립 보기에서 도식을 확대해 주세요.";
+      }
+
+      function connectDiagramView() {
+        disconnectDiagramView();
+        if (!diagrams.some(item => item.route === currentRoute)) return;
+        try {
+          const view = iframe.contentWindow.Archify?.view;
+          if (!view || !["zoomIn", "zoomOut", "reset", "state"].every(key => typeof view[key] === "function")) {
+            diagramViewUnavailable();
+            return;
+          }
+          const svg = iframe.contentDocument.querySelector(".diagram-container > svg");
+          if (!svg) { diagramViewUnavailable(); return; }
+          diagramView = view;
+          setDiagramScale(preferredDiagramScale);
+          $("#diagram-hint").textContent = "기본 2배 확대 · 빈 곳을 드래그해 이동 · 전체 구조는 ‘전체 보기’로 확인하세요. 작은 화면에서는 독립 보기도 사용할 수 있습니다.";
+          diagramObserver = new MutationObserver(() => {
+            try { syncDiagramScale(); } catch (_) { diagramViewUnavailable(); }
+          });
+          diagramObserver.observe(svg, { attributes: true, attributeFilter: ["data-view-scale"] });
+        } catch (_) {
+          diagramViewUnavailable();
+        }
+      }
+
+      function safeStorageGet(key) { try { return localStorage.getItem(key); } catch (_) { return null; } }
+      function safeStorageSet(key, value) { try { localStorage.setItem(key, value); } catch (_) {} }
+
+      function preferredTheme() {
+        const stored = safeStorageGet("blabee-architecture-theme");
+        if (stored === "light" || stored === "dark") return stored;
+        return window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+      }
+
+      function setTheme(theme, persist = true) {
+        currentTheme = theme === "dark" ? "dark" : "light";
+        document.documentElement.dataset.theme = currentTheme;
+        $("#theme-label").textContent = currentTheme === "dark" ? "Light" : "Dark";
+        $("#theme-button").setAttribute("aria-label", currentTheme === "dark" ? "라이트 모드로 전환" : "다크 모드로 전환");
+        if (persist) safeStorageSet("blabee-architecture-theme", currentTheme);
+        const diagram = diagrams.find(item => item.route === currentRoute);
+        if (diagram) loadIframe(diagram);
+      }
+
+      function loadIframe(diagram) {
+        const url = `${diagram.path}?embed=1&theme=${currentTheme}`;
+        if (iframe.getAttribute("src") !== url) {
+          disconnectDiagramView();
+          iframe.setAttribute("src", url);
+        }
+      }
+
+      function updateDiagram(diagram) {
+        $("#diagram-kicker").textContent = diagram.code;
+        $("#diagram-title").textContent = diagram.title;
+        $("#diagram-summary").textContent = diagram.summary;
+        $("#context-purpose").textContent = diagram.purpose;
+        $("#context-boundaries").replaceChildren(...diagram.boundaries.map(text => {
+          const li = document.createElement("li"); li.textContent = text; return li;
+        }));
+        iframe.title = `${diagram.fullTitle} 도식`;
+        loadIframe(diagram);
+        for (const id of ["diagram-open", "iframe-fallback"]) $("#" + id).href = diagram.path;
+        $("#diagram-spec").href = diagram.spec;
+        $("#diagram-proof").href = diagram.proof;
+        const index = diagrams.indexOf(diagram);
+        $("#diagram-position").textContent = `${index + 1} / ${diagrams.length}`;
+        $("#diagram-prev").disabled = index === 0;
+        $("#diagram-next").disabled = index === diagrams.length - 1;
+      }
+
+      function render(route) {
+        const diagram = diagrams.find(item => item.route === route);
+        const valid = diagram || ["overview", "arc42", "adr", "evidence"].includes(route);
+        currentRoute = valid ? route : "overview";
+
+        $$(".view").forEach(view => view.hidden = true);
+        if (diagram) {
+          $("#view-diagram").hidden = false;
+          updateDiagram(diagram);
+        } else {
+          $("#view-" + currentRoute).hidden = false;
+          disconnectDiagramView();
+          iframe.removeAttribute("src");
+        }
+
+        $$("[data-route].nav-item").forEach(button => {
+          if (button.dataset.route === currentRoute) button.setAttribute("aria-current", "page");
+          else button.removeAttribute("aria-current");
+        });
+
+        const crumbs = diagram ? [diagram.group, diagram.title] : (routeNames[currentRoute] || routeNames.overview);
+        $("#breadcrumb").innerHTML = `${escapeHtml(crumbs[0])} / <strong>${escapeHtml(crumbs[1])}</strong>`;
+        $("#mobile-route-label").textContent = crumbs[1];
+        document.title = `${crumbs[1]} · Blabee Architecture`;
+        closeDrawer(false);
+      }
+
+      function navigate(route, target) {
+        const nextHash = "#" + route;
+        if (location.hash === nextHash) render(route); else location.hash = nextHash;
+        if (target) {
+          window.setTimeout(() => {
+            const node = document.getElementById(target);
+            if (node) { node.open = true; node.scrollIntoView({ behavior: "smooth", block: "center" }); }
+          }, 80);
+        } else {
+          window.scrollTo({ top: 0, behavior: "smooth" });
+        }
+      }
+
+      function escapeHtml(value) {
+        return String(value).replace(/[&<>'"]/g, char => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;" }[char]));
+      }
+
+      function openDrawer() {
+        previousFocus = document.activeElement;
+        document.body.dataset.drawer = "open";
+        $("#menu-button").setAttribute("aria-expanded", "true");
+        $("#menu-button").setAttribute("aria-label", "탐색 메뉴 닫기");
+        $("#sidebar").inert = false;
+        $("#sidebar").removeAttribute("aria-hidden");
+        $("#main-shell").inert = true;
+        $(".sidebar .nav-item[aria-current='page']")?.focus();
+      }
+
+      function syncDrawerAccessibility() {
+        const sidebar = $("#sidebar");
+        const closedOnMobile = window.innerWidth <= 800 && document.body.dataset.drawer !== "open";
+        sidebar.inert = closedOnMobile;
+        if (closedOnMobile) sidebar.setAttribute("aria-hidden", "true");
+        else sidebar.removeAttribute("aria-hidden");
+      }
+
+      function closeDrawer(restore = true) {
+        if (document.body.dataset.drawer !== "open") { syncDrawerAccessibility(); return; }
+        delete document.body.dataset.drawer;
+        $("#menu-button").setAttribute("aria-expanded", "false");
+        $("#menu-button").setAttribute("aria-label", "탐색 메뉴 열기");
+        $("#main-shell").inert = false;
+        if (restore && previousFocus) previousFocus.focus();
+        else if (window.innerWidth <= 800) $("#main-content").focus({ preventScroll: true });
+        syncDrawerAccessibility();
+      }
+
+      function showSearchResults(query) {
+        const results = $("#search-results");
+        const status = $("#search-status");
+        const normalized = query.trim().toLocaleLowerCase("ko");
+        if (!normalized) {
+          results.hidden = true;
+          status.textContent = "";
+          return;
+        }
+        const catalog = [...documents, ...diagrams, ...adrs];
+        const matches = catalog.filter(item => `${item.title} ${item.group} ${item.code || ""} ${item.keywords || ""}`.toLocaleLowerCase("ko").includes(normalized)).slice(0, 10);
+        results.replaceChildren();
+        if (!matches.length) {
+          const empty = document.createElement("div");
+          empty.className = "search-empty";
+          empty.textContent = "일치하는 자료가 없습니다.";
+          results.append(empty);
+        } else {
+          matches.forEach(item => {
+            const button = document.createElement("button");
+            button.type = "button";
+            button.className = "search-result";
+            button.innerHTML = `${escapeHtml(item.title)}<small>${escapeHtml(item.group)}</small>`;
+            button.addEventListener("click", () => {
+              navigate(item.route, item.target);
+              $("#search").value = "";
+              showSearchResults("");
+            });
+            results.append(button);
+          });
+        }
+        results.hidden = false;
+        status.textContent = `${matches.length}개 결과`;
+      }
+
+      document.addEventListener("click", event => {
+        const routeButton = event.target.closest("[data-route]");
+        if (routeButton) navigate(routeButton.dataset.route);
+        if (!event.target.closest(".search-wrap")) showSearchResults("");
+      });
+
+      $("#theme-button").addEventListener("click", () => setTheme(currentTheme === "dark" ? "light" : "dark"));
+      iframe.addEventListener("load", connectDiagramView);
+      $$("[data-diagram-zoom]").forEach(button => button.addEventListener("click", () => {
+        if (!diagramView) return;
+        try {
+          const action = button.dataset.diagramZoom;
+          if (action === "in") diagramView.zoomIn();
+          else if (action === "out") diagramView.zoomOut();
+          else setDiagramScale(action === "read" ? 2 : 1);
+          preferredDiagramScale = diagramView.state().scale;
+          syncDiagramScale();
+        } catch (_) { diagramViewUnavailable(); }
+      }));
+      $("#menu-button").addEventListener("click", () => document.body.dataset.drawer === "open" ? closeDrawer() : openDrawer());
+      $("#mobile-route").addEventListener("click", openDrawer);
+      $("#drawer-overlay").addEventListener("click", () => closeDrawer());
+      $("#search").addEventListener("input", event => showSearchResults(event.currentTarget.value));
+      $("#search").addEventListener("keydown", event => {
+        if (event.key === "Escape") { event.currentTarget.value = ""; showSearchResults(""); event.currentTarget.blur(); }
+        if (event.key === "ArrowDown") { event.preventDefault(); $(".search-result", $("#search-results"))?.focus(); }
+      });
+
+      $("#diagram-prev").addEventListener("click", () => {
+        const index = diagrams.findIndex(item => item.route === currentRoute);
+        if (index > 0) navigate(diagrams[index - 1].route);
+      });
+      $("#diagram-next").addEventListener("click", () => {
+        const index = diagrams.findIndex(item => item.route === currentRoute);
+        if (index >= 0 && index < diagrams.length - 1) navigate(diagrams[index + 1].route);
+      });
+
+      document.addEventListener("keydown", event => {
+        if (event.key === "Escape") closeDrawer();
+        if (event.key === "/" && !event.metaKey && !event.ctrlKey && !event.altKey && !/INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName)) {
+          event.preventDefault(); $("#search").focus();
+        }
+        if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") { event.preventDefault(); $("#search").focus(); }
+      });
+
+      window.addEventListener("hashchange", () => render(location.hash.slice(1) || "overview"));
+      window.addEventListener("resize", () => { if (window.innerWidth > 800) closeDrawer(false); else syncDrawerAccessibility(); });
+
+      setTheme(preferredTheme(), false);
+      render(location.hash.slice(1) || "overview");
+      syncDrawerAccessibility();
+    })();
+  </script>
+</body>
+</html>

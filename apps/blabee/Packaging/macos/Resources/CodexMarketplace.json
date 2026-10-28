@@ -1,0 +1,20 @@
+{
+  "name": "blabee-app",
+  "interface": {
+    "displayName": "Blabee"
+  },
+  "plugins": [
+    {
+      "name": "blabee",
+      "source": {
+        "source": "local",
+        "path": "./Plugin/blabee"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    }
+  ]
+}

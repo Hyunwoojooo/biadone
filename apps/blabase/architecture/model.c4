@@ -1,0 +1,293 @@
+model {
+  user = person 'Blabase 사용자·운영자' {
+    #external
+    description '브라우저 UI와 로컬 macOS launcher를 사용하는 사람'
+  }
+
+  chatgptShare = external_system 'ChatGPT 공유 대화' {
+    #external #sensitive
+    description 'https://chatgpt.com/share/{id} HTML과 React Flight payload'
+  }
+
+  llmProviders = external_system 'LLM providers' {
+    #external #sensitive
+    description 'OpenAI Responses, Gemini Interactions, Qwen compatible API'
+  }
+
+  googleSheets = external_system 'Google Sheets' {
+    #external #sensitive
+    description '명시적 Golden Sheet 동기화 대상'
+  }
+
+  github = external_system 'GitHub API' {
+    #external #sensitive
+    description '읽기 전용 work signal과 OAuth installation data'
+  }
+
+  localCodex = external_system 'Local Codex App Server' {
+    #external #sensitive
+    description 'loopback WebSocket 기반 managed/local Codex observation'
+  }
+
+  calendar = external_system 'Google Calendar API' {
+    #external #sensitive
+    description '일정 context 전용 read-only source'
+  }
+
+  notion = external_system 'Notion API' {
+    #external #sensitive
+    description 'project context 전용 bounded search source'
+  }
+
+  blabase = system 'Blabase' {
+    #implemented
+    description '대화 구조화 앱과 별도 work-intelligence 앱을 포함하는 제품 코드베이스'
+
+    conversationApp = application 'Conversation application' {
+      #implemented
+      description 'Next.js App Router 기반 공유 대화 복원·추출·검토 앱'
+      technology 'Next.js 15 · React 19 · TypeScript'
+      link ../src/app/page.tsx 'UI entry'
+      link ../src/app/api/analyses/route.ts 'analysis API'
+
+      webUi = component 'UrlInputForm + ExtractionMonitor' {
+        #implemented
+        description 'URL 입력, 결과 탭, 증거 이동, audit 다운로드, Golden Sheet sync'
+        technology 'React client components'
+        link ../src/components/UrlInputForm.tsx 'UrlInputForm.handleSubmit'
+        link ../src/components/extraction-monitor/ExtractionMonitor.tsx 'ExtractionMonitor'
+      }
+
+      analysisApi = component 'POST /api/analyses' {
+        #implemented
+        description '공유 대화 수집부터 rule·LLM shadow·검증·저장을 동기식으로 조정'
+        technology 'Next.js Node route handler'
+        link ../src/app/api/analyses/route.ts 'POST'
+      }
+
+      analysisExports = component 'Audit + Golden export routes' {
+        #implemented #sensitive
+        description 'stored analysis를 GPT audit Markdown으로 내보내거나 명시적으로 Golden Sheet에 동기화'
+        technology 'Next.js Node route handlers'
+        link ../src/app/api/analyses/[analysisId]/gpt-audit/route.ts 'audit export'
+        link ../src/app/api/analyses/[analysisId]/golden-sheet/route.ts 'Golden sync'
+      }
+
+      shareAdapter = component 'importChatGPTShareUrl' {
+        #implemented
+        description 'URL 검증, HTML fetch, React Flight 복원, canonical conversation 생성'
+        link ../src/core/adapters/chatgpt-share/index.ts 'adapter'
+      }
+
+      normalizer = component 'normalizeConversation' {
+        #implemented
+        description '대화 턴과 block을 clean/context/internal 그룹으로 정규화'
+        link ../src/core/adapters/chatgpt-share/normalizeConversation.ts 'normalizer'
+      }
+
+      ruleExtractor = component 'extractMockStructure' {
+        #implemented
+        description '이름은 Mock이지만 live path에서 사용하는 deterministic rule engine'
+        link ../src/core/extractors/mockStructureExtractor.ts 'rule extractor'
+      }
+
+      shadowExtractor = component 'runShadowExtraction' {
+        #implemented
+        description 'segmented LLM shadow extraction과 provider result 집계'
+        link ../src/core/extractors/runShadowExtraction.ts 'shadow orchestration'
+      }
+
+      evidenceVerifier = component 'verifyLlmEvidence' {
+        #implemented
+        description 'LLM 후보를 verified, review, rejected로 분류'
+        link ../src/core/validation/evidenceVerifier.ts 'verifier'
+      }
+
+      analysisStore = datastore 'MemoryAnalysisStore' {
+        #implemented #sensitive
+        description 'isolate/process global Map. TTL·durability·ownership 없음'
+        technology 'globalThis Map'
+        link ../src/core/storage/analysisStore.ts 'store'
+      }
+
+      browserCache = datastore 'Browser analysis cache' {
+        #implemented #sensitive
+        description 'module memory + sessionStorage; Atlas는 마지막 analysis ID만 localStorage에 저장'
+        technology 'sessionStorage · localStorage'
+        link ../src/components/extraction-monitor/analysisSessionCache.ts 'session cache'
+        link ../src/components/atlas/AtlasStructurePage.tsx 'last analysis ID'
+      }
+
+      webUi -> analysisApi 'POST analysis request' 'HTTPS/JSON'
+      analysisApi -> shareAdapter 'restore shared conversation'
+      shareAdapter -> normalizer 'canonicalize turns'
+      analysisApi -> ruleExtractor 'deterministic extraction'
+      analysisApi -> shadowExtractor 'optional shadow extraction'
+      shadowExtractor -> evidenceVerifier 'verify LLM candidates'
+      analysisApi -> analysisStore 'store completed analysis'
+      analysisApi -> webUi 'return monitor payload'
+      webUi -> browserCache 'cache navigation payload'
+      webUi -> analysisExports 'download audit or request Golden sync'
+      analysisExports -> analysisStore 'read completed analysis'
+    }
+
+    suggestionApp = application 'Work intelligence application' {
+      #implemented
+      description '별도 npm/Next.js 앱. source observation, Active Attention, Work Board와 local APIs'
+      technology 'Next.js 15 · React 19 · TypeScript'
+      link ../suggestion/app/page.tsx 'Work Cockpit entry'
+      link ../suggestion/middleware.ts 'Basic Auth middleware'
+
+      workCockpit = component 'WorkCockpit' {
+        #implemented
+        description 'Attention·Work Board·Current Focus·Recent Work·source health 조합 화면'
+        link ../suggestion/app/WorkCockpit.tsx 'WorkCockpit'
+      }
+
+      localApis = component 'Local API route handlers' {
+        #implemented
+        description 'attention, sync, connector, display-only board, semantic intent, setup navigation offer, monitoring route 집합'
+        link ../suggestion/app/api/attention/route.ts 'attention API'
+        link ../suggestion/app/api/work-board/route.ts 'work board API'
+        link ../suggestion/app/api/work-board/intent/route.ts 'semantic intent API'
+        link ../suggestion/app/api/work-board/monitoring/route.ts 'monitoring API'
+        link ../suggestion/app/api/continuation/route.ts 'continuation read API'
+        link ../suggestion/app/api/continuation/offers/route.ts 'setup offer issue API'
+        link ../suggestion/app/api/continuation/open/route.ts 'setup offer consume API'
+      }
+
+      connectors = component 'Source connectors' {
+        #implemented #sensitive
+        description 'GitHub, Codex, Calendar, Notion의 bounded read adapters'
+        link ../suggestion/src/connectors/github/githubApi.ts 'GitHub connector'
+        link ../suggestion/src/connectors/codex/appServer.ts 'Codex connector'
+      }
+
+      syncCoordinator = component 'SourceSyncCoordinator' {
+        #implemented
+        description 'process-local timer, in-flight deduplication, backoff와 snapshot persistence'
+        link ../suggestion/src/sync/coordinator.ts 'coordinator'
+        link ../suggestion/src/sync/runtime.ts 'runtime singleton'
+      }
+
+      attentionEngine = component 'Active Attention pipeline' {
+        #implemented
+        description 'router, eligibility, evidence graph, deterministic lane ranking'
+        link ../suggestion/src/attention/liveAttention.ts 'capture and evaluate'
+        link ../suggestion/src/attentionDecision/resolveActiveAttention.ts 'resolver'
+      }
+
+      continuation = component 'Continuation + Work Board' {
+        #implemented
+        description 'sealed Active를 보존하는 display-only projection, explicit semantic title, bounded setup navigation offer, opt-in monitoring receipt'
+        link ../suggestion/src/suggestionBoard/liveShadow.ts 'live shadow'
+        link ../suggestion/src/suggestionBoard/composeBoard.ts 'composer'
+        link ../suggestion/src/semanticContinuation/titleOverlay.ts 'semantic title overlay'
+        link ../suggestion/src/continuation/actions/gateway.ts 'setup action gateway'
+        link ../suggestion/src/suggestionBoard/monitoring/receipt.ts 'monitoring receipt'
+      }
+
+      localStores = datastore 'Private local stores' {
+        #implemented #sensitive
+        description '.local 아래 strict schema, atomic write, bounded retention을 사용하는 filesystem stores'
+        technology 'local JSON files'
+        link ../suggestion/src/sync/repository.ts 'sync repository'
+        link ../suggestion/src/semanticContinuation/localStore.ts 'semantic intent store'
+        link ../suggestion/src/continuation/actions/store.ts 'setup action store'
+        link ../suggestion/src/suggestionBoard/monitoring/store.ts 'monitoring store and all-data purge'
+      }
+
+      screenEvidenceIngestion = component 'Private Screen Evidence ingestion (inactive)' {
+        #implemented #sensitive
+        description 'Blabase 소유 contract, qualifier, importer와 secure filesystem reader가 구현됐지만 private, inactive, unfrozen, unwired 상태이며 caller나 activation이 없음'
+        technology 'TypeScript internal boundary'
+        link ../suggestion/src/screenEvidence/contractsV1.ts 'private contract'
+        link ../suggestion/src/screenEvidence/qualifyScreenEvidenceBundleV1.internal.ts 'qualifier'
+        link ../suggestion/src/screenEvidence/importScreenEvidenceBundleV1.ts 'importer'
+        link ../suggestion/src/screenEvidence/readScreenEvidenceBundleV1.ts 'secure filesystem reader'
+      }
+
+      privateScreenEvidenceStore = datastore 'Private immutable Screen Evidence store (inactive)' {
+        #implemented #sensitive
+        description 'Exact immutable revision write, read, snapshot과 metadata-only cleanup inventory를 제공하지만 private, inactive, unfrozen, unwired 상태이며 deletion authority, caller나 activation이 없음'
+        technology 'TypeScript private filesystem boundary'
+        link ../suggestion/src/screenEvidence/privateStoreContractsV1.ts 'private store contract'
+        link ../suggestion/src/screenEvidence/privateScreenEvidenceFilesystemV1.internal.ts 'private filesystem boundary'
+        link ../suggestion/src/screenEvidence/privateScreenEvidenceStoreV1.ts 'immutable store operations and read-only cleanup inventory'
+      }
+
+      screenEvidenceExporter = component 'Private Screen Evidence exporter (inactive)' {
+        #implemented #sensitive
+        description 'Pure export selection, canonical four-file publication과 preflight/current-reader readback을 구현했지만 private, inactive, unfrozen, unwired 상태이며 caller나 activation이 없음'
+        technology 'TypeScript internal boundary'
+        link ../suggestion/src/screenEvidence/exportScreenEvidenceBundleV1.ts 'private exporter'
+      }
+
+      completedScreenEvidenceBundle = datastore 'Completed four-file Screen Evidence bundle format (inactive)' {
+        #implemented #sensitive
+        description 'payload.json, manifest.json, manifest.sha256, COMPLETE의 canonical completed-bundle format이 구현됐지만 private, inactive, unfrozen, unwired 상태이며 production publication이 없음'
+        technology 'Canonical private filesystem bundle'
+        link ../suggestion/src/screenEvidence/exportScreenEvidenceBundleV1.ts 'bundle publication format'
+      }
+
+      sameEngineAblation = component 'Private same-engine A/B/C evaluation runner (inactive)' {
+        #implemented #sensitive
+        description '고정 structured·screen 패킷 6개를 한 번만 추출하고 동일 후보를 A/B/C evidence 조합에 재사용하며 관찰 시간 범위와 physical·attributed 사용량을 분리하는 비활성 private evaluation 경로'
+        technology 'TypeScript internal evaluation runner'
+        link ../suggestion/src/evaluation/screenEvidenceAblation/runScreenEvidenceTask2SameEnginePilotV2.ts 'shared extraction and arm resolution'
+        link ../suggestion/src/runSuggestionEngine.ts 'provider-neutral extraction and common resolver'
+      }
+
+      workCockpit -> localApis 'read and refresh views' 'loopback HTTP'
+      localApis -> syncCoordinator 'start or inspect source sync'
+      syncCoordinator -> connectors 'collect bounded source snapshots'
+      localApis -> attentionEngine 'evaluate current attention'
+      attentionEngine -> continuation 'project Active without selection effect'
+      localApis -> continuation 'preserve-evaluate, project, or explicitly confirm'
+      continuation -> localStores 'authenticated local intent, offer, and monitoring events'
+      syncCoordinator -> localStores 'persist private snapshots'
+      attentionEngine -> localStores 'persist replay and monitoring data'
+      sameEngineAblation -> screenEvidenceIngestion 'read fixed imported screen evidence'
+      sameEngineAblation -> localStores 'read sealed private evaluation input and publish private results'
+    }
+
+    macLauncher = application 'Blabase macOS Launcher' {
+      #implemented
+      description 'AppKit menu-bar UI와 bundled Node launcher agent의 JSONL bridge'
+      technology 'Swift AppKit + Node child process'
+      link ../suggestion/desktop/macos/Sources/BlabaseLauncher/BlabaseLauncherApp.swift 'native entry'
+      link ../suggestion/src/launcher/service.ts 'LauncherService'
+      link ../suggestion/src/launcher/workBoardProjection.ts 'strict display-only Work Board projection'
+    }
+
+    chatgptFetcher = application 'ChatGPT fetcher sidecar' {
+      #implemented #sensitive
+      description '선택적 bearer-authenticated fetch sidecar; 별도 Node HTTP process'
+      technology 'Node.js HTTP'
+      link ../tools/chatgpt-fetcher/server.mjs 'sidecar'
+    }
+  }
+
+  user -> blabase.conversationApp.webUi '공유 URL 입력·결과 검토'
+  user -> blabase.suggestionApp.workCockpit '다음 행동과 source 상태 확인'
+  user -> blabase.macLauncher '로컬 Work Board 표시·legacy Active 조회·승인된 resume 요청'
+
+  blabase.conversationApp.shareAdapter -> chatgptShare '공유 HTML fetch' 'HTTPS'
+  blabase.conversationApp.shareAdapter -> blabase.chatgptFetcher '설정된 경우 fetch 위임' 'Bearer HTTP'
+  blabase.chatgptFetcher -> chatgptShare 'server-side fetch' 'HTTPS'
+  blabase.conversationApp.shadowExtractor -> llmProviders 'clean conversation 전송' 'HTTPS/JSON'
+  blabase.conversationApp.analysisExports -> googleSheets '명시적 Golden Sheet sync' 'Google API'
+
+  blabase.suggestionApp.sameEngineAblation -> llmProviders 'extract six unique evidence packets once per evaluation case' 'HTTPS/JSON'
+
+  blabase.suggestionApp.connectors -> github 'read work signals' 'OAuth/REST'
+  blabase.suggestionApp.connectors -> localCodex 'read managed/local observations' 'loopback WebSocket'
+  blabase.suggestionApp.connectors -> calendar 'read schedule context' 'OAuth/REST'
+  blabase.suggestionApp.connectors -> notion 'read project context' 'OAuth/REST'
+  blabase.macLauncher -> blabase.suggestionApp.localApis 'bundled agent와 local service 호출' 'JSONL + loopback HTTP'
+  blabase.macLauncher -> blabase.suggestionApp.continuation 'work-board.get의 preserve display-only projection' 'JSONL'
+
+  blabase.suggestionApp.continuation -> blabase.conversationApp.shareAdapter 'legacy shared-chat restoration' {
+    description 'suggestion/src/restoreConversations.ts의 현재 one-way source dependency'
+  }
+}

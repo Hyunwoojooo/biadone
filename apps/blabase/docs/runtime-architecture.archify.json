@@ -1,0 +1,455 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "blabase 저장소 런타임 아키텍처",
+    "output": "runtime-architecture.html",
+    "quality_profile": "showcase",
+    "repository": {
+      "url": "https://github.com/Hyunwoojooo/biadone",
+      "revision": "d620ae9724958efa5a80999c9d127fea34450811"
+    },
+    "legend": {
+      "entries": {
+        "external": { "label": "외부 서비스·소스" },
+        "frontend": { "label": "브라우저 런타임" },
+        "backend": { "label": "서버·처리 엔진" },
+        "database": { "label": "상태·파일 저장소" },
+        "cloud": { "label": "배포·라우팅 계층" }
+      }
+    }
+  },
+  "layout": {
+    "mode": "grid",
+    "origin": [48, 118],
+    "cols": 5,
+    "gapX": 130,
+    "gapY": 86,
+    "cellW": 170,
+    "cellH": 78
+  },
+  "components": [
+    {
+      "id": "browserClient",
+      "type": "frontend",
+      "label": "사용자 브라우저",
+      "sublabel": "입력·모니터 · sessionStorage",
+      "row": 1,
+      "col": 0,
+      "size": [178, 78],
+      "sources": [
+        {
+          "path": "apps/blabase/src/components/UrlInputForm.tsx",
+          "line": 27,
+          "end_line": 75,
+          "label": "분석 생성 요청"
+        },
+        {
+          "path": "apps/blabase/src/components/extraction-monitor/ExtractionMonitor.tsx",
+          "line": 144,
+          "end_line": 180,
+          "label": "결과 로딩"
+        },
+        {
+          "path": "apps/blabase/src/components/extraction-monitor/analysisSessionCache.ts",
+          "line": 3,
+          "end_line": 52,
+          "label": "세션 캐시"
+        }
+      ]
+    },
+    {
+      "id": "blabaseRuntime",
+      "type": "cloud",
+      "label": "blabase Next.js Worker",
+      "sublabel": "OpenNext · UI · Route Handlers",
+      "row": 1,
+      "col": 1,
+      "size": [184, 80],
+      "sources": [
+        {
+          "path": "apps/blabase/wrangler.jsonc",
+          "line": 1,
+          "end_line": 31,
+          "label": "Cloudflare 배포"
+        },
+        {
+          "path": "apps/blabase/open-next.config.ts",
+          "line": 1,
+          "end_line": 3,
+          "label": "OpenNext 설정"
+        },
+        {
+          "path": "apps/blabase/src/app/api/analyses/route.ts",
+          "line": 17,
+          "end_line": 83,
+          "label": "동기 분석 API"
+        }
+      ]
+    },
+    {
+      "id": "shareAdapter",
+      "type": "backend",
+      "label": "ChatGPT Share Adapter",
+      "sublabel": "검증 · Flight 복원 · 정규화",
+      "row": 1,
+      "col": 2,
+      "size": [184, 82],
+      "sources": [
+        {
+          "path": "apps/blabase/src/core/adapters/chatgpt-share/index.ts",
+          "line": 29,
+          "end_line": 70,
+          "label": "가져오기 파이프라인"
+        },
+        {
+          "path": "apps/blabase/src/core/adapters/chatgpt-share/restoreConversation.ts",
+          "line": 15,
+          "end_line": 37,
+          "label": "대화 복원"
+        }
+      ]
+    },
+    {
+      "id": "hybridEngine",
+      "type": "backend",
+      "label": "하이브리드 추출 엔진",
+      "sublabel": "규칙 · LLM shadow · 근거 검증",
+      "row": 1,
+      "col": 3,
+      "size": [190, 82],
+      "sources": [
+        {
+          "path": "apps/blabase/src/core/extractors/runShadowExtraction.ts",
+          "line": 11,
+          "end_line": 36,
+          "label": "하이브리드 조합"
+        },
+        {
+          "path": "apps/blabase/src/core/extractors/llmShadowExtractor.ts",
+          "line": 61,
+          "end_line": 142,
+          "label": "LLM shadow 실행"
+        },
+        {
+          "path": "apps/blabase/src/core/validation/evidenceVerifier.ts",
+          "line": 37,
+          "end_line": 81,
+          "label": "근거 검증"
+        }
+      ]
+    },
+    {
+      "id": "memoryStore",
+      "type": "database",
+      "label": "프로세스 메모리 저장소",
+      "sublabel": "Map · 영구 DB 없음",
+      "row": 1,
+      "col": 4,
+      "size": [186, 76],
+      "sources": [
+        {
+          "path": "apps/blabase/src/core/storage/analysisStore.ts",
+          "line": 35,
+          "end_line": 87,
+          "label": "AnalysisStore 구현"
+        }
+      ]
+    },
+    {
+      "id": "shareFetcher",
+      "type": "external",
+      "label": "선택적 Share Fetcher",
+      "sublabel": "POST + Bearer · 독립 프록시",
+      "row": 0,
+      "col": 1,
+      "size": [180, 74],
+      "sources": [
+        {
+          "path": "apps/blabase/src/core/adapters/chatgpt-share/fetchShareHtml.ts",
+          "line": 28,
+          "end_line": 87,
+          "label": "인증된 프록시 호출"
+        },
+        {
+          "path": "apps/blabase/tools/chatgpt-fetcher/server.mjs",
+          "line": 16,
+          "end_line": 69,
+          "label": "Fetcher 서버"
+        }
+      ]
+    },
+    {
+      "id": "chatgptSource",
+      "type": "external",
+      "label": "ChatGPT 공유 페이지",
+      "sublabel": "공개 공유 HTML 원본",
+      "row": 0,
+      "col": 2,
+      "size": [180, 74],
+      "sources": [
+        {
+          "path": "apps/blabase/src/core/adapters/chatgpt-share/fetchShareHtml.ts",
+          "line": 18,
+          "end_line": 26,
+          "label": "가져오기 모드 선택"
+        },
+        {
+          "path": "apps/blabase/tools/chatgpt-fetcher/server.mjs",
+          "line": 35,
+          "end_line": 58,
+          "label": "프록시의 원본 GET"
+        }
+      ]
+    },
+    {
+      "id": "llmProviders",
+      "type": "external",
+      "label": "선택된 LLM Provider",
+      "sublabel": "OpenAI · Gemini · Qwen",
+      "row": 0,
+      "col": 3,
+      "size": [180, 74],
+      "sources": [
+        {
+          "path": "apps/blabase/src/core/extractors/providers/index.ts",
+          "line": 1,
+          "end_line": 14,
+          "label": "Provider 선택"
+        },
+        {
+          "path": "apps/blabase/src/core/extractors/providers/openaiProvider.ts",
+          "line": 9,
+          "end_line": 64,
+          "label": "OpenAI 호출"
+        },
+        {
+          "path": "apps/blabase/src/core/extractors/providers/geminiProvider.ts",
+          "line": 9,
+          "end_line": 74,
+          "label": "Gemini 호출"
+        }
+      ]
+    },
+    {
+      "id": "googleSheets",
+      "type": "external",
+      "label": "Google Sheets",
+      "sublabel": "명시적 Golden Sheet 동기화",
+      "row": 2,
+      "col": 1,
+      "size": [172, 72],
+      "sources": [
+        {
+          "path": "apps/blabase/src/app/api/analyses/[analysisId]/golden-sheet/route.ts",
+          "line": 19,
+          "end_line": 53,
+          "label": "동기화 API"
+        },
+        {
+          "path": "apps/blabase/src/core/golden-sheet/googleSheetsClient.ts",
+          "line": 85,
+          "end_line": 153,
+          "label": "중복 확인·배치 저장"
+        }
+      ]
+    },
+    {
+      "id": "suggestionHosted",
+      "type": "cloud",
+      "label": "Suggestion 운영 Worker",
+      "sublabel": "별도 Next.js 앱 · Basic auth",
+      "row": 2,
+      "col": 0,
+      "size": [184, 78],
+      "sources": [
+        {
+          "path": "apps/blabase/suggestion/app/WorkCockpit.tsx",
+          "line": 58,
+          "label": "Work Cockpit"
+        },
+        {
+          "path": "apps/blabase/suggestion/middleware.ts",
+          "line": 5,
+          "end_line": 38,
+          "label": "운영 Basic auth"
+        },
+        {
+          "path": "apps/blabase/suggestion/wrangler.jsonc",
+          "line": 3,
+          "end_line": 28,
+          "label": "별도 Worker 배포"
+        }
+      ]
+    },
+    {
+      "id": "suggestionLocal",
+      "type": "backend",
+      "label": "Suggestion localhost 모드",
+      "sublabel": "sync · timers · .local JSON · Codex",
+      "row": 2,
+      "col": 3,
+      "size": [190, 78],
+      "sources": [
+        {
+          "path": "apps/blabase/suggestion/src/attention/access.ts",
+          "line": 1,
+          "end_line": 14,
+          "label": "localhost 개발 제한"
+        },
+        {
+          "path": "apps/blabase/suggestion/src/sync/runtime.ts",
+          "line": 88,
+          "end_line": 151,
+          "label": "동기화·타이머 런타임"
+        },
+        {
+          "path": "apps/blabase/suggestion/src/sync/repository.ts",
+          "line": 89,
+          "end_line": 93,
+          "label": ".local 파일 상태"
+        }
+      ]
+    },
+    {
+      "id": "connectedSources",
+      "type": "external",
+      "label": "연결 소스",
+      "sublabel": "GitHub · Notion · Calendar · Codex",
+      "row": 2,
+      "col": 4,
+      "size": [184, 74],
+      "sources": [
+        {
+          "path": "apps/blabase/suggestion/src/sync/runtime.ts",
+          "line": 193,
+          "end_line": 351,
+          "label": "소스 어댑터 등록"
+        },
+        {
+          "path": "apps/blabase/suggestion/src/sync/runtime.ts",
+          "line": 136,
+          "end_line": 151,
+          "label": "병렬 동기화"
+        }
+      ]
+    }
+  ],
+  "connections": [
+    {
+      "id": "browserToBlabase",
+      "from": "browserClient",
+      "to": "blabaseRuntime",
+      "label": "HTTPS 페이지·API 요청",
+      "variant": "emphasis"
+    },
+    {
+      "id": "runtimeToAdapter",
+      "from": "blabaseRuntime",
+      "to": "shareAdapter",
+      "label": "공유 URL 가져오기",
+      "variant": "emphasis"
+    },
+    {
+      "id": "adapterToEngine",
+      "from": "shareAdapter",
+      "to": "hybridEngine",
+      "label": "정규 대화 분석",
+      "variant": "emphasis"
+    },
+    {
+      "id": "engineToMemory",
+      "from": "hybridEngine",
+      "to": "memoryStore",
+      "label": "완료·실패 레코드",
+      "variant": "emphasis"
+    },
+    {
+      "id": "adapterToChatgpt",
+      "from": "shareAdapter",
+      "to": "chatgptSource",
+      "label": "기본: HTML GET",
+      "fromSide": "top",
+      "toSide": "bottom",
+      "labelAt": [790, 222]
+    },
+    {
+      "id": "adapterToFetcher",
+      "from": "shareAdapter",
+      "to": "shareFetcher",
+      "label": "선택: POST + Bearer",
+      "variant": "dashed",
+      "fromSide": "top",
+      "toSide": "bottom"
+    },
+    {
+      "id": "fetcherToChatgpt",
+      "from": "shareFetcher",
+      "to": "chatgptSource",
+      "label": "HTML GET",
+      "variant": "dashed",
+      "fromSide": "right",
+      "toSide": "left"
+    },
+    {
+      "id": "engineToLlm",
+      "from": "hybridEngine",
+      "to": "llmProviders",
+      "label": "선택적 JSON 추출",
+      "variant": "dashed",
+      "fromSide": "top",
+      "toSide": "bottom"
+    },
+    {
+      "id": "runtimeToSheets",
+      "from": "blabaseRuntime",
+      "to": "googleSheets",
+      "label": "명시적 동기화",
+      "variant": "dashed",
+      "fromSide": "bottom",
+      "toSide": "top"
+    },
+    {
+      "id": "browserToSuggestionHosted",
+      "from": "browserClient",
+      "to": "suggestionHosted",
+      "label": "운영 호스트 접속",
+      "variant": "dashed",
+      "fromSide": "bottom",
+      "toSide": "top"
+    },
+    {
+      "id": "localSuggestionToSources",
+      "from": "suggestionLocal",
+      "to": "connectedSources",
+      "label": "로컬 전용 동기화",
+      "variant": "dashed"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "주 분석 요청",
+      "items": [
+        "POST /api/analyses 안에서 공유 대화 복원, 규칙 추출, 선택적 LLM shadow, 근거 검증이 동기 실행됩니다.",
+        "공유 HTML은 직접 GET하거나 설정된 Fetcher에 Bearer 인증 POST를 보내며, monitorData는 브라우저 세션 캐시에 전달됩니다."
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "상태와 외부 저장",
+      "items": [
+        "분석 레코드는 Worker 프로세스 메모리뿐이라 재시작·격리 인스턴스 사이에 공유되지 않습니다.",
+        "Google Sheets만 명시적 사용자 동작으로 영속 쓰기를 수행하며, Golden 품질 화면은 로컬 JSON을 읽습니다."
+      ]
+    },
+    {
+      "dot": "violet",
+      "title": "Suggestion 실행 경계",
+      "items": [
+        "운영 Cloudflare Worker와 localhost 개발 모드는 서로 다른 실행 경계이며 운영 호스트는 Basic auth로 보호됩니다.",
+        "다중 소스 동기화, 타이머, 로컬 Codex, .local 파일 상태는 localhost Node.js 전용이고 Worker 내구 상태가 아닙니다."
+      ]
+    }
+  ]
+}

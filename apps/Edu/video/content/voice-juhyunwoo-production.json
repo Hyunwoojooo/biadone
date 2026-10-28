@@ -1,0 +1,161 @@
+{
+  "provider": "ElevenLabs",
+  "voice_id": "OPFjzL0JpsgltRkDljyO",
+  "voice_name": "주현우",
+  "model_id": "eleven_multilingual_v2",
+  "voice_settings": {
+    "stability": 0.67,
+    "similarity_boost": 0.78,
+    "style": 0.08,
+    "use_speaker_boost": true,
+    "speed": 0.97
+  },
+  "brand_pronunciation": "비아던 에듀",
+  "scenes": [
+    {
+      "id": "intro",
+      "audio": "audio/juhyunwoo-v5/01-intro.mp3",
+      "alignment": "audio/juhyunwoo-v5/01-intro.alignment.json",
+      "characters": 92,
+      "status": "complete",
+      "request": {
+        "request-id": "6uGRsc2TCo7oa8VUNzeW",
+        "character-cost": "37"
+      }
+    },
+    {
+      "id": "approach",
+      "audio": "audio/juhyunwoo-v5/02-approach.mp3",
+      "alignment": "audio/juhyunwoo-v5/02-approach.alignment.json",
+      "characters": 94,
+      "status": "complete",
+      "request": {
+        "request-id": "2JGHNMM6fCuFBGkEbTf0",
+        "character-cost": "38"
+      }
+    },
+    {
+      "id": "foundation",
+      "audio": "audio/juhyunwoo-v5/03-foundation.mp3",
+      "alignment": "audio/juhyunwoo-v5/03-foundation.alignment.json",
+      "characters": 100,
+      "status": "complete",
+      "request": {
+        "request-id": "CYInZMnL9avGsnlEnRzP",
+        "character-cost": "40"
+      }
+    },
+    {
+      "id": "choice",
+      "audio": "audio/juhyunwoo-v5/04-choice.mp3",
+      "alignment": "audio/juhyunwoo-v5/04-choice.alignment.json",
+      "characters": 87,
+      "status": "complete",
+      "request": {
+        "request-id": "pGgTpYOtqlginmN3YMGq",
+        "character-cost": "35"
+      }
+    },
+    {
+      "id": "content",
+      "audio": "audio/juhyunwoo-v5/05-content.mp3",
+      "alignment": "audio/juhyunwoo-v5/05-content.alignment.json",
+      "characters": 94,
+      "status": "complete",
+      "request": {
+        "request-id": "9CrGINH5qvEcpIJDyaso",
+        "character-cost": "38"
+      }
+    },
+    {
+      "id": "website",
+      "audio": "audio/juhyunwoo-v5/06-website.mp3",
+      "alignment": "audio/juhyunwoo-v5/06-website.alignment.json",
+      "characters": 100,
+      "status": "complete",
+      "request": {
+        "request-id": "R4DmYNupIYAt8PaUcTcN",
+        "character-cost": "40"
+      }
+    },
+    {
+      "id": "inquiry",
+      "audio": "audio/juhyunwoo-v5/07-inquiry.mp3",
+      "alignment": "audio/juhyunwoo-v5/07-inquiry.alignment.json",
+      "characters": 104,
+      "status": "complete",
+      "request": {
+        "request-id": "dcJjTV4XjRRXOuRrSmC7",
+        "character-cost": "42"
+      }
+    },
+    {
+      "id": "data",
+      "audio": "audio/juhyunwoo-v5/08-data.mp3",
+      "alignment": "audio/juhyunwoo-v5/08-data.alignment.json",
+      "characters": 92,
+      "status": "complete",
+      "request": {
+        "request-id": "jOuDffiF2SxOlVmRltCe",
+        "character-cost": "37"
+      }
+    },
+    {
+      "id": "tool",
+      "audio": "audio/juhyunwoo-v5/09-tool.mp3",
+      "alignment": "audio/juhyunwoo-v5/09-tool.alignment.json",
+      "characters": 102,
+      "status": "complete",
+      "request": {
+        "request-id": "pwYl6VgWp6vyd369fpOF",
+        "character-cost": "41"
+      }
+    },
+    {
+      "id": "team",
+      "audio": "audio/juhyunwoo-v5/10-team.mp3",
+      "alignment": "audio/juhyunwoo-v5/10-team.alignment.json",
+      "characters": 122,
+      "status": "complete",
+      "request": {
+        "request-id": "1S0NQHHZkgfIXAo9cC5k",
+        "character-cost": "49"
+      }
+    },
+    {
+      "id": "operations",
+      "audio": "audio/juhyunwoo-v5/11-operations.mp3",
+      "alignment": "audio/juhyunwoo-v5/11-operations.alignment.json",
+      "characters": 100,
+      "status": "complete",
+      "request": {
+        "request-id": "yDA1pJf8vhYKxWbi8v4L",
+        "character-cost": "40"
+      }
+    },
+    {
+      "id": "closing",
+      "audio": "audio/juhyunwoo-v5/12-closing.mp3",
+      "alignment": "audio/juhyunwoo-v5/12-closing.alignment.json",
+      "characters": 93,
+      "status": "complete",
+      "request": {
+        "request-id": "i2znhtf3xvZfPAGTV02p",
+        "character-cost": "37"
+      }
+    }
+  ],
+  "voice_category": "cloned",
+  "usage_before": {
+    "character_count": 7351,
+    "character_limit": 40000
+  },
+  "usage_after": {
+    "character_count": 7351,
+    "character_limit": 40000
+  },
+  "generated_characters": 1180,
+  "completed_clips": 12,
+  "provider_reported_character_cost_total": 474,
+  "usage_snapshot_may_lag_billing": true
+}

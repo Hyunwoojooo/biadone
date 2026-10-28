@@ -64,12 +64,33 @@ export type RawTaskCandidate = {
   evidence: RawTaskEvidence[];
 };
 
+export type RawTaskStateSignal = {
+  title: string;
+  target: string;
+  deliverable: string;
+  state: "completed" | "cancelled" | "replaced";
+  evidence: RawTaskEvidence[];
+};
+
 export type VerifiedTaskEvidence = RawTaskEvidence & {
   conversationId: string;
   messageId: string;
   role: "user" | "assistant";
   startChar: number;
   endChar: number;
+};
+
+export type SuggestionEvidenceSourceContext = {
+  sourceId: string;
+  modality: "structured" | "screen";
+  authority: "structured_source" | "screen_observation";
+  observedFrom: string;
+  observedTo: string;
+  confidenceFloor: number | null;
+  confidenceCeiling: number | null;
+  coverageRatio: number | null;
+  conflictCount: number;
+  issueCount: number;
 };
 
 export type VerifiedTaskCandidate = {
@@ -93,6 +114,19 @@ export type VerifiedTaskCandidate = {
   conversationId: string;
   conversationEndedAt: string | null;
   evidence: VerifiedTaskEvidence[];
+  sourceContexts: SuggestionEvidenceSourceContext[];
+  verificationIssues: string[];
+};
+
+export type VerifiedTaskStateSignal = {
+  id: string;
+  canonicalKey: string;
+  title: string;
+  state: "completed" | "cancelled" | "replaced";
+  conversationId: string;
+  conversationEndedAt: string | null;
+  evidence: VerifiedTaskEvidence[];
+  sourceContexts: SuggestionEvidenceSourceContext[];
   verificationIssues: string[];
 };
 
@@ -201,6 +235,7 @@ export type PrioritySuggestionResult = {
 export type RestoredConversation = {
   inputIndex: number;
   conversation: CanonicalConversation;
+  sourceContext?: SuggestionEvidenceSourceContext;
 };
 
 export type ProviderResponse = {

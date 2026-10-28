@@ -1,4 +1,5 @@
 import Foundation
+import CoreFoundation
 
 enum LauncherIPC {
     static let contract = "blabase-launcher-ipc-v1"
@@ -7,9 +8,91 @@ enum LauncherIPC {
     static func requestID(uuid: UUID = UUID()) -> String {
         "request-\(uuid.uuidString.lowercased())"
     }
+
+    static func isCanonicalRequestID(_ value: String) -> Bool {
+        value.range(
+            of: #"^request-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"#,
+            options: .regularExpression
+        ) == (value.startIndex..<value.endIndex)
+    }
+
+    static func parseResponseLine(_ data: Data) throws -> LauncherIPCParsedResponse {
+        guard
+            let object = try? JSONSerialization.jsonObject(with: data),
+            let dictionary = object as? [String: Any],
+            let contract = dictionary["contract"] as? String,
+            contract == Self.contract,
+            let requestId = dictionary["requestId"] as? String,
+            isCanonicalRequestID(requestId),
+            let okNumber = dictionary["ok"] as? NSNumber,
+            CFGetTypeID(okNumber) == CFBooleanGetTypeID()
+        else {
+            throw LauncherAgentError.invalidResponse
+        }
+
+        if okNumber.boolValue {
+            guard
+                Set(dictionary.keys) ==
+                    Set(["contract", "requestId", "ok", "result"]),
+                let result = dictionary["result"] as? [String: Any],
+                JSONSerialization.isValidJSONObject(result),
+                let resultData = try? JSONSerialization.data(
+                    withJSONObject: result
+                )
+            else {
+                throw LauncherAgentError.invalidResponse
+            }
+            return .success(requestId: requestId, result: resultData)
+        }
+
+        guard
+            Set(dictionary.keys) ==
+                Set(["contract", "requestId", "ok", "error"]),
+            let error = dictionary["error"] as? [String: Any],
+            Set(error.keys) == Set(["code", "message"]),
+            let code = error["code"] as? String,
+            let message = error["message"] as? String,
+            isValidErrorCode(code),
+            !message.isEmpty,
+            message.utf16.count <= 500,
+            isControlSafeErrorMessage(message)
+        else {
+            throw LauncherAgentError.invalidResponse
+        }
+        return .failure(
+            requestId: requestId,
+            error: LauncherIPCErrorPayload(code: code, message: message)
+        )
+    }
+
+    private static func isValidErrorCode(_ value: String) -> Bool {
+        guard (1...120).contains(value.utf8.count) else { return false }
+        return value.utf8.allSatisfy { byte in
+            (byte >= 0x41 && byte <= 0x5a) ||
+                (byte >= 0x30 && byte <= 0x39) ||
+                byte == 0x5f
+        }
+    }
+
+    private static func isControlSafeErrorMessage(_ value: String) -> Bool {
+        value.unicodeScalars.allSatisfy { scalar in
+            scalar.value > 0x1f &&
+                !(scalar.value >= 0x7f && scalar.value <= 0x9f)
+        }
+    }
+
+    static func displayErrorMessage(_ value: String) -> String {
+        isLauncherWorkBoardPublicTextSafe(value)
+            ? value
+            : "Local Agent 요청을 처리하지 못했습니다."
+    }
 }
 
 struct AttentionGetParameters: Encodable, Sendable {
+    let refresh: Bool
+}
+
+struct WorkBoardGetParameters: Encodable, Sendable {
     let refresh: Bool
 }
 
@@ -309,18 +392,9 @@ struct LauncherIPCErrorPayload: Decodable, Error, Equatable, Sendable {
     let message: String
 }
 
-struct LauncherIPCResponseEnvelope: Decodable, Sendable {
-    let contract: String
-    let requestId: String?
-    let ok: Bool
-    let error: LauncherIPCErrorPayload?
-
-    private enum CodingKeys: String, CodingKey {
-        case contract
-        case requestId
-        case ok
-        case error
-    }
+enum LauncherIPCParsedResponse: Sendable {
+    case success(requestId: String, result: Data)
+    case failure(requestId: String, error: LauncherIPCErrorPayload)
 }
 
 enum LauncherAgentError: LocalizedError, Equatable, Sendable {
@@ -350,7 +424,7 @@ enum LauncherAgentError: LocalizedError, Equatable, Sendable {
         case .responseTooLarge:
             "Blabase Local Agent 응답 크기 제한을 초과했습니다."
         case .agent(_, let message):
-            message
+            LauncherIPC.displayErrorMessage(message)
         }
     }
 }

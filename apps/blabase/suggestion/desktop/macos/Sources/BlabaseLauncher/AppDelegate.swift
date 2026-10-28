@@ -106,10 +106,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    func applicationWillTerminate(_ notification: Notification) {
+    func applicationShouldTerminate(
+        _ sender: NSApplication
+    ) -> NSApplication.TerminateReply {
+        guard !isTerminating else { return .terminateLater }
         isTerminating = true
         hotKey?.invalidate()
-        viewModel?.shutdown()
+        Task { [weak self, weak sender] in
+            guard let self, let sender else { return }
+            do {
+                try await self.viewModel?.shutdown()
+                sender.reply(toApplicationShouldTerminate: true)
+            } catch {
+                self.isTerminating = false
+                self.viewModel?.markAgentTerminationFailure()
+                sender.reply(toApplicationShouldTerminate: false)
+            }
+        }
+        return .terminateLater
     }
 
     private func showPrimaryInterface() {
@@ -143,30 +157,41 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             nextChoice: prepared.snapshot.dataRootChoice,
             isAgentActive: isAgentActive
         )
-        try await LauncherSettingsTransaction.run(
-            plan: applyPlan,
-            isTerminating: { [weak self] in
-                self?.isTerminating ?? true
-            },
-            stopAgent: { [weak self, weak viewModel] in
-                guard let self, let viewModel else {
-                    throw CancellationError()
+        var configurationGateHeld = false
+        do {
+            try await LauncherSettingsTransaction.run(
+                plan: applyPlan,
+                isTerminating: { [weak self] in
+                    self?.isTerminating ?? true
+                },
+                stopAgent: { [weak self] in
+                    guard let self else { throw CancellationError() }
+                    try await viewModel.stopForConfigurationChange()
+                    configurationGateHeld = true
+                    self.isAgentActive = false
+                },
+                activateDataRoot: {
+                    _ = try settingsStore.activateDataRoot(prepared)
+                    if configurationGateHeld {
+                        viewModel.completeConfigurationChange()
+                        configurationGateHeld = false
+                    }
+                },
+                persist: {
+                    settingsStore.persist(prepared)
+                },
+                loadAttention: { [weak self] in
+                    guard let self else { return }
+                    self.isAgentActive = true
+                    viewModel.loadAfterConfigurationChange()
                 }
-                try await viewModel.stopForConfigurationChange()
-                self.isAgentActive = false
-            },
-            activateDataRoot: {
-                _ = try settingsStore.activateDataRoot(prepared)
-            },
-            persist: {
-                settingsStore.persist(prepared)
-            },
-            loadAttention: { [weak self, weak viewModel] in
-                guard let self, let viewModel else { return }
-                self.isAgentActive = true
-                viewModel.loadAfterConfigurationChange()
+            )
+        } catch {
+            if configurationGateHeld {
+                viewModel.abortConfigurationChange()
             }
-        )
+            throw error
+        }
         return prepared.snapshot
     }
 

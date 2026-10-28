@@ -1,0 +1,39 @@
+/* Approved round-05 B lockup. Import fonts.css and tokens.css first. */
+.biadone-logo {
+  display: inline-flex;
+  align-items: center;
+  gap: calc(1em * var(--logo-gap-ratio));
+  flex: none;
+  font-family: var(--logo-font-family);
+  font-size: var(--biadone-logo-size, 1em);
+  line-height: 1;
+  color: var(--logo-text-color);
+  white-space: nowrap;
+  text-decoration: none;
+}
+.biadone-logo__symbol {
+  --biadone-logo-symbol-edge: calc(1em * var(--logo-symbol-ratio));
+  display: block;
+  position: relative;
+  flex: none;
+  width: var(--biadone-logo-symbol-edge);
+  height: var(--biadone-logo-symbol-edge);
+  overflow: hidden;
+}
+.biadone-logo__symbol img {
+  display: block;
+  position: absolute;
+  max-width: none;
+  width: calc(var(--biadone-logo-symbol-edge) * 4 / 3);
+  height: calc(var(--biadone-logo-symbol-edge) * 4 / 3);
+  left: calc(var(--biadone-logo-symbol-edge) / -6);
+  top: calc(var(--biadone-logo-symbol-edge) / -6);
+}
+.biadone-logo__name {
+  display: block;
+  font-family: var(--logo-font-family);
+  font-weight: var(--logo-font-weight);
+  letter-spacing: var(--logo-letter-spacing);
+  line-height: 1;
+}
+.biadone-logo--inverse { color: var(--color-on-brand); }
