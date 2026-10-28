@@ -3,11 +3,20 @@ import CoordinatorSwift
 import Darwin
 import Foundation
 
+/// Explicit normal-shutdown consent is different from proving that an agent's
+/// task completed. The disconnected path never completes or replays that task.
+enum AppUpdateConnectionPolicy: Equatable, Sendable {
+    case preserve
+    case userConfirmedSessionClosure
+}
+
 enum AppUpdateTransitionError: Error, Equatable, LocalizedError {
-    case waiting(String), reconnect(String), unverified
+    case waiting(String), reconnect(String), serviceUnavailable, unverified
     var errorDescription: String? {
         switch self {
         case .waiting(let reason), .reconnect(let reason): reason
+        case .serviceUnavailable:
+            PetL10n.text("Waiting for Blabee's service to respond. If this continues, check the connection settings before retrying the update.", korean: "Blabee 서비스의 응답을 기다립니다. 계속 응답이 없으면 연결 설정을 확인한 뒤 업데이트를 다시 시도해 주세요.")
         case .unverified:
             PetL10n.text("Unable to verify active Blabee connections. The update is postponed; your conversations are kept open.", korean: "사용 중인 Blabee 연결을 확인하지 못해 업데이트 적용을 보류합니다. 대화는 그대로 유지됩니다.")
         }
@@ -50,7 +59,7 @@ struct AppUpdateServiceReadiness: Decodable, Equatable, Sendable {
         return value
     }
 
-    func requireReady() throws {
+    func requireReady(policy: AppUpdateConnectionPolicy = .preserve) throws {
         guard ready else {
             if pendingApprovals > 0 || pendingDeliveries > 0 {
                 throw AppUpdateTransitionError.waiting(PetL10n.text(
@@ -62,14 +71,25 @@ struct AppUpdateServiceReadiness: Decodable, Equatable, Sendable {
                     "Waiting for the selected task to reach its conversation. It will not be sent again automatically.",
                     korean: "선택한 작업이 대화에 전달되기를 기다립니다. 작업을 자동으로 다시 보내지 않습니다."))
             }
-            if pendingPromptContexts > 0 {
+            if pendingPromptContexts > 0, policy == .preserve {
                 throw AppUpdateTransitionError.waiting(PetL10n.text(
                     "Waiting for the current Codex task to finish. If that conversation was interrupted, reconnect Blabee before retrying.",
                     korean: "진행 중인 Codex 작업이 끝나기를 기다립니다. 대화가 중단된 상태라면 Blabee를 다시 연결한 뒤 재시도해 주세요."))
             }
-            throw AppUpdateTransitionError.waiting(PetL10n.text(
-                "Finish or dismiss the pending Blabee cards before updating.",
-                korean: "Blabee에 남은 카드를 처리하거나 닫은 뒤 업데이트합니다."))
+            if pendingCards > 0 || pendingReconciliation > 0 {
+                throw AppUpdateTransitionError.waiting(PetL10n.text(
+                    "Finish or skip the pending Blabee choices before updating. Closing the panel alone does not finish them.",
+                    korean: "Blabee에 남은 선택을 처리하거나 건너뛴 뒤 업데이트합니다. 패널을 닫는 것만으로는 처리되지 않습니다."))
+            }
+            // UserPromptSubmit/Stop bookkeeping is volatile and does not prove
+            // that a native Codex host is still alive. Only the separate,
+            // explicitly confirmed normal-shutdown flow may leave it behind.
+            // The caller also requires clear bridge/Claude/legacy use; the
+            // helper repeats this under exclusive admission before shutdown.
+            guard policy == .userConfirmedSessionClosure else {
+                throw AppUpdateTransitionError.unverified
+            }
+            return
         }
     }
 }
@@ -80,13 +100,48 @@ enum AppUpdateTransitionPreflight {
     static func isTransient(_ error: Error) -> Bool {
         if error as? AppUpdateAdmissionError == .busy { return true }
         if case .waiting = error as? AppUpdateTransitionError { return true }
+        if error as? AppUpdateTransitionError == .serviceUnavailable { return true }
         return false
     }
 
-    static func requireReady(candidateApplicationURL: URL) async throws {
+    /// Keep transport outages separate from malformed or unbound responses.
+    /// In particular, invalid identity/schema must never become an endless
+    /// request to close sessions in the interactive window.
+    static func serviceReadiness(request: () throws -> [String: Any]) throws -> AppUpdateServiceReadiness {
+        let response: [String: Any]
+        do { response = try request() }
+        catch let error as CoordinatorError where [
+            "operational_connect_failed", "operational_connect_timeout", "operational_connect_refused",
+            "operational_socket_unavailable",
+            "operational_response_timeout", "operational_transport_closed", "operational_transport_failed",
+        ].contains(error.code) {
+            throw AppUpdateTransitionError.serviceUnavailable
+        }
+        catch { throw AppUpdateTransitionError.unverified }
+        do { return try .parse(StrictJSONTransport.data(forJSONObject: response)) }
+        catch { throw AppUpdateTransitionError.unverified }
+    }
+
+    static func requireReady(candidateApplicationURL: URL,
+                             policy: AppUpdateConnectionPolicy = .preserve) async throws {
         try await Task.detached(priority: .utility) {
-            try requireReadySynchronously(candidateApplicationURL: candidateApplicationURL)
+            try requireReadySynchronously(candidateApplicationURL: candidateApplicationURL, policy: policy)
         }.value
+    }
+
+    static func requireRuntimeConnections(
+        candidate: OperationalRuntimeIdentitySnapshot, activeIdentities: Set<String>,
+        policy: AppUpdateConnectionPolicy
+    ) throws {
+        if policy == .userConfirmedSessionClosure {
+            guard activeIdentities.isEmpty else {
+                throw AppUpdateTransitionError.waiting(PetL10n.text(
+                    "A Blabee connection is still open. Save your work and close the connected Codex and Claude sessions normally. This window will check again automatically.",
+                    korean: "Blabee 연결이 아직 열려 있습니다. 작업을 저장하고 연결된 Codex·Claude 세션을 정상 종료해 주세요. 이 창에서 자동으로 다시 확인합니다."))
+            }
+        } else {
+            try requireCompatibleRuntimes(candidate: candidate, activeIdentities: activeIdentities)
+        }
     }
 
     static func requireCompatibleRuntimes(
@@ -111,21 +166,34 @@ enum AppUpdateTransitionPreflight {
             guard inspection.outstandingUseCount == 0 else { throw AppUpdateTransitionError.unverified }
         case .inUse:
             throw AppUpdateTransitionError.waiting(PetL10n.text(
-                "Claude still has an unreleased Blabee connection. Keep working and apply this update after that connection ends.",
-                korean: "Claude의 Blabee 연결이 아직 종료되지 않았습니다. 작업을 계속하고 해당 연결이 끝난 뒤 업데이트를 적용해 주세요."))
+                    "Claude still has an unreleased Blabee connection. Save your work and close the connected Claude session normally. If it has already closed, use Prepare Connection Recovery, then restart your Mac and retry.",
+                    korean: "Claude의 Blabee 연결이 아직 종료되지 않았습니다. 작업을 저장하고 연결된 Claude 세션을 정상 종료해 주세요. 이미 종료했다면 ‘연결 복구 준비’를 누른 뒤 Mac을 재시작하고 다시 시도해 주세요."))
         case .unavailable: throw AppUpdateTransitionError.unverified
         }
     }
 
-    static func requireReadySynchronously(candidateApplicationURL: URL) throws {
+    /// Update preparation may remove only evidence proved to belong to an
+    /// earlier kernel boot. Inspection itself remains read-only. Re-enumerate
+    /// after recovery so a newly registered use still blocks replacement.
+    static func recoverAndRequireClaudeReady(
+        recover: () throws -> Int = { try ClaudeRuntimePayloadUse.recoverAfterRestart() },
+        inspect: () -> ClaudeRuntimePayloadUse.UpdateInspection = { ClaudeRuntimePayloadUse.inspectForUpdate() }
+    ) throws {
+        do { _ = try recover() }
+        catch { throw AppUpdateTransitionError.unverified }
+        try requireClaudeReady(inspect())
+    }
+
+    static func requireReadySynchronously(candidateApplicationURL: URL,
+                                         policy: AppUpdateConnectionPolicy = .preserve) throws {
         let candidateExecutable = candidateApplicationURL.appendingPathComponent(AppRuntimeUseLease.executablePath)
         guard let candidate = OperationalRuntimeIdentity.installedSnapshot(forExecutable: candidateExecutable) else {
             throw AppUpdateTransitionError.unverified
         }
-        try requireClaudeReady(ClaudeRuntimePayloadUse.inspectForUpdate())
+        try recoverAndRequireClaudeReady()
         do {
-            try requireCompatibleRuntimes(candidate: candidate,
-                activeIdentities: AppBridgeRuntimeStore.activeRuntimeIdentities())
+            try requireRuntimeConnections(candidate: candidate,
+                activeIdentities: AppBridgeRuntimeStore.activeRuntimeIdentities(), policy: policy)
         } catch let error as AppUpdateTransitionError { throw error }
         catch let error as CoordinatorError where error.code == "app_bridge_runtime_store_busy" {
             throw AppUpdateTransitionError.waiting(PetL10n.text(
@@ -145,6 +213,11 @@ enum AppUpdateTransitionPreflight {
         if FileManager.default.fileExists(atPath: registry.directoryURL.path) {
             for record in try registry.records() {
                 if try UpdateManagedCodexProcessIdentity.isAlive(pid: record.hostPID, startTime: record.hostStartTime) {
+                    if policy == .userConfirmedSessionClosure {
+                        throw AppUpdateTransitionError.waiting(PetL10n.text(
+                            "A managed Codex session is still open. Save your work and close it normally. The update will continue after its connection closes.",
+                            korean: "Codex 관리 세션이 아직 열려 있습니다. 작업을 저장하고 정상 종료해 주세요. 연결이 닫히면 업데이트가 이어집니다."))
+                    }
                     throw AppUpdateTransitionError.reconnect(PetL10n.text(
                         "A legacy managed Codex connection requires a normal disconnect before this update. Save it and close that connection, then retry.",
                         korean: "이전 자동 복원 방식의 Codex 연결은 이번 업데이트 전에 정상 종료가 필요합니다. 작업을 저장하고 해당 연결을 종료한 뒤 재시도해 주세요."))
@@ -161,18 +234,12 @@ enum AppUpdateTransitionPreflight {
             guard let identity = OperationalRuntimeIdentity.installedIdentity(forExecutable: installed) else {
                 throw AppUpdateTransitionError.unverified
             }
-            let status: AppUpdateServiceReadiness
-            do {
+            let status = try serviceReadiness {
                 let client = try UnixDomainSocketClient(socketPath: socketPath, runtimeIdentity: identity)
-                let response = try client.request(type: "update_status", payload: [:],
+                return try client.request(type: "update_status", payload: [:],
                     connectTimeoutMilliseconds: 500, responseTimeoutMilliseconds: 2_000)
-                status = try .parse(StrictJSONTransport.data(forJSONObject: response))
-            } catch {
-                throw AppUpdateTransitionError.waiting(PetL10n.text(
-                    "Waiting for Blabee's connection check. An older service may need to be closed normally once before installation.",
-                    korean: "Blabee 연결 상태를 확인하고 있습니다. 구버전 서비스라면 이번 설치 전에 Blabee를 한 번 정상 종료해야 할 수 있습니다."))
             }
-            try status.requireReady()
+            try status.requireReady(policy: policy)
             guard case .running(let service) = reader.state(status.servicePID),
                   service.effectiveUserID == geteuid(), service.parentProcessID == status.serviceParentPID,
                   AppUpdateHelper.runningIdentity(status.servicePID, executable: installed) == identity,

@@ -48,12 +48,15 @@ struct PetHookReadinessView: View {
 struct PetStorageRecoveryView: View {
     @ObservedObject private var localization = PetLocalization.shared
     @ObservedObject var viewModel: PetViewModel
+    var showsIntroduction = true
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text(PetL10n.text("Storage Recovery", korean: "저장소 복구")).font(.blabee(.callout, weight: .bold))
-            Text(PetL10n.text("Use this when the service fails to start after storage files were deleted. A fresh start is available only when both the DB and authentication key are missing.", korean: "저장 파일을 삭제한 뒤 서비스가 시작되지 않을 때 사용합니다. DB와 인증 키가 모두 없는 경우만 새로 시작할 수 있습니다."))
-                .font(.blabee(.caption)).foregroundStyle(.secondary)
+            if showsIntroduction {
+                Text(PetL10n.text("Storage Recovery", korean: "저장소 복구")).font(.blabee(.callout, weight: .bold))
+                Text(PetL10n.text("Use this when the service fails to start after storage files were deleted. A fresh start is available only when both the DB and authentication key are missing.", korean: "저장 파일을 삭제한 뒤 서비스가 시작되지 않을 때 사용합니다. DB와 인증 키가 모두 없는 경우만 새로 시작할 수 있습니다."))
+                    .font(.blabee(.caption)).foregroundStyle(.secondary)
+            }
             if let receipt = viewModel.storageRecoveryReceipt {
                 Text(PetL10n.text("Previous verification records were archived. Continue by checking the service connection and Codex settings.", korean: "이전 검증 기록을 보관했습니다. 서비스 연결과 Codex 설정을 이어서 확인하세요."))
                     .font(.blabee(.caption))
@@ -75,6 +78,7 @@ struct PetStorageRecoveryView: View {
                 }
             } else {
                 Button(PetL10n.text("Check Recovery Eligibility", korean: "복구 가능 여부 확인")) { Task { await viewModel.prepareStorageRecovery() } }
+                    .buttonStyle(PetOnboardingActionButtonStyle(emphasized: !showsIntroduction))
                     .disabled(!viewModel.canPrepareStorageRecovery)
                     .accessibilityIdentifier("prepare-storage-recovery")
                 if !viewModel.canPrepareStorageRecovery && !viewModel.isStorageRecoveryOperationInFlight {

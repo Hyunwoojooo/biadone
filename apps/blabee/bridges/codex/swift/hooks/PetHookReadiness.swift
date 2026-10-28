@@ -24,9 +24,9 @@ enum PetHookReadinessState: Equatable, Sendable {
     var detail: String {
         switch self {
         case .unchecked:
-            return PetL10n.text("Plugin installation and Hook trust are separate. Choose a project and check Hook status.", korean: "Plugin 설치와 Hook 신뢰는 별개입니다. 사용할 프로젝트를 선택하고 Hook 상태를 확인하세요.")
+            return PetL10n.text("Plugin installation and Hook trust are separate. Choose a project to check. Codex may update existing Hook trust information during the check.", korean: "Plugin 설치와 Hook 신뢰는 별개입니다. 프로젝트를 선택해 확인하세요. 검사 중 Codex가 기존 Hook 신뢰 정보를 갱신할 수 있습니다.")
         case .checking:
-            return PetL10n.text("Checking the selected project's four Blabee Hooks without changing settings.", korean: "선택한 프로젝트의 Blabee Hook 4개를 읽기 전용으로 확인합니다.")
+            return PetL10n.text("Checking the selected project's four Blabee Hooks. Codex may update existing Hook trust information.", korean: "선택한 프로젝트의 Blabee Hook 4개를 확인합니다. Codex가 기존 Hook 신뢰 정보를 갱신할 수 있습니다.")
         case .trusted:
             return PetL10n.text("The selected project's four Hooks are enabled and trusted. Verify actual card receipt and delivery to the original conversation with a new request.", korean: "선택한 프로젝트의 Hook 4개가 활성화되고 신뢰된 상태입니다. 실제 카드 수신과 원래 대화로의 선택 전달은 새 요청으로 확인하세요.")
         case .reviewRequired:
@@ -47,7 +47,7 @@ enum PetHookReadinessState: Equatable, Sendable {
             case "hook_plugin_changed_during_check":
                 return PetL10n.text("The Plugin changed during the check. Check again after connection setup finishes.", korean: "검사 중 Plugin이 변경되었습니다. 연결 작업이 끝난 뒤 다시 확인하세요.")
             default:
-                return PetL10n.text("Unable to check Hook status in Codex. Check /hooks or retry shortly. Trust settings were not changed.", korean: "Codex에서 Hook 상태를 확인하지 못했습니다. /hooks에서 확인하거나 잠시 후 다시 검사하세요. 신뢰 설정은 변경하지 않았습니다.")
+                return PetL10n.text("Unable to check Hook status in Codex. Check /hooks or retry shortly. Codex may already have updated existing Hook trust information.", korean: "Codex에서 Hook 상태를 확인하지 못했습니다. /hooks에서 확인하거나 잠시 후 다시 검사하세요. 기존 Hook 신뢰 정보는 검사 중 Codex가 갱신했을 수 있습니다.")
             }
         }
     }

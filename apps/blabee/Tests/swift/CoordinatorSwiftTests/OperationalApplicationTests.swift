@@ -405,6 +405,7 @@ private func operationalFixture(
     dispatchMode: OperationalNextTurnDispatchRecorder.Mode = .succeed,
     closedHistoryCount: Int = 0,
     suggestionMode: BlabeeSuggestionMode = .actionOnly,
+    secretCorpus: RuntimeSecretCorpus = RuntimeSecretCorpus(),
     initialApprovalAdmissionSequence: Int64 = 0,
     permissionRequestTimeoutNanoseconds: UInt64 = HookPermissionTimingPolicy.userDecisionTimeoutNanoseconds,
     permissionLifecycleObserver: @escaping @Sendable (HookPermissionLifecycleEvent) -> Void = { _ in },
@@ -437,7 +438,7 @@ private func operationalFixture(
     let app = CoordinatorOperationalApplication(
         routing: routing,
         suggestionMode: suggestionMode,
-        secretCorpus: RuntimeSecretCorpus(),
+        secretCorpus: secretCorpus,
         idGenerator: ids.next,
         wallInstantGenerator: { try RFC3339Instant("2026-08-21T12:00:00Z") },
         monotonicInstantGenerator: cooldownClock.nowNanoseconds,
@@ -2727,16 +2728,21 @@ func operationalPacketSelectionAndCompletion(suggestionKind: String?) async thro
     let queuedPromptPrefix =
         "Blabee 선택 작업을 불러옵니다. Hook 세부 조건이 없으면 실행하지 마세요. ref="
     #expect(dispatch.message.hasPrefix(queuedPromptPrefix))
-    let reference = String(dispatch.message.dropFirst(queuedPromptPrefix.count))
+    let reference = String(dispatch.message.components(separatedBy: "\n")[0].dropFirst(queuedPromptPrefix.count))
     #expect(reference.utf8.count == 32)
     #expect(reference.utf8.allSatisfy { byte in
         (byte >= 0x30 && byte <= 0x39) || (byte >= 0x61 && byte <= 0x66)
     })
-    #expect(dispatch.message == queuedPromptPrefix + reference)
+    #expect(QueuedPromptEnvelope.classify(dispatch.message) == .exact(reference: reference))
+    let selectedActions = try #require(proposal["next_actions"] as? [[String: Any]])
+    let selectedAction = selectedActions[0]
+    #expect(dispatch.message == QueuedPromptEnvelope.message(reference: reference, action: selectedAction))
+    for displayed in ["Recommended first", "Run recommended work first", "Keep the binding exact", "The focused test passes"] {
+        #expect(dispatch.message.contains(displayed))
+    }
     let continuationID = try #require(selectedOutcome["continuation_id"] as? String)
     for forbidden in [
-        "{", "\"action\"", "\"binding\"", "Recommended first",
-        "Run recommended work first", "Keep the binding exact",
+        "\"action\"", "\"binding\"",
         continuationID, ids["cwd"]!, ids["project_id"]!, ids["session_id"]!,
         ids["source_turn_id"]!, ids["source_prompt_id"]!, ids["episode_id"]!,
         ids["correlation_token"]!, rawToken,
@@ -2744,8 +2750,6 @@ func operationalPacketSelectionAndCompletion(suggestionKind: String?) async thro
         #expect(!dispatch.message.contains(forbidden))
     }
 
-    let selectedActions = try #require(proposal["next_actions"] as? [[String: Any]])
-    let selectedAction = selectedActions[0]
     let canonicalAction = try operationalData(selectedAction)
     let canonicalActionText = try #require(String(data: canonicalAction, encoding: .utf8))
 
@@ -2784,6 +2788,21 @@ func operationalPacketSelectionAndCompletion(suggestionKind: String?) async thro
     )
     #expect(!wrongWorkingDirectoryContext.contains(canonicalActionText))
     #expect(!wrongWorkingDirectoryContext.contains("Recommended first"))
+
+    // Ref alone must not authorize edited visible text, even after queue
+    // completion. None of these attempts may create a durable claim.
+    for (index, original) in ["Recommended first", "Run recommended work first", "Keep the binding exact", "The focused test passes"].enumerated() {
+        let edited = dispatch.message.replacingOccurrences(of: original, with: "Changed selected work")
+        let rejected = try operationalObject(await fixture.app.handle(
+            type: "user_prompt_submit", payload: operationalData([
+                "session_id": ids["session_id"]!, "turn_id": "turn_preview_edited_\(index)",
+                "cwd": ids["cwd"]!, "prompt": edited, "hook_event_name": "UserPromptSubmit",
+            ])
+        ))
+        #expect(rejected["prompt_origin"] as? String == "blabee_rejected")
+        #expect(!(rejected["additionalContext"] as? String ?? "").contains(canonicalActionText))
+        #expect(fixture.journal.appendAttemptCount(eventType: "queued_action_context_claimed") == 0)
+    }
 
     let queuedTurnID = "turn_operational_first_queued"
     let decomposedQueuedPrompt = dispatch.message.decomposedStringWithCanonicalMapping
@@ -2886,8 +2905,249 @@ func operationalPacketSelectionAndCompletion(suggestionKind: String?) async thro
     }
 }
 
-@Test("Operational reconstructs a queued action from the journal after restart")
-func operationalQueuedActionSurvivesRestartBeforeDelivery() async throws {
+private func operationalOversizedPreviewAction(_ action: [String: Any], escapedScalar: String) -> [String: Any] {
+    var oversized = action
+    if escapedScalar == "format" {
+        oversized["constraints"] = [
+            String(repeating: "\u{200D}", count: 8_192),
+            String(repeating: "\u{200D}", count: 8_192),
+        ]
+    } else {
+        let text = "record " + String(repeating: "\u{85}", count: 7_500)
+        oversized["objective"] = text
+        oversized["constraints"] = [text, text]
+    }
+    return oversized
+}
+
+@Test("Operational rejects every oversized choice before registration and accepts a corrected proposal with the same ID",
+      arguments: [0, 1, 2, 3], ["format", "control"])
+func operationalQueuedPreviewAdmissionDoesNotMutate(optionIndex: Int, escapedScalar: String) async throws {
+    let fixture = try operationalFixture()
+    let ids = try await operationalBegin(fixture, suffix: "preview_bounds")
+    let validProposal = operationalProposal(ids, suffix: "preview_bounds")
+    var proposal = validProposal
+    var actions = try #require(proposal["next_actions"] as? [[String: Any]])
+    actions[optionIndex] = operationalOversizedPreviewAction(actions[optionIndex], escapedScalar: escapedScalar)
+    proposal["next_actions"] = actions
+    #expect(try operationalData(actions[optionIndex]).count < 60_000)
+    #expect(!QueuedPromptEnvelope.canRender(action: actions[optionIndex]))
+    let payload = try operationalData(operationalWrapper(ids, proposal: proposal))
+    let before = try fixture.journal.load()
+    let appendAttempts = fixture.journal.totalAppendAttemptCount()
+    // Renderability must not reveal a preview-specific error to an invalid
+    // prompt binding, even when the supplied action would overflow.
+    var wrongPrompt = operationalWrapper(ids, proposal: proposal)
+    wrongPrompt["source_prompt_id"] = "prompt_preview_bounds_wrong"
+    await expectOperationalError("proposal_source_prompt_mismatch") {
+        _ = try await fixture.app.handle(type: "emit_decision", payload: operationalData(wrongPrompt))
+    }
+    await expectOperationalError("queued_prompt_preview_invalid") {
+        _ = try await fixture.app.handle(type: "emit_decision", payload: payload)
+    }
+    let after = try fixture.journal.load()
+    #expect(after.journalSequence == before.journalSequence)
+    #expect(after.events == before.events)
+    #expect(after.documents == before.documents)
+    #expect(fixture.journal.totalAppendAttemptCount() == appendAttempts)
+    let snapshot = try operationalObject(await fixture.app.handle(type: "get_state", payload: operationalData([:])))
+    #expect((snapshot["interactions"] as? [[String: Any]])?.isEmpty == true)
+    #expect(await fixture.nextTurnDispatcher.recordedRequests().isEmpty)
+    let corrected = try operationalData(operationalWrapper(ids, proposal: validProposal))
+    let accepted = try await fixture.app.handle(type: "emit_decision", payload: corrected)
+    let acceptance = try operationalObject(accepted)
+    #expect(acceptance["accepted"] as? Bool == true)
+    #expect((acceptance["packet"] as? [String: Any])?["boundary_sequence"] as? Int == 1)
+    #expect(try await fixture.app.handle(type: "emit_decision", payload: corrected) == accepted)
+    // A conflict with an existing registration keeps its original contract;
+    // it is not reclassified as a new preview-size rejection.
+    await expectOperationalError("proposal_id_conflict") {
+        _ = try await fixture.app.handle(type: "emit_decision", payload: payload)
+    }
+}
+
+@Test("Oversized new proposals cannot resume pending reconciliation before their authenticated preview check")
+func operationalQueuedPreviewAdmissionPrecedesPendingReconciliation() async throws {
+    let fixture = try operationalFixture()
+    let ids = try await operationalBegin(fixture, suffix: "preview_pending_activation")
+    let original = operationalProposal(ids, suffix: "preview_pending_activation", actionCount: 2)
+    let originalPayload = try operationalData(operationalWrapper(ids, proposal: original))
+    // The atomic open/seal append fails before commit. Its registration and
+    // pending activation remain, and the next eligible prelude can finish it.
+    fixture.journal.failNextAppend(eventType: "decision_packet_sealed")
+    await expectOperationalError("injected_append_failure") {
+        _ = try await fixture.app.handle(type: "emit_decision", payload: originalPayload)
+    }
+    fixture.cooldownClock.advance(milliseconds: 251)
+    let doctorBefore = try operationalObject(await fixture.app.doctorStatus(payload: operationalData([:])))
+    let reconciliationBefore = try #require(doctorBefore["reconciliation"] as? [String: Any])
+    #expect(reconciliationBefore["state"] as? String == "retrying")
+    #expect(ExactJSONInteger.int64(reconciliationBefore["milliseconds_until_retry"]) == 0)
+    #expect(ExactJSONInteger.int64(reconciliationBefore["quarantined_initial_activation_count"]) == 0)
+    let before = try fixture.journal.load()
+    #expect(before.journalSequence == 0)
+    let writes = fixture.journal.totalAppendAttemptCount()
+    #expect(fixture.journal.appendAttemptCount(eventType: "decision_packet_sealed") == 1)
+
+    var proposal = operationalProposal(ids, suffix: "preview_pending_new", actionCount: 2)
+    var actions = try #require(proposal["next_actions"] as? [[String: Any]])
+    actions[1] = operationalOversizedPreviewAction(actions[1], escapedScalar: "format")
+    proposal["next_actions"] = actions
+    await expectOperationalError("queued_prompt_preview_invalid") {
+        _ = try await fixture.app.handle(type: "emit_decision", payload: operationalData(
+            operationalWrapper(ids, proposal: proposal)))
+    }
+    let after = try fixture.journal.load()
+    #expect(after.journalSequence == before.journalSequence)
+    #expect(after.events == before.events)
+    #expect(after.documents == before.documents)
+    #expect(after.verificationRecords == before.verificationRecords)
+    #expect(fixture.journal.totalAppendAttemptCount() == writes)
+    let doctorAfter = try operationalObject(await fixture.app.doctorStatus(payload: operationalData([:])))
+    #expect(try operationalData(doctorAfter["reconciliation"]!) == operationalData(reconciliationBefore))
+    #expect(await fixture.nextTurnDispatcher.recordedRequests().isEmpty)
+
+    // Prove the missing write was due to preview rejection, not cooldown or a
+    // disabled recovery fixture: an exact valid retry now commits the pending
+    // packet through the same common reconciliation prelude.
+    let recovered = try operationalObject(await fixture.app.handle(type: "emit_decision", payload: originalPayload))
+    #expect(recovered["accepted"] as? Bool == true)
+    #expect(recovered["proposal_id"] as? String == original["proposal_id"] as? String)
+    #expect(try fixture.journal.load().journalSequence == 2)
+    #expect(fixture.journal.appendAttemptCount(eventType: "decision_packet_sealed") == 2)
+}
+
+@Test("The shared selection preflight preserves an issued legacy packet whose displayed record is too large")
+func operationalQueuedPreviewLegacyPreflightPreservesWaitingPacket() async throws {
+    let donor = try operationalFixture()
+    let ids = try await operationalBegin(donor, suffix: "legacy_preview")
+    let accepted = try operationalObject(await donor.app.handle(type: "emit_decision", payload: operationalData(
+        operationalWrapper(ids, proposal: operationalProposal(ids, suffix: "legacy_preview", actionCount: 2)))))
+    var packet = try #require(accepted["packet"] as? [String: Any])
+    var choices = try #require(packet["choices"] as? [[String: Any]])
+    let action = operationalOversizedPreviewAction(
+        try #require(choices[0]["action"] as? [String: Any]), escapedScalar: "format")
+    choices[0]["action"] = action
+    packet["choices"] = choices
+    let binding = try CoordinatorBinding(jsonObject: packet)
+    // Model a packet issued by the older producer through the real semantic
+    // activation path. No production admission bypass or actor state injection.
+    let fixture = try operationalFixture()
+    _ = try fixture.routing.executeCommand(operationalData([
+        "type": "activate_initial_boundary", "open_event_id": "event_legacy_preview_open",
+        "seal_event_id": "event_legacy_preview_seal", "occurred_at": packet["sealed_at"]!,
+        "binding": binding.jsonObject, "proposal_id": "proposal_legacy_preview",
+        "packet": packet,
+    ]))
+    let before = try fixture.journal.load()
+    let pendingBefore = try fixture.routing.snapshotWithoutProcessingTime().canonicalJSON
+    let state = try CoordinatorSemanticReplay.replay(before)
+    let recordedAction = try #require(state.packet(for: binding)?.choices.first?.actionJSON)
+    #expect(recordedAction == (try operationalData(action)))
+    #expect(state.pendingInteractions.count == 1)
+    let writes = fixture.journal.totalAppendAttemptCount()
+    await expectOperationalError("queued_prompt_preview_invalid") {
+        _ = try await fixture.app.prepareQueuedActionPreview(
+            actionData: recordedAction, continuationID: "continuation_legacy_preview", cwd: ids["cwd"]!)
+    }
+    let after = try fixture.journal.load()
+    #expect(after.journalSequence == before.journalSequence)
+    #expect(after.events == before.events)
+    #expect(after.documents == before.documents)
+    #expect(after.verificationRecords == before.verificationRecords)
+    #expect(fixture.journal.totalAppendAttemptCount() == writes)
+    #expect(try fixture.routing.snapshotWithoutProcessingTime().canonicalJSON == pendingBefore)
+    #expect(try CoordinatorSemanticReplay.replay(after).boundary(for: binding)?.selection == nil)
+    #expect(await fixture.nextTurnDispatcher.recordedRequests().isEmpty)
+}
+
+@Test("Operational selection rechecks newly known secrets before any durable selection mutation")
+func operationalQueuedPreviewSecretPreflightPreservesWaitingCard() async throws {
+    let corpus = RuntimeSecretCorpus()
+    let fixture = try operationalFixture(secretCorpus: corpus)
+    let ids = try await operationalBegin(fixture, suffix: "preview_secret")
+    var proposal = operationalProposal(ids, suffix: "preview_secret", actionCount: 2)
+    var actions = try #require(proposal["next_actions"] as? [[String: Any]])
+    let secret = "runtime-secret-learned-after-card-admission"
+    actions[0]["constraints"] = [secret]
+    proposal["next_actions"] = actions
+    _ = try await fixture.app.handle(type: "emit_decision", payload: operationalData(
+        operationalWrapper(ids, proposal: proposal)))
+    _ = try await fixture.app.handle(type: "stop", payload: operationalStop(
+        ids: ids, active: false, message: "A card is ready"))
+    let card = try await waitForOperationalInteraction(fixture.app, state: "waiting")
+    corpus.register(secret)
+    let before = try fixture.journal.load()
+    let pendingBefore = try fixture.routing.snapshotWithoutProcessingTime().canonicalJSON
+    let writes = fixture.journal.totalAppendAttemptCount()
+    for _ in 0..<2 {
+        await expectOperationalError("raw_continuation_token_forbidden") {
+            _ = try await fixture.app.handle(type: "select", payload: operationalData(
+                operationalSelection(card, slot: 1)))
+        }
+    }
+    let after = try fixture.journal.load()
+    #expect(after.journalSequence == before.journalSequence)
+    #expect(after.events == before.events)
+    #expect(after.documents == before.documents)
+    #expect(fixture.journal.totalAppendAttemptCount() == writes)
+    #expect(try fixture.routing.snapshotWithoutProcessingTime().canonicalJSON == pendingBefore)
+    let state = try CoordinatorSemanticReplay.replay(after)
+    #expect(state.pendingInteractions.count == 1)
+    #expect(state.continuations.isEmpty)
+    #expect(await fixture.nextTurnDispatcher.recordedRequests().isEmpty)
+}
+
+@Test("Operational preview preflight preserves Unicode, emoji and multiline actions through exact Hook claim")
+func operationalQueuedPreviewUnicodeRoundTrip() async throws {
+    let fixture = try operationalFixture()
+    let ids = try await operationalBegin(fixture, suffix: "unicode_preview")
+    var proposal = operationalProposal(ids, suffix: "unicode_preview", actionCount: 2)
+    var actions = try #require(proposal["next_actions"] as? [[String: Any]])
+    let action: [String: Any] = [
+        "title": "한국어 실행 🐝",
+        "objective": "첫째 줄\n둘째 줄 👩‍💻",
+        "constraints": ["제약 조건 café", "줄바꿈 유지\nKeep every line"],
+        "done_when": ["완료 확인 ✅", "No omitted constraints"],
+    ]
+    actions[0] = action
+    proposal["next_actions"] = actions
+    _ = try await fixture.app.handle(type: "emit_decision", payload: operationalData(
+        operationalWrapper(ids, proposal: proposal)))
+    _ = try await fixture.app.handle(type: "stop", payload: operationalStop(
+        ids: ids, active: false, message: "Unicode card is ready"))
+    let card = try await waitForOperationalInteraction(fixture.app, state: "waiting")
+    _ = try await fixture.app.handle(type: "select", payload: operationalData(
+        operationalSelection(card, slot: 1)))
+    let dispatch = try await waitForRecordedDispatch(fixture.nextTurnDispatcher)
+    guard case .exact(let reference) = QueuedPromptEnvelope.classify(dispatch.message) else {
+        Issue.record("The rendered action must remain an exact queued envelope")
+        return
+    }
+    #expect(dispatch.message == QueuedPromptEnvelope.message(reference: reference, action: action))
+    #expect(dispatch.message.contains("한국어 실행 🐝"))
+    #expect(dispatch.message.contains("\n> 둘째 줄"))
+    #expect(dispatch.message.contains("\\u{200D}"))
+    let deliveredMessage = dispatch.message.decomposedStringWithCanonicalMapping
+    let payload = try operationalData([
+        "session_id": ids["session_id"]!, "turn_id": "turn_unicode_preview_delivery",
+        "cwd": ids["cwd"]!, "prompt": deliveredMessage, "hook_event_name": "UserPromptSubmit",
+    ])
+    let response = try await fixture.app.handle(type: "user_prompt_submit", payload: payload)
+    let result = try operationalObject(response)
+    #expect(result["prompt_origin"] as? String == "blabee_next_turn")
+    let expectedAction = try #require(String(data: operationalData(action), encoding: .utf8))
+    #expect((result["additionalContext"] as? String)?.hasSuffix(expectedAction) == true)
+    #expect(try await fixture.app.handle(type: "user_prompt_submit", payload: payload) == response)
+    let claim = try #require(CoordinatorSemanticReplay.replay(fixture.journal.load())
+        .continuations.values.first?.queuedActionContextClaim)
+    #expect(claim.queuedPromptSHA256 == operationalSHA256Fingerprint(Data(deliveredMessage.utf8)))
+    #expect(fixture.journal.appendAttemptCount(eventType: "queued_action_context_claimed") == 1)
+    #expect(await fixture.nextTurnDispatcher.recordedRequests().count == 1)
+}
+
+@Test("Operational reconstructs readable and legacy queued actions from the journal after restart", arguments: [false, true])
+func operationalQueuedActionSurvivesRestartBeforeDelivery(legacy: Bool) async throws {
     let fixture = try operationalFixture()
     let ids = try await operationalBegin(fixture, suffix: "queued_restart")
     let proposal = operationalProposal(ids, suffix: "queued_restart")
@@ -2936,11 +3196,24 @@ func operationalQueuedActionSurvivesRestartBeforeDelivery() async throws {
     )
 
     let restoredTurnID = "turn_operational_queued_restart_restored"
+    let deliveredMessage = legacy ? dispatch.message.components(separatedBy: "\n")[0] : dispatch.message
+    if !legacy {
+        let tampered = dispatch.message.replacingOccurrences(of: "Run recommended work queued_restart", with: "Run different work")
+        #expect(tampered != dispatch.message)
+        let rejected = try operationalObject(await restartedApp.handle(
+            type: "user_prompt_submit", payload: operationalData([
+                "session_id": ids["session_id"]!, "turn_id": "turn_restart_edited_preview",
+                "cwd": ids["cwd"]!, "prompt": tampered, "hook_event_name": "UserPromptSubmit",
+            ])
+        ))
+        #expect(rejected["prompt_origin"] as? String == "blabee_rejected")
+        #expect(fixture.journal.appendAttemptCount(eventType: "queued_action_context_claimed") == 0)
+    }
     let restoredPayload: [String: Any] = [
         "session_id": ids["session_id"]!,
         "turn_id": restoredTurnID,
         "cwd": ids["cwd"]!,
-        "prompt": dispatch.message,
+        "prompt": deliveredMessage,
         "hook_event_name": "UserPromptSubmit",
     ]
     let loadsBeforeRestoredPrompt = fixture.journal.loadCount()
@@ -9035,4 +9308,89 @@ func operationalUpdateStatusCardExpiryPreservesActivePrompt() async throws {
         ids: ids, active: false, message: "Actual prompt completion after card expiry"))
     #expect(try await operationalUpdateStatus(fixture)["ready"] as? Bool == true)
     #expect(await fixture.nextTurnDispatcher.recordedRequests().isEmpty)
+}
+
+@Test("Operational update readiness distinguishes abandoned claim responses from exact-retry eligibility",
+      arguments: [false, true])
+func operationalUpdateStatusRetainsClaimRetryWithoutBlocking(retryAfterReadiness: Bool) async throws {
+    let gate = OperationalProductAccessGate()
+    let fixture = try operationalFixture(productAccessCheck: gate.check)
+    let ids = try await operationalBegin(fixture, suffix: "update_abandoned_claim")
+    _ = try await fixture.app.handle(type: "emit_decision", payload: operationalData(
+        operationalWrapper(ids, proposal: operationalProposal(ids, suffix: "update_abandoned_claim"))))
+    _ = try await fixture.app.handle(type: "stop", payload: operationalStop(
+        ids: ids, active: false, message: "Source task finished; card is ready"))
+    let card = try await waitForOperationalInteraction(fixture.app, state: "waiting")
+    _ = try await fixture.app.handle(type: "select", payload: operationalData(
+        operationalSelection(card, slot: 1)))
+    let dispatch = try await waitForRecordedDispatch(fixture.nextTurnDispatcher)
+    let deliveryTurnID = "turn_update_abandoned_claim_delivery"
+    let queuedPayload = try operationalData([
+        "session_id": ids["session_id"]!, "turn_id": deliveryTurnID,
+        "cwd": ids["cwd"]!, "prompt": dispatch.message,
+        "hook_event_name": "UserPromptSubmit",
+    ])
+    // Persist the claim, then lose both the append response and immediate
+    // recovery read. No response or dispatch task is still running afterwards.
+    fixture.journal.loseNextCommittedResponse(
+        eventType: "queued_action_context_claimed", failFollowingLoads: 1)
+    await expectOperationalError("simulated_lost_response") {
+        _ = try await fixture.app.handle(type: "user_prompt_submit", payload: queuedPayload)
+    }
+    let durable = try CoordinatorSemanticReplay.replay(fixture.journal.load())
+    let continuation = try #require(durable.continuations.values.first)
+    #expect(continuation.transport?.status == .completed)
+    #expect(continuation.queuedActionContextClaim?.deliveryTurnID == deliveryTurnID)
+    #expect(durable.boundary(for: continuation.binding)?.closed == true)
+
+    var deliveryIDs = ids
+    deliveryIDs["source_turn_id"] = deliveryTurnID
+    _ = try await fixture.app.handle(type: "stop", payload: operationalStop(
+        ids: deliveryIDs, active: false, message: "Hook verification failed; no work was executed"))
+    _ = try await fixture.app.handle(type: "stop", payload: operationalStop(
+        ids: ids, active: false, message: "Source task remains complete"))
+    let sequenceBefore = try fixture.journal.load().journalSequence
+    _ = try await fixture.app.processTime()
+    _ = try await fixture.app.handle(type: "session_start", payload: operationalData([
+        "session_id": ids["session_id"]!, "cwd": ids["cwd"]!,
+    ]))
+    for _ in 0..<3 {
+        let status = try await operationalUpdateStatus(fixture)
+        #expect(status["ready"] as? Bool == true)
+        for key in ["pending_approvals", "pending_deliveries", "pending_cards",
+                    "pending_queued_actions", "pending_reconciliation", "pending_prompt_contexts",
+                    "pending_claim_responses"] {
+            #expect(status[key] as? Int == 0)
+        }
+    }
+    // Retained retry metadata is not permission to skip durable validation.
+    fixture.journal.failNextLoad()
+    await expectOperationalError("simulated_load_failure") {
+        _ = try await fixture.app.handle(type: "update_status", payload: operationalData([:]))
+    }
+    #expect(try await operationalUpdateStatus(fixture)["ready"] as? Bool == true)
+    #expect(try fixture.journal.load().journalSequence == sequenceBefore)
+    #expect(fixture.journal.appendAttemptCount(eventType: "queued_action_context_claimed") == 1)
+    #expect(await fixture.nextTurnDispatcher.recordedRequests().count == 1)
+
+    if retryAfterReadiness {
+        // The read-only readiness check must not discard an eligible exact
+        // retry. Its successful publication re-establishes prompt protection.
+        let recovered = try await fixture.app.handle(type: "user_prompt_submit", payload: queuedPayload)
+        let response = try operationalObject(recovered)
+        #expect(response["prompt_origin"] as? String == "blabee_next_turn")
+        #expect((response["additionalContext"] as? String)?.contains("Recommended update_abandoned_claim") == true)
+        let running = try await operationalUpdateStatus(fixture)
+        #expect(running["ready"] as? Bool == false)
+        #expect(running["pending_claim_responses"] as? Int == 0)
+        #expect(running["pending_prompt_contexts"] as? Int == 1)
+        #expect(try await fixture.app.handle(type: "user_prompt_submit", payload: queuedPayload) == recovered)
+        _ = try await fixture.app.handle(type: "stop", payload: operationalStop(
+            ids: deliveryIDs, active: false, message: "Recovered delivery completed"))
+        #expect(try await operationalUpdateStatus(fixture)["ready"] as? Bool == true)
+        #expect(try fixture.journal.load().events.map(operationalObject).filter {
+            $0["event_type"] as? String == "queued_action_context_claimed"
+        }.count == 1)
+        #expect(await fixture.nextTurnDispatcher.recordedRequests().count == 1)
+    }
 }

@@ -375,6 +375,67 @@ struct CodexRuntimeTrustTests {
         #expect(errno == ECHILD)
     }
 
+    @Test("Opt-in timeout reporting confirms direct-child reaping and disappearance of the whole group",
+          arguments: [false, true])
+    func managedVersionProbeRunnerConfirmsTimeoutTermination(withDescendant: Bool) throws {
+        let fixture = try RuntimeTrustFixture(groupWritableAncestors: false)
+        defer { fixture.remove() }
+        let directPIDFile = fixture.root.appendingPathComponent("confirmed-timeout.pid")
+        let childPIDFile = fixture.root.appendingPathComponent("confirmed-timeout-child.pid")
+        let directCommand = #"""
+        /bin/echo "$$" > "$1"
+        exec /bin/sleep 30
+        """#
+        let descendantCommand = #"""
+        trap '' TERM
+        /bin/echo "$$" > "$1"
+        /bin/sleep 30 &
+        child=$!
+        /bin/echo "$child" > "$2"
+        wait "$child"
+        """#
+        var observedCode: String?
+        do {
+            _ = try ManagedCodexVersionProbeRunner.run(
+                executable: URL(fileURLWithPath: "/bin/sh"),
+                arguments: ["-c", withDescendant ? descendantCommand : directCommand,
+                            "confirmed-timeout", directPIDFile.path, childPIDFile.path],
+                environment: [:], timeoutMilliseconds: 500, reportsTimeoutTermination: true
+            )
+        } catch let error as CoordinatorError {
+            observedCode = error.code
+        }
+        let directPID = try #require(pid_t(String(contentsOf: directPIDFile, encoding: .utf8)
+            .trimmingCharacters(in: .whitespacesAndNewlines)))
+        let childPID: pid_t?
+        if withDescendant {
+            let parsedChildPID: pid_t = try #require(pid_t(String(contentsOf: childPIDFile, encoding: .utf8)
+                .trimmingCharacters(in: .whitespacesAndNewlines)))
+            childPID = parsedChildPID
+        } else {
+            childPID = nil
+        }
+        defer {
+            if let childPID, kill(childPID, 0) == 0 { _ = kill(childPID, SIGKILL) }
+            if kill(directPID, 0) == 0 { _ = kill(directPID, SIGKILL) }
+        }
+        #expect(observedCode == "managed_codex_version_probe_timeout_terminated")
+        var waitStatus: Int32 = 0
+        errno = 0
+        #expect(waitpid(directPID, &waitStatus, WNOHANG) == -1)
+        #expect(errno == ECHILD)
+        let groupStatus = kill(-directPID, 0)
+        let groupError = errno
+        #expect(groupStatus == -1)
+        #expect(groupError == ESRCH)
+        if let childPID {
+            let childStatus = kill(childPID, 0)
+            let childError = errno
+            #expect(childStatus == -1)
+            #expect(childError == ESRCH)
+        }
+    }
+
     @Test("managed pin parent must be owner-safe and grant-ACL-free")
     func managedPinParentMetadataFailsClosedBeforeVersionProbe() throws {
         let candidate = try RuntimeTrustFixture(groupWritableAncestors: false)
@@ -1376,9 +1437,30 @@ struct CodexRuntimeTrustTests {
         }
         #expect(failure.pathDiagnostic == .init(
             issue: .groupWritable, role: .sourceAncestor,
-            path: fixture.source.deletingLastPathComponent().path
+            path: fixture.source.deletingLastPathComponent().path,
+            resolvedTargetPath: fixture.target.path
         ))
         #expect(CodexNativeDiagnostic.normalize(failure).code == "codex_native_path_unsafe")
+    }
+
+    @Test("An unsafe source rejected before resolution never invents a target observation")
+    func unsafeSourceHasNoResolvedTarget() throws {
+        let fixture = try RuntimeTrustFixture(groupWritableAncestors: false)
+        defer { fixture.remove() }
+        try FileManager.default.removeItem(at: fixture.source)
+        try Data(contentsOf: fixture.target).write(to: fixture.source)
+        try FileManager.default.setAttributes([.posixPermissions: 0o775], ofItemAtPath: fixture.source.path)
+        let versions = RuntimeTrustVersionProbe(["0.150.1"])
+        let failure = try captureRuntimeTrustFailure {
+            try fixture.gate(monitored: false).qualify(
+                sourceURL: fixture.source, versionReader: { versions.read($0) }
+            )
+        }
+        #expect(failure.pathDiagnostic == .init(
+            issue: .groupWritable, role: .source, path: fixture.source.path
+        ))
+        #expect(failure.pathDiagnostic?.resolvedTargetPath == nil)
+        #expect(versions.callCount == 0)
     }
 
     @Test("Target permissions are diagnosed before a version reader runs", arguments: [0o775, 0o777, 0o644])
@@ -1394,7 +1476,10 @@ struct CodexRuntimeTrustTests {
         }
         let issue: CodexRuntimePathIssue = mode == 0o775 ? .groupWritable
             : mode == 0o777 ? .worldWritable : .notExecutable
-        #expect(failure.pathDiagnostic == .init(issue: issue, role: .target, path: fixture.target.path))
+        #expect(failure.pathDiagnostic == .init(
+            issue: issue, role: .target, path: fixture.target.path,
+            resolvedTargetPath: fixture.target.path
+        ))
         #expect(versions.callCount == 0)
     }
 
@@ -1407,7 +1492,8 @@ struct CodexRuntimeTrustTests {
             try fixture.gate(monitored: false).inspect(sourceURL: fixture.source)
         }
         #expect(failure.pathDiagnostic == .init(
-            issue: .aclGrantsAccess, role: .target, path: fixture.target.path
+            issue: .aclGrantsAccess, role: .target, path: fixture.target.path,
+            resolvedTargetPath: fixture.target.path
         ))
     }
 
@@ -1432,7 +1518,8 @@ struct CodexRuntimeTrustTests {
         #expect(failure.pathDiagnostic == .init(
             issue: linkedAncestor ? .symbolicLinkAncestor : .linkUnresolved,
             role: linkedAncestor ? .sourceAncestor : .source,
-            path: linkedAncestor ? parent.path : fixture.source.path
+            path: linkedAncestor ? parent.path : fixture.source.path,
+            resolvedTargetPath: linkedAncestor ? fixture.target.path : nil
         ))
         #expect(versions.callCount == 0)
     }
@@ -1476,6 +1563,55 @@ struct CodexRuntimeTrustTests {
         #expect(executable.canonicalURL.path == fixture.target.path)
         #expect(approval.sourceAncestors.contains { $0.identity.mode & 0o020 != 0 })
         #expect(approval.canonicalAncestors.contains { $0.identity.mode & 0o020 != 0 })
+    }
+
+    @Test("Both standard Homebrew launchers monitor their same-prefix Cellar and Caskroom roots",
+          arguments: ["/opt/homebrew", "/usr/local"], ["Cellar", "Caskroom"])
+    func standardHomebrewMappingsStayMonitored(prefix: String, packageDirectory: String) throws {
+        let entries = CodexRuntimeTrustGate.standardHomebrewEntries
+        #expect(entries.count == 2)
+        let entry = try #require(entries.first { $0.stableSourcePath == "\(prefix)/bin/codex" })
+        #expect(Set(entry.canonicalRootPaths) == ["\(prefix)/Cellar", "\(prefix)/Caskroom"])
+        #expect(entry.groupWritableRootPath == prefix)
+        let fixture = try RuntimeTrustFixture(
+            groupWritableAncestors: true, prefixPath: String(prefix.dropFirst()),
+            packageDirectory: packageDirectory
+        )
+        defer { fixture.remove() }
+        // Mirror only the production entries beneath a private fixture root.
+        let gate = CodexRuntimeTrustGate(monitoredEntries: [.init(
+            stableSourceURL: fixture.source,
+            canonicalRootURLs: entry.canonicalRootPaths.map {
+                fixture.root.appendingPathComponent(String($0.dropFirst()), isDirectory: true)
+            }
+        )])
+        let versions = RuntimeTrustVersionProbe(["0.150.1"])
+        let approval = try gate.qualify(sourceURL: fixture.source, versionReader: { versions.read($0) })
+        #expect(try gate.revalidate(approval: approval).canonicalURL == fixture.target)
+        #expect(versions.callCount == 1)
+    }
+
+    @Test("A known Homebrew launcher never monitors a target outside its approved package roots")
+    func monitoredHomebrewRejectsUnrecognizedTargetLayout() throws {
+        let fixture = try RuntimeTrustFixture(groupWritableAncestors: true)
+        defer { fixture.remove() }
+        let otherTarget = fixture.prefix.appendingPathComponent("codex-outside-package-root")
+        try Data(contentsOf: fixture.target).write(to: otherTarget)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: otherTarget.path)
+        try FileManager.default.removeItem(at: fixture.source)
+        try FileManager.default.createSymbolicLink(at: fixture.source, withDestinationURL: otherTarget)
+        let versions = RuntimeTrustVersionProbe(["0.150.1"])
+        let failure = try captureRuntimeTrustFailure {
+            try fixture.gate(monitored: true).qualify(
+                sourceURL: fixture.source, versionReader: { versions.read($0) }
+            )
+        }
+        #expect(failure.pathDiagnostic == .init(
+            issue: .groupWritable, role: .sourceAncestor,
+            path: fixture.source.deletingLastPathComponent().path,
+            resolvedTargetPath: otherTarget.path
+        ))
+        #expect(versions.callCount == 0)
     }
 
     @Test("a monitored Homebrew exception never covers ancestors above its prefix")
@@ -1955,6 +2091,7 @@ struct CodexRuntimeTrustTests {
             "0.162.0": "5b0eedbe2ec32aa0e61e6ed4956b0a1c42db696613bdf004c55d3050581f4993",
             "0.162.1": "37d07b6af6cd84ff0953704fcd1b8c933b79c360a94d4ceeef5eb07ef77c6961",
             "0.163.0": "8455dbc0e6ca06359af0b7bf675767273c063ed92fa7a881380efc34771836b8",
+            "0.164.0": "d517a3752fe11e23aae487b07d6a9699b55031bc118253159c8d23bd26c01fb3",
         ]
         #expect(ManagedCodexRuntimeBundleQualificationCatalog
             .fingerprintForTesting(inspection)
@@ -1967,7 +2104,7 @@ struct CodexRuntimeTrustTests {
     @Test("catalog-pinned voice JSON loses executable permission only in the private copy",
           arguments: [
               "0.155.1", "0.156.0", "0.156.1", "0.157.0", "0.157.1",
-              "0.158.0", "0.159.0", "0.159.1", "0.159.2", "0.159.3", "0.160.0", "0.160.1", "0.161.0", "0.162.0", "0.162.1", "0.163.0",
+              "0.158.0", "0.159.0", "0.159.1", "0.159.2", "0.159.3", "0.160.0", "0.160.1", "0.161.0", "0.162.0", "0.162.1", "0.163.0", "0.164.0",
           ])
     func pinnedVoiceJSONIsDataDuringPrivateCustody(version: String) throws {
         let fixture = try RuntimeTrustFixture(groupWritableAncestors: false)
@@ -2008,7 +2145,7 @@ struct CodexRuntimeTrustTests {
     @Test("unreviewed executable JSON remains rejected even at the voice resource path",
           arguments: [
               "0.155.1", "0.156.0", "0.156.1", "0.157.0", "0.157.1",
-              "0.158.0", "0.159.0", "0.159.1", "0.159.2", "0.159.3", "0.160.0", "0.160.1", "0.161.0", "0.162.0", "0.162.1", "0.163.0",
+              "0.158.0", "0.159.0", "0.159.1", "0.159.2", "0.159.3", "0.160.0", "0.160.1", "0.161.0", "0.162.0", "0.162.1", "0.163.0", "0.164.0",
           ])
     func executableDataExceptionRequiresExactPathAndDigest(version: String) throws {
         let artifact = URL(fileURLWithPath: #filePath)
@@ -2648,7 +2785,7 @@ private final class RuntimeTrustFixture: @unchecked Sendable {
         )
     }
 
-    init(groupWritableAncestors: Bool) throws {
+    init(groupWritableAncestors: Bool, prefixPath: String = "homebrew", packageDirectory: String = "Cellar") throws {
         // Resolve `/var` before constructing the fixture so every lexical
         // ancestor is a real directory and `/var` itself is not mistaken for
         // a symbolic-link ancestor. Deny-only macOS home ACLs are covered by
@@ -2661,14 +2798,15 @@ private final class RuntimeTrustFixture: @unchecked Sendable {
             .appendingPathComponent("codex-runtime-trust-tests", isDirectory: true)
         try RuntimeTrustFixture.makeDirectory(base, mode: 0o700)
         root = base.appendingPathComponent(UUID().uuidString, isDirectory: true)
-        prefix = root.appendingPathComponent("homebrew", isDirectory: true)
+        prefix = root.appendingPathComponent(prefixPath, isDirectory: true)
         source = prefix.appendingPathComponent("bin/codex", isDirectory: false)
-        canonicalRoot = prefix.appendingPathComponent("Cellar", isDirectory: true)
+        canonicalRoot = prefix.appendingPathComponent(packageDirectory, isDirectory: true)
         target = canonicalRoot.appendingPathComponent(
             "codex/0.150.1/bin/codex",
             isDirectory: false
         )
 
+        try Self.makeDirectory(prefix.deletingLastPathComponent(), mode: 0o700)
         let directories = [
             root,
             prefix,

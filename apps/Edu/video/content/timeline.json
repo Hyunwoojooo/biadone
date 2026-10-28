@@ -1,0 +1,129 @@
+{
+  "fps": 30,
+  "leadFrames": 8,
+  "tailFrames": 20,
+  "totalFrames": 5115,
+  "durationSeconds": 170.5,
+  "scenes": [
+    {
+      "id": "intro",
+      "audio": "audio/curriculum/01-intro-brand.mp3",
+      "alignment": "audio/curriculum/01-intro-brand.alignment.json",
+      "narration": "사업을 하다 보면, 알리고 싶은 상품도 있고 매번 손이 가는 일도 있죠. 비아던 에듀는 내 사업에 필요한 것을 직접 만들고, 실제로 쓰고, 스스로 고치는 교육입니다.",
+      "from": 0,
+      "audioFrames": 336,
+      "durationSeconds": 11.180408,
+      "durationInFrames": 362
+    },
+    {
+      "id": "approach",
+      "audio": "audio/curriculum/02-approach.mp3",
+      "alignment": "audio/curriculum/02-approach.alignment.json",
+      "narration": "상품 사진과 가격표, 고객 질문처럼 이미 가진 자료에서 시작합니다. 만들 범위를 정하고 제작한 뒤, 결과를 확인하고 틀린 부분을 직접 고쳐서 다음 업무에도 다시 씁니다.",
+      "from": 362,
+      "audioFrames": 392,
+      "durationSeconds": 13.035102,
+      "durationInFrames": 420
+    },
+    {
+      "id": "foundation",
+      "audio": "audio/curriculum/03-foundation.mp3",
+      "alignment": "audio/curriculum/03-foundation.alignment.json",
+      "narration": "먼저, 상품과 가격, 고객 질문을 정리해 지피티에게 우리 사업을 알려줍니다. 말투와 답변 원칙을 설정하고 실제 질문으로 정확도를 확인하며, 사업 전용 지피티와 요청문을 준비합니다.",
+      "from": 782,
+      "audioFrames": 414,
+      "durationSeconds": 13.792653,
+      "durationInFrames": 442
+    },
+    {
+      "id": "choice",
+      "audio": "audio/curriculum/04-choice.mp3",
+      "alignment": "audio/curriculum/04-choice.alignment.json",
+      "narration": "기초를 바탕으로 지금 필요한 과정을 고릅니다. 홍보 콘텐츠, 웹페이지, 고객 문의, 매출 분석, 작은 업무 도구. 해결하고 싶은 일에 맞춰 선택하면 됩니다.",
+      "from": 1224,
+      "audioFrames": 356,
+      "durationSeconds": 11.833469,
+      "durationInFrames": 384
+    },
+    {
+      "id": "content",
+      "audio": "audio/curriculum/05-content.mp3",
+      "alignment": "audio/curriculum/05-content.alignment.json",
+      "narration": "홍보 과정에서는 고객이 궁금해할 문구와 실제 상품 사진으로 콘텐츠를 만듭니다. 우리 브랜드의 색과 글꼴을 템플릿으로 남겨 다른 상품에도 활용하고, 반응을 보며 고칩니다.",
+      "from": 1608,
+      "audioFrames": 396,
+      "durationSeconds": 13.191837,
+      "durationInFrames": 424
+    },
+    {
+      "id": "website",
+      "audio": "audio/curriculum/06-website.mp3",
+      "alignment": "audio/curriculum/06-website.alignment.json",
+      "narration": "웹페이지에는 사업 소개와 가격, 사진을 담고 문의나 예약 링크를 연결합니다. 모바일 화면을 확인해 공개하고, 가격이나 사진을 직접 수정하거나 이전 상태로 되돌리는 방법도 익힙니다.",
+      "from": 2032,
+      "audioFrames": 411,
+      "durationSeconds": 13.688163,
+      "durationInFrames": 439
+    },
+    {
+      "id": "inquiry",
+      "audio": "audio/curriculum/07-inquiry.mp3",
+      "alignment": "audio/curriculum/07-inquiry.alignment.json",
+      "narration": "고객 문의를 폼으로 받아 관리표에 저장하고, 담당자에게 알림을 보내도록 연결합니다. 자주 묻는 질문으로 답변 초안을 준비하고, 중복 접수나 연결 실패 때 수동으로 처리하는 법도 배웁니다.",
+      "from": 2471,
+      "audioFrames": 425,
+      "durationSeconds": 14.158367,
+      "durationInFrames": 453
+    },
+    {
+      "id": "data",
+      "audio": "audio/curriculum/08-data.mp3",
+      "alignment": "audio/curriculum/08-data.alignment.json",
+      "narration": "매출 자료의 형식을 맞추고 취소와 중복, 누락을 확인합니다. 어떤 상품이 잘 팔리는지 살펴보며 실제 정산금과 대조하고, 다음에도 쓸 분석표와 보고서 양식을 남깁니다.",
+      "from": 2924,
+      "audioFrames": 404,
+      "durationSeconds": 13.453061,
+      "durationInFrames": 432
+    },
+    {
+      "id": "tool",
+      "audio": "audio/curriculum/09-tool.mp3",
+      "alignment": "audio/curriculum/09-tool.alignment.json",
+      "narration": "반복하는 불편 하나를 골라, 입력값과 처리 규칙을 정리합니다. 견적 계산기나 파일 정리 도구처럼 내 일에 맞는 프로그램을 만들고, 잘못된 입력을 시험하며 기준이 바뀌면 직접 고칩니다.",
+      "from": 3356,
+      "audioFrames": 399,
+      "durationSeconds": 13.270204,
+      "durationInFrames": 427
+    },
+    {
+      "id": "team",
+      "audio": "audio/curriculum/10-team.mp3",
+      "alignment": "audio/curriculum/10-team.alignment.json",
+      "narration": "심화 과정에서는 기획, 제작, 검수 역할을 연결해 에이아이 업무팀을 만듭니다. 같은 사업 자료와 작업 지침으로 결과를 주고받되, 외부 발송 전에는 사장님이 승인하도록 합니다. 반복 실행과 비용, 오류, 기록도 살핍니다.",
+      "from": 3783,
+      "audioFrames": 492,
+      "durationSeconds": 16.378776,
+      "durationInFrames": 520
+    },
+    {
+      "id": "operations",
+      "audio": "audio/curriculum/11-operations.mp3",
+      "alignment": "audio/curriculum/11-operations.alignment.json",
+      "narration": "모든 과정에서 비용과 계정, 자료를 다루는 기준을 함께 배웁니다. 개인정보 입력 범위와 접근 권한, 구독과 사용 요금을 확인하고, 실행 중지와 복구 방법을 운영 카드로 정리합니다.",
+      "from": 4303,
+      "audioFrames": 393,
+      "durationSeconds": 13.087347,
+      "durationInFrames": 421
+    },
+    {
+      "id": "closing",
+      "audio": "audio/curriculum/12-closing-brand.mp3",
+      "alignment": "audio/curriculum/12-closing-brand.alignment.json",
+      "narration": "필요한 것부터 만들어 실제 업무에 써보고, 결과를 확인하고, 달라진 부분은 스스로 고쳐보세요. 내 사업을 이해하는 도구와 일하는 방식을, 비아던 에듀에서 만들어갑니다.",
+      "from": 4724,
+      "audioFrames": 357,
+      "durationSeconds": 11.885714,
+      "durationInFrames": 391
+    }
+  ]
+}

@@ -52,10 +52,10 @@ voice host 1개, library 18개, plugin 7개, manifest/runtime/sources/NOTICE 4�
 voice manifest의 schema/version/target 및 37개 파일 해시를 실제 패키지와 대조한다.
 전체 트리의 128개 항목·1 GiB 제한과 voice manifest 16 KiB 제한을 적용한다.
 
-`0.163.0`의 `aarch64-apple-darwin` 패키지는 patched `zsh`를 제거하여 41개 파일이다.
-정확한 이 조합에서만 `codex-resources/zsh/bin/zsh`를 제외한다. 구버전은 계속 해당
+`0.163.0`·`0.164.0`의 `aarch64-apple-darwin` 패키지는 patched `zsh`가 없는 41개 파일이다.
+정확한 이 두 조합에서만 `codex-resources/zsh/bin/zsh`를 제외한다. 구버전은 계속 해당
 파일을 요구하며, 새 버전에 구버전 shell을 섞거나 미검토 버전·target에 41파일 구성을
-사용하면 후보 실행 전에 거부한다. [0.163.0 검증 기록](CODEX_0163_QUALIFICATION.md).
+사용하면 후보 실행 전에 거부한다. [0.164.0 검증 기록](CODEX_0164_QUALIFICATION.md).
 
 voice 포함 42파일 구성에서는 기존 실행 파일 4개와 추가 native 파일 26개 모두 서명·공증을
 검사한다. `.dylib`는 실행 권한 비트와 관계없이 검사하며, 공식 archive의 `runtime.json`은
@@ -63,7 +63,7 @@ voice 포함 42파일 구성에서는 기존 실행 파일 4개와 추가 native
 기능 호환성을 주장하지 않는다. 이 구성의 인식은 제품 지원 목록·관리 실행 카탈로그·Hook
 승인 정책을 변경하지 않는다.
 
-0.163.0의 41파일 구성은 제거된 shell을 제외한 native 29개를 같은 조건으로 검사한다.
+0.163.0·0.164.0의 41파일 구성은 native 29개를 같은 조건으로 검사한다.
 
 `spctl --assess --type execute`는 단독 CLI를 앱으로 평가하여 오판할 수 있어 사용하지 않는다. 코드 서명·공증 검사가 통과해도 실제 실행 성공을 뜻하지 않는다. `--version`이 실제 종료 신호(SIGKILL 등)로 끝나면 `execution_terminated`로 기록한다. 종료 신호 없이 exit 137만 반환하면 `command_failed`이며 강제 종료라고 판단하지 않는다. OS 차단 가능성은 기록하지만 공증 ticket 부재라고 단정하지 않는다.
 

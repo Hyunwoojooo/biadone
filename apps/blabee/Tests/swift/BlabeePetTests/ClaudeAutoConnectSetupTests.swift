@@ -50,6 +50,15 @@ private struct ClaudeShellFixture: Sendable {
     func backups() throws -> [URL] {
         try FileManager.default.contentsOfDirectory(at: directory.appendingPathComponent("backups"), includingPropertiesForKeys: nil)
     }
+    func writeOrphanedBlock(suffix: String = "", legacy: Bool = false) throws -> Data {
+        var bytes = original ?? Data()
+        let bin = shim.deletingLastPathComponent().path
+        bytes.append(Data((legacy ? claudeLegacyManagedBlock(binPath: bin)
+            : ClaudeAutoConnectSetup.managedBlock(binPath: bin)).utf8))
+        bytes.append(Data(suffix.utf8))
+        try bytes.write(to: startup)
+        return bytes
+    }
     func run(_ executable: URL, arguments: [String], environment: [String: String] = [:]) throws -> (Int32, Data, Data) {
         let process = Process(), stdout = Pipe(), stderr = Pipe()
         process.executableURL = executable
@@ -71,6 +80,22 @@ private func claudeShellFields(_ data: Data) -> [String] {
     return fields
 }
 private func claudeShellQuote(_ value: String) -> String { "'" + value.replacingOccurrences(of: "'", with: "'\\''") + "'" }
+
+/// Fixed pre-migration bytes from the 2026-10-20 before snapshot. Keep this
+/// independent of the current generator so changing it cannot bless old bytes.
+private func claudeLegacyManagedBlock(binPath: String) -> String {
+    let bin = claudeShellQuote(binPath), shim = claudeShellQuote(binPath + "/claude")
+    return "\n# >>> Blabee Claude Auto Connect v1 >>>\n"
+        + "if (( ${+aliases[claude]} || ${+functions[claude]} )); then\n"
+        + "  builtin print -ru2 -- '[Blabee] claude alias/function exists; automatic connection was skipped.'\n"
+        + "elif [[ -x " + shim + " ]]; then\n"
+        + "  () {\n    builtin emulate -L zsh\n"
+        + "    local _blabee_claude_entry\n    local -a _blabee_claude_remaining=()\n"
+        + "    for _blabee_claude_entry in \"${path[@]}\"; do\n"
+        + "      [[ \"$_blabee_claude_entry\" == " + bin + " ]] || _blabee_claude_remaining+=(\"$_blabee_claude_entry\")\n"
+        + "    done\n    path=(" + bin + " \"${_blabee_claude_remaining[@]}\")\n"
+        + "    export PATH\n  }\nfi\n# <<< Blabee Claude Auto Connect v1 <<<\n"
+}
 
 @Suite("Claude automatic shell setup", .petLanguage(.korean))
 struct ClaudeAutoConnectSetupTests {
@@ -115,6 +140,127 @@ struct ClaudeAutoConnectSetupTests {
         #expect((await fixture.manager().enable()).isEnabled)
         #expect(!(await fixture.manager().disable()).isEnabled)
         #expect(!FileManager.default.fileExists(atPath: fixture.startup.path))
+    }
+
+    @Test("Inspecting an exact orphan block is read only and offers explicit repair", arguments: [true, false])
+    func orphanInspectionIsReadOnly(_ managedDirectoryExists: Bool) async throws {
+        let fixture = try ClaudeShellFixture()
+        defer { fixture.remove() }
+        let bytes = try fixture.writeOrphanedBlock(suffix: "# Other user settings\n")
+        if managedDirectoryExists {
+            try FileManager.default.createDirectory(at: fixture.shim.deletingLastPathComponent(),
+                withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        }
+        let before = try FileManager.default.attributesOfItem(atPath: fixture.startup.path)
+        let manager = fixture.manager()
+        for _ in 0..<2 {
+            let result = await manager.inspect()
+            #expect(!result.isEnabled && result.canEnable && !result.canDisable && result.canLaunch)
+            #expect(!result.automaticConnectionReady && result.issue == nil)
+        }
+        let after = try FileManager.default.attributesOfItem(atPath: fixture.startup.path)
+        #expect(try Data(contentsOf: fixture.startup) == bytes)
+        #expect(before[.systemFileNumber] as? NSNumber == after[.systemFileNumber] as? NSNumber)
+        #expect(before[.modificationDate] as? Date == after[.modificationDate] as? Date)
+        #expect(FileManager.default.fileExists(atPath: fixture.directory.path) == managedDirectoryExists)
+        #expect(!FileManager.default.fileExists(atPath: fixture.shim.path))
+        #expect(!FileManager.default.fileExists(atPath: fixture.directory.appendingPathComponent(".setup.lock").path))
+        #expect(!FileManager.default.fileExists(atPath: fixture.directory.appendingPathComponent("backups").path))
+    }
+
+    @Test("Explicit orphan repair restores one shim without duplicating the block or removing user content", arguments: [true, false])
+    func restoreOrphanedBlock(_ originallyMissing: Bool) async throws {
+        let fixture = try ClaudeShellFixture(startupBytes: originallyMissing ? nil : Data("# User prefix\n".utf8))
+        defer { fixture.remove() }
+        let suffix = originallyMissing ? "" : "alias mine='printf own'\n"
+        let bytes = try fixture.writeOrphanedBlock(suffix: suffix)
+        let manager = fixture.manager()
+        let restored = await manager.enable()
+        #expect(restored.isEnabled && restored.canDisable && restored.automaticConnectionReady)
+        #expect(try Data(contentsOf: fixture.startup) == bytes)
+        #expect(try fixture.backups().count == 1)
+        let shim = try Data(contentsOf: fixture.shim)
+        let inode = try FileManager.default.attributesOfItem(atPath: fixture.shim.path)[.systemFileNumber] as? NSNumber
+        #expect((await manager.enable()).automaticConnectionReady)
+        #expect((await manager.inspect()).automaticConnectionReady)
+        #expect(try Data(contentsOf: fixture.startup) == bytes)
+        #expect(try Data(contentsOf: fixture.shim) == shim)
+        #expect(try FileManager.default.attributesOfItem(atPath: fixture.shim.path)[.systemFileNumber] as? NSNumber == inode)
+        #expect(try fixture.backups().count == 1)
+        #expect((await manager.disable()).canEnable)
+        var expected = fixture.original ?? Data()
+        expected.append(Data(suffix.utf8))
+        // A missing shim cannot prove the old startup-origin flag. Preserve the
+        // already-present startup file even when removing its block leaves it empty.
+        #expect(try Data(contentsOf: fixture.startup) == expected)
+        #expect(!FileManager.default.fileExists(atPath: fixture.shim.path))
+    }
+
+    @Test("Orphan repair refuses edited, duplicate, foreign, or unsafe configuration", arguments: [
+        "edited", "duplicate", "foreign-block", "foreign-reference", "foreign-shim", "startup-permissions", "startup-symlink",
+    ])
+    func orphanRepairRejectsUnownedContent(_ variation: String) async throws {
+        let fixture = try ClaudeShellFixture()
+        defer { fixture.remove() }
+        var source = String(decoding: try fixture.writeOrphanedBlock(), as: UTF8.self)
+        switch variation {
+        case "edited": source = source.replacingOccurrences(of: "    export PATH\n", with: "    export OTHER_PATH\n")
+        case "duplicate": source += ClaudeAutoConnectSetup.managedBlock(binPath: fixture.shim.deletingLastPathComponent().path)
+        case "foreign-block": source = ClaudeAutoConnectSetup.managedBlock(binPath: fixture.home.appendingPathComponent("foreign-bin").path)
+        case "foreign-reference": source += "# shell/claude-v1/foreign\n"
+        default: break
+        }
+        try Data(source.utf8).write(to: fixture.startup)
+        if variation == "foreign-shim" {
+            try FileManager.default.createDirectory(at: fixture.shim.deletingLastPathComponent(),
+                withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+            try ClaudeShellFixture.executable(fixture.shim, body: "exit 0\n")
+        } else if variation == "startup-permissions" {
+            try FileManager.default.setAttributes([.posixPermissions: 0o666], ofItemAtPath: fixture.startup.path)
+        } else if variation == "startup-symlink" {
+            let target = fixture.home.appendingPathComponent("startup-target")
+            try FileManager.default.moveItem(at: fixture.startup, to: target)
+            try FileManager.default.createSymbolicLink(at: fixture.startup, withDestinationURL: target)
+        }
+        let shim = try? Data(contentsOf: fixture.shim)
+        let manager = fixture.manager()
+        for result in [await manager.inspect(), await manager.enable(), await manager.disable()] {
+            #expect(!result.isEnabled && !result.canEnable && !result.canDisable && result.canLaunch)
+            #expect(result.issue == .manualReview)
+        }
+        #expect(try Data(contentsOf: fixture.startup) == Data(source.utf8))
+        #expect((try? Data(contentsOf: fixture.shim)) == shim)
+    }
+
+    @Test("An editor race during orphan repair preserves user changes and rolls back only the exact new shim", arguments: [
+        "user-content", "edited-block", "removed-block", "foreign-shim",
+    ])
+    func orphanRepairPreservesConcurrentChanges(_ variation: String) async throws {
+        let fixture = try ClaudeShellFixture()
+        defer { fixture.remove() }
+        let original = try fixture.writeOrphanedBlock()
+        let updated: Data
+        if variation == "edited-block" {
+            updated = Data(String(decoding: original, as: UTF8.self)
+                .replacingOccurrences(of: "    export PATH\n", with: "    export OTHER_PATH\n").utf8)
+        } else if variation == "removed-block" {
+            updated = Data("# Concurrently saved user settings\n".utf8)
+        } else {
+            updated = original + Data("# Concurrently saved user suffix\n".utf8)
+        }
+        let foreignShim = Data("#!/bin/sh\n# Concurrent replacement\nexit 0\n".utf8)
+        let manager = fixture.manager(beforeStartupReplace: {
+            try updated.write(to: fixture.startup, options: .atomic)
+            if variation == "foreign-shim" { try foreignShim.write(to: fixture.shim, options: .atomic) }
+        })
+        let result = await manager.enable()
+        #expect(!result.isEnabled && !result.canEnable && result.issue == .manualReview)
+        #expect(try Data(contentsOf: fixture.startup) == updated)
+        if variation == "foreign-shim" {
+            #expect(try Data(contentsOf: fixture.shim) == foreignShim)
+        } else {
+            #expect(!FileManager.default.fileExists(atPath: fixture.shim.path))
+        }
     }
 
     @Test("Disable preserves changes before and after the exact managed block", arguments: [true, false])
@@ -201,6 +347,189 @@ struct ClaudeAutoConnectSetupTests {
         #expect(result.2.isEmpty)
     }
 
+    @Test("Login PATH changes still route exact arguments without changing the caller PATH", arguments: ["prepend", "reset"])
+    func loginPathChanges(_ change: String) async throws {
+        let fixture = try ClaudeShellFixture(quotedPaths: true)
+        defer { fixture.remove() }
+        let login = change == "prepend" ? "export PATH=\"$HOME/.local/bin:$PATH\"\n"
+            : "export PATH=\"$HOME/.local/bin:/usr/bin:/bin\"\n"
+        try Data(login.utf8).write(to: fixture.home.appendingPathComponent(".zlogin"))
+        #expect((await fixture.manager().enable()).automaticConnectionReady)
+        let arguments = ["--resume", "", "a b", "a'b", "$(do-not-run)", "`do-not-run`", "line\nbreak", "--", "끝"]
+        let command = "before=$PATH\nclaude \"$@\"\nresult=$?\nbuiltin printf '%s\\0' \"$before\" \"$PATH\"\nexit \"$result\""
+        let result = try fixture.run(URL(fileURLWithPath: "/bin/zsh"),
+            arguments: ["-d", "-l", "-i", "-c", command, "blabee-shell-fixture"] + arguments,
+            environment: ["ZDOTDIR": fixture.home.path, "TERM": "dumb"])
+        let fields = claudeShellFields(result.1)
+        #expect(result.0 == 37)
+        #expect(Array(fields.dropLast(2)) == ["claude-auto-launch", "--claude-bin", fixture.claude.path, "--"] + arguments)
+        let paths = Array(fields.suffix(2))
+        #expect(paths.count == 2 && paths.first == paths.last)
+        #expect(paths.first?.components(separatedBy: ":").first == fixture.claude.deletingLastPathComponent().path)
+        if change == "reset" {
+            #expect(paths.first == fixture.claude.deletingLastPathComponent().path + ":/usr/bin:/bin")
+        }
+        #expect(result.2.isEmpty)
+    }
+
+    @Test("User aliases and either function syntax survive before or after setup and re-sourcing",
+          arguments: ["alias", "short-function", "function"])
+    func userDefinitionsSurviveResourcing(_ kind: String) async throws {
+        let definition: String
+        if kind == "alias" {
+            definition = "alias claude='builtin printf \"%s\\0\" user-alias'\n"
+        } else {
+            let declaration = kind == "short-function" ? "claude()" : "function claude"
+            definition = declaration + " { builtin printf '%s\\0' user-function \"$@\"; return 43; }\n"
+        }
+        for after in [false, true] {
+            let fixture = try ClaudeShellFixture(startupBytes: Data((after ? "# User settings\n" : definition).utf8),
+                                                quotedPaths: true)
+            defer { fixture.remove() }
+            #expect((await fixture.manager().enable()).automaticConnectionReady)
+            if after { try Data(definition.utf8).write(to: fixture.home.appendingPathComponent(".zlogin")) }
+            let command = "source " + claudeShellQuote(fixture.startup.path)
+                + "\nsource " + claudeShellQuote(fixture.startup.path) + "\nclaude \"$@\""
+            let arguments = ["", "literal $(unchanged)", "a'b"]
+            let result = try fixture.run(URL(fileURLWithPath: "/bin/zsh"),
+                arguments: ["-d", "-l", "-i", "-c", command, "blabee-shell-fixture"] + arguments,
+                environment: ["ZDOTDIR": fixture.home.path, "TERM": "dumb"])
+            #expect(result.0 == (kind == "alias" ? 0 : 43))
+            #expect(claudeShellFields(result.1) == [kind == "alias" ? "user-alias" : "user-function"] + arguments)
+            #expect(String(decoding: result.2, as: UTF8.self).contains("alias/function exists"))
+        }
+    }
+
+    @Test("A function retained in an open shell finds upstream after the managed shim disappears")
+    func retainedFunctionAfterShimRemoval() async throws {
+        let fixture = try ClaudeShellFixture(quotedPaths: true)
+        defer { fixture.remove() }
+        #expect((await fixture.manager().enable()).automaticConnectionReady)
+        let arguments = ["--resume", "", "literal $HOME", "a'b"]
+        // This fixture removes only its temporary shim in the same shell.
+        // Production disable's exact ownership/removal is checked separately.
+        let command = "source " + claudeShellQuote(fixture.startup.path)
+            + "\nPATH=" + claudeShellQuote(fixture.claude.deletingLastPathComponent().path + ":/usr/bin:/bin")
+            + "\n/bin/rm -- " + claudeShellQuote(fixture.shim.path)
+            + "\n(( ${+functions[claude]} )) || exit 90\nclaude \"$@\""
+        let result = try fixture.run(URL(fileURLWithPath: "/bin/zsh"),
+            arguments: ["-f", "-c", command, "blabee-shell-fixture"] + arguments)
+        #expect(result.0 == 23)
+        #expect(claudeShellFields(result.1) == ["first"] + arguments)
+        #expect(result.2.isEmpty)
+    }
+
+    @Test("Legacy setup inspection is read only and explicit migration preserves its location and shim")
+    func legacyInspectionAndMigration() async throws {
+        let fixture = try ClaudeShellFixture(startupBytes: Data("# User prefix without newline".utf8), quotedPaths: true)
+        defer { fixture.remove() }
+        let manager = fixture.manager()
+        #expect((await manager.enable()).automaticConnectionReady)
+        let suffix = "# User suffix\nalias mine='printf own'\n"
+        let legacy = try fixture.writeOrphanedBlock(suffix: suffix, legacy: true)
+        let startupMetadata = try FileManager.default.attributesOfItem(atPath: fixture.startup.path)
+        let shim = try Data(contentsOf: fixture.shim)
+        let shimInode = try FileManager.default.attributesOfItem(atPath: fixture.shim.path)[.systemFileNumber] as? NSNumber
+        for _ in 0..<2 {
+            let observed = await manager.inspect()
+            #expect(observed.isEnabled && observed.canEnable && observed.canDisable && observed.canLaunch)
+            #expect(observed.needsSetupRefresh && !observed.automaticConnectionReady && observed.issue == nil)
+        }
+        #expect(try Data(contentsOf: fixture.startup) == legacy)
+        let afterInspect = try FileManager.default.attributesOfItem(atPath: fixture.startup.path)
+        #expect(afterInspect[.systemFileNumber] as? NSNumber == startupMetadata[.systemFileNumber] as? NSNumber)
+        #expect(afterInspect[.modificationDate] as? Date == startupMetadata[.modificationDate] as? Date)
+        #expect(try fixture.backups().count == 1)
+        let migrated = await manager.enable()
+        #expect(migrated.isEnabled && migrated.canDisable && !migrated.canEnable)
+        #expect(migrated.automaticConnectionReady && !migrated.needsSetupRefresh)
+        let expected = (fixture.original ?? Data())
+            + Data(ClaudeAutoConnectSetup.managedBlock(binPath: fixture.shim.deletingLastPathComponent().path).utf8)
+            + Data(suffix.utf8)
+        #expect(try Data(contentsOf: fixture.startup) == expected)
+        #expect(try Data(contentsOf: fixture.shim) == shim)
+        #expect(try FileManager.default.attributesOfItem(atPath: fixture.shim.path)[.systemFileNumber] as? NSNumber == shimInode)
+        #expect(try fixture.backups().count == 2)
+        #expect((await manager.enable()).automaticConnectionReady)
+        #expect(try Data(contentsOf: fixture.startup) == expected)
+        #expect(try fixture.backups().count == 2)
+        #expect((await manager.disable()).canEnable)
+        #expect(try Data(contentsOf: fixture.startup) == (fixture.original ?? Data()) + Data(suffix.utf8))
+        #expect(!FileManager.default.fileExists(atPath: fixture.shim.path))
+    }
+
+    @Test("A legacy migration editor race preserves the original shim and the new user bytes")
+    func legacyMigrationEditorRace() async throws {
+        let fixture = try ClaudeShellFixture()
+        defer { fixture.remove() }
+        #expect((await fixture.manager().enable()).automaticConnectionReady)
+        let legacy = try fixture.writeOrphanedBlock(legacy: true)
+        let shim = try Data(contentsOf: fixture.shim)
+        let inode = try FileManager.default.attributesOfItem(atPath: fixture.shim.path)[.systemFileNumber] as? NSNumber
+        let updated = legacy + Data("# Concurrent user edit\n".utf8)
+        let manager = fixture.manager(beforeStartupReplace: { try updated.write(to: fixture.startup, options: .atomic) })
+        let result = await manager.enable()
+        #expect(!result.isEnabled && result.issue == .manualReview)
+        #expect(try Data(contentsOf: fixture.startup) == updated)
+        #expect(try Data(contentsOf: fixture.shim) == shim)
+        #expect(try FileManager.default.attributesOfItem(atPath: fixture.shim.path)[.systemFileNumber] as? NSNumber == inode)
+        #expect((await fixture.manager().inspect()).needsSetupRefresh)
+    }
+
+    @Test("An orphan legacy block is explicitly repaired and migrated without duplicating user content")
+    func legacyOrphanRepair() async throws {
+        let fixture = try ClaudeShellFixture()
+        defer { fixture.remove() }
+        let suffix = "# User suffix\n"
+        let legacy = try fixture.writeOrphanedBlock(suffix: suffix, legacy: true)
+        let manager = fixture.manager()
+        let observed = await manager.inspect()
+        #expect(!observed.isEnabled && observed.canEnable && !observed.canDisable && !observed.automaticConnectionReady)
+        #expect(try Data(contentsOf: fixture.startup) == legacy)
+        #expect(!FileManager.default.fileExists(atPath: fixture.directory.path))
+        let repaired = await manager.enable()
+        #expect(repaired.automaticConnectionReady && !repaired.needsSetupRefresh)
+        let expected = (fixture.original ?? Data())
+            + Data(ClaudeAutoConnectSetup.managedBlock(binPath: fixture.shim.deletingLastPathComponent().path).utf8)
+            + Data(suffix.utf8)
+        #expect(try Data(contentsOf: fixture.startup) == expected)
+        #expect((await manager.enable()).automaticConnectionReady)
+        #expect(try fixture.backups().count == 1)
+        #expect((await manager.disable()).canEnable)
+        #expect(try Data(contentsOf: fixture.startup) == (fixture.original ?? Data()) + Data(suffix.utf8))
+    }
+
+    @Test("Legacy refresh stays unavailable for unsupported shells or an unavailable saved CLI",
+          arguments: ["unsupported-shell", "saved-cli"])
+    func legacyRefreshReadiness(_ variation: String) async throws {
+        let fixture = try ClaudeShellFixture()
+        defer { fixture.remove() }
+        #expect((await fixture.manager().enable()).automaticConnectionReady)
+        let legacy = try fixture.writeOrphanedBlock(legacy: true)
+        let shim = try Data(contentsOf: fixture.shim)
+        let manager: ClaudeAutoConnectSetup
+        if variation == "saved-cli" {
+            try FileManager.default.removeItem(at: fixture.firstVersion)
+            let replacement = fixture.home.appendingPathComponent("replacement-claude")
+            try ClaudeShellFixture.executable(replacement, body: "exit 0\n")
+            manager = ClaudeAutoConnectSetup(homeURL: fixture.home, coordinatorExecutable: fixture.coordinator,
+                                             claudeExecutable: replacement)
+        } else {
+            manager = fixture.manager(environment: ["SHELL": "/bin/bash"])
+        }
+        for result in [await manager.inspect(), await manager.enable()] {
+            #expect(result.isEnabled && result.canDisable && result.canLaunch && !result.canEnable)
+            #expect(result.needsSetupRefresh && !result.automaticConnectionReady)
+            #expect(result.issue == (variation == "saved-cli" ? .savedExecutableUnavailable : .unsupportedShell))
+        }
+        #expect(try Data(contentsOf: fixture.startup) == legacy)
+        #expect(try Data(contentsOf: fixture.shim) == shim)
+        #expect(try fixture.backups().count == 1)
+        #expect(!(await manager.disable()).isEnabled)
+        #expect(try Data(contentsOf: fixture.startup) == fixture.original)
+        #expect(!FileManager.default.fileExists(atPath: fixture.shim.path))
+    }
+
     @Test("Home-local explicit ZDOTDIR changes only its real startup file")
     func customDotDirectory() async throws {
         let fixture = try ClaudeShellFixture(customDotDirectory: true)
@@ -256,7 +585,10 @@ struct ClaudeAutoConnectSetupTests {
         #expect(try Data(contentsOf: fixture.startup) == bytes)
     }
 
-    @Test("Edited or duplicate managed content is never treated as owned", arguments: ["shim", "duplicate", "edited-block", "shim-symlink", "shim-hardlink"])
+    @Test("Edited or duplicate managed content is never treated as owned", arguments: [
+        "shim", "duplicate", "edited-block", "shim-symlink", "shim-hardlink",
+        "mixed-blocks", "legacy-duplicate", "legacy-edited",
+    ])
     func ownedContentConflicts(_ variation: String) async throws {
         let fixture = try ClaudeShellFixture()
         defer { fixture.remove() }
@@ -272,6 +604,18 @@ struct ClaudeAutoConnectSetupTests {
         case "edited-block":
             let text = try String(contentsOf: fixture.startup, encoding: .utf8).replacingOccurrences(of: "    export PATH\n", with: "    export OTHER_PATH\n")
             try Data(text.utf8).write(to: fixture.startup)
+        case "mixed-blocks":
+            let bytes = try Data(contentsOf: fixture.startup)
+                + Data(claudeLegacyManagedBlock(binPath: fixture.shim.deletingLastPathComponent().path).utf8)
+            try bytes.write(to: fixture.startup)
+        case "legacy-duplicate":
+            let block = claudeLegacyManagedBlock(binPath: fixture.shim.deletingLastPathComponent().path)
+            _ = try fixture.writeOrphanedBlock(suffix: block, legacy: true)
+        case "legacy-edited":
+            let bytes = try fixture.writeOrphanedBlock(legacy: true)
+            let text = String(decoding: bytes, as: UTF8.self)
+                .replacingOccurrences(of: "    export PATH\n", with: "    export OTHER_PATH\n")
+            try Data(text.utf8).write(to: fixture.startup)
         case "shim-symlink":
             let target = fixture.directory.appendingPathComponent("user-shim")
             try FileManager.default.moveItem(at: fixture.shim, to: target)
@@ -279,6 +623,8 @@ struct ClaudeAutoConnectSetupTests {
         default: try FileManager.default.linkItem(at: fixture.shim, to: fixture.directory.appendingPathComponent("shim-link"))
         }
         let startup = try Data(contentsOf: fixture.startup), shim = try Data(contentsOf: fixture.shim)
+        #expect((await manager.inspect()).issue == .manualReview)
+        #expect((await manager.enable()).issue == .manualReview)
         #expect((await manager.disable()).detail.hasPrefix(ClaudeAutoConnectSetup.manualReviewDetail))
         let otherShell = fixture.manager(environment: ["SHELL": "/bin/bash"])
         #expect(!(await otherShell.inspect()).canDisable)

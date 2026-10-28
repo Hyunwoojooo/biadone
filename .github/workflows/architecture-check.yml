@@ -1,0 +1,41 @@
+name: Blabase architecture check
+
+on:
+  pull_request:
+    paths:
+      - "apps/blabase/**"
+      - ".github/workflows/architecture-check.yml"
+  push:
+    branches: [main]
+    paths:
+      - "apps/blabase/**"
+      - ".github/workflows/architecture-check.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  architecture:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: apps/blabase
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22.23.2"
+          cache: npm
+          cache-dependency-path: apps/blabase/package-lock.json
+      - run: npm ci
+      - run: npm ci --prefix suggestion
+      - run: npm run arch:check
+      - run: npm run arch:build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: blabase-architecture-${{ github.sha }}
+          path: apps/blabase/artifacts/architecture
+          if-no-files-found: error
+          retention-days: 14

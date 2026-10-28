@@ -71,6 +71,21 @@ waiter를 취소하지 못한다. 모델에는 waiter generation이나 장기 Ho
   작업만 다음 waiter/claim으로 이어질 수 있다.
 - readiness·카드·continuation의 기존 만료를 늘려 시험을 통과시키지 않는다.
 
+### 2026-10-17: MCP 진단 출력 실패 처리
+
+진단용 stderr에는 `createSessionV2DiagnosticWriter`를 사용한다. 시작 문맥을 확인하기
+전에 오류 guard를 설치하며, CLI 시작 실패 안내와 연결/정리 단계의 진단에도 같은
+writer를 적용한다. 동기 write 예외, callback 오류, 비동기 error/close/finish와 늦은
+EPIPE를 처리한다. 첫 오류·종료·backpressure 이후에는 진단 쓰기를 중단하고 drain을
+기다리거나 같은 로그를 다시 쓰지 않는다.
+
+같은 stream에는 WeakMap으로 writer와 작은 오류 guard를 공유한다. 논리적 MCP 정리가
+끝난 뒤 도착한 오류도 처리하되 session/runtime을 listener에 보관하지 않는다.
+caller 소유 stderr를 destroy/end/unref하거나 stdout으로 우회 출력하지 않는다.
+진단 출력 실패 자체는 정상 MCP 연결을 종료하지 않으며, 실제 연결 실패의 정리와
+결과 코드·단일 실행·재전송 금지는 기존 경로를 따른다. 보호한 로그 출력을 이유로
+실제 RPC/선택 결과가 성공했다고 표시하지 않는다.
+
 ## 필수 검증
 
 - 자동: 새 wire 계약의 Swift/Node/JSON Schema 일치, 잘못된 role/세션/세대 거절,

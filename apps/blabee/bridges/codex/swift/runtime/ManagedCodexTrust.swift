@@ -484,7 +484,8 @@ enum ManagedCodexVersionProbeRunner {
         arguments: [String],
         environment: [String: String] = ProcessInfo.processInfo.environment,
         timeoutMilliseconds: Int,
-        outputLimit: Int = defaultOutputLimit
+        outputLimit: Int = defaultOutputLimit,
+        reportsTimeoutTermination: Bool = false
     ) throws -> ManagedCodexVersionProbeResult {
         guard executable.isFileURL, executable.path.hasPrefix("/"),
               !executable.path.utf8.contains(0),
@@ -689,6 +690,15 @@ enum ManagedCodexVersionProbeRunner {
                     output: &output,
                     errors: &errors
                 )
+                if reportsTimeoutTermination {
+                    // SIGKILL alone is not proof of cleanup. A read-only caller
+                    // may retry only after reaping our child and observing that
+                    // no member remains in the process group we created.
+                    let terminated = !childNeedsReaping && waitForProcessGroupExit(childPID)
+                    throw CoordinatorError(terminated
+                        ? "managed_codex_version_probe_timeout_terminated"
+                        : "managed_codex_version_probe_termination_uncertain")
+                }
                 throw CoordinatorError("managed_codex_version_probe_timeout")
             }
             usleep(drainIntervalMicroseconds)
@@ -708,6 +718,20 @@ enum ManagedCodexVersionProbeRunner {
             terminationSignal: (waitStatus & 0x7f) != 0 && (waitStatus & 0x7f) != 0x7f
                 ? waitStatus & 0x7f : nil
         )
+    }
+
+    private static func waitForProcessGroupExit(_ childPID: pid_t) -> Bool {
+        let deadline = DispatchTime.now().uptimeNanoseconds
+            + UInt64(terminationGraceMilliseconds) * 1_000_000
+        repeat {
+            if kill(-childPID, 0) < 0 {
+                // EPERM and every other error are uncertainty, not proof that
+                // the group disappeared. Never operate on a different group.
+                return errno == ESRCH
+            }
+            usleep(drainIntervalMicroseconds)
+        } while DispatchTime.now().uptimeNanoseconds < deadline
+        return false
     }
 
     private static func terminateProcessGroup(

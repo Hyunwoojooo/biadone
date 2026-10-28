@@ -1,0 +1,516 @@
+{
+  "$description": "Biadone basic production kit v0.1. Approved brand foundations remain in tokens.json and screen-style.tokens.json. These component values are initial reusable application defaults, to refine with real content.",
+  "primitive": {
+    "kit": {
+      "space-xs": {
+        "$value": "8px",
+        "$type": "dimension"
+      },
+      "space-sm": {
+        "$value": "16px",
+        "$type": "dimension"
+      },
+      "space-md": {
+        "$value": "24px",
+        "$type": "dimension"
+      },
+      "space-lg": {
+        "$value": "32px",
+        "$type": "dimension"
+      },
+      "space-xl": {
+        "$value": "48px",
+        "$type": "dimension"
+      },
+      "space-2xl": {
+        "$value": "64px",
+        "$type": "dimension"
+      },
+      "body-small": {
+        "$value": "16px",
+        "$type": "dimension"
+      },
+      "body": {
+        "$value": "18px",
+        "$type": "dimension"
+      },
+      "lead-small": {
+        "$value": "17px",
+        "$type": "dimension"
+      },
+      "lead": {
+        "$value": "20px",
+        "$type": "dimension"
+      },
+      "source": {
+        "$value": "14px",
+        "$type": "dimension"
+      },
+      "subtitle": {
+        "$value": "28px",
+        "$type": "dimension"
+      },
+      "subtitle-small": {
+        "$value": "25px",
+        "$type": "dimension"
+      },
+      "flow": {
+        "$value": "26px",
+        "$type": "dimension"
+      },
+      "flow-small": {
+        "$value": "22px",
+        "$type": "dimension"
+      },
+      "title-min": {
+        "$value": "48px",
+        "$type": "dimension"
+      },
+      "title-max": {
+        "$value": "84px",
+        "$type": "dimension"
+      },
+      "title-mobile-min": {
+        "$value": "32px",
+        "$type": "dimension"
+      },
+      "section-title-max": {
+        "$value": "36px",
+        "$type": "dimension"
+      },
+      "heading-weight": {
+        "$value": 700,
+        "$type": "number",
+        "$description": "Approved SUITE title weight from round11."
+      },
+      "label-weight": {
+        "$value": 600,
+        "$type": "number"
+      },
+      "title-leading": {
+        "$value": 1.19,
+        "$type": "number"
+      },
+      "body-leading": {
+        "$value": 1.8,
+        "$type": "number"
+      },
+      "title-tracking": {
+        "$value": "-0.052em",
+        "$type": "dimension"
+      },
+      "body-tracking": {
+        "$value": "-0.025em",
+        "$type": "dimension"
+      },
+      "logo": {
+        "$value": "24px",
+        "$type": "dimension"
+      },
+      "header": {
+        "$value": "112px",
+        "$type": "dimension"
+      },
+      "header-small": {
+        "$value": "88px",
+        "$type": "dimension"
+      },
+      "control-min": {
+        "$value": "48px",
+        "$type": "dimension"
+      },
+      "table-min": {
+        "$value": "720px",
+        "$type": "dimension"
+      },
+      "signature-width": {
+        "$value": "96px",
+        "$type": "dimension"
+      },
+      "signature-height": {
+        "$value": "32px",
+        "$type": "dimension"
+      },
+      "focus-width": {
+        "$value": "2px",
+        "$type": "dimension"
+      },
+      "focus-offset": {
+        "$value": "4px",
+        "$type": "dimension"
+      },
+      "slide-title": {
+        "$value": "64px",
+        "$type": "dimension"
+      },
+      "slide-body": {
+        "$value": "26px",
+        "$type": "dimension"
+      },
+      "slide-detail": {
+        "$value": "24px",
+        "$type": "dimension"
+      },
+      "slide-step-title": {
+        "$value": "32px",
+        "$type": "dimension"
+      },
+      "slide-source": {
+        "$value": "18px",
+        "$type": "dimension"
+      },
+      "slide-leading": {
+        "$value": 1.6,
+        "$type": "number"
+      }
+    }
+  },
+  "semantic": {
+    "kit": {
+      "text": {
+        "$value": "var(--color-text-primary)",
+        "$type": "color"
+      },
+      "accent": {
+        "$value": "var(--color-brand)",
+        "$type": "color"
+      },
+      "surface": {
+        "$value": "var(--color-background)",
+        "$type": "color"
+      },
+      "line": {
+        "$value": "color-mix(in srgb, var(--color-text-primary) 18%, var(--color-background))",
+        "$type": "color"
+      },
+      "space-compact": {
+        "$value": "{primitive.kit.space-sm}",
+        "$type": "dimension"
+      },
+      "space-related": {
+        "$value": "{primitive.kit.space-md}",
+        "$type": "dimension"
+      },
+      "space-content": {
+        "$value": "{primitive.kit.space-lg}",
+        "$type": "dimension"
+      },
+      "space-section": {
+        "$value": "{primitive.kit.space-2xl}",
+        "$type": "dimension"
+      },
+      "body-size": {
+        "$value": "{primitive.kit.body}",
+        "$type": "dimension"
+      },
+      "body-small": {
+        "$value": "{primitive.kit.body-small}",
+        "$type": "dimension"
+      },
+      "title-weight": {
+        "$value": "{primitive.kit.heading-weight}",
+        "$type": "number"
+      },
+      "label-weight": {
+        "$value": "{primitive.kit.label-weight}",
+        "$type": "number"
+      },
+      "space-xs": {
+        "$value": "{primitive.kit.space-xs}",
+        "$type": "dimension"
+      },
+      "space-xl": {
+        "$value": "{primitive.kit.space-xl}",
+        "$type": "dimension"
+      },
+      "lead": {
+        "$value": "{primitive.kit.lead}",
+        "$type": "dimension"
+      },
+      "lead-small": {
+        "$value": "{primitive.kit.lead-small}",
+        "$type": "dimension"
+      },
+      "source": {
+        "$value": "{primitive.kit.source}",
+        "$type": "dimension"
+      },
+      "title-min": {
+        "$value": "{primitive.kit.title-min}",
+        "$type": "dimension"
+      },
+      "title-max": {
+        "$value": "{primitive.kit.title-max}",
+        "$type": "dimension"
+      },
+      "title-mobile-min": {
+        "$value": "{primitive.kit.title-mobile-min}",
+        "$type": "dimension"
+      },
+      "section-title-max": {
+        "$value": "{primitive.kit.section-title-max}",
+        "$type": "dimension"
+      },
+      "subtitle": {
+        "$value": "{primitive.kit.subtitle}",
+        "$type": "dimension"
+      },
+      "subtitle-small": {
+        "$value": "{primitive.kit.subtitle-small}",
+        "$type": "dimension"
+      },
+      "flow": {
+        "$value": "{primitive.kit.flow}",
+        "$type": "dimension"
+      },
+      "flow-small": {
+        "$value": "{primitive.kit.flow-small}",
+        "$type": "dimension"
+      },
+      "title-leading": {
+        "$value": "{primitive.kit.title-leading}",
+        "$type": "number"
+      },
+      "body-leading": {
+        "$value": "{primitive.kit.body-leading}",
+        "$type": "number"
+      },
+      "title-tracking": {
+        "$value": "{primitive.kit.title-tracking}",
+        "$type": "dimension"
+      },
+      "body-tracking": {
+        "$value": "{primitive.kit.body-tracking}",
+        "$type": "dimension"
+      },
+      "logo": {
+        "$value": "{primitive.kit.logo}",
+        "$type": "dimension"
+      },
+      "header": {
+        "$value": "{primitive.kit.header}",
+        "$type": "dimension"
+      },
+      "header-small": {
+        "$value": "{primitive.kit.header-small}",
+        "$type": "dimension"
+      },
+      "control-min": {
+        "$value": "{primitive.kit.control-min}",
+        "$type": "dimension"
+      },
+      "table-min": {
+        "$value": "{primitive.kit.table-min}",
+        "$type": "dimension"
+      },
+      "signature-width": {
+        "$value": "{primitive.kit.signature-width}",
+        "$type": "dimension"
+      },
+      "signature-height": {
+        "$value": "{primitive.kit.signature-height}",
+        "$type": "dimension"
+      },
+      "focus-width": {
+        "$value": "{primitive.kit.focus-width}",
+        "$type": "dimension"
+      },
+      "focus-offset": {
+        "$value": "{primitive.kit.focus-offset}",
+        "$type": "dimension"
+      },
+      "slide-title": {
+        "$value": "{primitive.kit.slide-title}",
+        "$type": "dimension"
+      },
+      "slide-body": {
+        "$value": "{primitive.kit.slide-body}",
+        "$type": "dimension"
+      },
+      "slide-detail": {
+        "$value": "{primitive.kit.slide-detail}",
+        "$type": "dimension"
+      },
+      "slide-step-title": {
+        "$value": "{primitive.kit.slide-step-title}",
+        "$type": "dimension"
+      },
+      "slide-source": {
+        "$value": "{primitive.kit.slide-source}",
+        "$type": "dimension"
+      },
+      "slide-leading": {
+        "$value": "{primitive.kit.slide-leading}",
+        "$type": "number"
+      }
+    }
+  },
+  "component": {
+    "ui": {
+      "space-xs": {
+        "$value": "{semantic.kit.space-xs}",
+        "$type": "dimension"
+      },
+      "space-sm": {
+        "$value": "{semantic.kit.space-compact}",
+        "$type": "dimension"
+      },
+      "space-md": {
+        "$value": "{semantic.kit.space-related}",
+        "$type": "dimension"
+      },
+      "space-lg": {
+        "$value": "{semantic.kit.space-content}",
+        "$type": "dimension"
+      },
+      "space-xl": {
+        "$value": "{semantic.kit.space-xl}",
+        "$type": "dimension"
+      },
+      "space-section": {
+        "$value": "{semantic.kit.space-section}",
+        "$type": "dimension"
+      },
+      "body-size": {
+        "$value": "{semantic.kit.body-size}",
+        "$type": "dimension"
+      },
+      "body-mobile-size": {
+        "$value": "{semantic.kit.body-small}",
+        "$type": "dimension"
+      },
+      "lead-size": {
+        "$value": "{semantic.kit.lead}",
+        "$type": "dimension"
+      },
+      "lead-mobile-size": {
+        "$value": "{semantic.kit.lead-small}",
+        "$type": "dimension"
+      },
+      "source-size": {
+        "$value": "{semantic.kit.source}",
+        "$type": "dimension"
+      },
+      "title-min": {
+        "$value": "{semantic.kit.title-min}",
+        "$type": "dimension"
+      },
+      "title-max": {
+        "$value": "{semantic.kit.title-max}",
+        "$type": "dimension"
+      },
+      "title-mobile-min": {
+        "$value": "{semantic.kit.title-mobile-min}",
+        "$type": "dimension"
+      },
+      "section-title-max": {
+        "$value": "{semantic.kit.section-title-max}",
+        "$type": "dimension"
+      },
+      "subtitle-size": {
+        "$value": "{semantic.kit.subtitle}",
+        "$type": "dimension"
+      },
+      "subtitle-mobile-size": {
+        "$value": "{semantic.kit.subtitle-small}",
+        "$type": "dimension"
+      },
+      "flow-size": {
+        "$value": "{semantic.kit.flow}",
+        "$type": "dimension"
+      },
+      "flow-mobile-size": {
+        "$value": "{semantic.kit.flow-small}",
+        "$type": "dimension"
+      },
+      "heading-weight": {
+        "$value": "{semantic.kit.title-weight}",
+        "$type": "number"
+      },
+      "label-weight": {
+        "$value": "{semantic.kit.label-weight}",
+        "$type": "number"
+      },
+      "title-leading": {
+        "$value": "{semantic.kit.title-leading}",
+        "$type": "number"
+      },
+      "body-leading": {
+        "$value": "{semantic.kit.body-leading}",
+        "$type": "number"
+      },
+      "title-tracking": {
+        "$value": "{semantic.kit.title-tracking}",
+        "$type": "dimension"
+      },
+      "body-tracking": {
+        "$value": "{semantic.kit.body-tracking}",
+        "$type": "dimension"
+      },
+      "logo-size": {
+        "$value": "{semantic.kit.logo}",
+        "$type": "dimension"
+      },
+      "header-height": {
+        "$value": "{semantic.kit.header}",
+        "$type": "dimension"
+      },
+      "header-mobile-height": {
+        "$value": "{semantic.kit.header-small}",
+        "$type": "dimension"
+      },
+      "control-min": {
+        "$value": "{semantic.kit.control-min}",
+        "$type": "dimension"
+      },
+      "table-min": {
+        "$value": "{semantic.kit.table-min}",
+        "$type": "dimension"
+      },
+      "signature-width": {
+        "$value": "{semantic.kit.signature-width}",
+        "$type": "dimension"
+      },
+      "signature-height": {
+        "$value": "{semantic.kit.signature-height}",
+        "$type": "dimension"
+      },
+      "focus-width": {
+        "$value": "{semantic.kit.focus-width}",
+        "$type": "dimension"
+      },
+      "focus-offset": {
+        "$value": "{semantic.kit.focus-offset}",
+        "$type": "dimension"
+      },
+      "line-color": {
+        "$value": "{semantic.kit.line}",
+        "$type": "color"
+      },
+      "slide-title": {
+        "$value": "{semantic.kit.slide-title}",
+        "$type": "dimension"
+      },
+      "slide-body": {
+        "$value": "{semantic.kit.slide-body}",
+        "$type": "dimension"
+      },
+      "slide-detail": {
+        "$value": "{semantic.kit.slide-detail}",
+        "$type": "dimension"
+      },
+      "slide-step-title": {
+        "$value": "{semantic.kit.slide-step-title}",
+        "$type": "dimension"
+      },
+      "slide-source": {
+        "$value": "{semantic.kit.slide-source}",
+        "$type": "dimension"
+      },
+      "slide-leading": {
+        "$value": "{semantic.kit.slide-leading}",
+        "$type": "number"
+      }
+    }
+  }
+}

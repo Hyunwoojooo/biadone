@@ -30,6 +30,7 @@ private final class SetupOperationGate {
 @MainActor
 private final class SetupFixture {
     var serviceReady = false
+    var serviceIssue: String?
     var providers: [PetConnectionSetupProvider: PetConnectionSetupProviderState] = [
         .codex: .init(status: .available, detail: "Codex 발견"),
         .claude: .init(status: .available, detail: "Claude 개발용 연결 경로 확인 필요")
@@ -40,13 +41,15 @@ private final class SetupFixture {
     var writesBeforeFailure: Set<PetConnectionSetupProvider> = []
     var configurationHasNoEffect = false
     var preparationHasNoEffect = false
+    var preparationFails = false
     var inspectionFails = false
     var disconnectAfterProvider: PetConnectionSetupProvider?
     var inspectionGate: SetupOperationGate?
     var configurationGate: SetupOperationGate?
 
     func inspection() -> PetConnectionSetupInspection {
-        .init(serviceReady: serviceReady, providers: providers, recommendedProviders: recommended)
+        .init(serviceReady: serviceReady, providers: providers, recommendedProviders: recommended,
+              serviceIssue: serviceIssue)
     }
 
     func makeController(store: (any PetConnectionSetupSelectionStoring)? = nil) -> PetConnectionSetupController {
@@ -58,6 +61,7 @@ private final class SetupFixture {
             return observed
         }, prepare: {
             self.calls.append("prepare")
+            if self.preparationFails { throw SetupFixtureError() }
             if !self.preparationHasNoEffect { self.serviceReady = true }
         }, configure: { provider in
             self.calls.append("configure:" + provider.rawValue)
@@ -252,6 +256,127 @@ struct PetConnectionSetupTests {
         #expect(!controller.canFinish)
     }
 
+    @Test("An observed service failure remains visible across refresh and polling without setup writes")
+    func observedServiceFailureSurvivesRefresh() async {
+        let fixture = SetupFixture()
+        fixture.serviceIssue = "저장소 확인 필요: freshness_storage_missing"
+        let controller = fixture.makeController(store: PetConnectionSetupMemorySelectionStore(selectedProviders: [.codex]))
+
+        await controller.refresh()
+        #expect(controller.serviceIssue == fixture.serviceIssue)
+        #expect(controller.phase == .failed && controller.detail == fixture.serviceIssue)
+        for _ in 0..<3 {
+            await controller.refresh()
+            controller.receiveObservation(fixture.inspection())
+            #expect(controller.phase == .failed && controller.detail == fixture.serviceIssue)
+        }
+        await controller.connect()
+
+        #expect(fixture.calls == Array(repeating: "inspect", count: 5))
+        #expect(controller.state(for: .codex).status == .available)
+        #expect(!controller.canFinish && !controller.serviceReady)
+        fixture.inspectionFails = true
+        await controller.refresh()
+        #expect(controller.serviceIssue == fixture.serviceIssue && controller.detail == fixture.serviceIssue)
+        #expect(fixture.calls.allSatisfy { $0 == "inspect" })
+    }
+
+    @Test("Only fresh healthy service evidence clears an observed issue even when tool setup is unfinished")
+    func serviceIssueClearsOnlyAfterHealthyObservation() async {
+        let fixture = SetupFixture()
+        let issue = "저장소 확인 필요: freshness_storage_missing"
+        fixture.serviceIssue = issue
+        let controller = fixture.makeController(store: PetConnectionSetupMemorySelectionStore(selectedProviders: [.codex]))
+        await controller.refresh()
+        fixture.serviceIssue = nil
+        // A service restart's stopped/starting observation cannot claim recovery.
+        controller.receiveObservation(fixture.inspection())
+        await controller.refresh()
+        await controller.connect()
+        #expect(controller.serviceIssue == issue && controller.detail == issue)
+        #expect(fixture.calls.allSatisfy { $0 == "inspect" })
+
+        fixture.serviceReady = true
+        controller.receiveObservation(fixture.inspection())
+        #expect(controller.serviceIssue == nil && controller.phase == .idle)
+        #expect(controller.availableProviders == [.codex] && !controller.canFinish)
+        fixture.calls = []
+        await controller.connect()
+        #expect(fixture.calls == ["inspect", "prepare", "inspect", "configure:codex", "inspect"])
+        #expect(controller.canFinish)
+    }
+
+    @Test("A service issue overrides contradictory ready flags and revokes session evidence")
+    func serviceIssueRevokesReadiness() {
+        let fixture = SetupFixture()
+        fixture.serviceReady = true
+        fixture.providers[.claude] = .init(status: .configured, sessionEvidence: .ready)
+        let controller = fixture.makeController(store: PetConnectionSetupMemorySelectionStore(selectedProviders: [.claude]))
+        controller.receiveObservation(fixture.inspection())
+        #expect(controller.canFinish)
+        fixture.serviceIssue = "공통 서비스 오류"
+        controller.receiveObservation(fixture.inspection())
+        #expect(!controller.canFinish && !controller.serviceReady)
+        #expect(controller.state(for: .claude).sessionEvidence == .unavailable)
+        #expect(controller.phase == .failed && controller.detail == fixture.serviceIssue)
+        controller.setSelected(false, for: .claude)
+        #expect(controller.detail == fixture.serviceIssue)
+    }
+
+    @Test("A newly observed service failure stops configuration after preparation or between tools",
+          arguments: [false, true])
+    func serviceIssueStopsLaterWrites(afterCodex: Bool) async {
+        let fixture = SetupFixture()
+        var configured: [PetConnectionSetupProvider] = []
+        var prepares = 0
+        let controller = PetConnectionSetupController(
+            store: PetConnectionSetupMemorySelectionStore(selectedProviders: [.codex, .claude]),
+            inspect: { fixture.inspection() },
+            prepare: {
+                prepares += 1
+                fixture.serviceReady = true
+                if !afterCodex { fixture.serviceIssue = "공통 서비스 오류" }
+            },
+            configure: { provider in
+                configured.append(provider)
+                fixture.providers[provider] = .init(status: .configured)
+                fixture.serviceIssue = "공통 서비스 오류"
+            }
+        )
+        await controller.connect()
+        #expect(prepares == 1)
+        #expect(configured == (afterCodex ? [.codex] : []))
+        #expect(controller.phase == .failed && !controller.canFinish)
+        #expect(controller.serviceIssue == fixture.serviceIssue)
+    }
+
+    @Test("Mixed availability identifies both tools and configures only the actionable provider",
+          arguments: [PetConnectionSetupStatus.needsAction, .needsInstall, .failed])
+    func mixedAvailabilityRemainsActionable(_ pending: PetConnectionSetupStatus) async {
+        let fixture = SetupFixture()
+        fixture.providers[.claude] = .init(status: pending, detail: "Claude 추가 확인 필요")
+        let controller = fixture.makeController(store: PetConnectionSetupMemorySelectionStore(selectedProviders: [.codex, .claude]))
+        await controller.refresh()
+        #expect(controller.availableProviders == [.codex])
+        #expect(controller.pendingProviders == [.claude])
+        #expect(controller.canConnect && !controller.canFinish)
+        #expect(controller.phase == .needsAction)
+        PetL10n.$languageOverride.withValue(.english) {
+            #expect(controller.detail == "Codex can connect now. Claude still needs attention; you can review it separately or connect it later.")
+        }
+        #expect(controller.detail.contains("Codex는 지금 연결"))
+        #expect(controller.detail.contains("Claude는 추가 확인"))
+        fixture.calls = []
+        await controller.connect()
+        #expect(fixture.calls == ["inspect", "prepare", "inspect", "configure:codex", "inspect"])
+        #expect(controller.state(for: .codex).status == .configured)
+        #expect(controller.state(for: .claude).status == pending)
+        #expect(controller.pendingProviders == [.claude] && controller.availableProviders.isEmpty)
+        #expect(!controller.canFinish)
+        controller.setSelected(false, for: .claude)
+        #expect(controller.canFinish)
+    }
+
     @Test("Missing installation and external required actions are displayed without mutation")
     func requiredActionRemainsExplicit() async {
         let fixture = SetupFixture()
@@ -361,6 +486,95 @@ struct PetConnectionSetupTests {
         #expect(controller.phase == .failed)
         #expect(!controller.canFinish && !controller.serviceReady)
         #expect(controller.state(for: .codex).sessionEvidence == .notObserved)
+    }
+
+    @Test("Common preparation and inspection failures survive ordinary available-state polls",
+          arguments: ["prepare", "inspect"])
+    func commonFailureSurvivesHealthPolling(stage: String) async {
+        let fixture = SetupFixture()
+        fixture.preparationFails = stage == "prepare"
+        fixture.inspectionFails = stage == "inspect"
+        let controller = fixture.makeController(store: PetConnectionSetupMemorySelectionStore(selectedProviders: [.codex]))
+        await controller.connect()
+        let calls = fixture.calls
+        #expect(controller.phase == .failed && controller.detail == "fixture 설정 실패")
+
+        for _ in 0..<3 { controller.receiveObservation(fixture.inspection()) }
+        fixture.serviceReady = true
+        controller.receiveObservation(fixture.inspection())
+
+        #expect(controller.phase == .failed && controller.detail == "fixture 설정 실패")
+        #expect(controller.state(for: .codex).status == .available)
+        #expect(!controller.canFinish)
+        #expect(fixture.calls == calls)
+    }
+
+    @Test("Only a fresh ready-service observation for every selected provider clears a common failure")
+    func completeObservationClearsCommonFailure() async {
+        let fixture = SetupFixture()
+        fixture.preparationFails = true
+        let controller = fixture.makeController(store: PetConnectionSetupMemorySelectionStore(selectedProviders: [.codex, .claude]))
+        await controller.connect()
+        let calls = fixture.calls
+
+        fixture.serviceReady = true
+        fixture.providers[.codex] = .init(status: .configured, sessionEvidence: .ready)
+        controller.receiveObservation(fixture.inspection())
+        #expect(controller.phase == .failed && controller.detail == "fixture 설정 실패")
+        #expect(!controller.canFinish)
+
+        fixture.serviceReady = false
+        fixture.providers[.claude] = .init(status: .configured, sessionEvidence: .ready)
+        controller.receiveObservation(fixture.inspection())
+        #expect(controller.phase == .failed && controller.detail == "fixture 설정 실패")
+        #expect(!controller.canFinish)
+        #expect(controller.state(for: .claude).sessionEvidence == .unavailable)
+
+        fixture.serviceReady = true
+        controller.receiveObservation(fixture.inspection())
+        #expect(controller.phase == .configured && controller.canFinish)
+        #expect(controller.detail != "fixture 설정 실패")
+        #expect(fixture.calls == calls)
+    }
+
+    @Test("An explicit refresh or connect starts a new common-failure attempt",
+          arguments: [false, true])
+    func explicitActionClearsCommonFailure(connect: Bool) async {
+        let fixture = SetupFixture()
+        fixture.preparationFails = true
+        let controller = fixture.makeController(store: PetConnectionSetupMemorySelectionStore(selectedProviders: [.codex]))
+        await controller.connect()
+        fixture.preparationFails = false
+        fixture.calls = []
+
+        if connect { await controller.connect() } else { await controller.refresh() }
+
+        #expect(controller.detail != "fixture 설정 실패")
+        #expect(controller.phase == (connect ? .configured : .idle))
+        #expect(controller.canFinish == connect)
+        if !connect { #expect(fixture.calls == ["inspect"]) }
+    }
+
+    @Test("Refreshing a common failure does not erase an earlier provider configuration failure")
+    func commonFailureRetryPreservesProviderFailure() async {
+        let fixture = SetupFixture()
+        fixture.failingProviders = [.codex]
+        let controller = fixture.makeController(store: PetConnectionSetupMemorySelectionStore(selectedProviders: [.codex, .claude]))
+        await controller.connect()
+        fixture.inspectionFails = true
+        await controller.refresh()
+        #expect(controller.detail == "fixture 설정 실패")
+        fixture.inspectionFails = false
+        fixture.calls = []
+
+        await controller.refresh()
+
+        #expect(controller.phase == .failed && !controller.canFinish)
+        #expect(controller.detail != "fixture 설정 실패")
+        #expect(controller.state(for: .codex).status == .failed)
+        #expect(controller.state(for: .codex).detail == "fixture 설정 실패")
+        #expect(controller.state(for: .claude).status == .configured)
+        #expect(fixture.calls == ["inspect"])
     }
 
     @Test("Restart restores only selection intent and requires fresh evidence")

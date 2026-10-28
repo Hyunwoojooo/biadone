@@ -1,4 +1,5 @@
 import AppKit
+import CoordinatorSwift
 import SwiftUI
 import Testing
 @testable import BlabeeCoordinator
@@ -14,7 +15,7 @@ struct PetFirstRunViewTests {
         let defaults = try #require(UserDefaults(suiteName: suite))
         defer { defaults.removePersistentDomain(forName: suite) }
         let preferences = PetFirstRunPreferences(defaults: defaults, loginItem: FirstRunRenderLoginItem(), applyTheme: { _ in })
-        let model = PetViewModel(transport: PetFakeTransport(), externalApplicationOpener: PetFakeApplicationOpener())
+        let model = firstRunRenderModel()
         let store = FirstRunRenderStore()
         let controller = PetFirstRunController(store: store, legalDocuments: .deferred)
         let view = PetFirstRunView(controller: controller, viewModel: model, preferences: preferences,
@@ -23,17 +24,21 @@ struct PetFirstRunViewTests {
         #expect(view.thirdStepTitle == "데이터 공유")
         #expect(!view.showsLegalAgreement)
         #expect(view.continueTitle == "계속")
+        #expect(view.navigationHint == "위에서 로그인을 마치면 다음 단계로 갈 수 있어요.")
         #expect(!view.canContinue)
         controller.synchronizeAccount(id: "verified-account", email: nil)
+        #expect(view.navigationHint == "로그인됐어요. 아래 버튼으로 계속하세요.")
         #expect(view.canContinue)
         #expect(controller.continueAfterSignIn())
         #expect(controller.step == .terms)
         #expect(view.continueTitle == "설정 저장하고 계속")
+        #expect(view.navigationHint == "선택 항목은 꺼 두어도 괜찮아요. 아래 버튼으로 설정을 저장하세요.")
         #expect(!controller.acceptsTerms)
         #expect(view.canContinue)
         #expect(!view.canDeferConnection)
         controller.synchronizeAccount(id: nil, email: nil, isVerifying: true)
         #expect(controller.step == .terms)
+        #expect(view.navigationHint == nil)
         #expect(!view.canContinue)
         controller.synchronizeAccount(id: "verified-account", email: nil)
         #expect(controller.saveDataSharingPreferences())
@@ -47,7 +52,7 @@ struct PetFirstRunViewTests {
         let defaults = try #require(UserDefaults(suiteName: suite))
         defer { defaults.removePersistentDomain(forName: suite) }
         let preferences = PetFirstRunPreferences(defaults: defaults, loginItem: FirstRunRenderLoginItem(), applyTheme: { _ in })
-        let model = PetViewModel(transport: PetFakeTransport(), externalApplicationOpener: PetFakeApplicationOpener())
+        let model = firstRunRenderModel()
         let published = PetFirstRunLegalDocuments.configured(info: [
             "BlabeeTermsURL": "https://example.test/terms",
             "BlabeePrivacyURL": "https://example.test/privacy",
@@ -88,6 +93,92 @@ struct PetFirstRunViewTests {
         #expect(example.selected == 1)
     }
 
+    @Test("Primary action shows a local delivery result before advancing and skip never fabricates a delivery")
+    func tutorialPrimaryActionTransition() {
+        var example = PetFirstRunTutorialExampleState()
+        #expect(PetFirstRunTutorialAction.current(scene: 0, example: example) == .preview)
+        let advancesPreview = example.activatePrimaryAction(scene: 0)
+        #expect(advancesPreview)
+        #expect(!example.delivered)
+        #expect(PetFirstRunTutorialAction.current(scene: 1, example: example) == .choose)
+        let skipsPractice = example.activatePrimaryAction(scene: 1)
+        #expect(skipsPractice)
+        #expect(example.selected == nil)
+        #expect(!example.delivered)
+        #expect(PetFirstRunTutorialAction.current(scene: 2, example: example) == .resultPreview)
+        let advancesResultPreview = example.activatePrimaryAction(scene: 2)
+        #expect(advancesResultPreview)
+        #expect(!example.delivered)
+
+        example.select(0)
+        example.select(1)
+        #expect(example.selected == 1)
+        #expect(PetFirstRunTutorialAction.current(scene: 1, example: example) == .send)
+        let advancesOnSend = example.activatePrimaryAction(scene: 1)
+        #expect(!advancesOnSend)
+        #expect(example.delivered)
+        #expect(PetFirstRunTutorialAction.current(scene: 1, example: example) == .next)
+        let delivered = example
+        let advancesAfterSend = example.activatePrimaryAction(scene: 1)
+        #expect(advancesAfterSend)
+        #expect(example == delivered)
+        example.select(0)
+        #expect(example == delivered)
+    }
+
+    @Test("Korean tutorial buttons distinguish preview, skip, send and a result preview")
+    func tutorialActionPresentation() throws {
+        try verifyTutorialActionPresentation(english: false)
+    }
+
+    @Test("English tutorial buttons and guidance retain the same explicit action sequence", .petLanguage(.english))
+    func englishTutorialActionPresentation() throws {
+        try verifyTutorialActionPresentation(english: true)
+        #expect(PetFirstRunTutorialAction.choose.title == "1. Click either card below")
+        #expect(PetFirstRunTutorialAction.send.detail.contains("No real task will run"))
+        #expect(PetFirstRunTutorialAction.resultPreview.detail.contains("previews the result"))
+    }
+
+    private func verifyTutorialActionPresentation(english: Bool) throws {
+        let suite = "blabee-first-run-tutorial-actions-\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let preferences = PetFirstRunPreferences(defaults: defaults, loginItem: FirstRunRenderLoginItem(), applyTheme: { _ in })
+        let model = firstRunRenderModel()
+        defer { model.endFirstRunSetup(); model.stopPolling() }
+        let controller = PetFirstRunController(store: FirstRunRenderStore(), legalDocuments: .placeholder)
+        func view(_ example: PetFirstRunTutorialExampleState = .init()) -> PetFirstRunView {
+            PetFirstRunView(controller: controller, viewModel: model, preferences: preferences, tutorialExample: example,
+                            onFinish: { _ in Issue.record("Tutorial presentation must not complete setup") }, onClose: {})
+        }
+        #expect(view().tutorialAction == .preview)
+        #expect(view().continueTitle == (english ? "Try Choosing a Card" : "카드 선택해 보기"))
+        #expect(view().canContinue)
+        controller.advanceTutorial()
+        #expect(view().tutorialAction == .choose)
+        #expect(view().continueTitle == (english ? "Skip Practice and Continue" : "체험 건너뛰고 다음"))
+        #expect(view().canContinue)
+        #expect(view().navigationHint == nil)
+        var selected = PetFirstRunTutorialExampleState()
+        selected.select(0)
+        #expect(view(selected).tutorialAction == .send)
+        #expect(view(selected).continueTitle == (english ? "Send Example Choice" : "예시 선택 전달하기"))
+        let advancesOnSend = selected.activatePrimaryAction(scene: 1)
+        #expect(!advancesOnSend)
+        #expect(controller.tutorialIndex == 1)
+        #expect(view(selected).tutorialAction == .next)
+        #expect(view(selected).continueTitle == (english ? "Next" : "다음"))
+        controller.advanceTutorial()
+        #expect(view().tutorialAction == .resultPreview)
+        #expect(view().continueTitle == (english ? "Continue to Sign In" : "로그인으로 계속"))
+        #expect(!controller.isComplete)
+        controller.advanceTutorial()
+        #expect(controller.step == .signIn)
+        #expect(!view().canContinue)
+        #expect(view().navigationHint == (english ? "Complete sign-in above to unlock the next step."
+                                          : "위에서 로그인을 마치면 다음 단계로 갈 수 있어요."))
+    }
+
     @Test("First-run window fits the visible screen, including a small display")
     func screenBounds() {
         #expect(PetFirstRunWindowController.contentSize(available: NSSize(width: 1440, height: 900))
@@ -102,13 +193,14 @@ struct PetFirstRunViewTests {
         let defaults = try #require(UserDefaults(suiteName: suite))
         defer { defaults.removePersistentDomain(forName: suite) }
         let preferences = PetFirstRunPreferences(defaults: defaults, loginItem: FirstRunRenderLoginItem(), applyTheme: { _ in })
-        let model = PetViewModel(transport: PetFakeTransport(), externalApplicationOpener: PetFakeApplicationOpener())
+        let model = firstRunRenderModel()
         let store = FirstRunRenderStore()
         store.failLoad = true
         let controller = PetFirstRunController(store: store, legalDocuments: .placeholder)
         let view = PetFirstRunView(controller: controller, viewModel: model, preferences: preferences,
                                   onFinish: { _ in }, onClose: {})
         #expect(controller.canRetryLoading)
+        #expect(view.navigationHint == nil)
         #expect(!view.canContinue)
         #expect(!view.canDeferConnection)
         store.failLoad = false
@@ -124,6 +216,7 @@ struct PetFirstRunViewTests {
         #expect(view.canDeferConnection)
         controller.synchronizeAccount(id: nil, email: nil, isVerifying: true)
         #expect(controller.step == .setup)
+        #expect(view.navigationHint == nil)
         #expect(!view.canContinue)
         #expect(!view.canDeferConnection)
         controller.synchronizeAccount(id: userID, email: "tester@example.test")
@@ -137,9 +230,11 @@ struct PetFirstRunViewTests {
         let defaults = try #require(UserDefaults(suiteName: suite))
         defer { defaults.removePersistentDomain(forName: suite) }
         let preferences = PetFirstRunPreferences(defaults: defaults, loginItem: FirstRunRenderLoginItem(), applyTheme: { _ in })
-        let model = PetViewModel(transport: PetFakeTransport(), externalApplicationOpener: PetFakeApplicationOpener())
-        defer { model.stopPolling() }
-        try model.receiveSnapshotDataForTesting(petTestSnapshotData(cards: []))
+        let transport = PetFakeTransport()
+        let model = firstRunRenderModel(transport: transport)
+        defer { model.endFirstRunSetup(); model.stopPolling() }
+        await transport.enqueue(type: "get_state", response: try petTestSnapshotData(cards: []))
+        await model.refreshFirstRunSetup(inspectSettings: false)
         let inspection = PetConnectionSetupInspection(serviceReady: true, providers: [
             .codex: .init(status: .needsInstall, detail: "설치 필요"),
             .claude: .init(status: .configured, detail: "설정 완료", sessionEvidence: .waitingForSession)
@@ -171,9 +266,11 @@ struct PetFirstRunViewTests {
         let defaults = try #require(UserDefaults(suiteName: suite))
         defer { defaults.removePersistentDomain(forName: suite) }
         let preferences = PetFirstRunPreferences(defaults: defaults, loginItem: FirstRunRenderLoginItem(), applyTheme: { _ in })
-        let model = PetViewModel(transport: PetFakeTransport(), externalApplicationOpener: PetFakeApplicationOpener())
-        defer { model.stopPolling() }
-        try model.receiveSnapshotDataForTesting(petTestSnapshotData(cards: []))
+        let transport = PetFakeTransport()
+        let model = firstRunRenderModel(transport: transport)
+        defer { model.endFirstRunSetup(); model.stopPolling() }
+        await transport.enqueue(type: "get_state", response: try petTestSnapshotData(cards: []))
+        await model.refreshFirstRunSetup(inspectSettings: false)
         let inspection = PetConnectionSetupInspection(serviceReady: true, providers: [
             .claude: .init(status: .configured, detail: "설정 완료", sessionEvidence: .waitingForSession)
         ])
@@ -193,6 +290,7 @@ struct PetFirstRunViewTests {
         for _ in 0..<100 where pending == nil { await Task.yield() }
         let waiter = try #require(pending)
         #expect(connection.isWorking)
+        #expect(view.navigationHint == nil)
         #expect(!view.canContinue)
         #expect(!view.canDeferConnection)
         connection.cancel()
@@ -215,8 +313,33 @@ struct PetFirstRunViewTests {
         return controller
     }
 
-    @Test("Four stages render at standard and narrow sizes without finishing or selecting real work")
+    @Test("Korean tutorial guidance and account gate render at standard and narrow sizes")
     func renderStages() async throws {
+        try await render([
+            .init(name: "preview", scene: 0, size: .standard, dark: false),
+            .init(name: "choose", scene: 1, size: .narrow, dark: false),
+            .init(name: "send", scene: 1, selected: 0, size: .standard, dark: true),
+            .init(name: "delivered", scene: 1, selected: 1, delivered: true, size: .narrow, dark: true),
+            .init(name: "finish-tutorial", scene: 2, size: .standard, dark: false),
+            .init(name: "sign-in", stage: .signIn, size: .narrow, dark: false),
+        ])
+    }
+
+    @Test("English tutorial guidance, consent and setup render without real connection side effects", .petLanguage(.english))
+    func renderEnglishStages() async throws {
+        try await render([
+            .init(name: "choose", scene: 1, size: .standard, dark: true),
+            .init(name: "send", scene: 1, selected: 1, size: .narrow, dark: false),
+            .init(name: "delivered", scene: 1, selected: 0, delivered: true, size: .standard, dark: false),
+            .init(name: "finish-tutorial", scene: 2, size: .narrow, dark: true),
+            .init(name: "terms", stage: .terms, size: .narrow, dark: false),
+            .init(name: "setup", stage: .setup, size: .standard, dark: true),
+        ])
+    }
+
+    private func render(_ cases: [FirstRunRenderCase]) async throws {
+        let restoreLanguage = petRenderLanguageOverride(PetL10n.language)
+        defer { restoreLanguage() }
         let suite = "blabee-first-run-view-\(UUID().uuidString)"
         let defaults = try #require(UserDefaults(suiteName: suite))
         defer { defaults.removePersistentDomain(forName: suite) }
@@ -227,51 +350,84 @@ struct PetFirstRunViewTests {
         let transport = PetFakeTransport()
         let account = PetAccountController(service: FirstRunRenderAccountService(), store: FirstRunRenderAccountStore(),
                                            browser: FirstRunRenderAccountBrowser(), automaticRefresh: false)
-        let viewModel = PetViewModel(transport: transport, externalApplicationOpener: PetFakeApplicationOpener(), account: account)
-        defer { viewModel.stopPolling(); account.stop() }
-        let registry = try PetHotKeyRegistry(backend: PetFakeHotKeyBackend(), configuration: .defaults) { _ in }
+        let viewModel = firstRunRenderModel(transport: transport, account: account)
+        defer { viewModel.endFirstRunSetup(); viewModel.stopPolling(); account.stop() }
+        let registry = try PetHotKeyRegistry(backend: PetFakeHotKeyBackend(), configuration: .defaults) { _ in
+            Issue.record("Rendering must not dispatch a keyboard shortcut")
+        }
         viewModel.attachHotKeyRegistry(registry)
-        let store = FirstRunRenderStore()
-        let controller = PetFirstRunController(store: store, legalDocuments: .placeholder)
+        await transport.enqueue(type: "get_state", response: try petTestSnapshotData(cards: []))
+        await viewModel.refreshFirstRunSetup(inspectSettings: false)
         let userID = "11111111-1111-4111-8111-111111111111"
 
-        for stage in PetFirstRunStep.allCases {
-            switch stage {
-            case .tutorial: break
-            case .signIn: controller.skipTutorial()
-            case .terms:
+        for fixture in cases {
+            let controller = PetFirstRunController(store: FirstRunRenderStore(), legalDocuments: .placeholder)
+            for _ in 0..<fixture.scene { controller.advanceTutorial() }
+            if fixture.stage != .tutorial { controller.skipTutorial() }
+            if fixture.stage == .terms || fixture.stage == .setup {
                 controller.synchronizeAccount(id: userID, email: "tester@example.test")
                 #expect(controller.continueAfterSignIn())
-            case .setup:
+            }
+            if fixture.stage == .setup {
                 controller.acceptsTerms = true
                 #expect(controller.acceptTerms())
             }
-            #expect(controller.step == stage)
-            for size in [NSSize(width: 590, height: 720), NSSize(width: 460, height: 550)] {
-                for dark in [false, true] {
-                    let view = PetFirstRunView(controller: controller, viewModel: viewModel, preferences: preferences,
-                        onFinish: { _ in Issue.record("Rendering must not finish onboarding") },
-                        onClose: { Issue.record("Rendering must not close onboarding") })
-                        .frame(width: size.width, height: size.height)
-                        .environment(\.colorScheme, dark ? .dark : .light)
-                        .environment(\.petAirForceOpaqueSurfaces, true)
-                    let host = NSHostingView(rootView: view)
-                    host.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
-                    host.frame = NSRect(origin: .zero, size: size)
-                    host.layoutSubtreeIfNeeded()
-                    let bitmap = try #require(host.bitmapImageRepForCachingDisplay(in: host.bounds))
-                    host.effectiveAppearance.performAsCurrentDrawingAppearance {
-                        host.cacheDisplay(in: host.bounds, to: bitmap)
-                    }
-                    #expect(bitmap.pixelsWide > 0 && bitmap.pixelsHigh > 0)
-                    #expect(abs(host.bounds.width - size.width) < 0.1)
-                    if let directory = ProcessInfo.processInfo.environment["BLABEE_FIRST_RUN_RENDER_DIRECTORY"] {
-                        try FileManager.default.createDirectory(atPath: directory, withIntermediateDirectories: true)
-                        let data = try #require(bitmap.representation(using: .png, properties: [:]))
-                        try data.write(to: URL(fileURLWithPath: directory).appendingPathComponent(
-                            "first-run-\(stage.rawValue)-\(Int(size.width))-\(dark ? "dark" : "light").png"))
-                    }
+            #expect(controller.step == fixture.stage)
+            var example = PetFirstRunTutorialExampleState()
+            if let selected = fixture.selected { example.select(selected) }
+            if fixture.delivered { example.deliver() }
+            let size = fixture.size.value
+            let view = PetFirstRunView(controller: controller, viewModel: viewModel, preferences: preferences,
+                tutorialExample: example,
+                onFinish: { _ in Issue.record("Rendering must not finish onboarding") },
+                onClose: { Issue.record("Rendering must not close onboarding") })
+                .frame(width: size.width, height: size.height)
+                .foregroundStyle(fixture.dark ? Color.white : Color.black)
+                .background(fixture.dark ? Color.black : Color.white)
+                .environment(\.colorScheme, fixture.dark ? .dark : .light)
+                .environment(\.petAirForceOpaqueSurfaces, true)
+            let host = NSHostingView(rootView: view)
+            host.appearance = NSAppearance(named: fixture.dark ? .darkAqua : .aqua)
+            let window = NSWindow(contentRect: NSRect(x: -20_000, y: -20_000, width: size.width, height: size.height),
+                                  styleMask: .borderless, backing: .buffered, defer: false)
+            window.isReleasedWhenClosed = false
+            window.contentView = host
+            // Never order this fixture window or activate the app.
+            defer { window.contentView = nil; window.close() }
+            host.frame = NSRect(origin: .zero, size: size)
+            for _ in 0..<5 {
+                host.layoutSubtreeIfNeeded()
+                window.displayIfNeeded()
+                try await Task.sleep(for: .milliseconds(20))
+            }
+            host.layoutSubtreeIfNeeded()
+            let bitmap = try #require(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+            host.effectiveAppearance.performAsCurrentDrawingAppearance {
+                host.cacheDisplay(in: host.bounds, to: bitmap)
+            }
+            #expect(bitmap.pixelsWide > 0 && bitmap.pixelsHigh > 0)
+            #expect(abs(host.bounds.width - size.width) < 0.1)
+            #expect(abs(host.bounds.height - size.height) < 0.1)
+            #expect(host.fittingSize.width <= size.width + 1)
+            var colors = Set<String>()
+            var contentEdges = 0
+            for y in stride(from: 8, to: bitmap.pixelsHigh - 8, by: 4) {
+                for x in stride(from: 8, to: bitmap.pixelsWide - 8, by: 4) {
+                    guard let color = bitmap.colorAt(x: x, y: y)?.usingColorSpace(.deviceRGB),
+                          let nearby = bitmap.colorAt(x: x + 2, y: y)?.usingColorSpace(.deviceRGB) else { continue }
+                    colors.insert("\(Int(color.redComponent * 255)),\(Int(color.greenComponent * 255)),\(Int(color.blueComponent * 255))")
+                    let intensity = (color.redComponent + color.greenComponent + color.blueComponent) / 3
+                    let nearbyIntensity = (nearby.redComponent + nearby.greenComponent + nearby.blueComponent) / 3
+                    if abs(intensity - nearbyIntensity) > 0.2 { contentEdges += 1 }
                 }
+            }
+            #expect(colors.count > 12, "A blank bitmap must not count as a rendered screen")
+            #expect(contentEdges > 20, "A background gradient alone must not count as visible content")
+            if let directory = ProcessInfo.processInfo.environment["BLABEE_FIRST_RUN_RENDER_DIRECTORY"] {
+                try FileManager.default.createDirectory(atPath: directory, withIntermediateDirectories: true)
+                let data = try #require(bitmap.representation(using: .png, properties: [:]))
+                try data.write(to: URL(fileURLWithPath: directory).appendingPathComponent(
+                    "first-run-\(fixture.name)-\(PetL10n.language.rawValue)-\(Int(size.width))-\(fixture.dark ? "dark" : "light").png"))
             }
             #expect(!controller.isComplete)
         }
@@ -281,12 +437,61 @@ struct PetFirstRunViewTests {
             #expect(object["consumer_heartbeat"] as? Bool != true)
         }
         #expect(await transport.requestCount(type: "focus_interaction") == 0)
+        #expect(await transport.requestCount(type: "focus_event") == 0)
         #expect(await transport.requestCount(type: "resolve_permission_request") == 0)
+        #expect(await transport.requestCount(type: "resolve_managed_command_approval") == 0)
         #expect(loginItem.mutations == 0)
     }
+
 }
 
-@MainActor private final class FirstRunRenderStore: PetFirstRunStoring {
+private struct FirstRunRenderCase {
+    enum Size {
+        case standard, narrow
+        var value: NSSize {
+            switch self {
+            case .standard: NSSize(width: 590, height: 720)
+            case .narrow: NSSize(width: 460, height: 550)
+            }
+        }
+    }
+    let name: String
+    var stage: PetFirstRunStep = .tutorial
+    var scene = 0
+    var selected: Int? = nil
+    var delivered = false
+    let size: Size
+    let dark: Bool
+}
+
+private struct FirstRunRenderSuggestionStore: BlabeeSuggestionModeStoring {
+    func load() -> BlabeeSuggestionModeLoadResult { .init(mode: .smart, diagnostic: nil) }
+    func save(_: BlabeeSuggestionMode) { Issue.record("Onboarding presentation must not change saved suggestion settings") }
+}
+
+@MainActor
+private func firstRunRenderModel(transport: PetFakeTransport = PetFakeTransport(),
+                                 account: PetAccountController? = nil) -> PetViewModel {
+    let inspection = ClaudeAutoConnectSetup.Inspection(isEnabled: false, canEnable: false, canDisable: false,
+                                                        detail: "Test-only Claude fixture", canLaunch: false)
+    let claude = PetClaudeConnectionController(inspect: { inspection }, enable: {
+        Issue.record("Onboarding presentation must not enable a real Claude connection")
+        return inspection
+    }, disable: {
+        Issue.record("Onboarding presentation must not disable a real Claude connection")
+        return inspection
+    })
+    let model = PetViewModel(transport: transport, externalApplicationOpener: PetFakeApplicationOpener(),
+                            claudeConnection: claude, suggestionModeStore: FirstRunRenderSuggestionStore(),
+                            appUpdateURLOpener: { _ in
+                                Issue.record("Onboarding presentation must not open a browser")
+                                return false
+                            }, account: account)
+    model.beginFirstRunSetup()
+    return model
+}
+
+@MainActor final class FirstRunRenderStore: PetFirstRunStoring {
     var state: PetFirstRunState?
     var failLoad = false
     func load() throws -> PetFirstRunState? {
@@ -296,7 +501,7 @@ struct PetFirstRunViewTests {
     func save(_ state: PetFirstRunState) throws { self.state = state }
 }
 
-@MainActor private final class FirstRunRenderLoginItem: PetLoginItemManaging {
+@MainActor final class FirstRunRenderLoginItem: PetLoginItemManaging {
     let status: PetLaunchAtLoginStatus = .notRegistered
     var mutations = 0
     func register() throws { mutations += 1 }

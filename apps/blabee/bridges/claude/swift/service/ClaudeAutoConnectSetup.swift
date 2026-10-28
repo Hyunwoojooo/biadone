@@ -22,19 +22,23 @@ actor ClaudeAutoConnectSetup {
         /// when a different newly discovered CLI can launch from the app.
         let savedExecutableAvailable: Bool
         let issue: Issue?
+        /// An exact older block is owned and removable, but needs explicit
+        /// migration before promising coverage after login-shell PATH changes.
+        let needsSetupRefresh: Bool
 
         /// Configuration is usable in a new supported shell. This never proves
         /// that a running Claude conversation has acknowledged its connection.
         var automaticConnectionReady: Bool {
-            isEnabled && canLaunch && shellName == "zsh" && savedExecutableAvailable
+            isEnabled && canLaunch && shellName == "zsh" && savedExecutableAvailable && !needsSetupRefresh
         }
 
         init(isEnabled: Bool, canEnable: Bool, canDisable: Bool, detail: String,
              canLaunch: Bool = false, shellName: String = "zsh",
-             savedExecutableAvailable: Bool = true, issue: Issue? = nil) {
+             savedExecutableAvailable: Bool = true, issue: Issue? = nil, needsSetupRefresh: Bool = false) {
             self.isEnabled = isEnabled; self.canEnable = canEnable; self.canDisable = canDisable
             self.detail = detail; self.canLaunch = canLaunch; self.shellName = shellName
             self.savedExecutableAvailable = savedExecutableAvailable; self.issue = issue
+            self.needsSetupRefresh = needsSetupRefresh
         }
     }
 
@@ -87,7 +91,8 @@ actor ClaudeAutoConnectSetup {
                 // A saved shim can outlive its executable, runtime or updater
                 // target. Keep cleanup available while reporting launch separately.
                 let savedExecutableAvailable = (try? validateExecutables(claudeExecutable: URL(fileURLWithPath: owned.claude))) != nil
-                return enabled(launchFailure: launchFailure, savedExecutableAvailable: savedExecutableAvailable)
+                return enabled(launchFailure: launchFailure, savedExecutableAvailable: savedExecutableAvailable,
+                               needsSetupRefresh: snapshot.needsBlockRefresh)
             }
             return disabled(launchFailure: launchFailure)
         } catch { return rejected(error, launchFailure: launchFailure) }
@@ -116,7 +121,20 @@ actor ClaudeAutoConnectSetup {
             let current = try snapshot()
             if let owned = current.owned {
                 let savedExecutableAvailable = (try? validateExecutables(claudeExecutable: URL(fileURLWithPath: owned.claude))) != nil
-                return enabled(launchFailure: nil, savedExecutableAvailable: savedExecutableAvailable)
+                if current.needsBlockRefresh, savedExecutableAvailable, let startup = current.startup {
+                    // Refresh only an exact legacy block, in place. Existing
+                    // shim identity, updater symlink and user suffix stay intact.
+                    guard current.startupURL == initial.url, current.startup == initial.file else { throw Failure.manualReview }
+                    try backup(startup, root: root)
+                    try replaceStartup(current, bytes: updatingBlock(in: startup.bytes), root: root)
+                    try verifyDirectory(root, at: directory)
+                    try verifyDirectory(bin, at: binDirectory)
+                    let refreshed = try snapshot()
+                    guard refreshed.shim == current.shim, !refreshed.needsBlockRefresh else { throw Failure.manualReview }
+                    return enabled(launchFailure: nil)
+                }
+                return enabled(launchFailure: nil, savedExecutableAvailable: savedExecutableAvailable,
+                               needsSetupRefresh: current.needsBlockRefresh)
             }
             guard current.startupURL == initial.url, current.startup == initial.file else { throw Failure.manualReview }
             let bytes = Self.shimBytes(coordinator: coordinator.path, claude: claude.path,
@@ -125,7 +143,13 @@ actor ClaudeAutoConnectSetup {
             do {
                 try backup(current.startup, root: root)
                 var newBytes = current.startup?.bytes ?? Data()
-                newBytes.append(Data(Self.managedBlock(binPath: binDirectory.path).utf8))
+                if current.hasOrphanedManagedBlock {
+                    newBytes = try updatingBlock(in: newBytes)
+                } else {
+                    newBytes.append(Data(Self.managedBlock(binPath: binDirectory.path).utf8))
+                }
+                // Restoring a missing shim reuses the exact block. The same
+                // atomic replacement still checks for concurrent startup edits.
                 try replaceStartup(current, bytes: newBytes, root: root)
                 try verifyDirectory(root, at: directory)
                 try verifyDirectory(bin, at: binDirectory)
@@ -133,10 +157,14 @@ actor ClaudeAutoConnectSetup {
                       actual.matchesMoved(created), (try snapshot()).shim != nil else { throw Failure.manualReview }
                 return enabled(launchFailure: nil)
             } catch {
-                // Roll back only our exact shim, when startup has no managed
-                // reference. Never restore an old whole-file backup.
-                if let now = try? startupSnapshot(),
-                   (try? requireNoManagedReference(now.file?.bytes ?? Data())) != nil {
+                // An orphan repair started without a shim; restore that absence
+                // even if an editor changed its pre-existing startup reference.
+                // Otherwise require no reference. Never restore startup bytes
+                // or remove a shim that no longer has our exact identity/bytes.
+                let startupHasNoReference = (try? startupSnapshot()).map {
+                    (try? requireNoManagedReference($0.file?.bytes ?? Data())) != nil
+                } ?? false
+                if current.hasOrphanedManagedBlock || startupHasNoReference {
                     try? removeExact(parent: bin, name: "claude", expected: created, recovery: root)
                 }
                 throw error
@@ -210,6 +238,8 @@ actor ClaudeAutoConnectSetup {
         let startup: FileSnapshot?
         let shim: FileSnapshot?
         let owned: Owned?
+        let hasOrphanedManagedBlock: Bool
+        let needsBlockRefresh: Bool
     }
 
     private func snapshot() throws -> Snapshot {
@@ -227,11 +257,17 @@ actor ClaudeAutoConnectSetup {
             guard owned.startup == startup.url.path, owned.coordinator == coordinator.path,
                   shim.identity.mode & 0o777 == 0o700,
                   let file = startup.file else { throw Failure.manualReview }
-            _ = try removingBlock(from: file.bytes)
-            return Snapshot(startupURL: startup.url, startup: file, shim: shim, owned: owned)
+            let block = try managedBlockRange(in: file.bytes)
+            return Snapshot(startupURL: startup.url, startup: file, shim: shim, owned: owned,
+                            hasOrphanedManagedBlock: false, needsBlockRefresh: block.legacy)
         }
-        if let file = startup.file { try requireNoManagedReference(file.bytes) }
-        return Snapshot(startupURL: startup.url, startup: startup.file, shim: nil, owned: nil)
+        // Exact current bytes prove which block can be reused, not that setup
+        // is enabled. Edited/duplicate blocks or other references still fail.
+        let orphanedBlock = startup.file.flatMap { try? managedBlockRange(in: $0.bytes) }
+        let hasOrphanedManagedBlock = orphanedBlock != nil
+        if !hasOrphanedManagedBlock, let file = startup.file { try requireNoManagedReference(file.bytes) }
+        return Snapshot(startupURL: startup.url, startup: startup.file, shim: nil, owned: nil,
+                        hasOrphanedManagedBlock: hasOrphanedManagedBlock, needsBlockRefresh: orphanedBlock?.legacy ?? false)
     }
 
     private func startupSnapshot() throws -> (url: URL, file: FileSnapshot?) {
@@ -275,12 +311,27 @@ actor ClaudeAutoConnectSetup {
     }
 
     private func removingBlock(from bytes: Data) throws -> Data {
+        let block = try managedBlockRange(in: bytes)
+        return Data((String(block.source[..<block.range.lowerBound]) + String(block.source[block.range.upperBound...])).utf8)
+    }
+
+    private func updatingBlock(in bytes: Data) throws -> Data {
+        let block = try managedBlockRange(in: bytes)
+        return Data((String(block.source[..<block.range.lowerBound])
+            + Self.managedBlock(binPath: binDirectory.path) + String(block.source[block.range.upperBound...])).utf8)
+    }
+
+    private func managedBlockRange(in bytes: Data) throws -> (source: String, range: Range<String.Index>, legacy: Bool) {
         guard let source = String(data: bytes, encoding: .utf8) else { throw Failure.manualReview }
-        let block = Self.managedBlock(binPath: binDirectory.path)
-        guard let range = source.range(of: block) else { throw Failure.manualReview }
-        let remainder = Data((String(source[..<range.lowerBound]) + String(source[range.upperBound...])).utf8)
-        try requireNoManagedReference(remainder)
-        return remainder
+        for legacy in [false, true] {
+            let block = legacy ? Self.legacyManagedBlock(binPath: binDirectory.path) : Self.managedBlock(binPath: binDirectory.path)
+            if let range = source.range(of: block) {
+                let remainder = Data((String(source[..<range.lowerBound]) + String(source[range.upperBound...])).utf8)
+                try requireNoManagedReference(remainder)
+                return (source, range, legacy)
+            }
+        }
+        throw Failure.manualReview
     }
 
     private func requireNoManagedReference(_ bytes: Data) throws {
@@ -577,8 +628,13 @@ actor ClaudeAutoConnectSetup {
         }
     }
 
-    private func enabled(launchFailure: Failure?, savedExecutableAvailable: Bool = true) -> Inspection {
+    private func enabled(launchFailure: Failure?, savedExecutableAvailable: Bool = true,
+                         needsSetupRefresh: Bool = false) -> Inspection {
         var detail = PetL10n.text("Terminal auto-connect settings were saved. The current Claude session's connection is checked separately.", korean: "터미널 자동 연결 설정이 저장되었습니다. 현재 Claude 세션의 연결 여부는 별도로 확인합니다.")
+        if needsSetupRefresh {
+            detail += PetL10n.text(" Update auto-connect settings to keep Claude connected when a new terminal changes PATH during login.",
+                korean: " 새 터미널의 로그인 과정에서 PATH가 바뀌어도 Claude가 연결되도록 자동 연결 설정을 업데이트해 주세요.")
+        }
         if !supportsShellSetup {
             detail += PetL10n.text(" The saved settings are for zsh and do not apply to the current \(shellName) environment.", korean: " 저장된 설정은 zsh용이며 현재 \(shellName) 환경에는 적용되지 않습니다.")
         }
@@ -587,11 +643,14 @@ actor ClaudeAutoConnectSetup {
         } else if !savedExecutableAvailable {
             detail += PetL10n.text(" The previously configured Claude executable could not be verified. ", korean: " 이전에 설정한 Claude 실행 파일을 확인할 수 없습니다. ") + Self.directLaunchDetail
         }
-        return Inspection(isEnabled: true, canEnable: false, canDisable: true, detail: detail,
+        return Inspection(isEnabled: true,
+            canEnable: needsSetupRefresh && supportsShellSetup && launchFailure == nil && savedExecutableAvailable,
+            canDisable: true, detail: detail,
             canLaunch: launchFailure == nil, shellName: shellName,
             savedExecutableAvailable: savedExecutableAvailable,
             issue: launchFailure.map(issue(for:))
-                ?? (!supportsShellSetup ? .unsupportedShell : (!savedExecutableAvailable ? .savedExecutableUnavailable : nil)))
+                ?? (!supportsShellSetup ? .unsupportedShell : (!savedExecutableAvailable ? .savedExecutableUnavailable : nil)),
+            needsSetupRefresh: needsSetupRefresh)
     }
 
     private func disabled(launchFailure: Failure?) -> Inspection {
@@ -630,6 +689,30 @@ actor ClaudeAutoConnectSetup {
     private static func quote(_ value: String) -> String { "'" + value.replacingOccurrences(of: "'", with: "'\\''") + "'" }
 
     static func managedBlock(binPath: String) -> String {
+        let bin = quote(binPath), shim = quote(binPath + "/claude")
+        // A function, rather than an alias, permits later user function
+        // definitions without changing their parsing. PATH is scoped to each
+        // invocation; removing the shim restores ordinary upstream lookup even
+        // in an already-open shell. No arguments are evaluated as shell code.
+        let body = "PATH=" + bin + ":\"$PATH\" command claude \"$@\""
+        return "\n" + opening + "\n"
+            + "() {\n  builtin emulate -L zsh\n"
+            + "  local _blabee_claude_body=" + quote(body) + "\n"
+            + "  if (( ${+aliases[claude]} )) || { (( ${+functions[claude]} )) && [[ ${functions[claude]} != $'\\t'\"$_blabee_claude_body\" ]]; }; then\n"
+            + "    builtin print -ru2 -- '[Blabee] claude alias/function exists; automatic connection was skipped.'\n"
+            + "  elif [[ -x " + shim + " ]]; then\n"
+            + "    local _blabee_claude_entry\n    local -a _blabee_claude_remaining=()\n"
+            + "    for _blabee_claude_entry in \"${path[@]}\"; do\n"
+            + "      [[ \"$_blabee_claude_entry\" == " + bin + " ]] || _blabee_claude_remaining+=(\"$_blabee_claude_entry\")\n"
+            + "    done\n    path=(" + bin + " \"${_blabee_claude_remaining[@]}\")\n"
+            + "    export PATH\n"
+            + "    functions[claude]=\"$_blabee_claude_body\"\n"
+            + "  fi\n}\n" + closing + "\n"
+    }
+
+    /// Exact bytes emitted by earlier releases; accepted only for reversible
+    /// inspection, explicit migration and removal.
+    private static func legacyManagedBlock(binPath: String) -> String {
         let bin = quote(binPath), shim = quote(binPath + "/claude")
         return "\n" + opening + "\n"
             + "if (( ${+aliases[claude]} || ${+functions[claude]} )); then\n"

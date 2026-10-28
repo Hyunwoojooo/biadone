@@ -261,6 +261,199 @@ private func waitForHelper(
 
 @Suite("product service settings writer", .serialized)
 struct ProductServiceSettingsWriterTests {
+    @Test("first-run defaults initialize once with secure files and never merge a later default")
+    func initializeDefaultsOnce() throws {
+        let fixture = try ProductSettingsFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let first = try fixture.project("first"), second = try fixture.project("second")
+        let writer = ProductServiceSettingsWriter()
+        let initialized = try writer.initializeIfMissing(defaultProject: first.path, environment: fixture.environment())
+        #expect(initialized.changed)
+        #expect(initialized.status == "enabled")
+        #expect(initialized.enabledProjects == [first.path])
+        let original = try Data(contentsOf: fixture.configFile)
+        let originalInfo = try metadata(fixture.configFile)
+        #expect(originalInfo.st_mode & 0o7777 == 0o600)
+        #expect(originalInfo.st_nlink == 1)
+        #expect(try metadata(fixture.configDirectory).st_mode & 0o7777 == 0o700)
+        #expect(try metadata(fixture.productDirectory).st_mode & 0o7777 == 0o700)
+        let repeated = try writer.initializeIfMissing(defaultProject: second.path, environment: fixture.environment())
+        #expect(!repeated.changed)
+        #expect(repeated.status == "disabled")
+        #expect(repeated.enabledProjects == [first.path])
+        #expect(try Data(contentsOf: fixture.configFile) == original)
+        #expect(try metadata(fixture.configFile).st_ino == originalInfo.st_ino)
+        #expect(try fixture.temporaryConfigEntries().isEmpty)
+    }
+
+    @Test("explicit empty and customized settings preserve their exact bytes during default initialization",
+          arguments: [false, true])
+    func initializePreservesSavedSettings(empty: Bool) throws {
+        let fixture = try ProductSettingsFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let defaultProject = try fixture.project("default"), custom = try fixture.project("custom")
+        let savedProjects = empty ? [] : [custom.path]
+        var original = try JSONSerialization.data(
+            withJSONObject: ["schema_version": "1.0", "enabled_projects": savedProjects],
+            options: [.prettyPrinted, .sortedKeys]
+        )
+        original.append(0x0A)
+        try fixture.writeConfigData(original)
+        let before = try metadata(fixture.configFile)
+        let result = try ProductServiceSettingsWriter().initializeIfMissing(
+            defaultProject: defaultProject.path, environment: fixture.environment()
+        )
+        #expect(!result.changed)
+        #expect(result.enabledProjects == savedProjects)
+        #expect(try Data(contentsOf: fixture.configFile) == original)
+        #expect(try metadata(fixture.configFile).st_ino == before.st_ino)
+    }
+
+    @Test("default initialization never repairs malformed existing settings",
+          arguments: ["not JSON", #"{"schema_version":"2.0","enabled_projects":[]}"#])
+    func initializePreservesInvalidSettings(text: String) throws {
+        let fixture = try ProductSettingsFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let project = try fixture.project("default")
+        let original = Data(text.utf8)
+        try fixture.writeConfigData(original)
+        let before = try metadata(fixture.configFile)
+        #expect(settingsErrorCode {
+            try ProductServiceSettingsWriter().initializeIfMissing(defaultProject: project.path, environment: fixture.environment())
+        } == "product_service_config_invalid")
+        #expect(try Data(contentsOf: fixture.configFile) == original)
+        #expect(try metadata(fixture.configFile).st_ino == before.st_ino)
+        #expect(try fixture.temporaryConfigEntries().isEmpty)
+    }
+
+    @Test("create-only publication preserves a concurrent noncooperating writer, including its empty allowlist",
+          arguments: [false, true])
+    func initializeDoesNotOverwriteConcurrentCreation(empty: Bool) throws {
+        let fixture = try ProductSettingsFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let project = try fixture.project("default"), custom = try fixture.project("custom")
+        let concurrentProjects = empty ? [] : [custom.path]
+        let concurrentData = try JSONSerialization.data(
+            withJSONObject: ["schema_version": "1.0", "enabled_projects": concurrentProjects],
+            options: [.prettyPrinted, .sortedKeys]
+        )
+        var concurrentInode: ino_t?
+        let writer = ProductServiceSettingsWriter { point in
+            if point == .beforeRename {
+                try fixture.writeConfigData(concurrentData)
+                concurrentInode = try metadata(fixture.configFile).st_ino
+            }
+        }
+        let result = try writer.initializeIfMissing(defaultProject: project.path, environment: fixture.environment())
+        #expect(!result.changed)
+        #expect(result.enabledProjects == concurrentProjects)
+        #expect(try Data(contentsOf: fixture.configFile) == concurrentData)
+        #expect(try metadata(fixture.configFile).st_ino == concurrentInode)
+        #expect(try fixture.temporaryConfigEntries().isEmpty)
+    }
+
+    @Test("create-only collision with an invalid concurrent file fails closed without replacing it")
+    func initializeRejectsInvalidConcurrentCreation() throws {
+        let fixture = try ProductSettingsFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let project = try fixture.project("default")
+        let invalidData = Data("concurrent invalid JSON".utf8)
+        let writer = ProductServiceSettingsWriter { point in
+            if point == .beforeRename { try fixture.writeConfigData(invalidData) }
+        }
+        #expect(settingsErrorCode {
+            try writer.initializeIfMissing(defaultProject: project.path, environment: fixture.environment())
+        } == "product_service_config_invalid")
+        #expect(try Data(contentsOf: fixture.configFile) == invalidData)
+        #expect(try fixture.temporaryConfigEntries().isEmpty)
+    }
+
+    @Test("default initialization preserves missing or complete state across publication and durability failures")
+    func initializeFailureAndDurabilitySeams() throws {
+        let fixture = try ProductSettingsFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let first = try fixture.project("first"), second = try fixture.project("second")
+        let before = ProductServiceSettingsWriter { point in
+            if point == .beforeRename { throw CoordinatorError("test_before_rename_failure") }
+        }
+        #expect(settingsErrorCode {
+            try before.initializeIfMissing(defaultProject: first.path, environment: fixture.environment())
+        } == "test_before_rename_failure")
+        #expect(!FileManager.default.fileExists(atPath: fixture.configFile.path))
+        #expect(try fixture.temporaryConfigEntries().isEmpty)
+        let after = ProductServiceSettingsWriter { point in
+            if point == .afterRenameBeforeDirectorySync { throw CoordinatorError("test_after_rename_failure") }
+        }
+        #expect(settingsErrorCode {
+            try after.initializeIfMissing(defaultProject: first.path, environment: fixture.environment())
+        } == "product_service_config_durability_uncertain")
+        #expect(try ProductServiceBootstrap.loadEnabledProjectsIfPresent(applicationSupport: fixture.applicationSupport) == [first.path])
+        let completeData = try Data(contentsOf: fixture.configFile)
+        let idempotent = ProductServiceSettingsWriter { point in
+            if point == .beforeIdempotentDirectorySync { throw CoordinatorError("test_idempotent_sync_failure") }
+        }
+        #expect(settingsErrorCode {
+            try idempotent.initializeIfMissing(defaultProject: second.path, environment: fixture.environment())
+        } == "product_service_config_durability_uncertain")
+        let retry = try ProductServiceSettingsWriter().initializeIfMissing(defaultProject: second.path, environment: fixture.environment())
+        #expect(!retry.changed)
+        #expect(retry.enabledProjects == [first.path])
+        #expect(try Data(contentsOf: fixture.configFile) == completeData)
+        #expect(try fixture.temporaryConfigEntries().isEmpty)
+    }
+
+    @Test("default initialization shares the process mutex with initialization and explicit updates",
+          arguments: [false, true])
+    func initializeSerializesWithOtherWriters(secondUpdates: Bool) throws {
+        let fixture = try ProductSettingsFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let first = try fixture.project("first"), second = try fixture.project("second")
+        let atRename = DispatchSemaphore(value: 0), release = DispatchSemaphore(value: 0)
+        let secondAtMutex = DispatchSemaphore(value: 0), secondAtFileLock = DispatchSemaphore(value: 0)
+        let results = ProductSettingsTaskResults(), group = DispatchGroup()
+        let queue = DispatchQueue(label: "com.biadone.blabee.tests.settings-initialize", attributes: .concurrent)
+        group.enter()
+        queue.async {
+            defer { group.leave() }
+            do {
+                let writer = ProductServiceSettingsWriter { point in
+                    if point == .beforeRename {
+                        atRename.signal()
+                        guard release.wait(timeout: .now() + 5) == .success else {
+                            throw CoordinatorError("test_overlap_timeout")
+                        }
+                    }
+                }
+                _ = try writer.initializeIfMissing(defaultProject: first.path, environment: fixture.environment())
+            } catch { results.record(error) }
+        }
+        defer { release.signal(); _ = group.wait(timeout: .now() + 5) }
+        guard atRename.wait(timeout: .now() + 5) == .success else { throw CoordinatorError("test_overlap_timeout") }
+        group.enter()
+        queue.async {
+            defer { group.leave() }
+            do {
+                let writer = ProductServiceSettingsWriter(eventObserver: { event in
+                    if event == .beforeProcessMutex { secondAtMutex.signal() }
+                    if event == .beforeFileLock { secondAtFileLock.signal() }
+                })
+                if secondUpdates {
+                    _ = try writer.update(action: .enable, project: second.path, environment: fixture.environment())
+                } else {
+                    _ = try writer.initializeIfMissing(defaultProject: second.path, environment: fixture.environment())
+                }
+            } catch { results.record(error) }
+        }
+        guard secondAtMutex.wait(timeout: .now() + 5) == .success else { throw CoordinatorError("test_overlap_timeout") }
+        #expect(secondAtFileLock.wait(timeout: .now() + .milliseconds(50)) == .timedOut)
+        release.signal()
+        guard group.wait(timeout: .now() + 5) == .success else { throw CoordinatorError("test_overlap_timeout") }
+        #expect(secondAtFileLock.wait(timeout: .now()) == .success)
+        #expect(results.errors.isEmpty)
+        #expect(try ProductServiceBootstrap.loadEnabledProjectsIfPresent(applicationSupport: fixture.applicationSupport)
+            == (secondUpdates ? [first.path, second.path] : [first.path]))
+    }
+
     @Test("first enable creates exact secure files and deterministic output under a restrictive umask")
     func firstEnableCreatesSecureConfiguration() throws {
         let fixture = try ProductSettingsFixture()

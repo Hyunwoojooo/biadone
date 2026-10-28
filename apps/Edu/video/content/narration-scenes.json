@@ -1,0 +1,170 @@
+[
+  {
+    "id": "intro",
+    "chapter": "prepare",
+    "eyebrow": "BiaDone Edu",
+    "headline": {
+      "lead": "내 사업에 필요한 것을, ",
+      "strong": "직접",
+      "tail": " 만듭니다."
+    },
+    "narration": "사업을 하다 보면, 알리고 싶은 상품도 있고 매번 손이 가는 일도 있죠. 비아던 에듀는 내 사업에 필요한 것을 직접 만들고, 실제로 쓰고, 스스로 고치는 교육입니다.",
+    "seconds": 13,
+    "accent": "#E8EEF3",
+    "result": "내 사업에 쓰는 결과물"
+  },
+  {
+    "id": "approach",
+    "chapter": "prepare",
+    "eyebrow": "배우는 방식",
+    "headline": {
+      "lead": "시작은, ",
+      "strong": "내 사업 자료",
+      "tail": "입니다."
+    },
+    "narration": "상품 사진과 가격표, 고객 질문처럼 이미 가진 자료에서 시작합니다. 만들 범위를 정하고 제작한 뒤, 결과를 확인하고 틀린 부분을 직접 고쳐서 다음 업무에도 다시 씁니다.",
+    "seconds": 13,
+    "accent": "#F0EBD9",
+    "result": "내 자료 → 제작 → 검증 → 직접 수정"
+  },
+  {
+    "id": "foundation",
+    "chapter": "foundation",
+    "eyebrow": "공통 기초 · 내 사업에 AI 적용하기",
+    "headline": {
+      "lead": "우리 사업을 ",
+      "strong": "제대로",
+      "tail": " 알려주는 일."
+    },
+    "narration": "먼저, 상품과 가격, 고객 질문을 정리해 지피티에게 우리 사업을 알려줍니다. 말투와 답변 원칙을 설정하고 실제 질문으로 정확도를 확인하며, 사업 전용 지피티와 요청문을 준비합니다.",
+    "seconds": 14,
+    "accent": "#E2ECF4",
+    "result": "사업 전용 GPT · 실무용 요청문"
+  },
+  {
+    "id": "choice",
+    "chapter": "choose",
+    "eyebrow": "목적별 선택 과정",
+    "headline": {
+      "lead": "지금 ",
+      "strong": "필요한 과정",
+      "tail": "을 고릅니다."
+    },
+    "narration": "기초를 바탕으로 지금 필요한 과정을 고릅니다. 홍보 콘텐츠, 웹페이지, 고객 문의, 매출 분석, 작은 업무 도구. 해결하고 싶은 일에 맞춰 선택하면 됩니다.",
+    "seconds": 11,
+    "accent": "#EDE8DC",
+    "result": "필요에 맞춘 학습 경로"
+  },
+  {
+    "id": "content",
+    "chapter": "choose",
+    "eyebrow": "선택 A · 홍보 콘텐츠",
+    "headline": {
+      "lead": "상품을 알리는 콘텐츠도 ",
+      "strong": "우리답게",
+      "tail": "."
+    },
+    "narration": "홍보 과정에서는 고객이 궁금해할 문구와 실제 상품 사진으로 콘텐츠를 만듭니다. 우리 브랜드의 색과 글꼴을 템플릿으로 남겨 다른 상품에도 활용하고, 반응을 보며 고칩니다.",
+    "seconds": 14,
+    "accent": "#EEE5D9",
+    "result": "홍보 이미지·게시물 · 제작 템플릿"
+  },
+  {
+    "id": "website",
+    "chapter": "choose",
+    "eyebrow": "선택 B · 사업 소개·문의 웹페이지",
+    "headline": {
+      "lead": "홈페이지도 ",
+      "strong": "직접 수정",
+      "tail": "할 수 있게."
+    },
+    "narration": "웹페이지에는 사업 소개와 가격, 사진을 담고 문의나 예약 링크를 연결합니다. 모바일 화면을 확인해 공개하고, 가격이나 사진을 직접 수정하거나 이전 상태로 되돌리는 방법도 익힙니다.",
+    "seconds": 15,
+    "accent": "#E9E5F1",
+    "result": "공개 웹페이지 · 문의 연결"
+  },
+  {
+    "id": "inquiry",
+    "chapter": "choose",
+    "eyebrow": "선택 C · 고객 문의 관리·자동화",
+    "headline": {
+      "lead": "고객 문의는 ",
+      "strong": "정리부터",
+      "tail": " 이어지게."
+    },
+    "narration": "고객 문의를 폼으로 받아 관리표에 저장하고, 담당자에게 알림을 보내도록 연결합니다. 자주 묻는 질문으로 답변 초안을 준비하고, 중복 접수나 연결 실패 때 수동으로 처리하는 법도 배웁니다.",
+    "seconds": 15,
+    "accent": "#F1E3E4",
+    "result": "접수 폼 · 관리표 · 담당자 알림"
+  },
+  {
+    "id": "data",
+    "chapter": "choose",
+    "eyebrow": "선택 D · 매출 분석·반복 보고서",
+    "headline": {
+      "lead": "분석에 앞서, ",
+      "strong": "맞는 숫자",
+      "tail": "인지부터."
+    },
+    "narration": "매출 자료의 형식을 맞추고 취소와 중복, 누락을 확인합니다. 어떤 상품이 잘 팔리는지 살펴보며 실제 정산금과 대조하고, 다음에도 쓸 분석표와 보고서 양식을 남깁니다.",
+    "seconds": 14,
+    "accent": "#EFE7D8",
+    "result": "매출 분석표 · 반복 보고 양식"
+  },
+  {
+    "id": "tool",
+    "chapter": "choose",
+    "eyebrow": "선택 E · 나만의 작은 업무 도구",
+    "headline": {
+      "lead": "반복되는 불편 하나를, ",
+      "strong": "작은 도구",
+      "tail": "로."
+    },
+    "narration": "반복하는 불편 하나를 골라, 입력값과 처리 규칙을 정리합니다. 견적 계산기나 파일 정리 도구처럼 내 일에 맞는 프로그램을 만들고, 잘못된 입력을 시험하며 기준이 바뀌면 직접 고칩니다.",
+    "seconds": 15,
+    "accent": "#E2ECE5",
+    "result": "맞춤 계산기 · 작은 업무 앱"
+  },
+  {
+    "id": "team",
+    "chapter": "team",
+    "eyebrow": "심화 · AI 업무팀 구축·운영",
+    "headline": {
+      "lead": "일은 나눠 맡겨도, ",
+      "strong": "승인은 내가",
+      "tail": "."
+    },
+    "narration": "심화 과정에서는 기획, 제작, 검수 역할을 연결해 에이아이 업무팀을 만듭니다. 같은 사업 자료와 작업 지침으로 결과를 주고받되, 외부 발송 전에는 사장님이 승인하도록 합니다. 반복 실행과 비용, 오류, 기록도 살핍니다.",
+    "seconds": 18,
+    "accent": "#E8E3EF",
+    "result": "역할별 AI 팀 · 사장님 승인 단계"
+  },
+  {
+    "id": "operations",
+    "chapter": "operate",
+    "eyebrow": "모든 과정에서 함께 배우는 운영",
+    "headline": {
+      "lead": "만드는 법과 함께, ",
+      "strong": "운영 기준",
+      "tail": "도."
+    },
+    "narration": "모든 과정에서 비용과 계정, 자료를 다루는 기준을 함께 배웁니다. 개인정보 입력 범위와 접근 권한, 구독과 사용 요금을 확인하고, 실행 중지와 복구 방법을 운영 카드로 정리합니다.",
+    "seconds": 15,
+    "accent": "#E7E9E7",
+    "result": "비용 · 권한 · 중지 · 복구 운영 카드"
+  },
+  {
+    "id": "closing",
+    "chapter": "start",
+    "eyebrow": "BiaDone Edu",
+    "headline": {
+      "lead": "내 사업의 변화, ",
+      "strong": "내 손으로",
+      "tail": "."
+    },
+    "narration": "필요한 것부터 만들어 실제 업무에 써보고, 결과를 확인하고, 달라진 부분은 스스로 고쳐보세요. 내 사업을 이해하는 도구와 일하는 방식을, 비아던 에듀에서 만들어갑니다.",
+    "seconds": 13,
+    "accent": "#E8EEF3",
+    "result": "만들고 · 쓰고 · 고치는 힘"
+  }
+]

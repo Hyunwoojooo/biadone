@@ -78,6 +78,9 @@ struct CodexRuntimePathDiagnostic: Equatable, Sendable {
     let issue: CodexRuntimePathIssue
     var role: CodexRuntimePathRole = .unknown
     var path: String?
+    /// The target already observed by this failed inspection. This is not a
+    /// trusted canonical path, an approval, or permission to launch the file.
+    var resolvedTargetPath: String? = nil
 }
 
 /// Returns whether an extended ACL contains an allow entry. Standard macOS
@@ -342,6 +345,34 @@ struct CodexRuntimeTrustGate: Sendable {
         try requireNoExtendedACL(at: sourcePath, expected: sourceIdentity, role: .source)
 
         let canonicalPath = try resolvedPath(for: sourcePath)
+        do {
+            return try inspectResolvedSource(
+                sourcePath: sourcePath, sourceIdentity: sourceIdentity,
+                canonicalPath: canonicalPath
+            )
+        } catch let error as CodexRuntimeTrustError {
+            // Preserve this inspection's observation without resolving the
+            // source again or changing which errors reject the executable.
+            switch error {
+            case let .invalidSource(reason, diagnostic):
+                var observed = diagnostic
+                observed?.resolvedTargetPath = canonicalPath
+                throw CodexRuntimeTrustError.invalidSource(reason, diagnostic: observed)
+            case let .unsafePath(reason, diagnostic):
+                var observed = diagnostic
+                observed?.resolvedTargetPath = canonicalPath
+                throw CodexRuntimeTrustError.unsafePath(reason, diagnostic: observed)
+            default:
+                throw error
+            }
+        }
+    }
+
+    private func inspectResolvedSource(
+        sourcePath: String,
+        sourceIdentity: CodexRuntimeFileIdentity,
+        canonicalPath: String
+    ) throws -> CodexRuntimeTrustSnapshot {
         if let shim = dynamicShimLabel(for: canonicalPath) {
             throw CodexRuntimeTrustError.dynamicShim(shim)
         }

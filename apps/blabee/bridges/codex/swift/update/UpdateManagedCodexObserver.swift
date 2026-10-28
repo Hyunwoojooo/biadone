@@ -16,7 +16,7 @@ struct UpdateManagedSession: Codable, Equatable, Sendable, Identifiable {
 
 /// A deliberately separate lifecycle qualification. It grants no approval-broker capability.
 enum UpdateManagedCodexProfile {
-    static let supportedVersions: Set<String> = ["0.154.0", "0.155.0", "0.155.1", "0.156.0", "0.156.1", "0.157.0", "0.157.1", "0.158.0", "0.159.0", "0.159.1", "0.159.2", "0.159.3", "0.160.0", "0.160.1", "0.161.0", "0.162.0", "0.162.1", "0.163.0"]
+    static let supportedVersions: Set<String> = ["0.154.0", "0.155.0", "0.155.1", "0.156.0", "0.156.1", "0.157.0", "0.157.1", "0.158.0", "0.159.0", "0.159.1", "0.159.2", "0.159.3", "0.160.0", "0.160.1", "0.161.0", "0.162.0", "0.162.1", "0.163.0", "0.164.0"]
     static func requireSupported(_ version: String) throws {
         guard supportedVersions.contains(version) else {
             throw CoordinatorError("update_managed_codex_version_unsupported")

@@ -107,8 +107,7 @@ public actor CoordinatorOperationalApplication {
     // Managed broker previews retain their existing compact display contract.
     // Hook commands use HookPermissionPolicy and a scrollable complete command.
     private static let maximumPermissionCommandPreviewScalars = 120
-    private static let queuedActionContextMarker =
-        "Blabee verified the selected action locally. Execute exactly this action JSON as the new user request. The visible ref is transport metadata, and a queue receipt is not proof that the work succeeded.\n"
+    private static let queuedActionContextMarker = QueuedPromptEnvelope.verifiedActionContextMarker
 
     private static func ceilMilliseconds(_ nanoseconds: UInt64) -> UInt64 {
         let whole = nanoseconds / 1_000_000
@@ -144,13 +143,14 @@ public actor CoordinatorOperationalApplication {
         // a turn can still use it; only its matching, non-recursive Stop proves
         // completion. Card expiry and elapsed time are not completion evidence.
         var hasActivePromptContext = false
-        // Only unfinished claim responses for this prompt are retained. A new
-        // prompt clears them together; concurrent attempts never replace one
-        // another. No action text or correlation token is cached here.
-        var pendingQueuedClaims: [String: PendingQueuedClaim] = [:]
+        // Exact-retry eligibility after an unpublished claim response, not
+        // live response ownership. A new prompt clears these attempts together;
+        // concurrent attempts never replace one another. No action text or
+        // correlation token is cached here.
+        var queuedClaimRetries: [String: QueuedClaimRetry] = [:]
     }
 
-    private struct PendingQueuedClaim {
+    private struct QueuedClaimRetry {
         let sourcePromptID: String?
         let deliveryTurnID: String
         let queuedPromptSHA256: String
@@ -698,7 +698,15 @@ public actor CoordinatorOperationalApplication {
                 && $0.consumedAt != nil && now < $0.expiresAt
         }.count
         let reconciliation = pendingInitialActivations.count + pendingCompletionClosures.count
-        let pendingClaims = sessions.values.reduce(0) { $0 + $1.pendingQueuedClaims.count }
+        // Claim resolution is synchronous on this actor: this observation
+        // cannot run during its journal work. The socket server owns the live
+        // response and retains update admission through its final write attempt.
+        // Do not count retained exact-retry metadata as an in-flight response:
+        // a Hook may abandon a failed response without ever submitting a retry.
+        // The socket server fills this wire field from its actual reply owners.
+        // Final shutdown still requires exclusive transport admission and the
+        // durable authority validation above.
+        let pendingClaims = 0
         let promptContexts = sessions.values.filter(\.hasActivePromptContext).count
         return try publicData([
             "schema_version": "1.0", "kind": "blabee_update_status",
@@ -1411,6 +1419,21 @@ private extension CoordinatorOperationalApplication {
             promptID,
             "proposal_source_prompt_mismatch"
         )
+        try validateNewProposalPreviews(proposal)
+    }
+
+    /// Run only after the proposal's current session/token/prompt authority and
+    /// secret checks. Exact registered retries keep their original acceptance;
+    /// a new proposal must be deliverable before any reconciliation or write.
+    func validateNewProposalPreviews(_ proposal: [String: Any]) throws {
+        let proposalID = try identifier(string(proposal, "proposal_id"), "proposal_id")
+        guard registrations[proposalID] == nil else { return }
+        guard let actions = proposal["next_actions"] as? [[String: Any]] else {
+            throw CoordinatorError("invalid_proposal")
+        }
+        for action in actions {
+            try require(QueuedPromptEnvelope.canRender(action: action), "queued_prompt_preview_invalid")
+        }
     }
 
     func enableProject(_ data: Data) throws -> Data {
@@ -1575,7 +1598,7 @@ private extension CoordinatorOperationalApplication {
         session.promptOrigin = queuedResolution.promptOrigin
         session.queuedActionContext = queuedResolution.actionContext
         session.productAccessGeneration = queuedResolution.accessGeneration
-        session.pendingQueuedClaims.removeAll()
+        session.queuedClaimRetries.removeAll()
         let response = try promptContext(session: session)
         sessions[sessionID] = session
         recordRecentSnapshotSession(sessionID)
@@ -1667,6 +1690,7 @@ private extension CoordinatorOperationalApplication {
             promptID,
             "proposal_source_prompt_mismatch"
         )
+        try validateNewProposalPreviews(proposal)
 
         let contextKey = [projectID, sessionID, turnID, promptID, episodeID, correlationToken]
             .joined(separator: "\u{0}")
@@ -3654,6 +3678,24 @@ private extension CoordinatorOperationalApplication {
         request["revision"] = packet["revision"]
         request["option_id"] = choice["option_id"]
         let commandContinuationID = idGenerator("continuation")
+        let preparedActionJSON: Data?
+        let preparedMessage: String?
+        if isPetAction {
+            guard let action = choice["action"] as? [String: Any] else {
+                throw CoordinatorError("pet_action_envelope_missing")
+            }
+            guard let cwd = sessions[sessionID]?.path else {
+                throw CoordinatorError("session_not_registered")
+            }
+            let actionJSON = try StrictJSONTransport.data(forJSONObject: action)
+            preparedMessage = try prepareQueuedActionPreview(
+                actionData: actionJSON, continuationID: commandContinuationID, cwd: cwd
+            )
+            preparedActionJSON = actionJSON
+        } else {
+            preparedActionJSON = nil
+            preparedMessage = nil
+        }
         let command: [String: Any] = [
             "type": "select_option",
             "expected_state": "pending",
@@ -3688,6 +3730,7 @@ private extension CoordinatorOperationalApplication {
         let continuationID = isPetAction
             ? commandContinuationID
             : effectContinuationID
+        let message: String
         do {
             if let effectContinuationID {
                 try byteExactRequire(
@@ -3698,10 +3741,40 @@ private extension CoordinatorOperationalApplication {
             }
             guard isPetAction,
                   let envelope,
+                  let continuationID,
                   effectContinuationID != nil,
-                  envelope["action"] is [String: Any]
+                  let action = envelope["action"] as? [String: Any],
+                  let preparedActionJSON,
+                  let preparedMessage,
+                  effect?["kind"] as? String == "pet_action_envelope_ready",
+                  routed.effects.count == 1
             else { throw CoordinatorError("pet_action_envelope_missing") }
+            let effectBinding = try CoordinatorBinding(jsonObject: envelope)
+            try require(effectBinding == boundary.binding, "decision_boundary_binding_mismatch")
+            for (key, expected) in [
+                ("interaction_id", packet["interaction_id"] as? String),
+                ("packet_id", packet["packet_id"] as? String),
+                ("option_id", choice["option_id"] as? String),
+                ("action_id", choice["action_id"] as? String),
+            ] {
+                try byteExactRequire(envelope[key] as? String, expected, "continuation_binding_mismatch")
+            }
+            try require(
+                ExactJSONInteger.int64(envelope["revision"], minimum: 1) == revision,
+                "continuation_binding_mismatch"
+            )
+            let effectActionJSON = try StrictJSONTransport.data(forJSONObject: action)
+            try require(effectActionJSON == preparedActionJSON, "continuation_action_mismatch")
             secretCorpus.registerKnownSecrets(inJSONObject: envelope)
+            // Check decoded values too: quoting may insert characters into a
+            // known secret, which a scan of the final preview cannot match.
+            try secretCorpus.assertNoKnownSecret(inJSONObject: action)
+            try validateAction(action)
+            // The newly generated continuation token is known only after
+            // routing. Recheck secrets, but reuse the complete preflight record
+            // after proving its exact action and all selected effect bindings.
+            try secretCorpus.assertNoKnownSecret(in: Data(preparedMessage.utf8))
+            message = preparedMessage
             _ = try routing.routeConsumePetAction(StrictJSONTransport.data(forJSONObject: [
                 "type": "consume_pet_action",
                 "event_id": idGenerator("event_continuation_consumed"),
@@ -3720,21 +3793,8 @@ private extension CoordinatorOperationalApplication {
             }
             throw error
         }
-        guard let envelope, let continuationID,
-              let action = envelope["action"] as? [String: Any]
+        guard let continuationID
         else { throw CoordinatorError("pet_action_envelope_missing") }
-        try validateAction(action)
-        guard let cwd = sessions[sessionID]?.path else {
-            throw CoordinatorError("session_not_registered")
-        }
-        let reference = Self.queuedPromptReference(
-            continuationID: continuationID,
-            cwd: cwd
-        )
-        guard let message = QueuedPromptEnvelope.message(reference: reference) else {
-            throw CoordinatorError("queued_prompt_reference_invalid")
-        }
-        try secretCorpus.assertNoKnownSecret(in: Data(message.utf8))
         boundary.phase = .dispatched
         boundary.continuationID = continuationID
         boundary.nextTurnDispatchPhase = .inFlight
@@ -4294,6 +4354,25 @@ private extension CoordinatorOperationalApplication {
     }
 }
 
+// MARK: - Queued selection preflight
+
+extension CoordinatorOperationalApplication {
+    /// Presentation validation only: this does not claim, consume, or dispatch
+    /// an action. Selection calls it before its first durable mutation, including
+    /// for cards issued before the proposal admission check was introduced.
+    func prepareQueuedActionPreview(actionData: Data, continuationID: String, cwd: String) throws -> String {
+        let action = try StrictJSONTransport.object(from: actionData)
+        try validateAction(action)
+        try secretCorpus.assertNoKnownSecret(inJSONObject: action)
+        let reference = Self.queuedPromptReference(continuationID: continuationID, cwd: cwd)
+        guard let message = QueuedPromptEnvelope.message(reference: reference, action: action) else {
+            throw CoordinatorError("queued_prompt_preview_invalid")
+        }
+        try secretCorpus.assertNoKnownSecret(in: Data(message.utf8))
+        return message
+    }
+}
+
 // MARK: - Shared helpers
 
 private extension CoordinatorOperationalApplication {
@@ -4307,7 +4386,7 @@ private extension CoordinatorOperationalApplication {
     ) throws -> QueuedPromptResolution {
         // `codex queue` may canonically decompose non-ASCII command-line
         // message text before it reaches UserPromptSubmit. Normalize only for
-        // the fixed marker/reference comparison; the durable claim below
+        // the marker and selected-action preview comparison; the durable claim below
         // still seals the exact prompt bytes that the Hook actually received.
         let normalizedPrompt = prompt.precomposedStringWithCanonicalMapping
         guard !normalizedPrompt.hasPrefix(Self.legacyQueuedPromptPrefix) else {
@@ -4324,7 +4403,7 @@ private extension CoordinatorOperationalApplication {
         func isUnpublishedClaimRetry(_ continuation: CoordinatorContinuationState) -> Bool {
             guard let claim = continuation.queuedActionContextClaim,
                   let session = sessions[sessionID],
-                  let pending = session.pendingQueuedClaims[continuation.continuationID]
+                  let pending = session.queuedClaimRetries[continuation.continuationID]
             else { return false }
             return pending.matches(
                 sourcePromptID: session.latestPromptID,
@@ -4392,7 +4471,12 @@ private extension CoordinatorOperationalApplication {
                   }),
                   let actionJSON = choice.actionJSON,
                   let action = try? StrictJSONTransport.object(from: actionJSON),
-                  (try? validateAction(action)) != nil
+                  (try? validateAction(action)) != nil,
+                  // The readable text is a record of the selected journal
+                  // action, never an alternate source of execution authority.
+                  // Reconstruct it even after transport completion/restart,
+                  // when the process-local expected digest no longer exists.
+                  QueuedPromptEnvelope.matches(prompt, reference: reference, action: action)
             else { continue }
             matches.append((continuation, actionJSON, isExpectedInFlightDelivery))
         }
@@ -4415,14 +4499,14 @@ private extension CoordinatorOperationalApplication {
         // Commit may succeed while its response (or successor promotion)
         // fails. Remember this exact attempt under the current prompt before
         // claiming; only a retry under that unchanged prompt can recover it.
-        let pendingClaim = PendingQueuedClaim(
+        let pendingClaim = QueuedClaimRetry(
             sourcePromptID: sessions[sessionID]?.latestPromptID,
             deliveryTurnID: turnID,
             queuedPromptSHA256: queuedPromptSHA256,
             cwdSHA256: cwdSHA256,
             actionSHA256: actionSHA256
         )
-        sessions[sessionID]?.pendingQueuedClaims[match.continuation.continuationID] = pendingClaim
+        sessions[sessionID]?.queuedClaimRetries[match.continuation.continuationID] = pendingClaim
         let claimedActionJSON: Data
         do {
             let occurredAt = try wallInstantGenerator().rawValue

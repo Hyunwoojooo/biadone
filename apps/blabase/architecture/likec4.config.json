@@ -1,0 +1,9 @@
+{
+  "$schema": "https://likec4.dev/schemas/config.json",
+  "name": "blabase",
+  "title": "Blabase Architecture",
+  "exclude": ["**/node_modules/**"],
+  "landingPage": {
+    "redirect": true
+  }
+}

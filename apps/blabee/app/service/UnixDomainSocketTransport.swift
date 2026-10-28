@@ -884,6 +884,19 @@ final class OperationalServiceDiagnostics: @unchecked Sendable {
     }
 }
 
+/// Claim retry eligibility belongs to the application; live Hook replies belong
+/// to their socket. Count until the final write attempt and socket close, even
+/// when the application throws or the peer disappears. Admission remains the
+/// shutdown authority; this counter makes the advisory status describe reality.
+private final class OperationalPromptResponses: @unchecked Sendable {
+    private let lock = NSLock()
+    private var active = 0
+
+    func begin() { lock.withLock { active += 1 } }
+    func end() { lock.withLock { active -= 1 } }
+    var count: Int { lock.withLock { active } }
+}
+
 final class UnixDomainSocketServer: @unchecked Sendable {
     private static let allowedTypes: Set<String> = [
         "enable_project",
@@ -919,6 +932,7 @@ final class UnixDomainSocketServer: @unchecked Sendable {
     private let compatiblePreviousRuntimes: [OperationalRuntimeCompatibilityPolicy]
     private let responseWriter: OperationalResponseWriter
     private let updateAdmission: (@Sendable () throws -> any Sendable)?
+    private let promptResponses = OperationalPromptResponses()
     private let lockDescriptor: Int32
     private let admissionGate = ConnectionAdmissionGate(limit: 64)
     private let stateLock = NSLock()
@@ -1074,6 +1088,7 @@ final class UnixDomainSocketServer: @unchecked Sendable {
             let serverCompatiblePreviousRuntimes = compatiblePreviousRuntimes
             let serverResponseWriter = responseWriter
             let serverUpdateAdmission = updateAdmission
+            let serverPromptResponses = promptResponses
             Task.detached(priority: .userInitiated) {
                 defer { gate.release() }
                 await Self.handleConnection(
@@ -1083,7 +1098,8 @@ final class UnixDomainSocketServer: @unchecked Sendable {
                     runtimeIdentity: serverRuntimeIdentity,
                     compatiblePreviousRuntimes: serverCompatiblePreviousRuntimes,
                     responseWriter: serverResponseWriter,
-                    updateAdmission: serverUpdateAdmission
+                    updateAdmission: serverUpdateAdmission,
+                    promptResponses: serverPromptResponses
                 )
             }
         }
@@ -1126,13 +1142,18 @@ final class UnixDomainSocketServer: @unchecked Sendable {
         runtimeIdentity: String,
         compatiblePreviousRuntimes: [OperationalRuntimeCompatibilityPolicy],
         responseWriter: OperationalResponseWriter,
-        updateAdmission: (@Sendable () throws -> any Sendable)?
+        updateAdmission: (@Sendable () throws -> any Sendable)?,
+        promptResponses: OperationalPromptResponses
     ) async {
-        defer { close(descriptor) }
         // Retain through response publication, not merely actor completion:
         // an already-committed queued claim still needs its reply delivered.
         var updateRequestLease: (any Sendable)?
-        defer { withExtendedLifetime(updateRequestLease) {} }
+        var ownsPromptResponse = false
+        defer {
+            close(descriptor)
+            if ownsPromptResponse { promptResponses.end() }
+            withExtendedLifetime(updateRequestLease) {}
+        }
         guard peerHasCurrentEffectiveUserID(descriptor) else { return }
 
         var requestID = "unknown"
@@ -1198,6 +1219,10 @@ final class UnixDomainSocketServer: @unchecked Sendable {
                 do { updateRequestLease = try updateAdmission() }
                 catch { throw CoordinatorError("app_update_in_progress") }
             }
+            if observeUserPromptSubmit {
+                promptResponses.begin()
+                ownsPromptResponse = true
+            }
 
             // Never add unvalidated client material to the daemon-wide corpus:
             // one malicious request could otherwise poison all later output.
@@ -1220,6 +1245,9 @@ final class UnixDomainSocketServer: @unchecked Sendable {
                 )
                 status["service_pid"] = getpid()
                 status["service_parent_pid"] = getppid()
+                let replies = promptResponses.count
+                status["pending_claim_responses"] = replies
+                if replies > 0 { status["ready"] = false }
                 resultData = try StrictJSONTransport.data(forJSONObject: status)
             } else if type == "permission_request"
                         || type == "managed_command_approval"

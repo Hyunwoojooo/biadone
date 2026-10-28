@@ -48,6 +48,8 @@ final class PetAccessController: ObservableObject {
     private var uiGeneration: UInt64 = 0
     private var serviceRevision = 0
     private var grantDeadline: UInt64?
+    private var lastMonotonicInstant: UInt64?
+    private var grantClockInvalidated = false
     private var wantsRefresh = false
     private var started = false
     private var stopped = false
@@ -77,11 +79,30 @@ final class PetAccessController: ObservableObject {
     }
     var allowsActions: Bool { !stopped && owner != nil && ownedAccess() == owner && effectiveState == .active }
     var remainingSeconds: Int {
-        let instant = now()
-        guard let deadline = grantDeadline, deadline > instant else { return 0 }
-        return Int((deadline - instant) / 1_000_000_000)
+        let remaining = remainingNanoseconds
+        // The deadline already removes the server's rounding allowance. Ceil
+        // only this local remainder so a fractional final second stays usable.
+        return Int(remaining / 1_000_000_000 + (remaining % 1_000_000_000 == 0 ? 0 : 1))
     }
     var pollInterval: TimeInterval { effectiveState == .checking ? 1 : 5 }
+
+    private var remainingNanoseconds: UInt64 {
+        guard let deadline = grantDeadline, !grantClockInvalidated,
+              let instant = observeMonotonicInstant(), deadline > instant else { return 0 }
+        return deadline - instant
+    }
+
+    private func observeMonotonicInstant() -> UInt64? {
+        let instant = now()
+        if let previous = lastMonotonicInstant, instant < previous {
+            // A later clock recovery cannot revive this cached grant. Only a
+            // fresh, fenced service reply may establish another deadline.
+            grantClockInvalidated = true
+            return nil
+        }
+        lastMonotonicInstant = instant
+        return instant
+    }
 
     func start() {
         guard !started, !stopped else { return }
@@ -179,9 +200,15 @@ final class PetAccessController: ObservableObject {
             let data = try StrictJSONTransport.data(forJSONObject: ["schema_version": 1,
                 "request_id": requestID.uuidString.lowercased(), "auth_token": owned.credential,
                 "operation": operation, "revision": requestRevision, "payload": fields])
+            guard let requestStartedAt = observeMonotonicInstant() else {
+                throw PetModelError.invalid("product_access_clock")
+            }
             let response = try await transport.request(type: "product_access_v1", payload: data)
             guard !stopped, uiGeneration == fence, ownedAccess() == owned, owner == owned,
                   credential == expectedCredential else { return }
+            guard let receivedAt = observeMonotonicInstant(), receivedAt >= requestStartedAt else {
+                throw PetModelError.invalid("product_access_clock")
+            }
             let reply = try decode(response, requestID: requestID)
             if knownGeneration != reply.generation {
                 serviceGeneration = reply.generation
@@ -230,7 +257,21 @@ final class PetAccessController: ObservableObject {
                 guard reply.userID == credential.userID, reply.remaining > 0 else {
                     throw PetModelError.invalid("product_access_grant")
                 }
-                publish(.active, userID: reply.userID, remaining: reply.remaining)
+                // The service rounds remaining_seconds UP. Start the proven
+                // lower-bound budget at request admission, not response arrival:
+                // transport delay and up to one second of rounding cannot renew
+                // an expired grant. A genuine newer grant can still extend it.
+                let (budget, budgetOverflow) = UInt64(reply.remaining - 1)
+                    .multipliedReportingOverflow(by: 1_000_000_000)
+                let (deadline, deadlineOverflow) = requestStartedAt.addingReportingOverflow(budget)
+                guard !budgetOverflow, !deadlineOverflow else {
+                    throw PetModelError.invalid("product_access_deadline")
+                }
+                if deadline <= receivedAt {
+                    publish(.expired, userID: reply.userID)
+                } else {
+                    publish(.active, userID: reply.userID, deadline: deadline)
+                }
             } else {
                 publish(reply.state, userID: reply.userID)
             }
@@ -267,25 +308,43 @@ final class PetAccessController: ObservableObject {
         return true
     }
 
-    private func publish(_ next: PetAccessState, userID nextUserID: UUID?, remaining: Int = 0) {
+    private func publish(_ next: PetAccessState, userID nextUserID: UUID?, deadline nextDeadline: UInt64? = nil) {
         let previouslyAllowed = allowsActions
         let previousUser = userID
         expiry?.cancel(); expiry = nil
         grantDeadline = nil
-        if next == .active, remaining > 0 {
-            let (deadline, overflow) = now().addingReportingOverflow(UInt64(remaining) * 1_000_000_000)
-            if !overflow { grantDeadline = deadline }
+        var publishedState = next
+        if next == .active {
+            if let deadline = nextDeadline, let instant = observeMonotonicInstant() {
+                if deadline > instant {
+                    grantDeadline = deadline
+                    grantClockInvalidated = false
+                } else {
+                    publishedState = .expired
+                }
+            } else {
+                publishedState = .unavailable
+            }
         }
         userID = nextUserID
-        state = next
+        state = publishedState
         if previouslyAllowed != allowsActions || previousUser != nextUserID { actionGeneration &+= 1 }
         onChange?()
-        if next == .active, automaticPolling, let deadline = grantDeadline {
+        if publishedState == .active, automaticPolling, let deadline = grantDeadline {
             let sleep = sleep
             expiry = Task { [weak self] in
-                do { try await sleep(TimeInterval(remaining)) } catch { return }
-                guard let self, !Task.isCancelled, self.grantDeadline == deadline else { return }
-                self.publish(.expired, userID: self.userID)
+                while !Task.isCancelled {
+                    guard self?.grantDeadline == deadline,
+                          let remaining = self?.remainingNanoseconds else { return }
+                    guard remaining > 0 else {
+                        self?.publish(.expired, userID: self?.userID)
+                        return
+                    }
+                    do { try await sleep(TimeInterval(remaining) / 1_000_000_000) }
+                    catch { return }
+                    // A timer can wake early. Recheck the current deadline and
+                    // sleep only its remainder instead of expiring prematurely.
+                }
             }
         }
     }

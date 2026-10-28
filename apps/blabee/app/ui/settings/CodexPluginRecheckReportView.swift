@@ -46,8 +46,9 @@ struct CodexPluginRecheckReportView: View {
                     }
                 }
                 Text(PetL10n.text("Codex version: \(result.evidence.codexVersion ?? "Unknown")", korean: "Codex 버전: \(result.evidence.codexVersion ?? "미확인")"))
+                Text(PetL10n.text("Observed installation layout: \(result.evidence.installationLayout.title)", korean: "확인한 설치 경로 형태: \(result.evidence.installationLayout.title)"))
                 inspectedPath(PetL10n.text("Selected path", korean: "선택 경로"), result.evidence.sourcePath)
-                inspectedPath(PetL10n.text("Actual executable", korean: "실제 실행 파일"), result.evidence.canonicalPath)
+                inspectedPath(PetL10n.text("Resolved target (not proof of verification)", korean: "실제 연결 대상 (검증 통과를 의미하지 않음)"), result.evidence.resolvedTargetPath)
                 Text(PetL10n.text("This is the last Check Again result. Hook trust, service connection, and selection delivery require separate verification.", korean: "이 기록은 마지막 ‘다시 검사’ 결과입니다. Hook 신뢰·서비스 연결·선택 반환은 별도 확인이 필요합니다."))
                     .foregroundStyle(.secondary)
 
@@ -90,5 +91,94 @@ struct CodexPluginRecheckReportView: View {
         } ?? PetL10n.text("Unverified", korean: "미확인")
         return Text("\(title): \(displayPath)")
             .font(.caption2.monospaced())
+    }
+}
+
+/// Shared by first-run setup and settings. Historical reports remain labeled
+/// as such; current recovery eligibility comes only from the current state.
+struct CodexConnectionRecoveryView: View {
+    @ObservedObject var viewModel: PetViewModel
+    @ObservedObject private var localization = PetLocalization.shared
+    let showsReport: Bool
+    let emphasizesAction: Bool
+    @State private var installationHelpExpanded: Bool
+    @State private var diagnosticsExpanded: Bool
+
+    init(viewModel: PetViewModel, showsReport: Bool = false, initiallyExpanded: Bool = false,
+         emphasizesAction: Bool = true) {
+        self.viewModel = viewModel
+        self.showsReport = showsReport
+        self.emphasizesAction = emphasizesAction
+        _installationHelpExpanded = State(initialValue: initiallyExpanded)
+        _diagnosticsExpanded = State(initialValue: initiallyExpanded)
+    }
+
+    var body: some View {
+        if let recovery = viewModel.codexConnectionRecovery {
+            VStack(alignment: .leading, spacing: 10) {
+                Text(recovery.title).font(.blabee(.callout, weight: .semibold))
+                Text(recovery.detail)
+                    .font(.blabee(.caption))
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                if recovery.offersInstallGuide {
+                    DisclosureGroup(PetL10n.text("Codex Installation Help", korean: "Codex 설치 도움말"), isExpanded: $installationHelpExpanded) {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text(PetL10n.text("1. Review your installation using the official Codex guide. Blabee needs a verifiable native Codex executable.", korean: "1. 공식 Codex 안내에서 설치 방법을 확인하세요. Blabee가 검증할 수 있는 native Codex 실행 파일이 필요합니다."))
+                            Text(PetL10n.text("2. Return here and choose Recheck and Connect. If verification succeeds, Blabee connects its Plugin when needed.", korean: "2. 돌아와서 ‘재검사 후 연결’을 누르세요. 검사가 통과하면 필요한 Blabee Plugin을 연결합니다."))
+                            Text(PetL10n.text("3. Use a new Codex conversation in your working folder. Review any sign-in and /hooks approval requests in Codex.", korean: "3. 작업 폴더에서 새 Codex 대화를 시작하세요. 로그인과 /hooks 승인 요청은 Codex에서 확인해 주세요."))
+                            Text(PetL10n.text("If the check still fails, copy its diagnostics below for support. Folder permissions do not need to be changed just to collect diagnostics.", korean: "검사가 계속 실패하면 아래 진단 정보를 복사해 전달해 주세요. 진단 정보를 모으기 위해 폴더 권한을 변경할 필요는 없습니다."))
+                        }
+                        .font(.blabee(.caption))
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .padding(.top, 6)
+                    }
+                    .font(.blabee(.caption))
+                    Button(PetL10n.text("Open Official Codex Guide", korean: "공식 Codex 설치 안내 열기")) {
+                        viewModel.openConnectionInstallGuide(for: .codex)
+                    }
+                    .disabled(viewModel.isOnboardingOperationInFlight)
+                    .accessibilityIdentifier("codex-connection-install-guide")
+                }
+
+                if recovery.offersAppUpdate {
+                    Button(PetL10n.text("Check Blabee Updates", korean: "Blabee 업데이트 확인")) {
+                        Task { await viewModel.checkForAppUpdates() }
+                    }
+                    .disabled(viewModel.isOnboardingOperationInFlight || viewModel.isCheckingForAppUpdate)
+                    .accessibilityIdentifier("codex-connection-check-app-update")
+                    Text(viewModel.appUpdateState.title)
+                        .font(.blabee(.caption)).foregroundStyle(.secondary)
+                    if viewModel.appUpdateState.availableRelease != nil {
+                        Button(PetL10n.text("Open Blabee Download", korean: "Blabee 다운로드 열기")) {
+                            viewModel.openAppUpdateLocation()
+                        }
+                    }
+                }
+
+                Button {
+                    Task { await viewModel.retryCodexPluginConnection() }
+                } label: {
+                    Label(PetL10n.text("Recheck and Connect", korean: "재검사 후 연결"), systemImage: "arrow.clockwise")
+                }
+                .buttonStyle(PetOnboardingActionButtonStyle(emphasized: emphasizesAction))
+                .disabled(!viewModel.canRetryCodexPluginConnection)
+                .accessibilityIdentifier("codex-connection-recheck-connect")
+                if viewModel.isCodexPluginOperationInFlight {
+                    ProgressView(PetL10n.text("Checking Codex and preparing the Plugin…", korean: "Codex 검사 및 Plugin 연결 준비 중…"))
+                        .font(.blabee(.caption)).controlSize(.small)
+                }
+                if showsReport, let report = viewModel.codexNativeRecheckReport {
+                    DisclosureGroup(PetL10n.text("Last Check · Copy Diagnostics", korean: "최근 검사 · 진단 정보 복사"), isExpanded: $diagnosticsExpanded) {
+                        CodexPluginRecheckReportView(report: report)
+                    }
+                    .font(.blabee(.caption))
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .accessibilityIdentifier("codex-connection-recovery")
+        }
     }
 }

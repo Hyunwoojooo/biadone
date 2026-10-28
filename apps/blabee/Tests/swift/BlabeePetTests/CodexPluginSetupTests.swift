@@ -9,7 +9,7 @@ import Testing
 func installedPluginCopyKeepsHookTrustUnknown() {
     let state = CodexPluginSetupState.installedNeedsHookReview(version: "0.1.0")
     #expect(state.title == "Plugin 설치됨 · Hook 상태 확인")
-    #expect(state.detail.contains("자동 확인할 수 없습니다"))
+    #expect(state.detail.contains("Blabee를 검토하세요"))
     #expect(state.detail.contains("/hooks"))
     #expect(!state.title.contains("검토 필요"))
 }
@@ -583,8 +583,11 @@ func codexPluginSetupPassiveInspectionDoesNotMutate() async throws {
         ["plugin", "list", "--json"],
     ])
     #expect(fixture.fake.snapshotInvocations().allSatisfy {
-        $0.executable == fixture.executable.path && $0.timeoutMilliseconds == 5_000
+        $0.executable == fixture.executable.path
     })
+    // The complete Plugin catalog can refresh remotely; it has its own query
+    // budget, while Marketplace listing stays short and all argv stay exact.
+    #expect(fixture.fake.snapshotInvocations().map(\.timeoutMilliseconds) == [5_000, 35_000])
 }
 
 @Test("Connect uses only exact official Codex Plugin argv and verifies post-state", .petLanguage(.korean))
@@ -2311,7 +2314,7 @@ func codexPluginSetupProductionAllowlistIsExplicit() {
     #expect(CodexPluginSetupProductionTrust.supportedPluginCLIVersions == [
         "0.151.0", "0.152.0", "0.152.1", "0.153.0", "0.153.1", "0.153.2",
         "0.153.3", "0.153.4", "0.154.0", "0.155.0", "0.155.1", "0.156.0", "0.156.1",
-        "0.157.0", "0.157.1", "0.158.0", "0.159.0", "0.159.1", "0.159.2", "0.159.3", "0.160.0", "0.160.1", "0.161.0", "0.162.0", "0.162.1", "0.163.0",
+        "0.157.0", "0.157.1", "0.158.0", "0.159.0", "0.159.1", "0.159.2", "0.159.3", "0.160.0", "0.160.1", "0.161.0", "0.162.0", "0.162.1", "0.163.0", "0.164.0",
     ])
 }
 
@@ -3001,7 +3004,7 @@ private func codexPluginSetupTrustSnapshot(
 func codexPluginSetupProductionVersionGateRejectsUnsupportedVersion() throws {
     for version in [
         "0.150.1", "0.154.1", "0.154.10", "0.155.2", "0.155.10", "0.156.2", "0.157.2",
-        "0.158.1", "0.159.4", "0.160.2", "0.161.1", "0.162.2", "0.163.1", "0.164.0",
+        "0.158.1", "0.159.4", "0.160.2", "0.161.1", "0.162.2", "0.163.1", "0.164.1", "0.165.0",
     ] {
         let unsupported = CodexPluginSetupProcessResult(
             exitCode: 0,
@@ -3193,7 +3196,94 @@ func codexPluginCheckReportIdentifiesFailedListStage(failPluginList: Bool) async
     #expect(result.evidence.sourcePath == fixture.executable.path)
     #expect(result.evidence.codexVersion == "0.152.1")
     #expect(result.evidence.errorCode != nil)
+    #expect(result.evidence.nativeOperation?.commandInvocationAttempted == true)
+    #expect(result.evidence.nativeOperation?.exitCode == 0)
     #expect(fixture.fake.snapshotInvocations().count == (failPluginList ? 2 : 1))
+}
+
+@Test("A terminated list timeout is recoverable on a separate inspection without mutations or automatic retry", .petLanguage(.korean))
+func codexPluginSetupListTimeoutDoesNotLatchNativeFailure() async throws {
+    let fixture = try CodexPluginSetupFixture()
+    fixture.fake.installOwned()
+    let executable = fixture.root.appendingPathComponent("inspection-native-fixture")
+    try Data("inert fixture, never executed".utf8).write(to: executable)
+    #expect(chmod(executable.path, mode_t(0o700)) == 0)
+    let pluginCalls = CodexPluginSetupProcessProbe()
+    let fake = fixture.fake
+    let runtime = CodexNativeRuntime(
+        candidates: { [executable] },
+        qualifier: { url, _, _, _ in .testOnly(url: url) },
+        revalidator: { $0.canonicalURL },
+        processRunner: { url, arguments, timeout in
+            if arguments == ["plugin", "list", "--json"] {
+                pluginCalls.record()
+                if pluginCalls.snapshot() == 1 {
+                    throw CoordinatorError("managed_codex_version_probe_timeout_terminated")
+                }
+            }
+            return try fake.run(executable: url, arguments: arguments, timeoutMilliseconds: timeout)
+        },
+        preflight: { _, _ in },
+        failureGuard: CodexNativeFailureGuard(directoryURL: fixture.root.appendingPathComponent("inspection-failures"))
+    )
+    let manager = fixture.manager(
+        qualifier: { _ in .testOnly(url: executable) },
+        revalidator: { $0.canonicalURL }, nativeRuntime: runtime
+    )
+    let result = await manager.recheckNativeExecutableWithReport()
+    #expect(result.state == .error(code: "codex_native_inspection_timeout"))
+    #expect(result.evidence.stage == .pluginList)
+    #expect(result.evidence.nativeOperation?.stage == .command)
+    #expect(result.evidence.nativeOperation?.commandInvocationAttempted == true)
+    #expect(result.evidence.nativeOperation?.cachedFailure == false)
+    #expect(result.evidence.nativeOperation?.elapsedMilliseconds != nil)
+    #expect(result.evidence.nativeOperation?.commandElapsedMilliseconds != nil)
+    #expect(pluginCalls.snapshot() == 1)
+    #expect(pluginSetupMutationArguments(fixture).isEmpty)
+
+    // A separate request must still revalidate the full catalog. A recovered
+    // list is not permission to resend a previously selected action.
+    #expect(await manager.inspect() == .installedNeedsHookReview(version: "0.1.0"))
+    #expect(pluginCalls.snapshot() == 2)
+    #expect(pluginSetupMutationArguments(fixture).isEmpty)
+}
+
+@Test("List preflight timeout remains blocked and reports no Plugin command attempt", .petLanguage(.korean))
+func codexPluginSetupListPreflightTimeoutPreservesNativeProtection() async throws {
+    let fixture = try CodexPluginSetupFixture()
+    let executable = fixture.root.appendingPathComponent("preflight-native-fixture")
+    try Data("inert fixture, never executed".utf8).write(to: executable)
+    #expect(chmod(executable.path, mode_t(0o700)) == 0)
+    let preflights = CodexPluginSetupProcessProbe()
+    let fake = fixture.fake
+    let runtime = CodexNativeRuntime(
+        candidates: { [executable] },
+        qualifier: { url, _, _, _ in .testOnly(url: url) },
+        revalidator: { $0.canonicalURL }, processRunner: fake.run,
+        preflight: { _, _ in
+            preflights.record()
+            if preflights.snapshot() == 2 {
+                throw CoordinatorError("managed_codex_version_probe_timeout_terminated")
+            }
+        },
+        failureGuard: CodexNativeFailureGuard(directoryURL: fixture.root.appendingPathComponent("preflight-failures"))
+    )
+    let manager = fixture.manager(
+        qualifier: { _ in .testOnly(url: executable) },
+        revalidator: { $0.canonicalURL }, nativeRuntime: runtime
+    )
+    let result = await manager.recheckNativeExecutableWithReport()
+    #expect(result.state == .error(code: "codex_native_probe_timeout"))
+    #expect(result.evidence.stage == .pluginList)
+    #expect(result.evidence.nativeOperation?.stage == .notarization)
+    #expect(result.evidence.nativeOperation?.commandInvocationAttempted == false)
+    #expect(result.evidence.nativeOperation?.cachedFailure == false)
+    #expect(result.evidence.nativeOperation?.commandElapsedMilliseconds == nil)
+    #expect(fake.snapshotInvocations().count == 1)
+    #expect(await manager.inspect() == .error(code: "codex_native_probe_timeout"))
+    #expect(preflights.snapshot() == 2)
+    #expect(fake.snapshotInvocations().count == 1)
+    #expect(pluginSetupMutationArguments(fixture).isEmpty)
 }
 
 @Test("Explicit recheck report does not invent a selection when native qualification fails", .petLanguage(.korean))

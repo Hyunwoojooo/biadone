@@ -432,6 +432,47 @@ struct CodexNativeRuntimeTests {
         #expect(failure.diagnostic == .pathUnsafe)
         #expect(failure.evidence.sourcePath == fixture.sourceURL.path)
         #expect(failure.evidence.canonicalPath == nil)
+        #expect(failure.evidence.resolvedTargetPath == nil)
+        #expect(failure.evidence.codexVersion == nil)
+        #expect(probe.preflightInvocations.isEmpty)
+        #expect(probe.processInvocations.isEmpty)
+    }
+
+    @Test("A resolved target rejected by source ancestry remains diagnostic and never reaches preflight or a probe")
+    func unsafeAncestorRetainsResolvedTargetWithoutExecution() throws {
+        let fixture = try NativeRuntimeFixture()
+        let probe = NativeRuntimeProbe()
+        let bin = fixture.root.appendingPathComponent("writable-bin", isDirectory: true)
+        try FileManager.default.createDirectory(at: bin, withIntermediateDirectories: false)
+        #expect(chmod(bin.path, mode_t(0o775)) == 0)
+        #expect(chmod(fixture.sourceURL.path, mode_t(0o755)) == 0)
+        let source = bin.appendingPathComponent("codex")
+        try FileManager.default.createSymbolicLink(at: source, withDestinationURL: fixture.sourceURL)
+        let runtime = makeNativeRuntime(
+            fixture: fixture, probe: probe, candidates: [source],
+            qualifier: { candidate, runner, preflight, timeout in
+                let inspected = try CodexRuntimeTrustGate(monitoredEntries: []).inspect(sourceURL: candidate)
+                let canonical = URL(fileURLWithPath: inspected.canonicalPath)
+                try preflight(canonical, timeout)
+                _ = try runner(canonical, ["--version"], timeout)
+                return .testOnly(url: canonical)
+            }
+        )
+        let failure = try capturedQualificationFailure {
+            try runtime.qualifyWithEvidence(timeoutMilliseconds: 1_000)
+        }
+        // Removing the observed target cannot trigger another resolve while
+        // presenting the captured diagnostic or classifying its layout.
+        try FileManager.default.removeItem(at: fixture.sourceURL)
+        #expect(failure.diagnostic == .pathUnsafe)
+        #expect(failure.evidence.sourcePath == source.path)
+        #expect(failure.evidence.canonicalPath == nil)
+        #expect(failure.evidence.resolvedTargetPath == fixture.sourceURL.path)
+        #expect(failure.evidence.pathDiagnostic == .init(
+            issue: .groupWritable, role: .sourceAncestor, path: bin.path,
+            resolvedTargetPath: fixture.sourceURL.path
+        ))
+        #expect(failure.evidence.installationLayout == .other)
         #expect(failure.evidence.codexVersion == nil)
         #expect(probe.preflightInvocations.isEmpty)
         #expect(probe.processInvocations.isEmpty)
@@ -493,6 +534,8 @@ struct CodexNativeRuntimeTests {
         let probe = NativeRuntimeProbe()
         let first = fixture.sourceURL
         let second = fixture.root.appendingPathComponent("second-codex-fixture")
+        let firstTarget = "/opt/homebrew/Caskroom/codex/0.154.0/codex-aarch64-apple-darwin"
+        let secondTarget = "/opt/homebrew/lib/node_modules/@openai/codex/bin/codex.js"
         try Data("inert second fixture".utf8).write(to: second)
         let runtime = makeNativeRuntime(
             fixture: fixture, probe: probe, candidates: [first, second],
@@ -502,7 +545,8 @@ struct CodexNativeRuntimeTests {
                     "unsafe candidate",
                     diagnostic: .init(
                         issue: url == first ? .groupWritable : .untrustedOwner,
-                        role: .source, path: url.path
+                        role: .source, path: url.path,
+                        resolvedTargetPath: url == first ? firstTarget : secondTarget
                     )
                 )
             }
@@ -516,9 +560,14 @@ struct CodexNativeRuntimeTests {
             }
             #expect(failure.evidence.sourcePath == first.path)
             #expect(failure.evidence.pathDiagnostic == .init(
-                issue: .groupWritable, role: .source, path: first.path
+                issue: .groupWritable, role: .source, path: first.path,
+                resolvedTargetPath: firstTarget
             ))
+            #expect(failure.evidence.resolvedTargetPath == firstTarget)
+            #expect(failure.evidence.installationLayout == .homebrewCask)
+            #expect(failure.evidence.canonicalPath == nil)
         }
+        #expect(probe.preflightInvocations.isEmpty)
         #expect(probe.processInvocations.isEmpty)
     }
 
@@ -1114,5 +1163,286 @@ struct CodexNativeRuntimeTests {
         #expect(probe.revalidationCount == 2)
         #expect(probe.preflightInvocations.count == 1)
         #expect(probe.queueCount == 0)
+    }
+
+    @Test("Read-only plugin inspection gives catalog fetching its own bounded command budget",
+          arguments: CodexPluginInspectionQuery.allCases)
+    func pluginInspectionSeparatesPreparationAndCommandBudgets(query: CodexPluginInspectionQuery) throws {
+        let fixture = try NativeRuntimeFixture(), probe = NativeRuntimeProbe()
+        let observations = CodexNativeOperationObservations()
+        let runtime = makeNativeRuntime(
+            fixture: fixture, probe: probe,
+            processBehavior: { _, _, _ in
+                usleep(20_000)
+                return .init(exitCode: 0, stdout: Data("[]".utf8))
+            },
+            preflightBehavior: { _, timeout in
+                #expect(timeout > 0 && timeout <= 5_000)
+                usleep(20_000)
+            }
+        )
+        _ = try runtime.runPluginInspection(
+            selection: fixture.selection(), query: query, timeoutMilliseconds: 45_000,
+            observer: { observations.replace($0) }
+        )
+        let invocation = try #require(probe.processInvocations.first)
+        switch query {
+        case .pluginList:
+            #expect(invocation.arguments == ["plugin", "list", "--json"])
+            #expect(invocation.timeoutMilliseconds == 35_000)
+            #expect(query.timeoutMilliseconds == 40_000)
+        case .marketplaceList:
+            #expect(invocation.arguments == ["plugin", "marketplace", "list", "--json"])
+            #expect(invocation.timeoutMilliseconds == 5_000)
+            #expect(query.timeoutMilliseconds == 10_000)
+        }
+        #expect(probe.processInvocations.count == 1)
+        #expect(probe.revalidationCount == 2)
+        #expect(probe.preflightInvocations.count == 1)
+        let observation = observations.snapshot()
+        #expect(observation.commandInvocationAttempted)
+        #expect(try #require(observation.preparationElapsedMilliseconds) >= 20)
+        #expect(try #require(observation.commandElapsedMilliseconds) >= 20)
+        #expect(try #require(observation.elapsedMilliseconds) >= 40)
+    }
+
+    @Test("Plugin inspection command budget cannot exceed the overall remaining deadline")
+    func pluginInspectionRespectsRemainingOverallBudget() throws {
+        let fixture = try NativeRuntimeFixture(), probe = NativeRuntimeProbe()
+        let runtime = makeNativeRuntime(
+            fixture: fixture, probe: probe,
+            preflightBehavior: { _, _ in usleep(30_000) }
+        )
+        _ = try runtime.runPluginInspection(
+            selection: fixture.selection(), query: .pluginList, timeoutMilliseconds: 500
+        )
+        let invocation = try #require(probe.processInvocations.first)
+        #expect(invocation.timeoutMilliseconds > 0 && invocation.timeoutMilliseconds <= 470)
+    }
+
+    @Test("Expired plugin preparation cannot start the read-only command or automatically retry",
+          arguments: [false, true])
+    func expiredPluginInspectionPreparationDoesNotRun(slowPreflight: Bool) throws {
+        let fixture = try NativeRuntimeFixture(), probe = NativeRuntimeProbe()
+        let observations = CodexNativeOperationObservations()
+        let runtime = makeNativeRuntime(
+            fixture: fixture, probe: probe,
+            revalidator: { selection in
+                if !slowPreflight { usleep(60_000) }
+                return selection.canonicalURL
+            },
+            preflightBehavior: { _, _ in if slowPreflight { usleep(60_000) } }
+        )
+        #expect(capturedCoordinatorCode {
+            try runtime.runPluginInspection(
+                selection: fixture.selection(), query: .pluginList, timeoutMilliseconds: 30,
+                observer: { observations.replace($0) }
+            )
+        } == "codex_native_probe_timeout")
+        let failed = observations.snapshot()
+        #expect(!failed.commandInvocationAttempted)
+        #expect(failed.commandElapsedMilliseconds == nil)
+        #expect(try #require(failed.preparationElapsedMilliseconds) >= 60)
+        #expect(capturedCoordinatorCode {
+            try runtime.runPluginInspection(
+                selection: fixture.selection(), query: .pluginList, timeoutMilliseconds: 40_000,
+                observer: { observations.replace($0) }
+            )
+        } == "codex_native_probe_timeout")
+        #expect(observations.snapshot().cachedFailure)
+        #expect(probe.processInvocations.isEmpty)
+        #expect(probe.revalidationCount == 1)
+    }
+
+    @Test("Only a confirmed read-only command timeout allows a later independent inspection",
+          arguments: CodexPluginInspectionQuery.allCases)
+    func confirmedPluginInspectionTimeoutDoesNotPoisonLaterRequest(query: CodexPluginInspectionQuery) throws {
+        let fixture = try NativeRuntimeFixture(), probe = NativeRuntimeProbe()
+        let observations = CodexNativeOperationObservations()
+        let runtime = makeNativeRuntime(
+            fixture: fixture, probe: probe,
+            processBehavior: { _, _, _ in
+                if probe.processInvocations.count == 1 {
+                    throw CoordinatorError("managed_codex_version_probe_timeout_terminated")
+                }
+                return .init(exitCode: 0, stdout: Data("[]".utf8))
+            }
+        )
+        #expect(capturedCoordinatorCode {
+            try runtime.runPluginInspection(
+                selection: fixture.selection(), query: query, timeoutMilliseconds: query.timeoutMilliseconds,
+                observer: { observations.replace($0) }
+            )
+        } == "codex_native_inspection_timeout")
+        #expect(probe.processInvocations.count == 1)
+        #expect(observations.snapshot().commandInvocationAttempted)
+        #expect(observations.snapshot().commandElapsedMilliseconds != nil)
+        // A distinct request is allowed; the failed call did not retry itself.
+        _ = try runtime.runPluginInspection(
+            selection: fixture.selection(), query: query, timeoutMilliseconds: query.timeoutMilliseconds
+        )
+        #expect(probe.processInvocations.count == 2)
+        #expect(probe.revalidationCount == 4)
+        #expect(probe.preflightInvocations.count == 2)
+    }
+
+    @Test("Unconfirmed inspection timeout, signal death, and invalid output stay durably blocked",
+          arguments: ["managed_codex_version_probe_timeout", "managed_codex_version_probe_termination_uncertain",
+                      "signal", "managed_codex_version_probe_output_too_large"])
+    func unsafePluginInspectionFailuresStaySuppressed(failure: String) throws {
+        let fixture = try NativeRuntimeFixture(), probe = NativeRuntimeProbe()
+        let observations = CodexNativeOperationObservations()
+        let runtime = makeNativeRuntime(
+            fixture: fixture, probe: probe,
+            processBehavior: { _, _, _ in
+                if failure == "signal" {
+                    return .init(exitCode: 137, stdout: Data(), terminationSignal: SIGKILL)
+                }
+                throw CoordinatorError(failure)
+            }
+        )
+        let expected: String
+        switch failure {
+        case "signal": expected = "codex_native_execution_terminated"
+        case "managed_codex_version_probe_termination_uncertain": expected = "codex_native_execution_uncertain"
+        case "managed_codex_version_probe_output_too_large": expected = "codex_native_probe_output_invalid"
+        default: expected = "codex_native_probe_timeout"
+        }
+        for _ in 0..<2 {
+            #expect(capturedCoordinatorCode {
+                try runtime.runPluginInspection(
+                    selection: fixture.selection(), query: .pluginList, timeoutMilliseconds: 40_000,
+                    observer: { observations.replace($0) }
+                )
+            } == expected)
+        }
+        #expect(observations.snapshot().cachedFailure)
+        #expect(!observations.snapshot().commandInvocationAttempted)
+        #expect(probe.processInvocations.count == 1)
+    }
+
+    @Test("A confirmed preflight timeout is not reclassified as a recoverable plugin list delay")
+    func pluginInspectionPreflightTimeoutStaysSuppressed() throws {
+        let fixture = try NativeRuntimeFixture(), probe = NativeRuntimeProbe()
+        let runtime = makeNativeRuntime(
+            fixture: fixture, probe: probe,
+            preflightBehavior: { _, timeout in
+                #expect(timeout > 0 && timeout <= 5_000)
+                throw CoordinatorError("managed_codex_version_probe_timeout_terminated")
+            }
+        )
+        for _ in 0..<2 {
+            #expect(capturedCoordinatorCode {
+                try runtime.runPluginInspection(
+                    selection: fixture.selection(), query: .pluginList, timeoutMilliseconds: 40_000
+                )
+            } == "codex_native_probe_timeout")
+        }
+        #expect(probe.preflightInvocations.count == 1)
+        #expect(probe.processInvocations.isEmpty)
+    }
+
+    @Test("File replacement during inspection preflight still prevents plugin list execution")
+    func pluginInspectionRevalidationDriftDoesNotRun() throws {
+        let fixture = try NativeRuntimeFixture(), probe = NativeRuntimeProbe()
+        let runtime = makeNativeRuntime(
+            fixture: fixture, probe: probe,
+            revalidator: { selection in
+                if probe.revalidationCount > 1 { throw CodexRuntimeTrustError.changedDuringQualification }
+                return selection.canonicalURL
+            }
+        )
+        #expect(capturedCoordinatorCode {
+            try runtime.runPluginInspection(
+                selection: fixture.selection(), query: .pluginList, timeoutMilliseconds: 40_000
+            )
+        } == "codex_native_binary_changed")
+        #expect(probe.processInvocations.isEmpty)
+        #expect(probe.revalidationCount == 2)
+    }
+
+    @Test("An in-flight plugin inspection blocks a competing queue request without sending or replaying it")
+    func pluginInspectionContentionDoesNotQueueOrReplay() async throws {
+        let fixture = try NativeRuntimeFixture(), probe = NativeRuntimeProbe()
+        let inspectionStarted = DispatchSemaphore(value: 0)
+        let releaseInspection = DispatchSemaphore(value: 0)
+        let observations = CodexNativeOperationObservations()
+        let runtime = makeNativeRuntime(
+            fixture: fixture, probe: probe,
+            processBehavior: { _, arguments, _ in
+                if arguments == CodexPluginInspectionQuery.pluginList.arguments {
+                    inspectionStarted.signal()
+                    guard releaseInspection.wait(timeout: .now() + 5) == .success else {
+                        throw CoordinatorError("test_inspection_release_timed_out")
+                    }
+                }
+                return .init(exitCode: 0, stdout: Data("[]".utf8))
+            }
+        )
+        let selection = fixture.selection()
+        let inspection = Task.detached {
+            try runtime.runPluginInspection(
+                selection: selection, query: .pluginList, timeoutMilliseconds: 40_000
+            )
+        }
+        let didStart: Bool = await withCheckedContinuation { continuation in
+            DispatchQueue.global().async {
+                continuation.resume(returning: inspectionStarted.wait(timeout: .now() + 2) == .success)
+            }
+        }
+        guard didStart else {
+            releaseInspection.signal()
+            _ = try? await inspection.value
+            Issue.record("plugin inspection did not enter the guarded command")
+            return
+        }
+        defer { releaseInspection.signal() }
+        #expect(capturedCoordinatorCode {
+            try runtime.run(
+                selection: selection, arguments: ["queue", "--thread", "contended-session"],
+                timeoutMilliseconds: 30, observer: { observations.replace($0) }
+            )
+        } == "codex_native_execution_in_progress")
+        #expect(!observations.snapshot().commandInvocationAttempted)
+        #expect(!observations.snapshot().cachedFailure)
+        #expect(probe.queueCount == 0)
+        #expect(probe.processInvocations.count == 1)
+        releaseInspection.signal()
+        _ = try await inspection.value
+        // Completing the inspection does not enqueue or replay the rejected request.
+        #expect(probe.queueCount == 0)
+        #expect(probe.processInvocations.count == 1)
+    }
+
+    @Test("Confirmed cleanup does not make mutation or queue timeouts retryable",
+          arguments: [["queue", "--thread", "session-fixture"], ["plugin", "install", "fixture"],
+                      ["plugin", "enable", "fixture"]])
+    func confirmedSideEffectingTimeoutStaysSuppressed(arguments: [String]) throws {
+        let fixture = try NativeRuntimeFixture(), probe = NativeRuntimeProbe()
+        let runtime = makeNativeRuntime(
+            fixture: fixture, probe: probe,
+            processBehavior: { _, _, _ in throw CoordinatorError("managed_codex_version_probe_timeout_terminated") }
+        )
+        for _ in 0..<2 {
+            #expect(capturedCoordinatorCode {
+                try runtime.run(selection: fixture.selection(), arguments: arguments, timeoutMilliseconds: 5_000)
+            } == "codex_native_probe_timeout")
+        }
+        #expect(probe.processInvocations.count == 1)
+    }
+
+    @Test("Confirmed version probe timeout remains protected outside plugin inspection")
+    func confirmedQualificationTimeoutStaysSuppressed() throws {
+        let fixture = try NativeRuntimeFixture(), probe = NativeRuntimeProbe()
+        let runtime = makeNativeRuntime(
+            fixture: fixture, probe: probe,
+            processBehavior: { _, _, _ in throw CoordinatorError("managed_codex_version_probe_timeout_terminated") }
+        )
+        for _ in 0..<2 {
+            #expect(capturedCoordinatorCode { try runtime.qualify(timeoutMilliseconds: 5_000) }
+                == "codex_native_probe_timeout")
+        }
+        #expect(probe.versionProbeCount == 1)
+        #expect(probe.processInvocations.count == 1)
     }
 }

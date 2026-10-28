@@ -6,7 +6,9 @@
 - [기능별 안내](features/): 계정·온보딩·연결·승인·업데이트·복구
 - [Claude 제품 연결](bridges/claude/): 공통 엔진·수명·계약과 작업 상태
 - [빌드·배포](development/): 앱 조립·서명·공증·검증
+- [Blabee Test 앱 개발 계획](development/BLABEE_TEST_APP/README.md): 반복 가능한 온보딩·연결 검사와 실행별 격리
 - [설치·테스터 안내](guides/)
+- [전용 GitHub 저장소 분리·소개 구성](development/GITHUB_REPOSITORY.md)
 - [이전 릴리스 기록](releases/)
 - [이전 계획·검증 기록](history/)
 - [Claude 이동 전 검증 기록 보관](history/claude/PRE_LAYOUT_ARTIFACTS.md)

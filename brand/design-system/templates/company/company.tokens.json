@@ -1,0 +1,239 @@
+{
+  "$description": "Company template composition from approved round-06 A. Layout values only; brand, typography, controls and repeated shared spacing remain in ../../biadone.css.",
+  "primitive": {
+    "company": {
+      "space-13": {
+        "$value": "13px",
+        "$type": "dimension"
+      },
+      "space-20": {
+        "$value": "20px",
+        "$type": "dimension"
+      },
+      "space-25": {
+        "$value": "25px",
+        "$type": "dimension"
+      },
+      "space-26": {
+        "$value": "26px",
+        "$type": "dimension"
+      },
+      "space-28": {
+        "$value": "28px",
+        "$type": "dimension"
+      },
+      "space-34": {
+        "$value": "34px",
+        "$type": "dimension"
+      },
+      "space-40": {
+        "$value": "40px",
+        "$type": "dimension"
+      },
+      "space-42": {
+        "$value": "42px",
+        "$type": "dimension"
+      },
+      "space-45": {
+        "$value": "45px",
+        "$type": "dimension"
+      },
+      "space-53": {
+        "$value": "53px",
+        "$type": "dimension"
+      },
+      "space-60": {
+        "$value": "60px",
+        "$type": "dimension"
+      },
+      "space-72": {
+        "$value": "72px",
+        "$type": "dimension"
+      },
+      "space-82": {
+        "$value": "82px",
+        "$type": "dimension"
+      },
+      "space-94": {
+        "$value": "94px",
+        "$type": "dimension"
+      },
+      "status-width": {
+        "$value": "64px",
+        "$type": "dimension"
+      },
+      "description-max": {
+        "$value": "670px",
+        "$type": "dimension"
+      }
+    }
+  },
+  "semantic": {
+    "company-layout": {
+      "hero-top": {
+        "$value": "{primitive.company.space-82}",
+        "$type": "dimension"
+      },
+      "support-offset": {
+        "$value": "{primitive.company.space-34}",
+        "$type": "dimension"
+      },
+      "flow-offset": {
+        "$value": "{primitive.company.space-94}",
+        "$type": "dimension"
+      },
+      "project-top": {
+        "$value": "{primitive.company.space-72}",
+        "$type": "dimension"
+      },
+      "project-bottom": {
+        "$value": "{primitive.company.space-82}",
+        "$type": "dimension"
+      },
+      "project-heading-gap": {
+        "$value": "{primitive.company.space-42}",
+        "$type": "dimension"
+      },
+      "project-status-width": {
+        "$value": "{primitive.company.status-width}",
+        "$type": "dimension"
+      },
+      "project-description-max": {
+        "$value": "{primitive.company.description-max}",
+        "$type": "dimension"
+      },
+      "footer-top": {
+        "$value": "{primitive.company.space-28}",
+        "$type": "dimension"
+      },
+      "footer-bottom": {
+        "$value": "{primitive.company.space-40}",
+        "$type": "dimension"
+      },
+      "support-gap-compact": {
+        "$value": "{primitive.company.space-28}",
+        "$type": "dimension"
+      },
+      "flow-offset-compact": {
+        "$value": "{primitive.company.space-72}",
+        "$type": "dimension"
+      },
+      "hero-top-mobile": {
+        "$value": "{primitive.company.space-53}",
+        "$type": "dimension"
+      },
+      "support-offset-mobile": {
+        "$value": "{primitive.company.space-26}",
+        "$type": "dimension"
+      },
+      "project-top-mobile": {
+        "$value": "{primitive.company.space-45}",
+        "$type": "dimension"
+      },
+      "project-heading-gap-mobile": {
+        "$value": "{primitive.company.space-28}",
+        "$type": "dimension"
+      },
+      "flow-offset-mobile": {
+        "$value": "{primitive.company.space-60}",
+        "$type": "dimension"
+      },
+      "project-row-gap-y-mobile": {
+        "$value": "{primitive.company.space-13}",
+        "$type": "dimension"
+      },
+      "project-row-gap-x-mobile": {
+        "$value": "{primitive.company.space-20}",
+        "$type": "dimension"
+      },
+      "project-padding-mobile": {
+        "$value": "{primitive.company.space-25}",
+        "$type": "dimension"
+      }
+    }
+  },
+  "component": {
+    "company": {
+      "hero-top": {
+        "$value": "{semantic.company-layout.hero-top}",
+        "$type": "dimension"
+      },
+      "support-offset": {
+        "$value": "{semantic.company-layout.support-offset}",
+        "$type": "dimension"
+      },
+      "flow-offset": {
+        "$value": "{semantic.company-layout.flow-offset}",
+        "$type": "dimension"
+      },
+      "project-top": {
+        "$value": "{semantic.company-layout.project-top}",
+        "$type": "dimension"
+      },
+      "project-bottom": {
+        "$value": "{semantic.company-layout.project-bottom}",
+        "$type": "dimension"
+      },
+      "project-heading-gap": {
+        "$value": "{semantic.company-layout.project-heading-gap}",
+        "$type": "dimension"
+      },
+      "project-status-width": {
+        "$value": "{semantic.company-layout.project-status-width}",
+        "$type": "dimension"
+      },
+      "project-description-max": {
+        "$value": "{semantic.company-layout.project-description-max}",
+        "$type": "dimension"
+      },
+      "footer-top": {
+        "$value": "{semantic.company-layout.footer-top}",
+        "$type": "dimension"
+      },
+      "footer-bottom": {
+        "$value": "{semantic.company-layout.footer-bottom}",
+        "$type": "dimension"
+      },
+      "support-gap-compact": {
+        "$value": "{semantic.company-layout.support-gap-compact}",
+        "$type": "dimension"
+      },
+      "flow-offset-compact": {
+        "$value": "{semantic.company-layout.flow-offset-compact}",
+        "$type": "dimension"
+      },
+      "hero-top-mobile": {
+        "$value": "{semantic.company-layout.hero-top-mobile}",
+        "$type": "dimension"
+      },
+      "support-offset-mobile": {
+        "$value": "{semantic.company-layout.support-offset-mobile}",
+        "$type": "dimension"
+      },
+      "project-top-mobile": {
+        "$value": "{semantic.company-layout.project-top-mobile}",
+        "$type": "dimension"
+      },
+      "project-heading-gap-mobile": {
+        "$value": "{semantic.company-layout.project-heading-gap-mobile}",
+        "$type": "dimension"
+      },
+      "flow-offset-mobile": {
+        "$value": "{semantic.company-layout.flow-offset-mobile}",
+        "$type": "dimension"
+      },
+      "project-row-gap-y-mobile": {
+        "$value": "{semantic.company-layout.project-row-gap-y-mobile}",
+        "$type": "dimension"
+      },
+      "project-row-gap-x-mobile": {
+        "$value": "{semantic.company-layout.project-row-gap-x-mobile}",
+        "$type": "dimension"
+      },
+      "project-padding-mobile": {
+        "$value": "{semantic.company-layout.project-padding-mobile}",
+        "$type": "dimension"
+      }
+    }
+  }
+}

@@ -1,0 +1,77 @@
+/* Design Tokens - Auto-generated */
+/* Do not edit directly - modify tokens.json instead */
+
+/* === PRIMITIVES === */
+:root {
+  --primitive-color-yellow: #FBE275;
+  --primitive-color-navy: #263752;
+  --primitive-color-white: #FFFFFF;
+  --primitive-color-rose: #D54B4E;
+  --primitive-color-slate: #62718A;
+  --primitive-color-slateStrong: #4D5D75;
+  --primitive-dimension-gutter: clamp(1.25rem, 4.2vw, 4.5rem);
+  --primitive-dimension-headerHeight: 6.25rem;
+  --primitive-dimension-heroTop: clamp(2rem, 4vw, 4rem);
+  --primitive-dimension-heroBottom: clamp(2.5rem, 4vw, 4rem);
+  --primitive-dimension-frameStep: 1.5rem;
+  --primitive-dimension-frameLine: 2px;
+  --primitive-dimension-projectPadding: clamp(1.5rem, 3.3vw, 3.5rem);
+  --primitive-dimension-projectHeight: 23rem;
+  --primitive-dimension-projectGap: 2.5rem;
+  --primitive-dimension-logoWidth: 2.5rem;
+  --primitive-dimension-logoType: 1.75rem;
+  --primitive-dimension-navType: 0.9375rem;
+  --primitive-dimension-heroType: clamp(2.35rem, 4.8vw, 4.625rem);
+  --primitive-dimension-projectType: clamp(4rem, 8vw, 7.5rem);
+  --primitive-dimension-visionType: clamp(2rem, 3.2vw, 3.5rem);
+  --primitive-dimension-heroMeasure: 21rem;
+  --primitive-dimension-projectMeasure: 24rem;
+  --primitive-dimension-visionMeasure: 35rem;
+  --primitive-dimension-footerType: 1.25rem;
+  --primitive-dimension-statusMark: 0.5rem;
+  --primitive-radius-control: 0.25rem;
+}
+
+/* === SEMANTIC === */
+:root {
+  --color-background: #FBE275;
+  --color-surface: #FFFFFF;
+  --color-text: #263752;
+  --color-muted: #4D5D75;
+  --color-brand: #263752;
+  --color-onBrand: #FFFFFF;
+  --color-accent: #D54B4E;
+  --color-focus: #263752;
+  --color-border: #263752;
+  --color-actionHover: #FBE275;
+  --layout-gutter: clamp(1.25rem, 4.2vw, 4.5rem);
+  --layout-headerHeight: 6.25rem;
+  --layout-heroTop: clamp(2rem, 4vw, 4rem);
+  --layout-heroBottom: clamp(2.5rem, 4vw, 4rem);
+  --layout-frameStep: 1.5rem;
+  --layout-frameLine: 2px;
+  --layout-projectPadding: clamp(1.5rem, 3.3vw, 3.5rem);
+  --layout-projectHeight: 23rem;
+  --layout-projectGap: 2.5rem;
+  --layout-heroMeasure: 21rem;
+  --layout-projectMeasure: 24rem;
+  --layout-visionMeasure: 35rem;
+  --type-logo: 1.75rem;
+  --type-nav: 0.9375rem;
+  --type-hero: clamp(2.35rem, 4.8vw, 4.625rem);
+  --type-project: clamp(4rem, 8vw, 7.5rem);
+  --type-vision: clamp(2rem, 3.2vw, 3.5rem);
+  --type-footer: 1.25rem;
+}
+
+/* === COMPONENTS === */
+:root {
+  --button-bg: #263752;
+  --button-fg: #FFFFFF;
+  --button-hover-bg: #4D5D75;
+  --button-hover-fg: #FFFFFF;
+  --button-border: #263752;
+  --button-radius: 0.25rem;
+  --logo-width: 2.5rem;
+  --status-size: 0.5rem;
+}

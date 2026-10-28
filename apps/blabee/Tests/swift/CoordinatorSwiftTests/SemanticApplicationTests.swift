@@ -639,6 +639,69 @@ func semanticInitialActivationCASRetryIsStable() throws {
     ])
 }
 
+@Test("pending index is rebuilt after a writer acquires or releases the session slot", arguments: [false, true])
+func semanticPendingIndexReloadsOnCASConflict(released: Bool) throws {
+    let suffix = "pending_index_cas"
+    let binding = semanticBinding(suffix: suffix)
+    var competingBinding = semanticBinding(suffix: "pending_index_competing")
+    competingBinding["project_id"] = binding["project_id"]
+    competingBinding["session_id"] = binding["session_id"]
+    let competingPacket = try semanticPacket(
+        binding: competingBinding, validAfter: 1, suffix: "pending_index_competing"
+    )
+    let activation = try CoordinatorSemanticDecision.decide(
+        state: CoordinatorSemanticState(),
+        command: semanticInitialActivation(
+            binding: competingBinding, packet: competingPacket, suffix: "pending_index_competing"
+        )
+    )
+    var competing = activation
+    if released {
+        let state = try CoordinatorSemanticReplay.applying(activation, to: CoordinatorSemanticState())
+        let expiry = try CoordinatorSemanticDecision.decide(state: state, command: semanticData([
+            "type": "expire_interaction", "event_id": "event_pending_index_competing_expiry",
+            "occurred_at": "2026-08-21T01:02:01Z", "binding": competingBinding,
+            "interaction_id": competingPacket["interaction_id"]!,
+            "packet_id": competingPacket["packet_id"]!, "revision": 1,
+            "reason": "decision_timeout",
+        ]))
+        competing = CoordinatorSemanticChange(
+            events: activation.events + expiry.events, documents: activation.documents
+        )
+    }
+    let journal = SemanticMemoryJournal()
+    let app = CoordinatorSemanticApplication(journal: journal)
+    let stale = try app.authorityProjection()
+    journal.installCompetingChange(competing)
+    let packet = try semanticPacket(
+        binding: binding, validAfter: 1, suffix: suffix,
+        sealedAt: "2026-08-21T01:03:01Z", expiresAt: "2026-08-21T01:05:01Z"
+    )
+    let command = try semanticInitialActivation(
+        binding: binding, packet: packet, suffix: suffix, occurredAt: "2026-08-21T01:03:01Z"
+    )
+    if released {
+        let result = try app.execute(command: command, using: stale)
+        #expect(result.commit.firstSequence == Int64(competing.events.count + 1))
+        #expect(result.commit.eventCount == 2)
+    } else {
+        semanticExpectCode("session_pending_interaction_conflict") {
+            _ = try app.execute(command: command, using: stale)
+        }
+    }
+    #expect(journal.appendAttempts == (released ? 2 : 1))
+    #expect(journal.loads == 2)
+    let state = try CoordinatorSemanticReplay.replay(journal.load())
+    #expect(state.pendingInteractions.count == 1)
+    let owner = try CoordinatorBinding(jsonObject: released ? binding : competingBinding)
+    #expect(state.pendingInteractions.first?.binding == owner)
+    let requestedBinding = try CoordinatorBinding(jsonObject: binding)
+    #expect((state.boundary(for: requestedBinding) != nil) == released)
+    // The operation-local projection is a value; neither a failed candidate nor
+    // a competing write mutates the stale caller's empty state.
+    #expect(stale.state.boundaries.isEmpty)
+}
+
 @Test("queued action claim is durable across restart and exact same-turn retry")
 func semanticQueuedActionClaimIsDurableAndIdempotent() throws {
     let suffix = "queued_claim_durable"

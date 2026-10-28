@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Biadone</title>
+  <link rel="stylesheet" href="../shared/common.css">
+  <link rel="stylesheet" href="tokens.css">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body class="web-page">
+  <header class="site-header">
+    <a href="#vision" data-brand-logo></a>
+    <nav class="site-nav" aria-label="주요 메뉴">
+      <a href="#vision" data-copy="nav.vision"></a>
+      <a href="#projects" data-copy="nav.projects"></a>
+      <a href="#edu" data-copy="nav.edu"></a>
+    </nav>
+  </header>
+
+  <main>
+    <section class="vision" id="vision" aria-labelledby="vision-title">
+      <div class="vision-copy">
+        <h1 id="vision-title" data-copy="web.title"></h1>
+        <p class="vision-description" data-copy="web.description"></p>
+        <div class="vision-actions">
+          <a class="primary-link" href="#projects" data-copy="web.primary"></a>
+          <a class="secondary-link" href="#edu" data-copy="web.secondary"></a>
+        </div>
+      </div>
+      <div class="concept-plane">
+        <ol class="concept-message">
+          <li class="concept-step concept-step--understand" data-copy="concept.understand"></li>
+          <li class="concept-step concept-step--act" data-copy="concept.act"></li>
+          <li class="concept-step concept-step--finish" data-copy="concept.finish"></li>
+        </ol>
+      </div>
+    </section>
+
+    <section class="projects" id="projects" aria-labelledby="projects-title">
+      <div class="projects-heading">
+        <h2 id="projects-title" data-copy="web.projectsTitle"></h2>
+      </div>
+      <article class="project-band project-band--blabee" aria-labelledby="blabee-title">
+        <h3 id="blabee-title" data-copy="web.blabeeTitle"></h3>
+        <div class="project-detail">
+          <p data-copy="web.blabeeDescription"></p>
+        </div>
+      </article>
+      <article class="project-band project-band--edu" id="edu" aria-labelledby="edu-project-title">
+        <h3 id="edu-project-title" data-copy="web.eduTitle"></h3>
+        <div class="project-detail">
+          <p data-copy="web.eduDescription"></p>
+          <p class="edu-status" data-copy="web.eduStatus"></p>
+        </div>
+      </article>
+    </section>
+  </main>
+
+  <footer class="site-footer">Biadone</footer>
+  <script src="../shared/content.js" defer></script>
+</body>
+</html>

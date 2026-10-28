@@ -9,6 +9,39 @@ import Vision
 struct PetAirViewTests {
     init() throws { try PetTypographyTestResources.register() }
 
+    @Test("Compact Codex overview and its action remain visible at 460 by 550 when opted in")
+    func compactConnectionSettingsPresentation() async throws {
+        guard ProcessInfo.processInfo.environment["BLABEE_HOME_DEFAULT_SETTINGS_RENDERS"] == "1" else { return }
+        for language in [PetUILanguage.english, .korean] {
+            try await PetL10n.$languageOverride.withValue(language) {
+                let restoreLanguage = petRenderLanguageOverride(language)
+                defer { restoreLanguage() }
+                let transport = PetFakeTransport()
+                let model = try viewModel(transport: transport)
+                defer { model.stopPolling() }
+                model.beginShortcutSettings()
+                model.selectSettingsTab(.general)
+                for dark in [false, true] {
+                    let (host, window) = hosting(model, size: CGSize(width: 460, height: 550), dark: dark, forceOpaque: true)
+                    defer { window.contentView = nil; window.close() }
+                    await settleLayout(host)
+                    let bitmap = try render(host, name: "compact-settings-460-550-\(language.rawValue)-\(dark ? "dark" : "light")")
+                    let copy = normalized(try recognizedText(in: bitmap).map(\.text).joined(separator: " "))
+                    let expectedSummary = language == .english ? "Codex connection" : "Codex 연결"
+                    let expectedAction = language == .english ? "Connection Settings" : "연결 설정"
+                    #expect(copy.contains(normalized(expectedSummary)), "\(copy)")
+                    #expect(copy.contains(normalized(expectedAction)), "\(copy)")
+                    for removed in ["Codex Plugin", "Codex Hook trust", "Codex watched projects", "Codex selection delivery",
+                                    "Codex Hook 신뢰", "Codex 관찰 프로젝트", "Codex 선택 전달"] {
+                        #expect(!copy.contains(normalized(removed)), "\(copy)")
+                    }
+                    #expect(host.fittingSize.width <= 461)
+                }
+                await expectNoSelectionRequests(transport)
+            }
+        }
+    }
+
     @Test("English settings and choice controls fit normal and narrow panels while card text stays exact")
     func englishPresentation() async throws {
         try await PetL10n.$languageOverride.withValue(.english) {
@@ -260,11 +293,302 @@ struct PetAirViewTests {
         await expectNoSelectionRequests(transport)
     }
 
+    @Test("Measured decisions shrink to their content with nearby footer controls", arguments: [2, 3, 4])
+    func adaptiveDecisionHeight(count: Int) async throws {
+        try await PetL10n.$languageOverride.withValue(.english) {
+            let transport = PetFakeTransport()
+            let model = try viewModel(transport: transport, count: count)
+            defer { model.stopPolling() }
+            for width in [460.0, 340.0] {
+                let (host, window, capture) = adaptiveHosting(model, width: width, maximumHeight: 900)
+                defer { window.contentView = nil; window.close() }
+                await settleLayout(host)
+                let measurement = try #require(capture.latest)
+                #expect(abs(window.frame.height - ceil(measurement.size.height)) < 1)
+                #expect(window.frame.height < 680)
+                #expect(capture.resizeCount <= 3, "Layout must settle instead of chasing its viewport height")
+                for scroll in scrollViews(in: host) {
+                    if let document = scroll.documentView {
+                        #expect(document.bounds.height <= scroll.contentView.bounds.height + 1)
+                    }
+                }
+                let bitmap = try render(host, name: "adaptive-\(count)-\(Int(width))")
+                let words = try recognizedText(in: bitmap)
+                let skip = try #require(words.first { normalized($0.text).contains("skipchoices") })
+                let lastTitle = try #require(words.first {
+                    normalized($0.text).contains(normalized(Self.choiceTitles[count - 1]))
+                })
+                // Pixel-derived separation catches the original empty viewport
+                // between the final card row and its secondary actions.
+                let titleToFooter = (lastTitle.frame.minY - skip.frame.maxY) * host.bounds.height
+                #expect(titleToFooter > 0 && titleToFooter < 190, "\(width): \(titleToFooter)")
+                #expect(words.contains { normalized($0.text).contains("first") })
+                #expect(words.contains { normalized($0.text).contains("second") })
+            }
+            await expectNoSelectionRequests(transport)
+        }
+    }
+
+    @Test("A same-count decision grows for longer content and shrinks again")
+    func adaptiveDecisionRemeasuresText() async throws {
+        let transport = PetFakeTransport()
+        let model = try viewModel(transport: transport, count: 2)
+        defer { model.stopPolling() }
+        let (host, window, capture) = adaptiveHosting(model, width: 460, maximumHeight: 900)
+        defer { window.contentView = nil; window.close() }
+        await settleLayout(host)
+        let shortMeasurement = try #require(capture.latest)
+        let shortHeight = window.frame.height
+        let card = PetTestCard(suffix: "air", rankedActionCount: 2)
+        var snapshot = petTestSnapshotObject(cards: [card], foregroundSuffix: "air")
+        var interactions = try #require(snapshot["interactions"] as? [[String: Any]])
+        interactions[0]["summary"] = String(repeating: "선택한 작업의 변경 내용과 검증 결과를 확인할 수 있습니다. ", count: 5)
+        snapshot["interactions"] = interactions
+        try model.receiveSnapshotDataForTesting(petTestData(snapshot))
+        await settleLayout(host)
+        let longMeasurement = try #require(capture.latest)
+        #expect(longMeasurement.identity != shortMeasurement.identity)
+        #expect(window.frame.height > shortHeight + 40)
+        #expect(shortMeasurement.accepted(for: longMeasurement.identity, width: 460) == nil)
+        try model.receiveSnapshotDataForTesting(petTestData(petTestSnapshotObject(cards: [card], foregroundSuffix: "air")))
+        await settleLayout(host)
+        #expect(window.frame.height < longMeasurement.size.height - 40)
+        #expect(capture.resizeCount <= 7)
+        await expectNoSelectionRequests(transport)
+    }
+
+    @Test("Adaptive decisions use overflow only when the display cannot fit the full text")
+    func adaptiveDecisionSmallDisplayOverflow() async throws {
+        let transport = PetFakeTransport()
+        let title = String(repeating: "작업 범위와 완료 조건을 확인합니다. ", count: 9) + " AIR TITLE END"
+        let model = try viewModel(transport: transport, count: 2, title: title)
+        defer { model.stopPolling() }
+        let (host, window, capture) = adaptiveHosting(model, width: 340, maximumHeight: 460)
+        defer { window.contentView = nil; window.close() }
+        await settleLayout(host)
+        #expect(window.frame.height == 460)
+        #expect(try #require(capture.latest).size.height > 460)
+        let scroll = try #require(scrollViews(in: host).first)
+        #expect(try #require(scroll.documentView).bounds.height > scroll.contentView.bounds.height)
+        scrollToEnd(scroll)
+        await settleLayout(host)
+        let bitmap = try render(host, name: "adaptive-small-display-end")
+        let words = try recognizedText(in: bitmap)
+        let copy = normalized(words.map(\.text).joined())
+        #expect(copy.contains("airtitleend"))
+        #expect(copy.contains("선택건너뛰기"))
+        #expect(capture.resizeCount <= 3)
+        await expectNoSelectionRequests(transport)
+    }
+
+    @Test("An overflowed decision resets its scroll position only for a new card")
+    func adaptiveDecisionCardResetsScroll() async throws {
+        let transport = PetFakeTransport()
+        let model = try viewModel(transport: transport, count: 2,
+                                  title: String(repeating: "변경 범위와 완료 조건을 확인합니다. ", count: 8))
+        defer { model.stopPolling() }
+        let (host, window, capture) = adaptiveHosting(model, width: 340, maximumHeight: 420)
+        defer { window.contentView = nil; window.close() }
+        await settleLayout(host)
+        let firstIdentity = try #require(capture.latest).identity
+        let oldScroll = try #require(scrollViews(in: host).first)
+        scrollToEnd(oldScroll)
+        await settleLayout(host)
+        let card = PetTestCard(suffix: "new-card", rankedActionCount: 2)
+        var snapshot = petTestSnapshotObject(cards: [card], foregroundSuffix: card.suffix)
+        var interactions = try #require(snapshot["interactions"] as? [[String: Any]])
+        interactions[0]["summary"] = String(repeating: "새 카드에서는 맨 위부터 작업을 확인합니다. ", count: 20)
+        snapshot["interactions"] = interactions
+        try model.receiveSnapshotDataForTesting(petTestData(snapshot))
+        await settleLayout(host)
+        #expect(try #require(capture.latest).identity != firstIdentity)
+        let scroll = try #require(scrollViews(in: host).first)
+        let document = try #require(scroll.documentView)
+        #expect(document.bounds.height > scroll.contentView.bounds.height + 1)
+        if document.isFlipped {
+            #expect(abs(scroll.documentVisibleRect.minY - document.bounds.minY) < 1)
+        } else {
+            #expect(abs(scroll.documentVisibleRect.maxY - document.bounds.maxY) < 1)
+        }
+        let bitmap = try render(host, name: "adaptive-new-card-top")
+        #expect(try recognizedText(in: bitmap).contains { normalized($0.text) == "blabee" })
+        scrollToEnd(scroll)
+        await settleLayout(host)
+        let readingPosition = scroll.documentVisibleRect.minY
+        // An ordinary timer snapshot must not send the reader back to the top.
+        interactions[0]["milliseconds_until_expiry"] = 80_000
+        snapshot["interactions"] = interactions
+        var routing = try #require(snapshot["routing"] as? [String: Any])
+        var pending = try #require(routing["pending"] as? [[String: Any]])
+        pending[0]["milliseconds_until_expiry"] = 80_000
+        routing["pending"] = pending
+        snapshot["routing"] = routing
+        try model.receiveSnapshotDataForTesting(petTestData(snapshot))
+        await settleLayout(host)
+        let updatedScroll = try #require(scrollViews(in: host).first)
+        #expect(abs(updatedScroll.documentVisibleRect.minY - readingPosition) < 1)
+        await expectNoSelectionRequests(transport)
+    }
+
+    @Test("One hosted decision remeasures when display width narrows and widens")
+    func adaptiveDecisionWidthChanges() async throws {
+        let transport = PetFakeTransport()
+        let model = try viewModel(transport: transport, count: 2,
+                                  title: "작업 내용과 완료 기준을 확인하고 선택합니다")
+        defer { model.stopPolling() }
+        let (host, window, capture) = adaptiveHosting(model, width: 460, maximumHeight: 900)
+        defer { window.contentView = nil; window.close() }
+        await settleLayout(host)
+        let wide = try #require(capture.latest)
+        capture.maximumSize.width = 340
+        window.setContentSize(CGSize(width: 340, height: 900))
+        await settleLayout(host)
+        #expect(try #require(capture.latest).size.width == 340)
+        #expect(window.frame.height > wide.size.height)
+        #expect(wide.accepted(for: capture.latest?.identity, width: 340) == nil)
+        capture.maximumSize.width = 460
+        window.setContentSize(CGSize(width: 460, height: 900))
+        await settleLayout(host)
+        #expect(abs(window.frame.height - ceil(wide.size.height)) < 1)
+        #expect(capture.resizeCount <= 5)
+        await expectNoSelectionRequests(transport)
+    }
+
+    @Test("Screenshot-sized summary keeps both cards and footer in a compact panel")
+    func adaptiveDecisionScreenshot() async throws {
+        try await PetL10n.$languageOverride.withValue(.english) {
+            let transport = PetFakeTransport()
+            let model = try viewModel(
+                transport: transport, count: 2, suggestionKind: "current_task",
+                summary: "선택한 옵션의 제목·목표·제약·완료 조건을 Codex에 전달하는 프롬프트에 표시하도록 수정했습니다. ref와 Hook 검증은 유지하며, 변조·재시도·구형 전달 형식의 회귀 검사도 통과했습니다. 설치 앱은 아직 변경하지 않았습니다.",
+                titles: ["Codex 실제 전달 확인", "수정본 빌드·공증"]
+            )
+            defer { model.stopPolling() }
+            let (host, window, capture) = adaptiveHosting(model, width: 460, maximumHeight: 900)
+            defer { window.contentView = nil; window.close() }
+            await settleLayout(host)
+            #expect(try #require(capture.latest).size.height < 520)
+            let bitmap = try render(host, name: "adaptive-user-example")
+            let words = try recognizedText(in: bitmap)
+            let copy = normalized(words.map(\.text).joined())
+            #expect(copy.contains("codex실제전달확인"))
+            #expect(copy.contains("수정본빌드공증"))
+            #expect(copy.contains("skipchoices"))
+            await expectNoSelectionRequests(transport)
+        }
+    }
+
+    @Test("The panel controller preserves other modes and returns to adaptive decisions")
+    func adaptiveDecisionControllerTransitions() async throws {
+        let transport = PetFakeTransport()
+        let model = try viewModel(transport: transport, count: 2)
+        let controller = PetPanelController(viewModel: model)
+        defer {
+            controller.stopObservingScreenChanges()
+            controller.panel.contentView = nil
+            controller.panel.close()
+            model.stopPolling()
+        }
+        let host = try #require(controller.panel.contentView)
+        await settleLayout(host)
+        #expect(!controller.panel.isVisible)
+        let naturalHeight = controller.panel.frame.height
+        #expect(naturalHeight < 500)
+        model.beginShortcutSettings()
+        await settleLayout(host)
+        #expect(controller.panel.frame.height > naturalHeight)
+        model.cancelShortcutSettings()
+        await settleLayout(host)
+        // Settings already leave the details flag expanded. Preserve that
+        // behavior, then exercise the user's return to the collapsed card.
+        #expect(model.isExpanded)
+        #expect(controller.panel.frame.height > naturalHeight)
+        model.setExpanded(false)
+        await settleLayout(host)
+        #expect(abs(controller.panel.frame.height - naturalHeight) < 1)
+
+        let card = PetTestCard(suffix: "air", rankedActionCount: 2)
+        let approval = petTestSnapshotObject(cards: [card], foregroundSuffix: "air",
+                                            permissionRequests: [.init(suffix: "air")], permissionNoticeCount: 1)
+        try model.receiveSnapshotDataForTesting(petTestData(approval))
+        await settleLayout(host)
+        #expect(model.hasNewPermissionNotice)
+        #expect(PetDecisionLayoutIdentity.current(for: model, language: PetL10n.language) == nil)
+        #expect(controller.panel.frame.height > naturalHeight)
+        try model.receiveSnapshotDataForTesting(petTestData(petTestSnapshotObject(cards: [card], foregroundSuffix: "air")))
+        await settleLayout(host)
+        #expect(PetDecisionLayoutIdentity.current(for: model, language: PetL10n.language) != nil)
+        #expect(controller.panel.frame.height < 500)
+        #expect(!controller.panel.isVisible)
+        await expectNoSelectionRequests(transport)
+    }
+
+    @MainActor
+    private final class AdaptiveLayoutCapture {
+        let model: PetViewModel
+        var maximumSize: CGSize
+        weak var window: NSWindow?
+        var latest: PetDecisionContentMeasurement?
+        var resizeCount = 0
+
+        init(model: PetViewModel, maximumSize: CGSize) {
+            self.model = model
+            self.maximumSize = maximumSize
+        }
+
+        func receive(_ measurement: PetDecisionContentMeasurement) {
+            let identity = PetDecisionLayoutIdentity.current(for: model, language: PetL10n.language)
+            guard measurement.accepted(for: identity, width: maximumSize.width) != nil,
+                  let window else { return }
+            latest = measurement
+            let state = PetPanelLayoutState(
+                isExpanded: model.isExpanded, isEditingShortcuts: model.isEditingShortcuts,
+                isShowingOnboarding: model.isShowingOnboarding,
+                actionCount: model.displayInteraction?.actionChoices.count,
+                fifoQueueCount: model.eventQueueCount,
+                hasPermissionNotice: model.hasNewPermissionNotice,
+                hasStatusMessage: model.hasVisibleStatusMessage
+            )
+            let size = PetPanelSizePolicy.preferredSize(
+                for: state, decisionMeasurement: measurement, decisionIdentity: identity,
+                availableSize: maximumSize
+            )
+            guard window.frame.size != size else { return }
+            resizeCount += 1
+            window.setContentSize(size)
+        }
+    }
+
+    private func adaptiveHosting(
+        _ model: PetViewModel, width: CGFloat, maximumHeight: CGFloat
+    ) -> (NSHostingView<AnyView>, NSWindow, AdaptiveLayoutCapture) {
+        let capture = AdaptiveLayoutCapture(model: model, maximumSize: CGSize(width: width, height: maximumHeight))
+        let view = PetRootView(viewModel: model, usesSystemGlassSurface: false,
+                              onDecisionContentSize: { capture.receive($0) })
+            .environment(\.colorScheme, .light)
+            .environment(\.petAirForceOpaqueSurfaces, true)
+            .background(PetAirPalette.panel(for: .light))
+        let host = NSHostingView(rootView: AnyView(view))
+        host.sizingOptions = []
+        host.appearance = NSAppearance(named: .aqua)
+        let window = NSWindow(
+            contentRect: CGRect(x: -20_000, y: -20_000, width: width, height: maximumHeight),
+            styleMask: .borderless, backing: .buffered, defer: false
+        )
+        window.isReleasedWhenClosed = false
+        capture.window = window
+        window.contentView = host
+        host.layoutSubtreeIfNeeded()
+        return (host, window, capture)
+    }
+
     private func viewModel(
         transport: PetFakeTransport,
         count: Int? = nil,
         title: String? = nil,
-        suggestionKind: String? = nil
+        suggestionKind: String? = nil,
+        summary: String? = nil,
+        titles: [String]? = nil
     ) throws -> PetViewModel {
         let model = PetViewModel(
             transport: transport,
@@ -287,10 +611,11 @@ struct PetAirViewTests {
         if count != nil {
             var interactions = try #require(snapshot["interactions"] as? [[String: Any]])
             if let suggestionKind { interactions[0]["suggestion_kind"] = suggestionKind }
+            if let summary { interactions[0]["summary"] = summary }
             var choices = try #require(interactions[0]["choices"] as? [[String: Any]])
             for index in choices.indices {
                 var action = try #require(choices[index]["action"] as? [String: Any])
-                action["title"] = title ?? Self.choiceTitles[index]
+                action["title"] = title ?? titles?[index] ?? Self.choiceTitles[index]
                 choices[index]["action"] = action
             }
             interactions[0]["choices"] = choices

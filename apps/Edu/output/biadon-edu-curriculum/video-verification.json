@@ -1,0 +1,70 @@
+{
+  "width": 1920,
+  "height": 1080,
+  "fps": 30.0,
+  "video_codec": "h264",
+  "audio_codec": "aac",
+  "audio_rate": 44100,
+  "video_duration": 100.0,
+  "audio_duration": 100.0,
+  "video_start": 0.0,
+  "audio_start": 0.0,
+  "decoded_frames": 3000,
+  "faststart": true,
+  "file_bytes": 6486101,
+  "preview_comparisons": [
+    {
+      "time": 4,
+      "frame": 120,
+      "luminance_ssim": 0.9995514212245734
+    },
+    {
+      "time": 14,
+      "frame": 420,
+      "luminance_ssim": 0.9996974637992605
+    },
+    {
+      "time": 23,
+      "frame": 690,
+      "luminance_ssim": 0.9996428537611055
+    },
+    {
+      "time": 31,
+      "frame": 930,
+      "luminance_ssim": 0.9996564510968717
+    },
+    {
+      "time": 41,
+      "frame": 1230,
+      "luminance_ssim": 0.9996138143893015
+    },
+    {
+      "time": 50,
+      "frame": 1500,
+      "luminance_ssim": 0.9996967119883867
+    },
+    {
+      "time": 59,
+      "frame": 1770,
+      "luminance_ssim": 0.9996376456052114
+    },
+    {
+      "time": 72,
+      "frame": 2160,
+      "luminance_ssim": 0.9997620879159257
+    },
+    {
+      "time": 86,
+      "frame": 2580,
+      "luminance_ssim": 0.999605091819154
+    },
+    {
+      "time": 97,
+      "frame": 2910,
+      "luminance_ssim": 0.9997554761410776
+    }
+  ],
+  "verification": "PASS",
+  "narration": false,
+  "soundtrack": "original locally synthesized score"
+}

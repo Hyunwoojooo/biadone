@@ -1,6 +1,7 @@
 import AppKit
 import BlabeeProductSupport
 import CoordinatorSwift
+import Darwin
 import Foundation
 import ServiceManagement
 
@@ -41,11 +42,26 @@ enum PetServiceRegistrationState: Sendable, Equatable {
 protocol PetOnboardingAdapting: AnyObject {
     func serviceRegistrationState() -> PetServiceRegistrationState
     func configuredProjectPaths() throws -> [String]
+    /// nil means no saved configuration. An empty array is an explicit saved scope.
+    func configuredProjectPathsIfPresent() throws -> [String]?
+    func initializeDefaultProjectScopeIfMissing() throws
     func registerService() throws
     func unregisterService() async throws
     func openSystemSettingsLoginItems()
     func enableProject(at path: String) throws
     func disableProject(at path: String) throws
+}
+
+extension PetOnboardingAdapting {
+    // Older/fixture adapters remain explicit scopes. They must opt in to default
+    // initialization and must never inherit the live user's home implicitly.
+    func configuredProjectPathsIfPresent() throws -> [String]? {
+        try configuredProjectPaths()
+    }
+
+    func initializeDefaultProjectScopeIfMissing() throws {
+        throw CoordinatorError("pet_onboarding_unavailable", "default working folder setup is unavailable")
+    }
 }
 
 @MainActor
@@ -85,7 +101,37 @@ final class PetLiveOnboardingAdapter: PetOnboardingAdapting {
     }
 
     func configuredProjectPaths() throws -> [String] {
-        try ProductServiceBootstrap.resolve(environment: environment).enabledProjectPaths
+        try configuredProjectPathsIfPresent() ?? []
+    }
+
+    func configuredProjectPathsIfPresent() throws -> [String]? {
+        try ProductServiceBootstrap.loadEnabledProjectsIfPresent(environment: environment)
+    }
+
+    func initializeDefaultProjectScopeIfMissing() throws {
+        // Avoid even resolving the default when the user already saved a scope.
+        // The writer checks again under its lock and publishes without replacing.
+        guard try configuredProjectPathsIfPresent() == nil else { return }
+        _ = try settingsWriter.initializeIfMissing(
+            defaultProject: Self.accountHomeDirectory(),
+            environment: environment
+        )
+    }
+
+    private static func accountHomeDirectory() throws -> String {
+        // HOME/CODEX_HOME can be overridden by a launcher; use the OS account.
+        var buffer = [CChar](repeating: 0, count: 16_384)
+        let home: String? = buffer.withUnsafeMutableBufferPointer { buffer in
+            var account = passwd()
+            var result: UnsafeMutablePointer<passwd>?
+            guard getpwuid_r(geteuid(), &account, buffer.baseAddress, buffer.count, &result) == 0,
+                  result != nil, let path = account.pw_dir else { return nil }
+            return String(cString: path)
+        }
+        guard let home, home.hasPrefix("/"), home != "/" else {
+            throw CoordinatorError("pet_home_directory_unavailable", "the OS account home directory is unavailable")
+        }
+        return home
     }
 
     func registerService() throws {

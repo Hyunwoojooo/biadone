@@ -1,0 +1,6 @@
+/*
+  X-Robots-Tag: noindex, nofollow
+  X-Content-Type-Options: nosniff
+  Referrer-Policy: strict-origin-when-cross-origin
+  Content-Security-Policy: default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self'; media-src 'self'; base-uri 'none'; form-action mailto:; frame-ancestors 'none'
+  Cache-Control: public, no-cache, no-transform

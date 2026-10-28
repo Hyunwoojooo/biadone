@@ -81,6 +81,7 @@ struct CodexHookApprovalQualificationTests {
             ("0.162.0", "5f410845b5189c21ca0aa20c2ef91293e3145b13"),
             ("0.162.1", "9ddc61acceef79aa2aad437ba1fe94239f2e0423"),
             ("0.163.0", "5a4eec85679683d4b137579cb2555fe0b42a02dd"),
+            ("0.164.0", "3a7d7f1461a52f92f4a4fdc2cc70fc06bee91285"),
         ]
         for (version, hash) in reviewed {
             let expected = "codex-\(version)-arm64-\(hash)"
@@ -93,7 +94,7 @@ struct CodexHookApprovalQualificationTests {
             )
             #expect(fixture.evaluate() == expected)
             #expect(HookPermissionPolicy.allowsOnce(qualification: expected))
-            for otherVersion in ["0.162.2", "0.163.1", "0.164.0", "0.162.1-alpha.1", "0.163.0-alpha.1"] {
+            for otherVersion in ["0.162.2", "0.163.1", "0.164.1", "0.165.0", "0.162.1-alpha.1", "0.163.0-alpha.1", "0.164.0-alpha.1"] {
                 #expect(!HookPermissionPolicy.allowsOnce(
                     qualification: "codex-\(otherVersion)-arm64-\(hash)"
                 ))

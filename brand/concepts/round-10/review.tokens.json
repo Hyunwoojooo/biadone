@@ -1,0 +1,123 @@
+{
+  "$description": "Round10 font review only. Approved common brand tokens remain unchanged.",
+  "primitive": {
+    "review": {
+      "specimen-title": {
+        "$value": "48px",
+        "$type": "dimension"
+      },
+      "specimen-mobile-title": {
+        "$value": "32px",
+        "$type": "dimension"
+      },
+      "control-inset": {
+        "$value": "12px",
+        "$type": "dimension"
+      },
+      "web-width": {
+        "$value": "1280px",
+        "$type": "dimension"
+      },
+      "web-initial-height": {
+        "$value": "1200px",
+        "$type": "dimension"
+      },
+      "preview-min-height": {
+        "$value": "96px",
+        "$type": "dimension"
+      },
+      "wanted-family": {
+        "$value": "\"Review Wanted\", sans-serif",
+        "$type": "fontFamily"
+      },
+      "neo-family": {
+        "$value": "\"Review Neo\", sans-serif",
+        "$type": "fontFamily"
+      },
+      "line-family": {
+        "$value": "\"Review LINE\", sans-serif",
+        "$type": "fontFamily"
+      }
+    }
+  },
+  "semantic": {
+    "review": {
+      "specimen-title": {
+        "$value": "{primitive.review.specimen-title}",
+        "$type": "dimension"
+      },
+      "specimen-mobile-title": {
+        "$value": "{primitive.review.specimen-mobile-title}",
+        "$type": "dimension"
+      },
+      "control-inset": {
+        "$value": "{primitive.review.control-inset}",
+        "$type": "dimension"
+      },
+      "web-width": {
+        "$value": "{primitive.review.web-width}",
+        "$type": "dimension"
+      },
+      "web-initial-height": {
+        "$value": "{primitive.review.web-initial-height}",
+        "$type": "dimension"
+      },
+      "preview-min-height": {
+        "$value": "{primitive.review.preview-min-height}",
+        "$type": "dimension"
+      },
+      "wanted-family": {
+        "$value": "{primitive.review.wanted-family}",
+        "$type": "fontFamily"
+      },
+      "neo-family": {
+        "$value": "{primitive.review.neo-family}",
+        "$type": "fontFamily"
+      },
+      "line-family": {
+        "$value": "{primitive.review.line-family}",
+        "$type": "fontFamily"
+      }
+    }
+  },
+  "component": {
+    "review": {
+      "specimen-title": {
+        "$value": "{semantic.review.specimen-title}",
+        "$type": "dimension"
+      },
+      "specimen-mobile-title": {
+        "$value": "{semantic.review.specimen-mobile-title}",
+        "$type": "dimension"
+      },
+      "control-inset": {
+        "$value": "{semantic.review.control-inset}",
+        "$type": "dimension"
+      },
+      "web-width": {
+        "$value": "{semantic.review.web-width}",
+        "$type": "dimension"
+      },
+      "web-initial-height": {
+        "$value": "{semantic.review.web-initial-height}",
+        "$type": "dimension"
+      },
+      "preview-min-height": {
+        "$value": "{semantic.review.preview-min-height}",
+        "$type": "dimension"
+      },
+      "wanted-family": {
+        "$value": "{semantic.review.wanted-family}",
+        "$type": "fontFamily"
+      },
+      "neo-family": {
+        "$value": "{semantic.review.neo-family}",
+        "$type": "fontFamily"
+      },
+      "line-family": {
+        "$value": "{semantic.review.line-family}",
+        "$type": "fontFamily"
+      }
+    }
+  }
+}

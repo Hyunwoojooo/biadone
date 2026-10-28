@@ -9,6 +9,10 @@ node_modules/
 out/
 dist/
 coverage/
+tmp/appmap/
+artifacts/architecture/
+docs/architecture-current.visual-check.*
+docs/runtime-architecture.visual-check.*
 
 .env
 .env.*

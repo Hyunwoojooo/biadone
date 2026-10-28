@@ -28,6 +28,33 @@ struct PetPanelLayoutState: Sendable, Equatable {
     var isShowingChoicePreview = false
     var isProductAccessBlocked = false
     var hasSelectionDeliveryNotice = false
+
+    var usesAdaptiveDecisionSize: Bool {
+        actionCount != nil && !isExpanded && !isEditingShortcuts && !isShowingOnboarding
+            && !hasPermissionNotice && !isShowingChoicePreview && !isProductAccessBlocked
+    }
+}
+
+/// A measurement describes one rendered decision at one actual window width.
+/// It is never reused for another card, language, service generation, or mode.
+struct PetDecisionContentMeasurement: Sendable, Equatable {
+    let identity: PetDecisionLayoutIdentity
+    let size: CGSize
+
+    func accepted(for currentIdentity: PetDecisionLayoutIdentity?, width: CGFloat) -> CGSize? {
+        guard identity == currentIdentity,
+              size.width.isFinite, size.height.isFinite, width.isFinite,
+              size.width > 0, size.height > 0, width > 0,
+              abs(size.width - width) <= 0.5 else { return nil }
+        return size
+    }
+}
+
+enum PetDecisionViewportPolicy {
+    static func requiresScrolling(contentHeight: CGFloat, availableHeight: CGFloat) -> Bool {
+        contentHeight.isFinite && availableHeight.isFinite
+            && contentHeight > availableHeight + 0.5
+    }
 }
 
 enum PetPanelScreenMode: Sendable, Equatable {
@@ -63,7 +90,7 @@ enum PetPanelSizePolicy {
     static let expandedHeight: CGFloat = 680
     static let minimumDecisionHeight: CGFloat = 500
     static let decisionBaseHeight: CGFloat = 350
-    // Air choices form at most two rows; long text scrolls inside the panel.
+    // Fallback until the collapsed decision reports its natural content size.
     static let actionHeight: CGFloat = 150
     static let fifoQueueHeight: CGFloat = 44
     static let permissionRequestHeight: CGFloat = 520
@@ -74,7 +101,31 @@ enum PetPanelSizePolicy {
     static let compactSize = CGSize(width: width, height: compactHeight)
     static let expandedSize = CGSize(width: width, height: expandedHeight)
 
-    static func preferredSize(for state: PetPanelLayoutState) -> CGSize {
+    static func preferredSize(
+        for state: PetPanelLayoutState,
+        decisionMeasurement: PetDecisionContentMeasurement? = nil,
+        decisionIdentity: PetDecisionLayoutIdentity? = nil,
+        availableSize: CGSize? = nil
+    ) -> CGSize {
+        let available = availableSize.flatMap { size in
+            size.width.isFinite && size.height.isFinite && size.width > 0 && size.height > 0 ? size : nil
+        }
+        let actualWidth = min(width, available?.width ?? width)
+        var size = unmeasuredPreferredSize(for: state)
+        if state.usesAdaptiveDecisionSize,
+           let measured = decisionMeasurement?.accepted(for: decisionIdentity, width: actualWidth) {
+            // No count-based minimum: chrome, wrapped text, cards, and footer
+            // are already included in this natural-height measurement.
+            size = CGSize(width: actualWidth, height: ceil(measured.height))
+        }
+        if let available {
+            size.width = min(size.width, available.width)
+            size.height = min(size.height, available.height)
+        }
+        return size
+    }
+
+    private static func unmeasuredPreferredSize(for state: PetPanelLayoutState) -> CGSize {
         if state.isProductAccessBlocked { return expandedSize }
         if state.hasPermissionNotice {
             let height = permissionRequestHeight
@@ -323,6 +374,7 @@ final class PetPanelController: NSObject, NSWindowDelegate {
     private var globalMouseMonitor: Any?
     private var lastScreenID: Int?
     private var openedOnlyForChoicePreview = false
+    private var decisionMeasurement: PetDecisionContentMeasurement?
 
     init(viewModel: PetViewModel) {
         self.viewModel = viewModel
@@ -339,7 +391,16 @@ final class PetPanelController: NSObject, NSWindowDelegate {
         super.init()
         configurePanel()
         panel.delegate = self
-        panel.contentView = NSHostingView(rootView: PetRootView(viewModel: viewModel))
+        let hostingView = NSHostingView(rootView: PetRootView(
+            viewModel: viewModel,
+            onDecisionContentSize: { [weak self] measurement in
+                self?.decisionContentSizeChanged(measurement)
+            }
+        ))
+        // The controller owns screen clamping. Intrinsic hosting-size updates
+        // must not race the measured size and recursively resize the window.
+        hostingView.sizingOptions = []
+        panel.contentView = hostingView
         placeInitially()
         viewModel.onPanelLayoutChanged = { [weak self] in
             self?.refreshContentSize()
@@ -433,6 +494,18 @@ final class PetPanelController: NSObject, NSWindowDelegate {
         if panel.isVisible { panel.orderFrontRegardless() }
     }
 
+    private func decisionContentSizeChanged(_ measurement: PetDecisionContentMeasurement) {
+        let identity = PetDecisionLayoutIdentity.current(for: viewModel, language: PetL10n.language)
+        let width = min(PetPanelSizePolicy.width, availableDisplaySize?.width ?? PetPanelSizePolicy.width)
+        guard measurement.accepted(for: identity, width: width) != nil else { return }
+        if let previous = decisionMeasurement,
+           previous.identity == measurement.identity,
+           abs(previous.size.width - measurement.size.width) <= 0.5,
+           abs(previous.size.height - measurement.size.height) <= 0.5 { return }
+        decisionMeasurement = measurement
+        refreshContentSize()
+    }
+
     private func choicePreviewChanged(isShowing: Bool) {
         if isShowing {
             if !panel.isVisible {
@@ -482,7 +555,23 @@ final class PetPanelController: NSObject, NSWindowDelegate {
     }
 
     private var preferredSize: CGSize {
-        PetPanelSizePolicy.preferredSize(for: Self.layoutState(for: viewModel))
+        let identity = PetDecisionLayoutIdentity.current(for: viewModel, language: PetL10n.language)
+        let availableSize = availableDisplaySize
+        let actualWidth = min(PetPanelSizePolicy.width, availableSize?.width ?? PetPanelSizePolicy.width)
+        if decisionMeasurement?.accepted(for: identity, width: actualWidth) == nil {
+            decisionMeasurement = nil
+        }
+        return PetPanelSizePolicy.preferredSize(
+            for: Self.layoutState(for: viewModel),
+            decisionMeasurement: decisionMeasurement,
+            decisionIdentity: identity,
+            availableSize: availableSize
+        )
+    }
+
+    private var availableDisplaySize: CGSize? {
+        statusItemButton?.window?.screen?.visibleFrame.size
+            ?? preferredDisplay(stable: true)?.visibleFrame.size
     }
 
     private static func layoutState(for viewModel: PetViewModel) -> PetPanelLayoutState {

@@ -102,7 +102,7 @@ enum PetAppUpdateState: Equatable, Sendable {
             PetL10n.text("This repository has no public stable Blabee releases yet.", korean: "이 저장소의 GitHub Releases에 공개된 정식 Blabee 배포 버전이 아직 없습니다.")
         case let .available(release):
             if release.installerAssets != nil {
-                PetL10n.text("Choose Update to download and verify the installer. You can review which tasks will close and resume before installation.", korean: "업데이트를 누르면 설치 파일을 다운로드하고 검증합니다. 설치 전 종료·복원할 작업을 확인할 수 있습니다.")
+                PetL10n.text("Choose Update to download and verify the installer. A separate window will guide you to save your work and close connected Codex and Claude sessions before Blabee restarts.", korean: "업데이트를 누르면 설치 파일을 다운로드하고 검증합니다. 별도 창에서 작업 저장과 Codex·Claude 세션 종료를 안내한 뒤 Blabee를 재시작합니다.")
             } else {
                 PetL10n.text("Version \(release.version.displayLabel) is available, but no in-app installer could be verified. Check the release page for installation files.", korean: "\(release.version.displayLabel) 버전이 있지만 앱에서 설치할 수 있는 배포 파일을 확인하지 못했습니다. 릴리스 페이지에서 설치본을 확인하세요.")
             }

@@ -87,7 +87,7 @@ struct AppInstallationError: Error, LocalizedError, Sendable {
         case .runtimeUseLeaseUnavailable:
             PetL10n.text("Installation stopped safely because the Blabee runtime lock could not be verified. Reopen the app and try again.", korean: "Blabee 실행 잠금을 확인할 수 없어 안전하게 설치를 중단했습니다. 앱을 다시 열어 재시도해 주세요.")
         case .claudeRuntimeBlocked:
-            PetL10n.text("Claude Code is using Blabee, or its release could not be confirmed. Save your work, exit connected Claude Code sessions normally, and check again.", korean: "Claude Code에서 Blabee를 사용 중이거나 사용 종료를 확인하지 못했습니다. 작업을 저장하고 연결된 Claude Code를 정상 종료한 뒤 다시 확인해 주세요.")
+            PetL10n.text("Claude Code is using Blabee, or its release could not be confirmed. Close connected Claude sessions normally. If they are already closed, use Prepare Connection Recovery, then restart your Mac and retry.", korean: "Claude Code에서 Blabee를 사용 중이거나 사용 종료를 확인하지 못했습니다. 연결된 Claude 세션을 정상 종료해 주세요. 이미 종료했다면 ‘연결 복구 준비’를 누른 뒤 Mac을 재시작하고 다시 시도해 주세요.")
         case .insufficientPermissions:
             PetL10n.text("You do not have permission to install in Applications. Copy the app using Finder and follow macOS permission prompts.", korean: "응용 프로그램 폴더에 설치할 권한이 없습니다. Finder에서 앱을 복사하고 macOS의 권한 안내를 따라 주세요.")
         case .installationBusy:
@@ -126,7 +126,8 @@ enum AppClaudeRuntimeUpdateGuard {
     }
 
     static func requireLiveClear() throws {
-        try requireClear(ClaudeRuntimePayloadUse.inspect())
+        do { try AppUpdateTransitionPreflight.recoverAndRequireClaudeReady() }
+        catch { throw AppInstallationError(.claudeRuntimeBlocked) }
     }
 
     static func acquire(storeRootURL: URL = ClaudeRuntimePayload.defaultStoreRootURL) throws -> any Sendable {

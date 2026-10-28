@@ -3,9 +3,10 @@ import Darwin
 import Dispatch
 import Foundation
 
-/// Performs one bounded, read-only `hooks/list` request against the official
-/// Codex App Server. It never reads Codex's private trust files or reproduces
-/// Codex's hook hashing rules.
+/// Performs one bounded `hooks/list` request against the official Codex App Server.
+/// Codex may migrate existing Plugin Hook trust while listing, including before
+/// an error or timeout. Blabee never reads or writes Codex's private trust files
+/// directly and does not reproduce Codex's hook hashing rules.
 enum DoctorHookTrustInspector {
     private static let maximumMessageBytes = 1_048_576
     private static let maximumTotalBytes = 4 * 1_048_576

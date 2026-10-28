@@ -144,6 +144,51 @@ struct PetClaudeConnectionTests {
         #expect(await h.setup.operations == ["inspect", "enable", "inspect", "inspect"])
     }
 
+    @Test("Updating enabled legacy automatic settings writes once and confirms the fresh inspection")
+    func updateEnabledAutomaticConfiguration() async throws {
+        let old = ClaudeAutoConnectSetup.Inspection(isEnabled: true, canEnable: true,
+            canDisable: true, detail: "update required", canLaunch: true, needsSetupRefresh: true)
+        let setup = ConnectionSetupFixture(inspection: old)
+        let controller = PetClaudeConnectionController(inspect: { await setup.inspect() },
+            enable: { await setup.enable() }, disable: { await setup.disable() })
+        #expect(!old.automaticConnectionReady)
+        let updated = try await controller.configureAutomaticConnection()
+        #expect(updated.automaticConnectionReady && !updated.needsSetupRefresh)
+        #expect(controller.inspection == updated && controller.phase == .idle)
+        #expect(await setup.operations == ["inspect", "enable", "inspect"])
+        #expect(try await controller.configureAutomaticConnection() == updated)
+        #expect(await setup.enableCount == 1)
+        #expect(await setup.disableCount == 0)
+    }
+
+    @Test("Starting a connection refreshes enabled legacy automatic settings exactly once before launch")
+    func connectRefreshesEnabledAutomaticConfiguration() async {
+        let old = ClaudeAutoConnectSetup.Inspection(isEnabled: true, canEnable: true,
+            canDisable: true, detail: "update required", canLaunch: true, needsSetupRefresh: true)
+        let setup = ConnectionSetupFixture(inspection: old)
+        let controller = PetClaudeConnectionController(inspect: { await setup.inspect() },
+            enable: { await setup.enable() }, disable: { await setup.disable() })
+        var preparations = 0
+        var launches = 0
+        for _ in 0..<2 {
+            await controller.connect(terminal: .terminal, prepareService: {
+                #expect(await setup.enableCount == 1)
+                preparations += 1
+                return connectionService
+            }, launch: { native, terminal in
+                launches += 1
+                return .init(nativeSessionID: native, project: connectionProject, terminal: terminal)
+            })
+        }
+        #expect(await setup.operations == ["inspect", "enable"])
+        #expect(await setup.enableCount == 1)
+        #expect(await setup.disableCount == 0)
+        #expect(preparations == 1 && launches == 1)
+        #expect(controller.inspection?.automaticConnectionReady == true)
+        #expect(controller.inspection?.needsSetupRefresh == false)
+        #expect(controller.phase == .waitingForSession && controller.matchedSession == nil)
+    }
+
     @Test("Automatic setup returns fresh saved state instead of an optimistic write receipt")
     func automaticConfigurationRechecksWriterResult() async throws {
         let conflict = ClaudeAutoConnectSetup.Inspection(isEnabled: false, canEnable: false,

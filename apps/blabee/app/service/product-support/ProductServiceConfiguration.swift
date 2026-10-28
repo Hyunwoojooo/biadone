@@ -287,10 +287,23 @@ package enum ProductServiceBootstrap {
     }
 
     static func loadEnabledProjects(applicationSupport: URL) throws -> [String] {
+        try loadEnabledProjectsIfPresent(applicationSupport: applicationSupport) ?? []
+    }
+
+    /// A missing configuration is different from an explicitly saved empty
+    /// allowlist. Only the former may receive first-run defaults.
+    package static func loadEnabledProjectsIfPresent(
+        environment: ProductServiceEnvironment
+    ) throws -> [String]? {
+        let paths = try resolvePaths(environment: environment)
+        return try loadEnabledProjectsIfPresent(applicationSupport: paths.applicationSupport)
+    }
+
+    package static func loadEnabledProjectsIfPresent(applicationSupport: URL) throws -> [String]? {
         guard let applicationSupportDescriptor = try ProductServiceSecureFilesystem
             .openExistingApplicationSupportIfPresent(applicationSupport)
         else {
-            return []
+            return nil
         }
         defer { close(applicationSupportDescriptor) }
         guard let productDescriptor = try ProductServiceSecureFilesystem
@@ -299,7 +312,7 @@ package enum ProductServiceBootstrap {
                 name: BlabeeProductProfile.current.applicationSupportDirectoryName
             )
         else {
-            return []
+            return nil
         }
         defer { close(productDescriptor) }
         guard let configDescriptor = try ProductServiceSecureFilesystem
@@ -308,11 +321,11 @@ package enum ProductServiceBootstrap {
                 name: "config"
             )
         else {
-            return []
+            return nil
         }
         defer { close(configDescriptor) }
 
-        return try loadEnabledProjects(
+        return try loadEnabledProjectsIfPresent(
             directoryDescriptor: configDescriptor,
             fileName: "service.json"
         )
@@ -322,6 +335,13 @@ package enum ProductServiceBootstrap {
         directoryDescriptor: Int32,
         fileName: String
     ) throws -> [String] {
+        try loadEnabledProjectsIfPresent(directoryDescriptor: directoryDescriptor, fileName: fileName) ?? []
+    }
+
+    package static func loadEnabledProjectsIfPresent(
+        directoryDescriptor: Int32,
+        fileName: String
+    ) throws -> [String]? {
         var directoryInfo = stat()
         guard fileName == "service.json",
               fstat(directoryDescriptor, &directoryInfo) == 0,
@@ -338,7 +358,7 @@ package enum ProductServiceBootstrap {
             O_RDONLY | O_NONBLOCK | O_NOFOLLOW | O_CLOEXEC
         )
         guard fileDescriptor >= 0 else {
-            if errno == ENOENT { return [] }
+            if errno == ENOENT { return nil }
             throw unsafeConfiguration("the service config file cannot be opened safely")
         }
         defer { close(fileDescriptor) }

@@ -120,6 +120,30 @@ func petSelectionDeliverySnapshotPersistence(_ attempted: Bool) async throws {
     #expect(await h.transport.backend.requestCount(type: "select") == 1)
 }
 
+@Test("An oversized preview explains the rejection without native rechecks or automatic resubmission",
+      arguments: PetUILanguage.allCases)
+@MainActor
+func petSelectionDeliveryPreviewTooLarge(language: PetUILanguage) async throws {
+    try await PetL10n.$languageOverride.withValue(language) {
+        let h = SelectionDeliveryHarness()
+        try await h.failSelection(CoordinatorError("queued_prompt_preview_invalid"))
+        let notice = try #require(h.model.selectionDeliveryNotice)
+        #expect(notice.deliveryState == .notSubmitted && !notice.requiresCodexRecheck)
+        #expect(notice.title == (language == .korean ? "카드 내용이 너무 길어요" : "Card content is too long"))
+        #expect(notice.detail == (language == .korean
+            ? "Codex에 내용을 줄인 새 카드를 요청한 뒤 다시 선택해 주세요. 선택한 작업은 전달되지 않았어요."
+            : "Ask Codex for a shorter card, then choose the task again. The selected task was not sent."))
+        await h.model.recheckSelectionDeliveryCodex(noticeID: notice.id)
+        for _ in 0..<2 {
+            await h.transport.backend.enqueue(type: "get_state", response: try petTestSnapshotData(cards: []))
+            await h.model.refresh()
+            #expect(h.model.selectionDeliveryNotice == notice)
+        }
+        #expect(await h.transport.backend.requestCount(type: "select") == 1)
+        #expect(await h.recheck.checks == 0 && h.opener.opened.isEmpty)
+    }
+}
+
 @Test("A legacy native error code cannot prove that queue submission never happened", .petLanguage(.korean))
 @MainActor
 func petSelectionDeliveryLegacyCodeIsUnknown() async throws {

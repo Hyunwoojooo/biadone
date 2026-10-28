@@ -49,7 +49,7 @@ struct PetConnectionDiagnostic: Codable, Equatable, Hashable, Sendable {
             case "codex_native_path_unsafe": reason = .executableUnsafe
             case "codex_native_signature_invalid", "codex_native_notarization_unavailable", "codex_native_binary_changed": reason = .executableUntrusted
             case "codex_native_version_unqualified": reason = .unsupportedVersion
-            case "codex_native_probe_timeout", "codex_plugin_setup_operation_timed_out": reason = .serviceTimeout
+            case "codex_native_probe_timeout", "codex_native_inspection_timeout", "codex_plugin_setup_operation_timed_out": reason = .serviceTimeout
             case "codex_native_probe_output_invalid", "marketplace_list_malformed", "plugin_list_malformed": reason = .invalidResponse
             default: reason = .pluginCheckFailed
             }

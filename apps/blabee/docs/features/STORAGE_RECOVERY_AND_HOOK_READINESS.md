@@ -17,7 +17,8 @@
 
 - 앱을 열거나 기본 Doctor를 실행하는 것만으로 Codex를 실행하지 않는다. 명시적인 버튼 동작만 bounded `plugin list`와 `hooks/list`를 사용한다.
 - 설치·활성화된 현재 Blabee Plugin과 일치하는 네 이벤트의 활성·신뢰·출처·해시·프로젝트를 확인한다. 검사 중 Plugin이나 선택 프로젝트가 변경되면 결과를 폐기한다.
-- 신뢰 승인이 필요한 경우 Codex의 `/hooks`에서 출처와 명령을 사용자가 검토하도록 안내한다. 신뢰 파일 수정, 일괄 명령 승인, 테스트 요청 자동 전송은 하지 않는다.
+- 신뢰 승인이 필요한 경우 Codex의 `/hooks`에서 출처와 명령을 사용자가 검토하도록 안내한다. Blabee가 Codex의 비공개 신뢰 파일을 직접 읽거나 수정하거나 신뢰 해시를 복제하지 않으며, 일괄 명령 승인과 테스트 요청 자동 전송도 하지 않는다.
+- Codex 0.164.0의 `hooks/list`는 기존 승인을 새 콘텐츠 검증 방식으로 옮기면서 `.hook-trust` 기준 파일을 생성할 수 있다. 따라서 조회를 읽기 전용으로 보장하지 않는다. 검사 전·진행 중 안내에 기존 Hook 신뢰 정보가 갱신될 수 있음을 표시하며, 실패·시간 초과 시에도 일부 정보가 갱신됐을 가능성을 알린다. 추가 승인을 자동 부여하거나 실패 후 기준 파일을 삭제·복원하지 않는다.
 - 신뢰 확인은 선택한 프로젝트에서 수행한 일회성 검사다. 기존 Codex 세션에 캐시된 상태까지 증명하지 않는다. 새 세션 또는 `codex resume`으로 다시 확인한다.
 - Hook 신뢰, 서비스 연결, 실제 카드 수신, 원래 세션으로 선택 반환은 서로 다른 증거다. 연결 확인 안내에 따라 새 카드와 원래 세션의 응답을 확인한다.
 
@@ -38,7 +39,7 @@ SQLite가 사용자 전용 `0700` 폴더 안에 생성한 `0600` 또는 `0644` �
 - `MissingStorageRecoveryTests`: 실제 임시 파일/SQLite + 모의 Keychain으로 준비 무변경, 잔여 파일 보존, 정상 신규 bootstrap, revision/경로 변경, 활성 writer, archive 실패와 불확실한 완료를 검사한다.
 - `StorageRecoveryAuthorityTests`: 서로 다른 DB 경로의 primary 배타성과 두 번째 잠금 실패 시 해제를 검사한다.
 - `PetConnectionRecoveryTests`: 명시적 확인, 취소, 중복 실행 차단, 실패 시 서비스 미시작, 늦은 다른 프로젝트 Hook 결과 폐기를 검사한다.
-- `PetHookReadinessTests`: 서명/버전 자격과 Plugin 계약 검사 경로, 미신뢰·비활성·누락·중복·출처 변경·프로젝트 불일치·시간 제한을 모의 입력으로 검사한다.
+- `PetHookReadinessTests`: 서명/버전 자격과 Plugin 계약 검사 경로, 기존 단일 해시 및 0.164.0 선언/콘텐츠 복합 해시 수용, `modified` 콘텐츠의 재검토 요구, 미신뢰·비활성·누락·중복·출처 변경·프로젝트 불일치·시간 제한을 모의 입력으로 검사한다. 실제 신뢰 파일 이동과 실패·시간 초과 후 파일 변경 여부는 격리된 Codex home의 native 검사로 별도 확인한다.
 - `MissingStorageKeychainRecoveryTests`: `BLABEE_TEST_RECOVERY_KEYCHAIN=1`일 때만 UUID 기반의 별도 테스트 계정으로 실제 Keychain을 검사한다. 보관 전후 값·revision·계정과 service 검색 결과, 잘못된 revision 거절, 새 저장소 bootstrap을 확인한다. 테스트는 사용자 `primary` 계정을 조회하거나 변경하지 않는다.
 
 보관은 [`SecItemUpdate`](https://developer.apple.com/documentation/security/secitemupdate(_:_:))로 service 속성만 변경한다. 테스트의 opaque persistent-reference 바이트 동일성은 보존 판정에 사용하지 않는다. 실제 ACL의 모든 항목 비교, 강제 OS 종료 시 내구성, 설치 앱에서의 복구 및 Codex 왕복은 별도로 검증해야 한다. 실제 사용자 primary Keychain을 테스트용으로 초기화하지 않는다.

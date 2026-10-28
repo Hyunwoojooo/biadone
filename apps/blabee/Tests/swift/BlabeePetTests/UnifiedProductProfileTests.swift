@@ -1,3 +1,4 @@
+#if !BLABEE_TEST_APP
 import BlabeeProductSupport
 import CoordinatorSwift
 import Foundation
@@ -9,7 +10,9 @@ struct UnifiedProductProfileTests {
     @Test("Both bridges belong to the existing installed app and storage namespace")
     func existingProductIdentity() throws {
         let profile = BlabeeProductProfile.current
+        #expect(!profile.isTestApp)
         #expect(BlabeeProductProfile.allCases == [.blabee])
+        #expect(BlabeeProductProfile(rawValue: "blabee-test") == nil)
         #expect(profile.installedAppPath == "/Applications/Blabee.app")
         #expect(profile.bundleIdentifier == "com.biadone.blabee")
         #expect(profile.applicationSupportDirectoryName == "Blabee")
@@ -33,3 +36,4 @@ struct UnifiedProductProfileTests {
         #expect(!profile.matchesDistributionMarker(""))
     }
 }
+#endif

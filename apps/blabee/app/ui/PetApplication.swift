@@ -86,6 +86,7 @@ final class PetApplicationDelegate: NSObject, NSApplicationDelegate {
     private var menuBarController: PetMenuBarController?
     private var firstRunController: PetFirstRunController?
     private var firstRunWindow: PetFirstRunWindowController?
+    private var appUpdateWindow: PetAppUpdateWindowController?
     private var firstRunPreferences: PetFirstRunPreferences?
     private var terminationInProgress = false
     private(set) var startupError: Error?
@@ -269,6 +270,11 @@ final class PetApplicationDelegate: NSObject, NSApplicationDelegate {
         }
         viewModel.onFeedbackRequested = { suggestion in
             feedbackWindow.show(suggestion: suggestion)
+        }
+        let appUpdateWindow = PetAppUpdateWindowController(controller: viewModel.automaticAppUpdate)
+        self.appUpdateWindow = appUpdateWindow
+        viewModel.onAppUpdateRequested = { [weak appUpdateWindow] release in
+            appUpdateWindow?.show(release: release)
         }
         PetStartupDiagnostics.record(.viewModelReady)
         viewModel.automaticAppUpdate.productMetrics = .live(analytics: usageAnalytics)

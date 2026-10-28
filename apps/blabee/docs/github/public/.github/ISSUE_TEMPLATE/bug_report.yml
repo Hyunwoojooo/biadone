@@ -1,0 +1,41 @@
+name: Bug report
+description: Report an app connection or published integration problem.
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Do not include account tokens, private prompts, transcripts or a production database.
+        For permission bypasses or cross-session execution, see SECURITY.md before posting.
+  - type: input
+    id: build
+    attributes:
+      label: Blabee version / build
+      placeholder: "0.1.0 / build 85"
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: macOS and Codex / Claude Code versions
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Affected area
+      options:
+        - Setup or connection
+        - Decision card delivery
+        - Codex approval
+        - App update
+        - Public integration source or tests
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps, expected behavior and actual behavior
+      description: Use a minimal synthetic example and redact personal paths and identifiers.
+    validations:
+      required: true

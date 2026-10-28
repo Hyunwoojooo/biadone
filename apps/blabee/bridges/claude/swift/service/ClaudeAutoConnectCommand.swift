@@ -72,18 +72,36 @@ enum ClaudeAutoConnectCommand {
         return .connect
     }
 
-    /// Call before acquiring an app-runtime usage lease: help/auth/update and
-    /// scripts do not read app resources or start any Blabee service.
-    static func passthroughIfNeeded(_ arguments: [String]) throws {
+    /// The entrypoint's admission closure must only prepare the runtime, before
+    /// any Claude spawn. Its failure may fall through once; launch errors must
+    /// stay outside this catch. Help/auth/update and scripts bypass admission.
+    static func runWithStartupAdmission<RuntimeLease>(
+        _ arguments: [String],
+        isTerminal: Bool = isatty(STDIN_FILENO) == 1 && isatty(STDOUT_FILENO) == 1,
+        environment: [String: String] = ProcessInfo.processInfo.environment,
+        acquireRuntime: () throws -> RuntimeLease,
+        launch: ([String]) throws -> Int32 = run,
+        passthrough: (Arguments) throws -> Int32 = execOriginal
+    ) throws -> Int32 {
         let parsed = try Arguments(arguments)
         let mode = disposition(arguments: parsed.forwarded,
-            isTerminal: isatty(STDIN_FILENO) == 1 && isatty(STDOUT_FILENO) == 1,
-            environment: ProcessInfo.processInfo.environment)
-        guard mode != .connect else { return }
-        if mode == .explicitConfiguration {
-            notice("지정한 Claude 실행 설정을 유지하기 위해 이번 실행은 Blabee 자동 연결을 생략합니다.")
+            isTerminal: isTerminal, environment: environment)
+        if mode != .connect {
+            if mode == .explicitConfiguration {
+                notice("지정한 Claude 실행 설정을 유지하기 위해 이번 실행은 Blabee 자동 연결을 생략합니다.")
+            }
+            return try passthrough(parsed)
         }
-        try execOriginal(parsed)
+        let runtimeUseLease: RuntimeLease
+        do {
+            runtimeUseLease = try acquireRuntime()
+        } catch {
+            noticePreparationFailure()
+            return try passthrough(parsed)
+        }
+        return try withExtendedLifetime(runtimeUseLease) {
+            try launch(arguments)
+        }
     }
 
     static func run(_ arguments: [String]) throws -> Int32 {
@@ -170,9 +188,8 @@ enum ClaudeAutoConnectCommand {
     }
 
     private static func passthroughAfterPreparationFailure(_ arguments: Arguments) throws -> Int32 {
-        notice("Blabee 자동 연결을 준비하지 못했습니다. Claude는 그대로 시작합니다. Blabee 설정의 연결 상태를 확인하세요.")
-        try execOriginal(arguments)
-        throw CoordinatorError("claude_auto_connect_exec_failed")
+        noticePreparationFailure()
+        return try execOriginal(arguments)
     }
 
     static func originalExecutable(_ candidate: URL) throws -> URL {
@@ -185,7 +202,7 @@ enum ClaudeAutoConnectCommand {
         return executable
     }
 
-    private static func execOriginal(_ arguments: Arguments) throws {
+    private static func execOriginal(_ arguments: Arguments) throws -> Int32 {
         let executable = try originalExecutable(arguments.executable)
         var pointers = ([executable.path] + arguments.forwarded).map { strdup($0) }
         defer { for case let pointer? in pointers { free(pointer) } }
@@ -217,5 +234,9 @@ enum ClaudeAutoConnectCommand {
 
     private static func notice(_ text: String) {
         FileHandle.standardError.write(Data(("[blabee] " + text + "\n").utf8))
+    }
+
+    private static func noticePreparationFailure() {
+        notice("Blabee 자동 연결을 준비하지 못했습니다. Claude는 그대로 시작합니다. Blabee 설정의 연결 상태를 확인하세요.")
     }
 }

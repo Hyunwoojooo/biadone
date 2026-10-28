@@ -8,6 +8,33 @@ and nonce through MCP, and selected actions arrive through the same session's St
 Use the current prompts at the top of [ACCEPTANCE](ACCEPTANCE.md). Source review and Node tests
 do not establish that the installed app contains these changes.
 
+Connection fixes, 2026-10-20 (source; installed-app acceptance remains separate):
+
+- **Recheck Connection** targets the new conversation matched by the connection flow,
+  even while another Claude or Codex card is selected. It preserves the visible card and
+  rejects stale session/service evidence or a concurrent connection operation.
+- A failed provider read removes the settings' cached **Connected** status. Cached rows
+  remain available for navigation and explicit recovery; they are not fresh readiness proof.
+- New automatic setup retains the PATH shim and adds a small zsh function for ordinary
+  `claude` invocations. Each invocation prioritizes the managed bin directory, including
+  after `.zlogin` resets PATH. Existing aliases/functions are preserved; later user
+  definitions can override the function normally.
+- Exact older PATH-only blocks remain removable. Read-only inspection offers
+  **Update Auto-Connect Settings**; this explicit action or **Connect Claude** replaces
+  only the owned block in place, with a backup. It preserves unrelated startup bytes and
+  the existing shim. Merely opening settings never migrates the user's shell.
+- If runtime admission fails before any Claude child is dispatched (including an update's
+  installation lock), ordinary CLI startup attempts the verified original Claude once.
+  The terminal explains that automatic connection was skipped. This does not replay a
+  request, grant Blabee authority or retry a possibly started process. Distribution
+  validation and launch errors remain outside this startup fallback.
+
+Validation for this source change: 139 tests in 9 selected Swift suites passed with serial
+`npm run test:swift`, including real temporary zsh startup files and installer locks.
+Twenty test functions were added. Logs and the exact filter are in
+`build/claude-connection-fixes-20261020/verified.{log,json}`. No release app was packaged,
+installed or restarted, and no real Claude account/model roundtrip was run.
+
 Historical status, 2026-09-21: one-click connection source updated. The new UI/terminal flow had
 regression test sources and syntax checks; it had **not been built or run** at the user's request.
 The r63 results below describe the earlier automatic CLI implementation, not this new flow.
@@ -37,6 +64,10 @@ home-local `ZDOTDIR`). It uses `~/Library/Application Support/Blabee/shell/claud
 Changed managed files are left intact; a conflicting alias/function takes precedence and the
 managed block skips itself. Unsupported/custom shell setups can still open a connected
 conversation directly from the app, with automatic CLI setup shown separately as unavailable.
+After disabling, a function already loaded in an open shell uses ordinary PATH lookup when
+the managed shim is absent. `command claude` skips the function but can still find the PATH
+shim; an absolute original-CLI path is the unambiguous bypass. Arbitrary later shell
+customization is not proof of automatic coverage, and readiness still requires the session ACK.
 This implementation does not activate itself or modify the current user's shell during tests.
 
 ## One-click connection evidence
@@ -59,13 +90,15 @@ Directory failure invalidates fresh evidence even if cached rows remain visible.
 
 Readiness expiry, service replacement, closed sessions and read failures remove success. A bounded
 wait exposes recovery, including after a previously successful connection. Probe retry is an
-explicit action for the same selected session; it does not run alongside the initial pending probe.
+explicit action for the matched connection session; it does not run alongside the initial pending probe
+or change the currently selected card.
 Settings inspection re-discovers available original CLI paths on each refresh, preserves updater
 symlinks in the managed shim and never executes startup scripts merely to inspect the environment.
 
-New regression sources cover these branches plus chooser cancellation, changed shell and terminal
-argument/version handling. They have not been executed: Swift testing requires a build, which the
-user excluded. Syntax-only checks do not prove type correctness or actual terminal/model behavior.
+The historical 2026-09-21 regression sources covered these branches plus chooser cancellation,
+changed shell and terminal argument/version handling, but were not executed in that source-only
+task. Current fixture results are recorded separately from that historical qualification.
+Syntax-only checks do not prove type correctness or actual terminal/model behavior.
 The initial Channel-turn check belonged to that earlier development candidate. Current product
 acceptance uses the MCP probe/ACK and Stop Hook selection path in [PUBLIC_MCP_HOOK](PUBLIC_MCP_HOOK.md).
 

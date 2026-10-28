@@ -6,6 +6,7 @@ import Testing
 
 private enum HookReadinessScenario: String, CaseIterable, Sendable {
     case trusted, managed, untrusted, changed, disabled, missing, duplicate
+    case trustedCompositeHash, modifiedCompositeHash
     case wrongPlugin, wrongSource, wrongProject, emptyHash, malformed
     case pluginMissing, pluginDisabled, pluginIdentityMismatch, contractChanged
     case installationChanges, hookFileChanges, qualifierFails, requesterFails
@@ -57,7 +58,11 @@ private final class HookReadinessFixture: @unchecked Sendable {
                 if scenario == .qualifierFails {
                     throw CodexNativeDiagnostic.signatureInvalid.error
                 }
-                return .testOnly(url: codex, version: "0.154.0")
+                let version = switch scenario {
+                case .trustedCompositeHash, .modifiedCompositeHash: "0.164.0"
+                default: "0.154.0"
+                }
+                return .testOnly(url: codex, version: version)
             },
             run: { [self] selection, arguments, timeout in
                 #expect(selection.canonicalURL == codex)
@@ -104,7 +109,15 @@ private final class HookReadinessFixture: @unchecked Sendable {
             case .managed: "managed"
             case .untrusted: "untrusted"
             case .changed: "changed"
+            case .modifiedCompositeHash: "modified"
             default: "trusted"
+            }
+            let currentHash: String = switch scenario {
+            case .emptyHash: ""
+            case .trustedCompositeHash, .modifiedCompositeHash:
+                "sha256:" + String(repeating: "a", count: 64)
+                    + "/sha256:" + String(repeating: "b", count: 64)
+            default: "codex-owned-hash-\(event)"
             }
             return [
                 "eventName": event, "enabled": scenario != .disabled,
@@ -115,7 +128,7 @@ private final class HookReadinessFixture: @unchecked Sendable {
                 "sourcePath": scenario == .wrongSource
                     ? root.appendingPathComponent("elsewhere/hooks/hooks.json").path
                     : plugin.appendingPathComponent("hooks/hooks.json").path,
-                "currentHash": scenario == .emptyHash ? "" : "codex-owned-hash-\(event)",
+                "currentHash": currentHash,
             ]
         }
         if scenario == .duplicate { hooks.append(hooks[0]) }
@@ -129,9 +142,10 @@ private final class HookReadinessFixture: @unchecked Sendable {
     }
 }
 
-@Test("Hook check is explicit and inspects only plugin metadata and hook trust", .petLanguage(.korean))
-func petHookReadinessExplicitInspection() async throws {
-    let fixture = try HookReadinessFixture()
+@Test("Hook check accepts Codex trust with either legacy or composite content hashes", .petLanguage(.korean),
+      arguments: [HookReadinessScenario.trusted, .trustedCompositeHash])
+private func petHookReadinessExplicitInspection(_ scenario: HookReadinessScenario) async throws {
+    let fixture = try HookReadinessFixture(scenario)
     let manager = fixture.manager()
     #expect(fixture.invocations.isEmpty)
     let state = await manager.inspect(projectURL: fixture.root)
@@ -145,7 +159,7 @@ func petHookReadinessExplicitInspection() async throws {
 
 @Test("Hook trust reports fail closed for untrusted, disabled, stale, or wrong metadata", .petLanguage(.korean),
       arguments: [
-        HookReadinessScenario.untrusted, .changed, .disabled, .missing,
+        HookReadinessScenario.untrusted, .changed, .modifiedCompositeHash, .disabled, .missing,
         .duplicate, .wrongPlugin, .wrongSource, .emptyHash,
       ])
 private func petHookReadinessNeedsReview(_ scenario: HookReadinessScenario) async throws {

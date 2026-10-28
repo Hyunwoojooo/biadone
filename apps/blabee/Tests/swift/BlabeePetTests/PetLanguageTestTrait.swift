@@ -1,3 +1,4 @@
+import Foundation
 import Testing
 @testable import BlabeeCoordinator
 
@@ -16,4 +17,18 @@ struct PetLanguageTestTrait: SuiteTrait, TestTrait, TestScoping {
 
 extension Trait where Self == PetLanguageTestTrait {
     static func petLanguage(_ language: PetUILanguage) -> Self { Self(language: language) }
+}
+
+/// AppKit may evaluate SwiftUI bodies outside a test's TaskLocal. Mirror the
+/// requested render language in this test process's volatile argument domain,
+/// never in the user's persistent preferences. Render suites use the serial
+/// Swift test command; restore the entire prior domain before leaving a render.
+@MainActor
+func petRenderLanguageOverride(_ language: PetUILanguage) -> () -> Void {
+    let defaults = UserDefaults.standard
+    let previous = defaults.volatileDomain(forName: UserDefaults.argumentDomain)
+    var arguments = previous
+    arguments[PetUILanguage.preferenceKey] = language.rawValue
+    defaults.setVolatileDomain(arguments, forName: UserDefaults.argumentDomain)
+    return { defaults.setVolatileDomain(previous, forName: UserDefaults.argumentDomain) }
 }

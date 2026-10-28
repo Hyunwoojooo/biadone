@@ -14,6 +14,48 @@ struct PetFirstRunTutorialExampleState: Equatable {
         guard selected != nil, !delivered else { return }
         delivered = true
     }
+
+    /// Returns whether to advance the tutorial. Sending updates only this
+    /// example and leaves its result visible until the next explicit click.
+    mutating func activatePrimaryAction(scene: Int) -> Bool {
+        if PetFirstRunTutorialAction.current(scene: scene, example: self) == .send {
+            deliver()
+            return false
+        }
+        return true
+    }
+}
+
+/// Presentation follows the local example only; it cannot approve real work.
+enum PetFirstRunTutorialAction: Equatable {
+    case preview, choose, send, next, resultPreview
+
+    static func current(scene: Int, example: PetFirstRunTutorialExampleState) -> Self {
+        if scene == 0 { return .preview }
+        if scene == 2 { return .resultPreview }
+        if example.delivered { return .next }
+        return example.selected == nil ? .choose : .send
+    }
+
+    var title: String {
+        switch self {
+        case .preview: PetL10n.text("First, see how a question arrives", korean: "먼저, 질문이 도착한 모습을 보세요")
+        case .choose: PetL10n.text("1. Click either card below", korean: "1. 아래 카드 중 하나를 클릭하세요")
+        case .send: PetL10n.text("2. Send your example choice", korean: "2. 고른 예시를 전달해 보세요")
+        case .next: PetL10n.text("Done! Continue when you're ready", korean: "체험 완료! 다음으로 넘어가세요")
+        case .resultPreview: PetL10n.text("3. Continue in your original conversation", korean: "3. 원래 대화에서 이어집니다")
+        }
+    }
+
+    var detail: String {
+        switch self {
+        case .preview: PetL10n.text("This is a preview. Choose Try Choosing a Card below to practice.", korean: "지금은 미리보기예요. 아래 ‘카드 선택해 보기’를 누르면 직접 체험할 수 있어요.")
+        case .choose: PetL10n.text("Either choice works for this practice. Your selection gets a checkmark.", korean: "어느 카드를 골라도 괜찮아요. 선택한 카드에 체크 표시가 생겨요.")
+        case .send: PetL10n.text("Choose Send Example Choice at the bottom. No real task will run.", korean: "하단의 ‘예시 선택 전달하기’를 누르세요. 실제 작업은 실행되지 않아요.")
+        case .next: PetL10n.text("In real use, Blabee returns your choice to the original conversation.", korean: "실제 사용에서는 고른 답이 원래 대화로 돌아가요.")
+        case .resultPreview: PetL10n.text("This previews the result of sending a choice. Choose Continue to Sign In below to set up Blabee.", korean: "선택 전달 후의 결과 예시예요. 아래 ‘로그인으로 계속’을 눌러 Blabee를 준비하세요.")
+        }
+    }
 }
 
 @MainActor
@@ -32,6 +74,7 @@ struct PetFirstRunView: View {
     @State private var shortcutSaved = false
 
     init(controller: PetFirstRunController, viewModel: PetViewModel, preferences: PetFirstRunPreferences,
+         tutorialExample: PetFirstRunTutorialExampleState = .init(),
          onFinish: @escaping (_ connectionDeferred: Bool) -> Void, onClose: @escaping () -> Void) {
         self.controller = controller
         self.viewModel = viewModel
@@ -39,6 +82,7 @@ struct PetFirstRunView: View {
         _connectionSetup = ObservedObject(wrappedValue: viewModel.connectionSetup)
         self.onFinish = onFinish
         self.onClose = onClose
+        _example = State(initialValue: tutorialExample)
     }
 
     private var secondary: Color { PetAirPalette.secondary(for: colorScheme) }
@@ -50,16 +94,13 @@ struct PetFirstRunView: View {
     var body: some View {
         VStack(spacing: 0) {
             chrome
-            PetLanguagePicker(localization: localization)
-                .padding(.horizontal, 26)
-                .padding(.bottom, 14)
             stepIndicator.padding(.horizontal, 24)
             ScrollViewReader { scroll in
                 ScrollView {
                     VStack(alignment: .leading, spacing: 20) {
                         stage.id("first-run-top")
                     }
-                    .padding(26)
+                    .padding(.horizontal, 24).padding(.vertical, 18)
                     .frame(maxWidth: .infinity, alignment: .leading)
                 }
                 .onChange(of: controller.step) { _ in scroll.scrollTo("first-run-top", anchor: .top) }
@@ -97,6 +138,7 @@ struct PetFirstRunView: View {
             PetAirBeeMark().frame(width: 26, height: 26).accessibilityHidden(true)
             Text("Blabee").font(.blabee(size: 18, weight: .semibold))
             Spacer()
+            PetLanguagePicker(localization: localization, compact: true)
             Button(action: onClose) { Image(systemName: "xmark").frame(width: 18, height: 18) }
                 .buttonStyle(PetAirButtonStyle())
                 .accessibilityLabel(PetL10n.text("Close Initial Setup", korean: "초기 설정 닫기"))
@@ -104,8 +146,8 @@ struct PetFirstRunView: View {
                 .accessibilityIdentifier("first-run-close")
         }
         .padding(.horizontal, 26)
-        .padding(.top, 24)
-        .padding(.bottom, 18)
+        .padding(.top, 18)
+        .padding(.bottom, 14)
     }
 
     private var stepIndicator: some View {
@@ -115,7 +157,9 @@ struct PetFirstRunView: View {
                     Text(index < stepNumber ? "✓" : "\(index + 1)")
                         .font(.blabee(size: 11, weight: .medium))
                         .frame(width: 20, height: 20)
-                        .overlay(Circle().strokeBorder(secondary.opacity(0.4)))
+                        .foregroundStyle(index == stepNumber ? PetAirPalette.panel(for: colorScheme) : secondary)
+                        .background(Circle().fill(index == stepNumber ? PetAirPalette.accent(for: colorScheme) : .clear))
+                        .overlay(Circle().strokeBorder(index == stepNumber ? PetAirPalette.accent(for: colorScheme) : secondary.opacity(0.4)))
                     Text(title).font(.blabee(size: 13, weight: index == stepNumber ? .semibold : .regular))
                 }
                 .frame(maxWidth: .infinity)
@@ -155,13 +199,13 @@ struct PetFirstRunView: View {
     }
 
     private var tutorial: some View {
-        VStack(spacing: 18) {
+        VStack(spacing: 14) {
             let index = controller.tutorialIndex
             heading(
-                [PetL10n.text("Questions from Codex and Claude,\nright in Blabee.", korean: "Codex와 Claude의 질문을,\nBlabee에서."), PetL10n.text("Choose a card.\nSend your choice.", korean: "카드를 고르고,\n선택을 전달하세요."), PetL10n.text("Continue in your\noriginal conversation.", korean: "원래 대화에서\n계속 이어집니다.")][index],
-                [PetL10n.text("Review choices as they arrive\nand send your answer back to the original conversation.", korean: "작업 중 도착한 선택지를 확인하고\n고른 답을 원래 대화로 전달하세요."),
-                 PetL10n.text("Review the content, then choose a card.\nSend real choices with a click or your configured shortcut.", korean: "내용을 확인한 뒤 원하는 카드를 고르세요.\n실제 선택지는 클릭이나 설정한 단축키로 전달합니다."),
-                 PetL10n.text("Your choice returns to the original conversation.\nReady to set up Blabee?", korean: "선택한 답이 원래 대화로 돌아가요.\n이제 Blabee를 사용할 준비를 해볼까요?")][index], centered: true
+                [PetL10n.text("Your questions, in one place", korean: "질문을 한곳에서 확인하세요"), PetL10n.text("Try choosing a card", korean: "카드 선택을 연습해 보세요"), PetL10n.text("Continue your conversation", korean: "원래 대화로 이어집니다")][index],
+                [PetL10n.text("Review choices from Codex and Claude in Blabee.", korean: "Codex와 Claude에서 온 선택지를 Blabee에서 확인해요."),
+                 PetL10n.text("Pick either card, then use the button below.", korean: "아무 카드나 고르고, 아래 버튼으로 전달하세요."),
+                 PetL10n.text("In real use, send a choice with a click or your shortcut.", korean: "실제 선택지는 클릭이나 설정한 단축키로 전달해요.")][index], centered: true
             )
             PetFirstRunTutorialCard(scene: index, example: $example)
             HStack(spacing: 6) {
@@ -170,7 +214,7 @@ struct PetFirstRunView: View {
                         .frame(width: number == index ? 20 : 6, height: 6)
                 }
             }.accessibilityLabel(PetL10n.text("Tutorial scene \(index + 1) of 3", korean: "사용법 장면 \(index + 1) / 3"))
-            Text(PetL10n.text("This is an example. No real tasks or commands will run.", korean: "체험 예시입니다. 실제 작업이나 명령은 실행하지 않습니다."))
+            Text(PetL10n.text("Practice only · No real tasks or commands will run", korean: "연습용 화면 · 실제 작업이나 명령은 실행하지 않습니다"))
                 .font(.blabee(.caption)).foregroundStyle(secondary)
                 .multilineTextAlignment(.center)
         }.frame(maxWidth: .infinity)
@@ -179,9 +223,6 @@ struct PetFirstRunView: View {
     private var login: some View {
         VStack(spacing: 22) {
             heading(PetL10n.text("Sign In to Blabee", korean: "Blabee에 로그인하세요"), PetL10n.text("Choose the account you want to use.", korean: "사용할 계정을 선택하세요."), centered: true)
-            PetAirBeeMark().frame(width: 46, height: 46).padding(22)
-                .petInsetSurface(emphasized: true, cornerRadius: 28)
-                .accessibilityHidden(true)
             if let account = viewModel.account {
                 PetFirstRunAccountView(controller: account)
             } else {
@@ -220,6 +261,14 @@ struct PetFirstRunView: View {
                         .accessibilityIdentifier("first-run-terms-consent")
                     legalLinks
                 }.padding(18).petInsetSurface()
+                    .overlay(RoundedRectangle(cornerRadius: PetPanelVisualStyle.sectionRadius)
+                        .strokeBorder(PetAirPalette.accent(for: colorScheme), lineWidth: controller.acceptsTerms ? 1 : 2)
+                        .allowsHitTesting(false))
+                if !controller.acceptsTerms {
+                    Label(PetL10n.text("Read the terms above, then check the required agreement to continue.", korean: "위 약관을 확인한 뒤 필수 동의 항목을 체크하면 계속할 수 있어요."), systemImage: "arrow.up")
+                        .font(.blabee(.caption)).foregroundStyle(secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
             Text(PetL10n.text("Optional Ways to Improve Your Experience", korean: "더 나은 사용 경험을 위한 선택")).font(.blabee(.caption)).foregroundStyle(secondary)
             VStack(alignment: .leading, spacing: 16) {
@@ -265,13 +314,14 @@ struct PetFirstRunView: View {
 
     private var setup: some View {
         VStack(alignment: .leading, spacing: 18) {
-            heading(PetL10n.text("Get Ready to Use Blabee", korean: "Blabee를 사용할 준비"), PetL10n.text("Connect your tools and choose settings that work for you.", korean: "사용할 도구를 연결하고 편한 방식으로 설정하세요."))
             PetConnectionSetupView(viewModel: viewModel)
             DisclosureGroup(PetL10n.text("Advanced Connection Options", korean: "연결 고급 옵션")) {
                 advancedConnectionSetup.padding(.top, 10)
             }
             .font(.blabee(.caption))
             .disabled(busy)
+            Label(PetL10n.text("Optional preferences · You can change these later", korean: "선택 설정 · 나중에 변경할 수 있어요"), systemImage: "slider.horizontal.3")
+                .font(.blabee(.caption, weight: .semibold)).foregroundStyle(secondary)
             shortcutSetup
             VStack(alignment: .leading, spacing: 16) {
                 Picker(PetL10n.text("Appearance", korean: "화면 모드"), selection: Binding(get: { preferences.theme }, set: preferences.setTheme)) {
@@ -395,6 +445,12 @@ struct PetFirstRunView: View {
     private var footer: some View {
         VStack(spacing: 10) {
             Divider()
+            if let hint = navigationHint {
+                Text(hint).font(.blabee(.caption)).foregroundStyle(secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .accessibilityIdentifier("first-run-next-action-hint")
+            }
             HStack(spacing: 18) {
                 if controller.step != .tutorial || controller.tutorialIndex > 0 {
                     Button { controller.back() } label: { Label(PetL10n.text("Back", korean: "이전"), systemImage: "chevron.left") }
@@ -403,16 +459,15 @@ struct PetFirstRunView: View {
                 }
                 Button(action: advance) {
                     HStack {
-                        Image(systemName: "return")
                         Spacer()
                         Text(continueTitle).font(.blabee(.body, weight: .semibold))
                         Spacer()
                         Image(systemName: "arrow.right")
                     }.padding(.vertical, 5)
                 }
-                .buttonStyle(PetAirButtonStyle(emphasized: true))
+                .buttonStyle(PetOnboardingActionButtonStyle(emphasized: controller.step != .tutorial || tutorialAction != .choose))
                 .disabled(!canContinue || busy)
-                .accessibilityIdentifier("first-run-continue")
+                .accessibilityIdentifier(controller.step == .tutorial && tutorialAction == .send ? "first-run-example-send" : "first-run-continue")
             }
             if controller.step == .tutorial {
                 Button(PetL10n.text("Skip Introduction", korean: "소개 건너뛰기"), action: controller.skipTutorial)
@@ -458,10 +513,49 @@ struct PetFirstRunView: View {
 
     var showsLegalAgreement: Bool { !controller.legalDocumentsDeferred }
     var thirdStepTitle: String { controller.legalDocumentsDeferred ? PetL10n.text("Data Sharing", korean: "데이터 공유") : PetL10n.text("Terms", korean: "약관") }
+    var tutorialAction: PetFirstRunTutorialAction {
+        .current(scene: controller.tutorialIndex, example: example)
+    }
+
+    var navigationHint: String? {
+        if !controller.isStorageLoaded || busy { return nil }
+        if (controller.step == .setup || controller.step == .terms), controller.accountID == nil { return nil }
+        switch controller.step {
+        case .tutorial: return nil
+        case .signIn:
+            return controller.canContinueAfterSignIn
+                ? PetL10n.text("You're signed in. Continue with the button below.", korean: "로그인됐어요. 아래 버튼으로 계속하세요.")
+                : PetL10n.text("Complete sign-in above to unlock the next step.", korean: "위에서 로그인을 마치면 다음 단계로 갈 수 있어요.")
+        case .terms:
+            return controller.legalDocumentsDeferred && controller.canSaveDataSharingPreferences
+                ? PetL10n.text("Optional sharing can stay off. Save your choices below.", korean: "선택 항목은 꺼 두어도 괜찮아요. 아래 버튼으로 설정을 저장하세요.")
+                : nil
+        case .setup:
+            if canContinue {
+                return PetL10n.text("Your settings are ready. Open Blabee below.", korean: "설정이 준비됐어요. 아래에서 Blabee를 시작하세요.")
+            }
+            if viewModel.appOwnedServiceState == .failed("freshness_storage_missing") {
+                return PetL10n.text("Check Storage Recovery above to continue setup.", korean: "위의 저장소 복구를 확인하면 설정을 이어갈 수 있어요.")
+            }
+            if connectionSetup.serviceIssue != nil {
+                return PetL10n.text("Resolve the Blabee service issue shown above to continue.", korean: "위에 표시된 Blabee 서비스 문제를 먼저 확인해 주세요.")
+            }
+            return canDeferConnection
+                ? PetL10n.text("Connect your tools above, or choose Connect Later below.", korean: "위에서 도구를 연결하거나, 아래 ‘연결은 나중에’를 선택하세요.")
+                : nil
+        }
+    }
 
     var continueTitle: String {
         switch controller.step {
-        case .tutorial: controller.tutorialIndex == 2 ? PetL10n.text("Continue to Sign In", korean: "로그인으로 계속") : PetL10n.text("Next", korean: "다음")
+        case .tutorial:
+            switch tutorialAction {
+            case .preview: PetL10n.text("Try Choosing a Card", korean: "카드 선택해 보기")
+            case .choose: PetL10n.text("Skip Practice and Continue", korean: "체험 건너뛰고 다음")
+            case .send: PetL10n.text("Send Example Choice", korean: "예시 선택 전달하기")
+            case .next: PetL10n.text("Next", korean: "다음")
+            case .resultPreview: PetL10n.text("Continue to Sign In", korean: "로그인으로 계속")
+            }
         case .signIn: controller.legalDocumentsDeferred ? PetL10n.text("Continue", korean: "계속") : PetL10n.text("Review Terms", korean: "약관 확인하기")
         case .terms: controller.legalDocumentsDeferred ? PetL10n.text("Save Settings and Continue", korean: "설정 저장하고 계속") : PetL10n.text("Agree and Continue", korean: "동의하고 계속")
         case .setup: PetL10n.text("Get Started with Blabee", korean: "Blabee 시작하기")
@@ -471,7 +565,8 @@ struct PetFirstRunView: View {
     private func advance() {
         guard canContinue, !busy else { return }
         switch controller.step {
-        case .tutorial: controller.advanceTutorial()
+        case .tutorial:
+            if example.activatePrimaryAction(scene: controller.tutorialIndex) { controller.advanceTutorial() }
         case .signIn: _ = controller.continueAfterSignIn()
         case .terms:
             if controller.legalDocumentsDeferred { _ = controller.saveDataSharingPreferences() }
@@ -503,48 +598,116 @@ struct PetFirstRunTutorialCard: View {
     let scene: Int
     @Binding var example: PetFirstRunTutorialExampleState
     @Environment(\.colorScheme) private var colorScheme
+    private var action: PetFirstRunTutorialAction { .current(scene: scene, example: example) }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 15) {
+        VStack(alignment: .leading, spacing: 12) {
             HStack {
                 PetAirBeeMark().frame(width: 22, height: 22)
                 Text("Blabee").font(.blabee(.callout, weight: .bold))
                 Spacer()
-                Text(PetL10n.text("Try It Out", korean: "체험 예시")).font(.blabee(.caption)).foregroundStyle(.secondary)
+                Text(scene == 0 || scene == 2 ? PetL10n.text("Preview", korean: "미리보기") : PetL10n.text("Practice", korean: "연습"))
+                    .font(.blabee(.caption)).foregroundStyle(.secondary)
             }
-            Text(scene == 2 || example.delivered ? PetL10n.text("Choice Received", korean: "선택을 받았어요") : PetL10n.text("What would you like to do next?", korean: "다음으로 무엇을 할까요?"))
-                .font(.blabee(.headline))
+            PetOnboardingGuidance(title: action.title, detail: action.detail,
+                                  symbol: action == .next || action == .resultPreview ? "checkmark.circle.fill" : action == .send ? "arrow.down" : "hand.point.up.left.fill")
+                .accessibilityIdentifier("first-run-tutorial-guidance")
             if scene == 2 || example.delivered {
                 VStack(spacing: 14) {
-                    Image(systemName: "checkmark.circle").font(.system(size: 48, weight: .ultraLight))
-                    Text(PetL10n.text("Your choice was sent to the example conversation.", korean: "예시 대화에 선택이 전달됐어요.")).font(.blabee(.callout))
-                }.frame(maxWidth: .infinity).padding(.vertical, 30)
+                    Image(systemName: "checkmark.circle.fill").font(.system(size: 40, weight: .light))
+                        .foregroundStyle(PetAirPalette.accent(for: colorScheme))
+                    Text(scene == 2
+                         ? PetL10n.text("Your original conversation continues with your choice.", korean: "원래 대화가 선택한 답으로 이어져요.")
+                         : PetL10n.text("Your choice was sent to the example conversation.", korean: "예시 대화에 선택이 전달됐어요."))
+                        .font(.blabee(.callout))
+                        .multilineTextAlignment(.center)
+                }.frame(maxWidth: .infinity).padding(.vertical, 16)
             } else {
                 HStack(spacing: 12) {
                     ForEach(0..<2) { index in
                         Button { example.select(index) } label: {
-                            VStack(alignment: .leading, spacing: 12) {
+                            VStack(alignment: .leading, spacing: 10) {
                                 Text(index == 0 ? PetL10n.text("Explore More Choices", korean: "선택지를 더 살펴볼게요") : PetL10n.text("Get Started", korean: "이제 시작할게요"))
                                     .font(.blabee(size: 15, weight: .semibold))
                                     .fixedSize(horizontal: false, vertical: true)
                                     .frame(maxWidth: .infinity, alignment: .leading)
-                                HStack {
-                                    Spacer()
-                                    Image(systemName: example.selected == index ? "checkmark.circle.fill" : "circle")
-                                }
-                            }.padding(15).frame(maxWidth: .infinity, minHeight: 100)
+                                Label(example.selected == index ? PetL10n.text("Selected", korean: "선택됨")
+                                      : scene == 0 ? PetL10n.text("Example", korean: "예시") : PetL10n.text("Click to choose", korean: "클릭하여 선택"),
+                                      systemImage: example.selected == index ? "checkmark.circle.fill" : "circle")
+                                    .font(.blabee(.caption, weight: .medium))
+                                    .foregroundStyle(PetAirPalette.accent(for: colorScheme))
+                            }.padding(12).frame(maxWidth: .infinity, minHeight: 90)
                                 .petInsetSurface(emphasized: example.selected == index)
+                                .overlay(RoundedRectangle(cornerRadius: PetPanelVisualStyle.sectionRadius)
+                                    .strokeBorder(PetAirPalette.accent(for: colorScheme)
+                                        .opacity(action == .choose || example.selected == index ? 1 : 0), lineWidth: 2)
+                                    .allowsHitTesting(false))
+                                .contentShape(RoundedRectangle(cornerRadius: PetPanelVisualStyle.sectionRadius))
                         }.buttonStyle(.plain).disabled(scene == 0)
                             .accessibilityIdentifier("first-run-example-choice-\(index + 1)")
                             .accessibilityValue(example.selected == index ? PetL10n.text("Selected", korean: "선택됨") : PetL10n.text("Not selected", korean: "선택 안 됨"))
+                            .accessibilityHint(PetL10n.text("Practice selection only. Use Send Example Choice at the bottom to continue.", korean: "연습용 선택입니다. 선택한 뒤 하단의 예시 선택 전달하기를 누르세요."))
                     }
                 }
-                Button(PetL10n.text("Send Example Choice", korean: "예시 선택 전달하기")) { example.deliver() }
-                    .buttonStyle(PetAirButtonStyle())
-                    .disabled(example.selected == nil || scene == 0)
-                    .accessibilityIdentifier("first-run-example-send")
             }
         }.padding(18).petInsetSurface()
+    }
+}
+
+/// A solid action stands apart from the glass surfaces used for secondary controls.
+/// Scope this style to setup flows; it does not change permission/decision buttons.
+struct PetOnboardingActionButtonStyle: ButtonStyle {
+    @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.isEnabled) private var isEnabled
+    var emphasized = true
+
+    func makeBody(configuration: Configuration) -> some View {
+        let filled = emphasized && isEnabled
+        let accent = PetAirPalette.accent(for: colorScheme)
+        configuration.label
+            .font(.blabee(size: 14, weight: .semibold))
+            .multilineTextAlignment(.center)
+            .padding(.horizontal, 16).padding(.vertical, 11)
+            .foregroundStyle(filled ? PetAirPalette.panel(for: colorScheme) : PetAirPalette.ink(for: colorScheme))
+            .background(filled ? accent : PetAirPalette.reading(for: colorScheme, emphasized: false),
+                        in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .strokeBorder(accent.opacity(filled ? 0 : 0.35), lineWidth: 1)
+                .allowsHitTesting(false))
+            .opacity(isEnabled ? (configuration.isPressed ? 0.78 : 1) : 0.48)
+            .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+    }
+}
+
+struct PetOnboardingGuidance: View {
+    let title: String
+    let detail: String
+    var symbol = "hand.point.up.left.fill"
+    @Environment(\.colorScheme) private var colorScheme
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: symbol)
+                .font(.system(size: 16, weight: .semibold))
+                .foregroundStyle(PetAirPalette.accent(for: colorScheme))
+                .frame(width: 22).padding(.top, 2).accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 4) {
+                Text(title).font(.blabee(.callout, weight: .semibold))
+                    .foregroundStyle(PetAirPalette.ink(for: colorScheme))
+                Text(detail).font(.blabee(.caption))
+                    .foregroundStyle(PetAirPalette.secondary(for: colorScheme))
+            }
+            .fixedSize(horizontal: false, vertical: true)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(12)
+        .background(PetAirPalette.reading(for: colorScheme, emphasized: true),
+                    in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay(alignment: .leading) {
+            RoundedRectangle(cornerRadius: 2).fill(PetAirPalette.accent(for: colorScheme))
+                .frame(width: 3).padding(.vertical, 10).allowsHitTesting(false)
+        }
+        .accessibilityElement(children: .combine)
     }
 }
 
@@ -552,15 +715,26 @@ struct PetFirstRunTutorialCard: View {
 private struct PetFirstRunAccountView: View {
     @ObservedObject private var localization = PetLocalization.shared
     @ObservedObject var controller: PetAccountController
+    @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
-        PetAccountStatusView(
-            phase: controller.phase, message: controller.message,
-            signIn: { provider in Task { await controller.signIn(provider) } },
-            cancel: controller.cancelSignIn,
-            signOut: { Task { await controller.signOut() } },
-            retry: { Task { await controller.refresh() } }
-        ).padding(18).petInsetSurface()
+        VStack(alignment: .leading, spacing: 12) {
+            if controller.phase == .signedOut {
+                PetOnboardingGuidance(
+                    title: PetL10n.text("Choose Google or GitHub below", korean: "아래에서 Google 또는 GitHub를 선택하세요"),
+                    detail: PetL10n.text("Use either account. Complete sign-in in the browser, then return here.", korean: "둘 중 하나만 선택하면 돼요. 브라우저에서 로그인한 뒤 이 화면으로 돌아오세요."))
+            }
+            PetAccountStatusView(
+                phase: controller.phase, message: controller.message,
+                signIn: { provider in Task { await controller.signIn(provider) } },
+                cancel: controller.cancelSignIn,
+                signOut: { Task { await controller.signOut() } },
+                retry: { Task { await controller.refresh() } }
+            )
+        }.padding(18).petInsetSurface()
+            .overlay(RoundedRectangle(cornerRadius: PetPanelVisualStyle.sectionRadius)
+                .strokeBorder(PetAirPalette.accent(for: colorScheme).opacity(controller.phase == .signedOut ? 1 : 0), lineWidth: 2)
+                .allowsHitTesting(false))
     }
 }
 

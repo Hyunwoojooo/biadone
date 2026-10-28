@@ -1659,7 +1659,7 @@ func managedCodexLauncherRoutesNativeWorkspaceOverrides() throws {
         "--config=\(roots)", "-c\(network)", "-c=\(exclude)",
         "--no-alt-screen", "-c", "model=example-model",
     ]
-    for version in ["0.156.0", "0.156.1", "0.157.0", "0.157.1", "0.158.0", "0.159.0", "0.159.1", "0.159.2", "0.159.3", "0.160.0", "0.160.1", "0.161.0", "0.162.0", "0.162.1", "0.163.0"] {
+    for version in ["0.156.0", "0.156.1", "0.157.0", "0.157.1", "0.158.0", "0.159.0", "0.159.1", "0.159.2", "0.159.3", "0.160.0", "0.160.1", "0.161.0", "0.162.0", "0.162.1", "0.163.0", "0.164.0"] {
         let parsed = try ManagedCodexLauncherArguments(
             ["--"] + original,
             qualifiedVersion: version
@@ -1694,7 +1694,7 @@ func managedCodexLauncherPreservesOlderWorkspaceArguments() throws {
     }
 }
 
-@Test("Managed argument routing respects literal native operands and separators", arguments: ["0.156.0", "0.156.1", "0.157.0", "0.157.1", "0.158.0", "0.159.0", "0.159.1", "0.159.2", "0.159.3", "0.160.0", "0.160.1", "0.161.0", "0.162.0", "0.162.1", "0.163.0"])
+@Test("Managed argument routing respects literal native operands and separators", arguments: ["0.156.0", "0.156.1", "0.157.0", "0.157.1", "0.158.0", "0.159.0", "0.159.1", "0.159.2", "0.159.3", "0.160.0", "0.160.1", "0.161.0", "0.162.0", "0.162.1", "0.163.0", "0.164.0"])
 func managedCodexLauncherPreservesLiteralNativeArguments(_ version: String) throws {
     for original in [
         ["--", "--remote", "--no-daemon", "--add-dir", "-csandbox_workspace_write={}"],
@@ -1714,7 +1714,7 @@ func managedCodexLauncherPreservesLiteralNativeArguments(_ version: String) thro
     }
 }
 
-@Test("Managed workspace overrides reject client-only profile scope before launch", arguments: ["0.156.0", "0.156.1", "0.157.0", "0.157.1", "0.158.0", "0.159.0", "0.159.1", "0.159.2", "0.159.3", "0.160.0", "0.160.1", "0.161.0", "0.162.0", "0.162.1", "0.163.0"])
+@Test("Managed workspace overrides reject client-only profile scope before launch", arguments: ["0.156.0", "0.156.1", "0.157.0", "0.157.1", "0.158.0", "0.159.0", "0.159.1", "0.159.2", "0.159.3", "0.160.0", "0.160.1", "0.161.0", "0.162.0", "0.162.1", "0.163.0", "0.164.0"])
 func managedCodexLauncherRejectsWorkspaceProfileScopeMismatch(_ version: String) throws {
     for profile in [["--profile", "work"], ["--profile=work"], ["-p", "work"], ["-pwork"]] {
         for original in [
@@ -1739,7 +1739,7 @@ func managedCodexLauncherRejectsWorkspaceProfileScopeMismatch(_ version: String)
     #expect(profileOnly.remoteTUIArguments == ["--profile", "work", "--no-alt-screen"])
 }
 
-@Test("Incompatible managed flags never start a child or discover an executable", arguments: ["0.156.0", "0.156.1", "0.157.0", "0.157.1", "0.158.0", "0.159.0", "0.159.1", "0.159.2", "0.159.3", "0.160.0", "0.160.1", "0.161.0", "0.162.0", "0.162.1", "0.163.0"])
+@Test("Incompatible managed flags never start a child or discover an executable", arguments: ["0.156.0", "0.156.1", "0.157.0", "0.157.1", "0.158.0", "0.159.0", "0.159.1", "0.159.2", "0.159.3", "0.160.0", "0.160.1", "0.161.0", "0.162.0", "0.162.1", "0.163.0", "0.164.0"])
 func managedCodexLauncherRejectsIncompatibleFlagsBeforeChildren(_ version: String) throws {
     for flags in [
         ["--add-dir", "../shared"], ["--add-dir=../shared"],
@@ -2073,7 +2073,7 @@ func managedCodexLauncherRevalidatesAfterTUISpawnAndCleansUp() throws {
     }
 }
 
-@Test("Managed primary App Server receives routed workspace settings without changing fallback arguments", arguments: ["0.156.0", "0.156.1", "0.157.0", "0.157.1", "0.158.0", "0.159.0", "0.159.1", "0.159.2", "0.159.3", "0.160.0", "0.160.1", "0.161.0", "0.162.0", "0.162.1", "0.163.0"])
+@Test("Managed primary App Server receives routed workspace settings without changing fallback arguments", arguments: ["0.156.0", "0.156.1", "0.157.0", "0.157.1", "0.158.0", "0.159.0", "0.159.1", "0.159.2", "0.159.3", "0.160.0", "0.160.1", "0.161.0", "0.162.0", "0.162.1", "0.163.0", "0.164.0"])
 func managedCodexLauncherPassesPrimaryWorkspaceArguments(_ version: String) throws {
     let fixture = try managedCodexLauncherExecutableFixture()
     defer { try? FileManager.default.removeItem(at: fixture.directory) }
@@ -2124,7 +2124,7 @@ func managedCodexLauncherPassesPrimaryWorkspaceArguments(_ version: String) thro
     #expect(!FileManager.default.fileExists(atPath: fixture.tuiPIDFile.path))
 }
 
-@Test("Managed launcher accepts and reaps an isolated auxiliary App Server", arguments: ["0.156.0", "0.156.1", "0.157.0", "0.157.1", "0.158.0", "0.159.0", "0.159.1", "0.159.2", "0.159.3", "0.160.0", "0.160.1", "0.161.0", "0.162.0", "0.162.1", "0.163.0"])
+@Test("Managed launcher accepts and reaps an isolated auxiliary App Server", arguments: ["0.156.0", "0.156.1", "0.157.0", "0.157.1", "0.158.0", "0.159.0", "0.159.1", "0.159.2", "0.159.3", "0.160.0", "0.160.1", "0.161.0", "0.162.0", "0.162.1", "0.163.0", "0.164.0"])
 func managedCodexAuxiliaryConnectionRoundTripAndCleanup(_ version: String) throws {
     let fixture = try managedCodexAuxiliaryExecutableFixture()
     defer { try? FileManager.default.removeItem(at: fixture.directory) }

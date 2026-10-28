@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Biadone · 서체 다시 보기</title>
+  <link rel="stylesheet" href="../../design-system/biadone.css">
+  <link rel="stylesheet" href="fonts.css">
+  <link rel="stylesheet" href="style.css">
+  <script src="app.js" defer></script>
+</head>
+<body class="biadone-theme font-review">
+  <header class="biadone-site-header biadone-page">
+    <a href="../../design-system/" aria-label="Biadone 기본 제작 키트로 이동"><span class="biadone-logo" role="img" aria-label="Biadone"><span class="biadone-logo__symbol"><img src="../../design-system/assets/logo/biadone-symbol.svg" width="64" height="64" alt=""></span><span class="biadone-logo__name" aria-hidden="true">Biadone</span></span></a>
+    <nav class="biadone-nav" aria-label="서체 검토 목차"><a href="#specimens">글자 비교</a><a href="#preview">실제 화면</a><a href="#reading">선택 기준</a></nav>
+  </header>
+  <main class="biadone-page">
+    <section class="review-intro" aria-labelledby="review-title">
+      <div class="biadone-header"><p class="biadone-source">이전 고딕 서체 비교 기록 · 현재 제목은 SUITE</p><span class="biadone-signature" aria-hidden="true"><span></span><span></span></span></div>
+      <h1 class="biadone-title" id="review-title">새로운 서체로 보는 Biadone.</h1>
+      <p class="biadone-lead">유능하고 든든하면서, 편안하게 함께 일하는 인상.<br>
+        같은 문구와 색상으로 세 가지 대안을 살펴봅니다.</p>
+      <p class="biadone-source review-note">제목 700·본문 400, 같은 크기·자간·여백으로 비교합니다. 확정된 로고는 Pretendard 600을 유지합니다. 후보 선택 후 굵기와 자간을 다듬습니다.</p>
+    </section>
+
+    <section class="review-section" id="specimens" aria-labelledby="specimen-title">
+      <h2 class="biadone-section-title" id="specimen-title">먼저, 글자의 인상을 비교합니다</h2>
+      <details class="copy-editor"><summary>내 문구로 비교하기</summary><div class="copy-control"><label for="sample-copy">비교할 제목</label><textarea id="sample-copy" rows="2" maxlength="140">하고 싶은 일을,
+더 많이 해낼 수 있도록.</textarea><button id="reset-copy" class="review-control" type="button">원래 문구</button></div><p class="biadone-source review-note">입력한 제목은 아래 글자 표본에 적용됩니다. 실제 화면은 원래 콘텐츠로 비교합니다.</p></details>
+      <div id="font-list">
+        <article class="font-row" data-font="pretendard">
+          <div class="font-info"><p class="biadone-source">당시 기준</p><h3 class="biadone-subtitle">Pretendard</h3><p class="biadone-body">익숙하고 명확한 전달.</p><p class="biadone-source">다른 후보의 개성을 판단할 기준입니다.</p><button class="biadone-link" type="button" data-preview-font="pretendard">실제 화면으로 보기</button><p class="font-state biadone-source" data-font-status role="status">서체 확인 중</p></div>
+          <div class="font-specimen"><p class="specimen-title" data-sample-title>하고 싶은 일을,
+더 많이 해낼 수 있도록.</p><p class="specimen-body">나의 생각과 생활, 작업을 이해하는 비서이자 워커. 여러 가지 일을 해보고 싶은 사람이 아이디어를 실행으로 옮길 수 있도록 돕습니다.</p><p class="specimen-mixed">Biadone Edu · Before I ask, Done.<br>AI · AX · Physical AI · 0123456789</p></div>
+        </article>
+        <article class="font-row" data-font="wanted">
+          <div class="font-info"><p class="biadone-source">후보 A</p><h3 class="biadone-subtitle">Wanted Sans</h3><p class="biadone-body">또렷함과 유연함의 균형.</p><p class="biadone-source">전체 서체를 바꾸는 첫 후보로 권합니다.</p><a class="biadone-source" href="https://github.com/wanteddev/wanted-sans" target="_blank" rel="noreferrer">공식 소개 ↗</a><button class="biadone-link" type="button" data-preview-font="wanted">실제 화면으로 보기</button><p class="font-state biadone-source" data-font-status role="status">서체 확인 중</p></div>
+          <div class="font-specimen"><p class="specimen-title" data-sample-title>하고 싶은 일을,
+더 많이 해낼 수 있도록.</p><p class="specimen-body">나의 생각과 생활, 작업을 이해하는 비서이자 워커. 여러 가지 일을 해보고 싶은 사람이 아이디어를 실행으로 옮길 수 있도록 돕습니다.</p><p class="specimen-mixed">Biadone Edu · Before I ask, Done.<br>AI · AX · Physical AI · 0123456789</p></div>
+        </article>
+        <article class="font-row" data-font="neo">
+          <div class="font-info"><p class="biadone-source">후보 B</p><h3 class="biadone-subtitle">나눔스퀘어 네오</h3><p class="biadone-body">반듯하고 힘 있는 제목.</p><p class="biadone-source">제목의 존재감과 긴 본문의 편안함을 함께 봅니다.</p><a class="biadone-source" href="https://www.sandoll.co.kr/NanumsquareNEO" target="_blank" rel="noreferrer">제작사 소개 ↗</a><button class="biadone-link" type="button" data-preview-font="neo">실제 화면으로 보기</button><p class="font-state biadone-source" data-font-status role="status">서체 확인 중</p></div>
+          <div class="font-specimen"><p class="specimen-title" data-sample-title>하고 싶은 일을,
+더 많이 해낼 수 있도록.</p><p class="specimen-body">나의 생각과 생활, 작업을 이해하는 비서이자 워커. 여러 가지 일을 해보고 싶은 사람이 아이디어를 실행으로 옮길 수 있도록 돕습니다.</p><p class="specimen-mixed">Biadone Edu · Before I ask, Done.<br>AI · AX · Physical AI · 0123456789</p></div>
+        </article>
+        <article class="font-row" data-font="line">
+          <div class="font-info"><p class="biadone-source">후보 C</p><h3 class="biadone-subtitle">LINE Seed KR</h3><p class="biadone-body">선명하고 친근한 인상.</p><p class="biadone-source">편안함이 Biadone의 신뢰감과 어울리는지 봅니다.</p><a class="biadone-source" href="https://seed.line.me/index_kr.html" target="_blank" rel="noreferrer">공식 소개 ↗</a><button class="biadone-link" type="button" data-preview-font="line">실제 화면으로 보기</button><p class="font-state biadone-source" data-font-status role="status">서체 확인 중</p></div>
+          <div class="font-specimen"><p class="specimen-title" data-sample-title>하고 싶은 일을,
+더 많이 해낼 수 있도록.</p><p class="specimen-body">나의 생각과 생활, 작업을 이해하는 비서이자 워커. 여러 가지 일을 해보고 싶은 사람이 아이디어를 실행으로 옮길 수 있도록 돕습니다.</p><p class="specimen-mixed">Biadone Edu · Before I ask, Done.<br>AI · AX · Physical AI · 0123456789</p></div>
+        </article>
+      </div>
+      <p class="biadone-source review-note">서체별 인상과 추천은 당시 Biadone의 성격에 맞춘 디자인 판단입니다. 현재 공통 제목은 SUITE이며, 이 비교 화면은 공통 기준을 변경하지 않습니다.</p>
+    </section>
+
+    <section class="review-section" id="preview" aria-labelledby="preview-title">
+      <h2 class="biadone-section-title" id="preview-title">지금 만든 화면에 적용해 봅니다</h2>
+      <div class="preview-controls">
+        <label>서체<select id="font-picker"><option value="pretendard">Pretendard · 기준</option><option value="wanted" selected>A · Wanted Sans</option><option value="neo">B · 나눔스퀘어 네오</option><option value="line">C · LINE Seed KR</option></select></label>
+        <label>화면<select id="scene-picker"><option value="web">회사 홈페이지</option><option value="edu">Edu 강의자료</option></select></label>
+        <label id="viewport-control">웹 화면<select id="viewport-picker"><option value="1280">데스크톱</option><option value="390">휴대폰</option></select></label>
+        <label id="edu-control" hidden>강의 장면<select id="edu-picker"><option value="cover">표지</option><option value="prose">본문</option><option value="table">비교표</option><option value="steps">과정</option><option value="summary">요약·출처</option></select></label>
+        <label>적용 범위<select id="scope-picker"><option value="all">제목과 본문</option><option value="headings">제목만 · 본문 Pretendard</option></select></label>
+        <label class="compare-control"><input id="compare-toggle" type="checkbox"> Pretendard와 나란히</label>
+      </div>
+      <p id="preview-status" class="biadone-source review-note" role="status" aria-live="polite">실제 화면을 준비하고 있습니다.</p>
+      <div class="preview-grid" id="preview-grid" data-compare="false">
+        <article class="preview-pane" id="baseline-pane" hidden><h3 class="preview-label">기준 · Pretendard</h3><div class="frame-shell"><iframe id="baseline-frame" title="Pretendard 기준 화면" src="../../design-system/templates/company/"></iframe></div></article>
+        <article class="preview-pane"><h3 class="preview-label" id="candidate-label">A · Wanted Sans</h3><div class="frame-shell"><iframe id="candidate-frame" title="Wanted Sans 비교 화면" src="../../design-system/templates/company/"></iframe></div></article>
+      </div>
+      <p class="biadone-source review-note">원래 페이지를 그대로 불러와 서체만 임시 적용합니다. Edu는 해당 서체로 높이를 다시 측정해 페이지를 나눕니다. 미리보기 크기는 화면에 맞춘 표시 배율입니다.</p>
+      <noscript><p class="biadone-body">글자 표본은 위에서 비교할 수 있습니다. 실제 화면의 서체 전환에는 JavaScript가 필요합니다.</p></noscript>
+    </section>
+
+    <section class="review-section" id="reading" aria-labelledby="reading-title">
+      <h2 class="biadone-section-title" id="reading-title">볼 것은 세 가지입니다</h2>
+      <ol class="biadone-steps"><li><span class="biadone-step-number">01</span><div><h3>제목의 첫인상</h3><p>믿고 맡길 만한 유능함과 편안함이 함께 느껴지는지.</p></div></li><li><span class="biadone-step-number">02</span><div><h3>본문을 읽는 편안함</h3><p>여러 문장과 긴 표를 읽을 때도 자연스럽게 따라갈 수 있는지.</p></div></li><li><span class="biadone-step-number">03</span><div><h3>한글·영문·숫자의 조화</h3><p>Biadone, AI, AX 같은 이름과 한글이 어색하지 않게 이어지는지.</p></div></li></ol>
+      <p class="biadone-body review-note">전체를 바꿀 수도 있고, 제목에만 개성을 주면서 본문은 Pretendard로 유지할 수도 있습니다.</p>
+      <p class="biadone-source review-note"><a href="DESIGN_NOTES.md">서체 출처·사용 조건·비교 방법</a> · <a href="../../design-system/">기본 제작 키트로 돌아가기</a></p>
+    </section>
+  </main>
+  <footer class="biadone-page review-footer"><p class="biadone-source">Biadone · 이전 고딕 비교 기록 · 현재 제목 SUITE</p><span class="biadone-signature" aria-hidden="true"><span></span><span></span></span></footer>
+</body>
+</html>

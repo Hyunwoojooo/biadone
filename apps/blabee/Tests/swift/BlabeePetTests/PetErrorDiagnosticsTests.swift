@@ -525,6 +525,19 @@ struct PetConnectionDiagnosticsTests {
         #expect(PetConnectionDiagnostic.claude(inspection, stage: .configuration)?.reason == .settingsConflict)
     }
 
+    @Test("Read-only native inspection timeouts retain the existing closed timeout reason")
+    func codexInspectionTimeoutMapping() {
+        let inspection = PetConnectionDiagnostic.codex(
+            .error(code: "codex_native_inspection_timeout"), stage: .pluginCheck, version: "0.163.0"
+        )
+        let probe = PetConnectionDiagnostic.codex(
+            .error(code: "codex_native_probe_timeout"), stage: .pluginCheck, version: "0.163.0"
+        )
+        #expect(inspection == .init(provider: .codex, stage: .pluginCheck,
+                                    reason: .serviceTimeout, toolVersion: "0.163.0"))
+        #expect(inspection == probe)
+    }
+
     @Test("A real Claude inspection records the initial consent and excludes later opt-in")
     func claudeInspectionConsent() async throws {
         let fixture = ErrorFixture()

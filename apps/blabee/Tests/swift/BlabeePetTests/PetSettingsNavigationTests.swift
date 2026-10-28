@@ -53,6 +53,24 @@ private actor SettingsNavigationCleanupManager: LegacyCodexShellCleanupManaging 
 @Suite("Air settings navigation")
 @MainActor
 struct PetSettingsNavigationTests {
+    @Test("The Codex overview action opens Connection without changing a draft or starting setup")
+    func codexOverviewOpensConnection() async {
+        let manager = SettingsNavigationCleanupManager()
+        let model = makeModel(cleanup: manager)
+        model.beginShortcutSettings()
+        model.updatePreviewShortcutDraft(.disabled)
+        model.selectSettingsTab(.general)
+        let draft = model.shortcutDraft
+        let view = PetSettingsView(viewModel: model)
+        view.openCodexConnectionSettings()
+        #expect(model.selectedSettingsTab == .connection)
+        #expect(model.isShowingSettings && model.isEditingShortcuts)
+        #expect(model.shortcutDraft == draft)
+        #expect(!model.connectionSetup.isWorking)
+        #expect(await manager.preparations == 0)
+        #expect(await manager.cleanups == 0)
+    }
+
     @Test("Moving from shortcut edits to Connection preserves the draft and cleanup works")
     func draftAndConnectionActionsCoexist() async throws {
         let manager = SettingsNavigationCleanupManager()

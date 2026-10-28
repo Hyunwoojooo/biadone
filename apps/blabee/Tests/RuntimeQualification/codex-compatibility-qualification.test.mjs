@@ -23,7 +23,7 @@ const voiceFixtureFiles = [
   "licenses/PCRE2.md", "licenses/libffi.txt", "licenses/proxy-libintl.txt", "licenses/sljit.txt", "licenses/zlib.txt",
 ].map((path) => `${voiceRoot}/${path}`);
 
-async function fixture(t, { voice = false, version = voice ? "0.163.0" : "0.153.4", bundledShell = version !== "0.163.0" } = {}) {
+async function fixture(t, { voice = false, version = voice ? "0.164.0" : "0.153.4", bundledShell = !["0.163.0", "0.164.0"].includes(version) } = {}) {
   const directory = await realpath(await mkdtemp(join(tmpdir(), "blabee-codex-qualification-fixture-")));
   t.after(() => rm(directory, { recursive: true, force: true }));
   const runtimeDir = join(directory, "runtime");
@@ -88,20 +88,20 @@ test("fixture evidence binds package contract checks without claiming real runti
   assert.ok(f.calls.every((call) => call.options.env === env));
 });
 
-for (const version of ["0.155.0", "0.155.1", "0.156.0", "0.156.1", "0.157.0", "0.157.1", "0.158.0", "0.159.0", "0.159.1", "0.159.2", "0.159.3", "0.160.0", "0.160.1", "0.161.0", "0.162.0", "0.162.1", "0.163.0"]) {
+for (const version of ["0.155.0", "0.155.1", "0.156.0", "0.156.1", "0.157.0", "0.157.1", "0.158.0", "0.159.0", "0.159.1", "0.159.2", "0.159.3", "0.160.0", "0.160.1", "0.161.0", "0.162.0", "0.162.1", "0.163.0", "0.164.0"]) {
   test(`${version} arm64 requires the complete voice layout and verifies every native resource before CLI execution`, async (t) => {
     const f = await fixture(t, { voice: true, version });
     const report = await qualifyCodexCompatibility(f.options, f.dependencies);
     assert.equal(report.status, "fixture_passed", JSON.stringify(report.failure));
     assert.equal(report.package.manifest.version, version);
-    assert.equal(report.package.files.length, version === "0.163.0" ? 41 : 42);
+    assert.equal(report.package.files.length, ["0.163.0", "0.164.0"].includes(version) ? 41 : 42);
     assert.ok(report.testedCapabilities.includes("voice-resource-manifest"));
     assert.ok(report.unverified.includes("voice capture and audio processing"));
     const trustCalls = f.calls.filter((call) => call.command === "/usr/bin/codesign");
-    const expectedTrustChecks = version === "0.163.0" ? 58 : 60;
+    const expectedTrustChecks = ["0.163.0", "0.164.0"].includes(version) ? 58 : 60;
     assert.equal(trustCalls.length, expectedTrustChecks);
     assert.ok(f.calls.slice(0, expectedTrustChecks).every((call) => call.command === "/usr/bin/codesign"));
-    assert.equal(trustCalls.some((call) => call.args.at(-1).endsWith("/zsh/bin/zsh")), version !== "0.163.0");
+    assert.equal(trustCalls.some((call) => call.args.at(-1).endsWith("/zsh/bin/zsh")), !["0.163.0", "0.164.0"].includes(version));
     for (const path of voiceFixtureFiles.filter((name) => name.endsWith(".dylib") || name.endsWith("/codex-voice-host"))) {
       const checks = trustCalls.filter((call) => call.args.at(-1) === join(f.runtimeDir, path));
       assert.equal(checks.length, 2, path);
@@ -122,10 +122,11 @@ for (const [version, unreviewedVersion] of [
   ["0.160.1", "0.160.2"], ["0.161.0", "0.161.1"],
   ["0.162.0", "0.162.2"], ["0.162.1", "0.162.2"],
   ["0.163.0", "0.163.1"],
+  ["0.164.0", "0.164.1"],
 ]) {
   test(`${version} voice layout rejects omitted resources, unknown files and unreviewed version or target combinations`, async (t) => {
     for (const kind of ["host", "library", "license", "manifest", "extra", "version", "target", "entire-voice-layout"]) {
-      const f = await fixture(t, { voice: kind !== "entire-voice-layout", version: kind === "version" ? unreviewedVersion : version, bundledShell: version !== "0.163.0" });
+      const f = await fixture(t, { voice: kind !== "entire-voice-layout", version: kind === "version" ? unreviewedVersion : version, bundledShell: !["0.163.0", "0.164.0"].includes(version) });
       const missing = { host: "bin/codex-voice-host", library: "lib/libopus.0.dylib", license: "licenses/Opus.txt", manifest: "manifest.json" }[kind];
       if (missing) await rm(join(f.runtimeDir, voiceRoot, missing));
       if (kind === "extra") await writeFile(join(f.runtimeDir, voiceRoot, "plugins/unreviewed.dylib"), "extra");
@@ -171,6 +172,7 @@ for (const [version, unreviewedVersion] of [
 test("retired bundled shell and partial older packages fail before any child is launched", async (t) => {
   for (const [version, bundledShell, voice] of [
     ["0.163.0", true, true],
+    ["0.164.0", true, true],
     ["0.162.1", false, true],
     ["0.155.0", false, true],
     ["0.153.4", false, false],
@@ -179,6 +181,17 @@ test("retired bundled shell and partial older packages fail before any child is 
     const report = await qualifyCodexCompatibility(f.options, f.dependencies);
     assert.equal(report.failure.code, "package_layout_invalid", version);
     assert.equal(f.calls.length, 0, version);
+  }
+});
+
+test("unreviewed patch and minor versions reject both voice layouts before execution", async (t) => {
+  for (const version of ["0.164.1", "0.165.0"]) {
+    for (const bundledShell of [false, true]) {
+      const f = await fixture(t, { version, voice: true, bundledShell });
+      const report = await qualifyCodexCompatibility(f.options, f.dependencies);
+      assert.equal(report.failure.code, "package_layout_invalid", `${version} bundledShell=${bundledShell}`);
+      assert.equal(f.calls.length, 0, `${version} bundledShell=${bundledShell}`);
+    }
   }
 });
 

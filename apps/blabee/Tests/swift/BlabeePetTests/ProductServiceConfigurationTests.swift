@@ -87,8 +87,8 @@ private struct ProductServiceFixture {
     }
 }
 
-private func productServiceErrorCode(
-    _ operation: () throws -> ProductServiceConfiguration
+private func productServiceErrorCode<T>(
+    _ operation: () throws -> T
 ) -> String? {
     do {
         _ = try operation()
@@ -98,6 +98,59 @@ private func productServiceErrorCode(
     } catch {
         return "unexpected_error"
     }
+}
+
+@Test("optional settings load distinguishes every missing layer from an explicitly empty allowlist")
+func productServiceOptionalLoadDistinguishesMissingAndEmpty() throws {
+    let fixture = try ProductServiceFixture()
+    defer { try? FileManager.default.removeItem(at: fixture.root) }
+    #expect(try ProductServiceBootstrap.loadEnabledProjectsIfPresent(applicationSupport: fixture.applicationSupport) == nil)
+    for directory in [fixture.applicationSupport, fixture.productDirectory, fixture.configDirectory] {
+        try FileManager.default.createDirectory(
+            at: directory, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700]
+        )
+        #expect(try ProductServiceBootstrap.loadEnabledProjectsIfPresent(applicationSupport: fixture.applicationSupport) == nil)
+    }
+    let descriptor = open(fixture.configDirectory.path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
+    guard descriptor >= 0 else { throw CoordinatorError("test_directory_open_failed") }
+    defer { close(descriptor) }
+    #expect(try ProductServiceBootstrap.loadEnabledProjectsIfPresent(directoryDescriptor: descriptor, fileName: "service.json") == nil)
+    try fixture.writeConfig(["schema_version": "1.0", "enabled_projects": []])
+    #expect(try ProductServiceBootstrap.loadEnabledProjectsIfPresent(applicationSupport: fixture.applicationSupport) == [])
+    #expect(try ProductServiceBootstrap.loadEnabledProjectsIfPresent(directoryDescriptor: descriptor, fileName: "service.json") == [])
+    #expect(try ProductServiceBootstrap.resolve(environment: fixture.environment()).enabledProjectPaths == [])
+}
+
+@Test("optional settings load fails closed for malformed and unsafe files instead of treating them as absent")
+func productServiceOptionalLoadRejectsInvalidAndUnsafeFiles() throws {
+    let fixture = try ProductServiceFixture()
+    defer { try? FileManager.default.removeItem(at: fixture.root) }
+    try fixture.writeConfigData(Data("not JSON".utf8))
+    #expect(productServiceErrorCode {
+        try ProductServiceBootstrap.loadEnabledProjectsIfPresent(applicationSupport: fixture.applicationSupport)
+    } == "product_service_config_invalid")
+    try FileManager.default.removeItem(at: fixture.configFile)
+    try FileManager.default.createSymbolicLink(atPath: fixture.configFile.path, withDestinationPath: "/nonexistent-settings-fixture")
+    #expect(productServiceErrorCode {
+        try ProductServiceBootstrap.loadEnabledProjectsIfPresent(applicationSupport: fixture.applicationSupport)
+    } == "product_service_config_unsafe")
+}
+
+@Test("environment-based optional settings load validates bundle identity and bundled contracts before returning absence")
+func productServiceOptionalEnvironmentLoadRequiresValidBundle() throws {
+    let fixture = try ProductServiceFixture()
+    defer { try? FileManager.default.removeItem(at: fixture.root) }
+    #expect(try ProductServiceBootstrap.loadEnabledProjectsIfPresent(environment: fixture.environment()) == nil)
+    #expect(productServiceErrorCode {
+        try ProductServiceBootstrap.loadEnabledProjectsIfPresent(
+            environment: fixture.environment(identifier: "com.example.lookalike")
+        )
+    } == "product_service_bundle_invalid")
+    try FileManager.default.removeItem(at: fixture.bundle.appendingPathComponent("Contents/Resources/Contracts/v1"))
+    #expect(productServiceErrorCode {
+        try ProductServiceBootstrap.loadEnabledProjectsIfPresent(environment: fixture.environment())
+    } == "product_service_bundle_invalid")
+    #expect(!FileManager.default.fileExists(atPath: fixture.applicationSupport.path))
 }
 
 @Test("product service derives only bundle and Application Support paths", .petLanguage(.korean))

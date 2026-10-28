@@ -83,7 +83,7 @@ enum CodexPluginSetupState: Sendable, Equatable {
         case let .legacyInstallationDetected(marketplaceName, _):
             return PetL10n.text("A previous test connection (\(marketplaceName)) was found. It will change only after you explicitly choose to migrate it.", korean: "이전 테스트 연결(\(marketplaceName))이 발견되었습니다. 사용자가 이전 연결 마이그레이션을 명시적으로 선택해야만 변경합니다.")
         case .installedNeedsHookReview:
-            return PetL10n.text("Blabee cannot automatically confirm completed Hook trust. Check /hooks in a new or reopened Codex session.", korean: "Blabee는 Hook 신뢰 완료 여부를 자동 확인할 수 없습니다. 새 Codex 세션 또는 다시 연 세션에서 /hooks로 현재 상태를 확인하세요.")
+            return PetL10n.text("Review Blabee in /hooks in a new or reopened Codex session. Return to Blabee to check the current trust state.", korean: "새 Codex 세션 또는 다시 연 세션에서 /hooks로 Blabee를 검토하세요. Blabee로 돌아오면 현재 신뢰 상태를 확인합니다.")
         case .updateAvailable:
             return PetL10n.text("Reconnect using the latest Plugin included in the app, then review /hooks in a new session.", korean: "앱에 포함된 최신 Plugin으로 다시 연결한 뒤 새 세션에서 /hooks를 검토하세요.")
         case let .conflict(reason):
@@ -952,7 +952,8 @@ enum CodexPluginSetupProcessRunner {
             arguments: arguments,
             environment: sanitizedEnvironment(environment),
             timeoutMilliseconds: timeoutMilliseconds,
-            outputLimit: outputLimit
+            outputLimit: outputLimit,
+            reportsTimeoutTermination: true
         )
         return CodexPluginSetupProcessResult(
             exitCode: result.exitCode,
@@ -1362,7 +1363,8 @@ actor CodexPluginSetupManager: CodexPluginSetupManaging {
                 canonicalPath: operation.executable?.canonicalURL.path ?? operation.nativeFailureEvidence?.canonicalPath,
                 codexVersion: operation.executable?.version ?? operation.nativeFailureEvidence?.codexVersion,
                 errorCode: operation.checkErrorCode,
-                pathDiagnostic: operation.nativeFailureEvidence?.pathDiagnostic
+                pathDiagnostic: operation.nativeFailureEvidence?.pathDiagnostic,
+                nativeOperation: operation.nativeOperation
             )
         )
     }
@@ -2193,6 +2195,7 @@ actor CodexPluginSetupManager: CodexPluginSetupManaging {
             executable = try qualifiedExecutable(operation: &operation)
         } catch let failure as CodexNativeQualificationFailure {
             operation.nativeFailureEvidence = failure.evidence
+            operation.nativeOperation = failure.operationObservation
             return Inspection(state: .error(code: failure.diagnostic.rawValue), context: nil)
         } catch let error as CoordinatorError
             where error.code == "codex_plugin_setup_operation_timed_out"
@@ -2581,7 +2584,7 @@ actor CodexPluginSetupManager: CodexPluginSetupManaging {
     ) throws -> [MarketplaceRecord] {
         let object = try queryObject(
             executable: executable,
-            arguments: ["plugin", "marketplace", "list", "--json"],
+            query: .marketplaceList,
             failureCode: "marketplace_list_failed",
             operation: &operation
         )
@@ -2603,7 +2606,7 @@ actor CodexPluginSetupManager: CodexPluginSetupManaging {
     ) throws -> [PluginRecord] {
         let object = try queryObject(
             executable: executable,
-            arguments: ["plugin", "list", "--json"],
+            query: .pluginList,
             failureCode: "plugin_list_failed",
             operation: &operation
         )
@@ -2646,25 +2649,44 @@ actor CodexPluginSetupManager: CodexPluginSetupManaging {
 
     private func queryObject(
         executable: CodexPluginSetupQualifiedExecutable,
-        arguments: [String],
+        query: CodexPluginInspectionQuery,
         failureCode: String,
         operation: inout OperationContext
     ) throws -> [String: Any] {
+        // Only these exact list queries use the inspection budget and failure
+        // policy. Partial marketplace results must not replace the full list
+        // used by duplicate/legacy ownership checks and mutation preconditions.
+        let observations = CodexNativeOperationObservations(
+            stage: .revalidation, codexVersion: executable.version
+        )
+        defer { operation.nativeOperation = observations.snapshot() }
         let result: CodexPluginSetupProcessResult
         do {
             let revalidated = try revalidatedExecutable(executable)
             let timeout = try remainingTimeout(
-                maximumMilliseconds: Self.inspectionTimeoutMilliseconds,
+                maximumMilliseconds: query.timeoutMilliseconds,
                 operation: operation
             )
-            result = try runSelectedProcess(
-                selection: executable, executable: revalidated,
-                arguments: arguments, timeout: timeout
-            )
+            if let nativeRuntime {
+                result = try nativeRuntime.runPluginInspection(
+                    selection: executable, query: query, timeoutMilliseconds: timeout,
+                    observer: { observations.replace($0) }
+                )
+            } else {
+                // Dependency-injected runners do not perform native preflight.
+                // Do not infer cleanup evidence from an arbitrary runner error.
+                observations.commandInvocationAttempted()
+                result = try processRunner(
+                    revalidated, query.arguments,
+                    min(query.commandTimeoutMilliseconds, timeout)
+                )
+                observations.returned(exitCode: result.exitCode, terminationSignal: result.terminationSignal)
+            }
             _ = try remainingTimeout(
                 maximumMilliseconds: Self.inspectionTimeoutMilliseconds,
                 operation: operation
             )
+            observations.enter(.revalidation)
             _ = try revalidatedExecutable(executable)
         } catch let error as CoordinatorError
             where error.code == "codex_plugin_setup_operation_timed_out"
@@ -3011,6 +3033,7 @@ actor CodexPluginSetupManager: CodexPluginSetupManaging {
         let deadlineNanoseconds: UInt64
         var executable: CodexPluginSetupQualifiedExecutable?
         var nativeFailureEvidence: CodexPluginCheckEvidence?
+        var nativeOperation: CodexNativeOperationObservation?
         var checkStage: CodexPluginCheckStage = .unknown
         var checkErrorCode: String?
 

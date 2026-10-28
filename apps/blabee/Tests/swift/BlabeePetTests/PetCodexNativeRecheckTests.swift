@@ -15,6 +15,8 @@ private actor PetNativeRecheckManager: CodexPluginSetupManaging {
     private let blocksRecheck: Bool
     private let blocksConnect: Bool
     private let recheckState: CodexPluginSetupState
+    private let inspectState: CodexPluginSetupState
+    private let connectState: CodexPluginSetupState
     private var inspectCalls = 0
     private var recheckCalls = 0
     private var connectCalls = 0
@@ -24,16 +26,20 @@ private actor PetNativeRecheckManager: CodexPluginSetupManaging {
     init(
         blocksRecheck: Bool = false,
         blocksConnect: Bool = false,
-        recheckState: CodexPluginSetupState = .installedNeedsHookReview(version: "0.1.0")
+        recheckState: CodexPluginSetupState = .installedNeedsHookReview(version: "0.1.0"),
+        inspectState: CodexPluginSetupState = .notInstalled,
+        connectState: CodexPluginSetupState = .installedNeedsHookReview(version: "0.1.0")
     ) {
         self.blocksRecheck = blocksRecheck
         self.blocksConnect = blocksConnect
         self.recheckState = recheckState
+        self.inspectState = inspectState
+        self.connectState = connectState
     }
 
     func inspect() async -> CodexPluginSetupState {
         inspectCalls += 1
-        return .notInstalled
+        return inspectState
     }
 
     func recheckNativeExecutable() async -> CodexPluginSetupState {
@@ -45,7 +51,7 @@ private actor PetNativeRecheckManager: CodexPluginSetupManaging {
     func connect() async -> CodexPluginSetupState {
         connectCalls += 1
         if blocksConnect { await pause() }
-        return .installedNeedsHookReview(version: "0.1.0")
+        return connectState
     }
 
     func disconnect() async -> CodexPluginSetupState { .notInstalled }
@@ -194,4 +200,109 @@ func petCodexNativeRecheckSameErrorStillCompletesFreshReport() async throws {
     #expect(viewModel.codexNativeRecheckReport == second)
     #expect((await manager.callCounts()).recheck == 2)
     #expect((await manager.callCounts()).inspect == 1)
+}
+
+@Test("Explicit recovery connects only after a fresh check identifies a pending Plugin setup",
+      arguments: [CodexPluginSetupState.notInstalled,
+                  .marketplaceInstalledNeedsPlugin,
+                  .updateAvailable(installedVersion: "0.1.0", bundledVersion: "0.1.3")])
+@MainActor
+func petCodexRecoveryConnectsAfterFreshCheck(state: CodexPluginSetupState) async {
+    let manager = PetNativeRecheckManager(recheckState: state,
+        inspectState: .error(code: "codex_native_path_unsafe"))
+    let model = petNativeRecheckViewModel(manager: manager)
+    await model.refreshCodexPluginSetup()
+    #expect(model.canRetryCodexPluginConnection)
+    #expect((await manager.callCounts()).recheck == 0)
+    #expect((await manager.callCounts()).connect == 0)
+    await model.retryCodexPluginConnection()
+    #expect((await manager.callCounts()).recheck == 1)
+    #expect((await manager.callCounts()).connect == 1)
+    #expect(model.codexPluginSetupState == .installedNeedsHookReview(version: "0.1.0"))
+    #expect(model.codexNativeRecheckReport?.result?.state == state)
+    #expect(model.codexHookReadiness != .trusted)
+    #expect(!model.canRetryCodexPluginConnection)
+}
+
+@Test("Recovery failures, conflicts and already installed Plugins never authorize a connect",
+      arguments: [CodexPluginSetupState.error(code: "codex_native_path_unsafe"),
+                  .error(code: "codex_native_signature_invalid"),
+                  .error(code: "codex_native_version_unqualified"),
+                  .conflict(reason: "fixture conflict"),
+                  .installedNeedsHookReview(version: "0.1.3")])
+@MainActor
+func petCodexRecoveryDoesNotInstallWithoutFreshEligibility(state: CodexPluginSetupState) async {
+    let manager = PetNativeRecheckManager(recheckState: state,
+        inspectState: .error(code: "codex_native_path_unsafe"))
+    let model = petNativeRecheckViewModel(manager: manager)
+    await model.refreshCodexPluginSetup()
+    await model.retryCodexPluginConnection()
+    #expect((await manager.callCounts()).recheck == 1)
+    #expect((await manager.callCounts()).connect == 0)
+    #expect(model.codexPluginSetupState == state)
+    #expect(model.codexHookReadiness != .trusted)
+}
+
+@Test("Recovery holds a single operation across the check and connect and drops repeated clicks")
+@MainActor
+func petCodexRecoveryCoalescesClicks() async {
+    let manager = PetNativeRecheckManager(blocksRecheck: true, blocksConnect: true,
+        recheckState: .notInstalled, inspectState: .error(code: "codex_native_path_unsafe"))
+    let model = petNativeRecheckViewModel(manager: manager)
+    await model.refreshCodexPluginSetup()
+    let task = Task { @MainActor in await model.retryCodexPluginConnection() }
+    await manager.waitUntilPaused()
+    await model.retryCodexPluginConnection()
+    await model.recheckCodexNativeExecutable()
+    #expect((await manager.callCounts()).recheck == 1)
+    #expect((await manager.callCounts()).connect == 0)
+    await manager.resume()
+    await manager.waitUntilPaused()
+    #expect(model.isCodexPluginOperationInFlight)
+    #expect(model.codexConnectionRecovery != nil)
+    #expect(!model.canRetryCodexPluginConnection)
+    await model.retryCodexPluginConnection()
+    await model.connectCodexPlugin()
+    await model.recheckCodexNativeExecutable()
+    #expect((await manager.callCounts()).connect == 1)
+    await manager.resume()
+    await task.value
+    #expect((await manager.callCounts()).recheck == 1)
+    #expect((await manager.callCounts()).connect == 1)
+    #expect(!model.isCodexPluginOperationInFlight)
+}
+
+@Test("Cancelling recovery during the check never starts Plugin installation")
+@MainActor
+func petCodexRecoveryCancellationStopsConnect() async {
+    let manager = PetNativeRecheckManager(blocksRecheck: true, recheckState: .notInstalled,
+        inspectState: .error(code: "codex_native_path_unsafe"))
+    let model = petNativeRecheckViewModel(manager: manager)
+    await model.refreshCodexPluginSetup()
+    let task = Task { @MainActor in await model.retryCodexPluginConnection() }
+    await manager.waitUntilPaused()
+    task.cancel()
+    await manager.resume()
+    await task.value
+    #expect((await manager.callCounts()).connect == 0)
+    #expect(!model.isCodexPluginOperationInFlight)
+}
+
+@Test("A connection write failure remains visible instead of the successful precheck")
+@MainActor
+func petCodexRecoveryPreservesConnectFailure() async {
+    let manager = PetNativeRecheckManager(blocksConnect: true, recheckState: .notInstalled,
+        inspectState: .error(code: "codex_native_path_unsafe"),
+        connectState: .error(code: "plugin_install_failed"))
+    let model = petNativeRecheckViewModel(manager: manager)
+    await model.refreshCodexPluginSetup()
+    let task = Task { @MainActor in await model.retryCodexPluginConnection() }
+    await manager.waitUntilPaused()
+    await model.refreshCodexPluginSetup()
+    await manager.resume()
+    await task.value
+    #expect(model.codexPluginSetupState == .error(code: "plugin_install_failed"))
+    #expect((await manager.callCounts()).inspect == 1)
+    #expect(model.codexNativeRecheckReport?.result?.state == .notInstalled)
+    #expect(model.codexHookReadiness != .trusted)
 }

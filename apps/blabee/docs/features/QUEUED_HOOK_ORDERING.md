@@ -2,6 +2,87 @@
 
 Codex 선택 전달은 `codex queue`의 반환과 `UserPromptSubmit` Hook이 서로 다른 순서로 도착할 수 있다. 그 사이 사용자가 새 프롬프트를 입력하더라도 이미 선택한 전달의 검증은 동일해야 한다.
 
+## 선택 내용이 보이는 프롬프트 (2026-10-17)
+
+새 전달에는 기존 `ref` 첫 줄 뒤에 선택한 옵션의 제목, 작업 목표, 제약 조건,
+완료 조건을 읽기 쉬운 기록으로 함께 표시한다. 선택한 내용을 다시 생성하거나
+요약하지 않고 저장된 action에서 결정적으로 만든다. 사용자 문장은 인용하고
+제어 문자와 방향 변경 문자는 표시용으로 escape한다. 내용을 조용히 자르지 않는다.
+
+첫 줄을 유지하는 이유는 구버전 Hook·서비스가 추가 본문을 일반 사용자 명령으로
+오인하지 않고 잘못된 envelope로 거절하게 하기 위해서다. 현재 queue 전달은 하나의
+`--message` 인수뿐이며, 숨겨진 ref와 별도의 표시 본문을 전달하는 인터페이스는 사용하지 않는다.
+
+표시 본문 자체에는 실행 권한이 없다. Hook에서 인증된 journal의 선택 action으로
+같은 본문을 재생성해 NFC bytes를 비교하고, 기존 session/turn/cwd·단일 claim·무결성
+검사를 통과한 action만 실행 문맥으로 반환한다. 서비스 재시작 후에도 이 비교를 한다.
+claim의 digest는 계속 Hook이 받은 **원본 bytes**에 묶이며, 다른 턴이나 변경된 본문은
+정확한 재시도가 아니다. 과거 ref-only 전달의 복구는 계속 지원한다.
+
+표식이 있는 요청은 연결 실패, 잘못된 응답, 비활성 프로젝트 등으로 검증 문맥을
+받지 못하면 고정된 실행 금지 안내를 반환한다. 정확한 envelope만 기존의 제한된
+재시도를 사용한다. 일반 사용자 입력과 PermissionRequest 처리는 이 변경과 구분한다.
+Hook 자체가 실행되지 않는 상황까지 네이티브 실행 차단을 증명하는 변경은 아니다.
+
+선택 내용이 Codex 대화와 로컬 `queue --message` 인수에도 남는다는 표시 범위 변화가 있다.
+binding·인증 token·내부 식별자는 추가하지 않으며 진단 로그에 본문을 기록하지 않는다.
+알려진 secret 검사를 유지하지만 임의의 모든 민감정보를 식별하는 필터로 간주하지 않는다.
+
+2026-10-17 검증은 임시 저장소를 사용하는 직렬 Swift 검사로 진행했다.
+`operational|Queued|queuedPrompt|codexQueue|ordinaryHook|permissionHook|nonqueuedPrompt`
+필터의 211건이 통과했고, 마지막 legacy 응답 호환성 보완 후
+`readableQueued|legacyQueuedPromptOutput|queuedPrompt|exactQueued|malformedQueued|nonqueuedPrompt|ordinaryHook|permissionHook|codexQueue`
+필터의 34건을 다시 실행해 통과했다. 두 실행에는 중복 검사가 포함된다.
+본문 변조, 재시작 후 복구, 정확한 재시도와 단일 claim, 다른 턴의 재사용 거절,
+표시 문자열 생성 실패 시 선택 미소비, 한 개의 argv로 전달되는 줄바꿈 본문,
+Hook 실패 안내와 기존 일반·권한 Hook 동작을 확인했다.
+Node roundtrip 파일은 문법 검사만 수행했다. 제품 패키징·서명·설치 및 실제 Codex
+대화에서의 표시 확인은 수행하지 않았다.
+
+## 등록·선택 전 최종 크기 검사 (2026-10-17 후속)
+
+원본 action JSON은 60,000바이트 이내여도, 제어·포맷 문자의 표시용 escape와 각 줄의
+인용 접두사를 넣은 프롬프트는 131,072 UTF-8 바이트를 넘을 수 있다. 이전 생성 실패
+검사는 consume·실제 전송이 발생하지 않는지만 확인했으며, 그 전에 선택과 dispatch
+기록이 저장되는 문제는 막지 못했다.
+
+새 제안은 현재 세션·토큰·프롬프트·secret 검사를 통과한 뒤 모든 옵션에 실제 표시문
+생성기를 적용한다. `canRender`는 길이가 고정된 ASCII ref 자리표시자로 동일 생성기를
+호출하며, 별도 길이 추정식을 두지 않는다. 상한에는 NFC 처리 이후 전체 표식·인용·
+escape·가드 문구가 포함된다. 초과하면 reconciliation·제안 등록·journal 쓰기 전에
+`queued_prompt_preview_invalid`로 거부한다. 기존에 등록된 동일 제안의 정확한 재시도와
+충돌 판정은 유지한다.
+
+Codex MCP에는 `decision_preview_too_large`, `accepted=false`, `retryable=true`로
+반환한다. 재시도 가능은 **내용을 고친 제안**에 대한 것이며, 기존 요청을 그대로 자동
+반복해서는 안 된다는 안내를 함께 보낸다. 세션·토큰 등이 잘못된 요청에는 이 크기 오류를
+먼저 노출하지 않는다. 응답 유실로 acceptance가 불확실한 경우는 계속
+`decision_delivery_unconfirmed`, `retryable=false`로 처리한다.
+
+선택할 때도 immutable packet의 정확한 action과 실제 생성할 ref로 전달문을 먼저
+만든다. 이 단계가 실패하면 `routeSelection`을 호출하지 않는다. 라우팅이 성공한 뒤에는
+effect의 binding·packet/option/action ID·revision과 action 원문이 사전 검증값과
+같은지 확인하고, 새 token에 대한 secret 검사를 거쳐 미리 만든 동일 전달문을 보낸다.
+MAC·freshness·만료·단일 claim·세션 바인딩 검증과 과거 ref-only 응답 호환은 유지한다.
+
+이전 카드가 크기 검사에서 거부되면 앱은 영어/한국어로 “카드 내용이 너무 길어요”와
+내용을 줄인 새 카드 요청 방법을 표시한다. 작업이 전송되지 않았다는 오류만 명시적으로
+분류하며, 일반 timeout·응답 유실의 결과는 계속 알 수 없음으로 둔다. 사용자 작업을
+자동으로 요약·절단·재전송하지 않고 128KiB 상한을 유지한다.
+
+회귀 검사는 4개 옵션 위치의 제어/포맷 문자, 크기 상한 직전·정확히 상한·1바이트 초과,
+한글·emoji·줄바꿈의 실제 Hook claim과 정확한 재시도, 수정한 동일 proposal ID의 등록,
+영어/한국어 안내와 자동 재전송 없음에 해당한다. 구형 oversized packet 검사는 실제
+의미 계층에 저장한 packet에 제품과 같은 선택 preflight를 적용하는 **gate 단위 검사**다.
+운영 actor가 기존 pending packet을 hydrate하는 진입점은 없어 전체 actor 재시작 복원
+검사를 대신하지 않는다. 정상 action의 등록→선택→Hook 검증은 전체 actor 경로로 검사한다.
+
+후속 격리 Swift 검사는 Engine 316개와 앱/Hook 51개가 성공했다. pending reconciliation
+검사를 추가한 뒤 preflight 관련 5개를 다시 실행해 모두 성공했다(앞선 실행과 일부 중복).
+명령·로그·검증 한계는 `build/queued-preview-preflight-20261017/`와
+[전체 디버깅 보고서의 3번 후속 수정](../development/FULL_DEBUG_20261017.md)에 기록했다.
+테스트용 컴파일만 수행했으며 배포 앱·설치본과 실제 모델 전달은 검증하지 않았다.
+
 ## 처리 규칙
 
 | 입력 | 처리 |

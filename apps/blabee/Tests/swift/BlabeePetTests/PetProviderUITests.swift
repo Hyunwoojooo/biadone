@@ -4,14 +4,16 @@ import Foundation
 import Testing
 @testable import BlabeeCoordinator
 
-private func providerUISession(_ provider: PetProvider, suffix: String) -> PetProviderSession {
+private func providerUISession(
+    _ provider: PetProvider, suffix: String, state: String = "ready", native: UUID? = nil
+) -> PetProviderSession {
     let context = PetProviderContext(provider: provider, scopeID: UUID().uuidString.lowercased(),
         serviceIncarnation: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
         sessionIncarnation: UUID().uuidString.lowercased(),
         authorityEpoch: provider == .claude ? UUID().uuidString.lowercased() : nil, uiGeneration: 1)
     return PetProviderSession(id: suffix, context: context, projectID: "project_\(suffix)",
-        sessionID: "session_\(suffix)", cwd: "/tmp/\(suffix)", state: "ready",
-        title: "\(provider.displayName) · \(suffix)")
+        sessionID: "session_\(suffix)", cwd: "/tmp/\(suffix)", state: state,
+        title: "\(provider.displayName) · \(suffix)", nativeSessionID: native?.uuidString.lowercased())
 }
 
 private func providerUISnapshot(
@@ -24,7 +26,7 @@ private func providerUISnapshot(
     if selected.context.provider == .claude {
         snapshot.providerStatus = PetProviderStatus(provider: .claude, scopeID: selected.context.scopeID,
             sessionID: selected.sessionID, cwd: selected.cwd, bridgeConnected: true,
-            ready: true, selectionEnabled: true, latestOutcome: nil)
+            ready: selected.state == "ready", selectionEnabled: selected.state == "ready", latestOutcome: nil)
     }
     return snapshot
 }
@@ -77,6 +79,47 @@ private final class ProviderSettingsOnboarding: PetOnboardingAdapting {
     func disableProject(at path: String) throws {}
 }
 
+private struct ProviderUISuggestions: BlabeeSuggestionModeStoring {
+    func load() -> BlabeeSuggestionModeLoadResult { .init(mode: .actionOnly, diagnostic: nil) }
+    func save(_ mode: BlabeeSuggestionMode) {}
+}
+
+@MainActor
+private final class ProviderUIServicePreferences: PetAppServicePreferenceStoring {
+    var enabled = true
+}
+
+@MainActor
+private final class ProviderUIServiceChild: AppOwnedServiceChild {
+    var isRunning = true
+    var hasPublishedService = true
+    var petSelectorCredential: String? { "fixture-provider-credential" }
+    var terminationSummary: String? { nil }
+    func stop() async { isRunning = false }
+}
+
+@MainActor
+private final class ProviderUIServiceLauncher: AppOwnedServiceLaunching {
+    func launch() throws -> any AppOwnedServiceChild { ProviderUIServiceChild() }
+}
+
+@MainActor
+private func providerUIService() -> PetAppServiceController {
+    let service = PetAppServiceController(launcher: ProviderUIServiceLauncher(),
+        preference: ProviderUIServicePreferences(), registration: { .notRegistered })
+    service.startAtAppLaunch()
+    service.receivedVerifiedSnapshot(generation: service.generation)
+    return service
+}
+
+@MainActor
+private func providerUIClaudeConnection() -> PetClaudeConnectionController {
+    let inspection = ClaudeAutoConnectSetup.Inspection(isEnabled: true, canEnable: false,
+        canDisable: true, detail: "fixture", canLaunch: true)
+    return PetClaudeConnectionController(inspect: { inspection },
+        enable: { inspection }, disable: { inspection })
+}
+
 /// Deliberately returns late successes without reinterpreting their context.
 /// The view model must reject these even without an AppService generation.
 private actor ProviderUITransport: PetProviderControlling {
@@ -89,9 +132,11 @@ private actor ProviderUITransport: PetProviderControlling {
     private var snapshots: [String: PetSnapshot]
     private(set) var requests: [Request] = []
     private(set) var controls: [(String, PetProviderContext)] = []
+    private(set) var selectedSessions: [PetProviderSession] = []
     private var blocked: Set<String> = []
     private var waiters: [String: [CheckedContinuation<Void, any Error>]] = [:]
     private var rejectNextSnapshot = false
+    private var rejectNextDecode = false
     private var nextSelectionFailure: CoordinatorError?
     private var rejectedFocusScopes: Set<String> = []
 
@@ -101,6 +146,7 @@ private actor ProviderUITransport: PetProviderControlling {
     }
     func setSnapshot(_ snapshot: PetSnapshot) { snapshots[snapshot.providerContext!.scopeID] = snapshot }
     func failNextSnapshot() { rejectNextSnapshot = true }
+    func failNextSnapshotDecode() { rejectNextDecode = true }
     func failNextSelection(_ failure: CoordinatorError) { nextSelectionFailure = failure }
     func failNextFocus(context: PetProviderContext) { rejectedFocusScopes.insert(context.scopeID) }
     func key(_ type: String, _ context: PetProviderContext) -> String { type + ":" + context.scopeID }
@@ -155,6 +201,10 @@ private actor ProviderUITransport: PetProviderControlling {
         return Data("{}".utf8)
     }
     func decodeSnapshot(_ data: Data) async throws -> PetSnapshot {
+        if rejectNextDecode {
+            rejectNextDecode = false
+            throw PetTestError.injected("selected_provider_snapshot_invalid")
+        }
         guard let snapshot = snapshots[String(decoding: data, as: UTF8.self)] else {
             throw PetTestError.injected("unknown_provider_snapshot")
         }
@@ -166,7 +216,10 @@ private actor ProviderUITransport: PetProviderControlling {
         try await suspendIfNeeded("outcome", context: expectedContext)
         return expectedContext?.provider == .claude ? .channelPending : .nextTurn
     }
-    func selectSession(_ session: PetProviderSession) async throws { selectedScope = session.context.scopeID }
+    func selectSession(_ session: PetProviderSession) async throws {
+        selectedSessions.append(session)
+        selectedScope = session.context.scopeID
+    }
     func checkConnection(_ expectedContext: PetProviderContext) async throws {
         controls.append(("check", expectedContext))
         try await suspendIfNeeded("check", context: expectedContext)
@@ -186,6 +239,34 @@ private func providerUIWait(
         await Task.yield()
     }
     return await transport.isWaiting(type, context: context)
+}
+
+@MainActor
+private func providerUIRecheckFixture(_ selectedProvider: PetProvider) async throws -> (
+    model: PetViewModel, transport: ProviderUITransport, service: PetAppServiceController,
+    selected: PetProviderSession, target: PetProviderSession, snapshot: PetSnapshot
+) {
+    let selected = providerUISession(selectedProvider, suffix: "recheck-shown")
+    let service = providerUIService()
+    let connection = providerUIClaudeConnection()
+    let identity = PetClaudeConnectionController.ServiceIdentity(
+        generation: service.generation, incarnation: selected.context.serviceIncarnation)
+    var native: UUID?
+    await connection.connect(terminal: .terminal, prepareService: { identity }, launch: { id, terminal in
+        native = id
+        return .init(nativeSessionID: id, project: URL(fileURLWithPath: "/tmp/recheck-target"), terminal: terminal)
+    })
+    let target = providerUISession(.claude, suffix: "recheck-target", state: "required",
+        native: try #require(native))
+    let snapshots = try unifiedUISnapshots([selected, target])
+    let transport = ProviderUITransport(snapshots: snapshots)
+    let model = PetViewModel(transport: transport, externalApplicationOpener: PetFakeApplicationOpener(),
+        claudeConnection: connection, appService: service, suggestionModeStore: ProviderUISuggestions())
+    model.applySnapshotForTesting(snapshots[0])
+    #expect(connection.observe(snapshot: snapshots[0], serviceGeneration: service.generation,
+        serviceReady: true, readFailed: false, canSelect: true) == nil)
+    #expect(connection.phase == .needsProbe && connection.matchedSession == target)
+    return (model, transport, service, selected, target, snapshots[0])
 }
 
 private actor ProviderUIDeliveryRecheck: CodexPluginSetupManaging {
@@ -229,6 +310,112 @@ private func providerUIDeliveryFailure(_ provider: PetProvider) async throws -> 
 @Suite("Common Pet provider controls and action isolation", .petLanguage(.korean))
 @MainActor
 struct PetProviderUITests {
+    @Test("New Claude recheck targets its exact session once while another card stays selected",
+          arguments: [PetProvider.codex, .claude])
+    func matchedSessionRecheckPreservesViewedCard(_ selectedProvider: PetProvider) async throws {
+        let h = try await providerUIRecheckFixture(selectedProvider)
+        let displayed = try #require(h.model.displayedEvent?.reference)
+        #expect(h.model.canRecheckConnectedClaudeSession)
+        await h.transport.block("check", context: h.target.context)
+        let recheck = Task { await h.model.recheckConnectedClaudeSession() }
+        let started = await providerUIWait("check", context: h.target.context, transport: h.transport)
+        #expect(started)
+        guard started else { await h.transport.release("check", context: h.target.context); await recheck.value; return }
+        #expect(!h.model.canRecheckConnectedClaudeSession)
+        await h.model.recheckConnectedClaudeSession()
+        await h.transport.release("check", context: h.target.context)
+        await recheck.value
+        let controls = await h.transport.controls
+        #expect(controls.count == 1 && controls.first?.0 == "check")
+        #expect(controls.first?.1 == h.target.context)
+        #expect(h.model.selectedProviderContext == h.selected.context)
+        #expect(h.model.displayedEvent?.reference == displayed)
+        #expect(await h.transport.selectedSessions.isEmpty)
+        #expect(await h.transport.count("select") == 0)
+        await h.service.shutdown()
+    }
+
+    @Test("A stale matched Claude session or service cannot send a connection recheck",
+          arguments: ["removed", "context", "directory", "service-generation", "service-unavailable"])
+    func matchedSessionRecheckRejectsStaleEvidence(_ change: String) async throws {
+        let h = try await providerUIRecheckFixture(.codex)
+        var changed = h.snapshot
+        switch change {
+        case "removed":
+            changed.providerSessions.removeAll { $0 == h.target }
+        case "context":
+            let context = h.target.context
+            let replacement = PetProviderSession(id: h.target.id,
+                context: .init(provider: .claude, scopeID: context.scopeID,
+                    serviceIncarnation: context.serviceIncarnation,
+                    sessionIncarnation: context.sessionIncarnation, authorityEpoch: context.authorityEpoch,
+                    uiGeneration: context.uiGeneration + 1),
+                projectID: h.target.projectID, sessionID: h.target.sessionID, cwd: h.target.cwd,
+                state: h.target.state, title: h.target.title, nativeSessionID: h.target.nativeSessionID)
+            changed.providerSessions = [h.selected, replacement]
+        case "directory":
+            changed.providerDirectory = .init(serviceGeneration: h.service.generation,
+                serviceIncarnation: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb")
+        case "service-generation":
+            changed.providerDirectory = .init(serviceGeneration: h.service.generation + 1,
+                serviceIncarnation: h.selected.context.serviceIncarnation)
+        default:
+            h.service.connectionFailed(generation: h.service.generation)
+        }
+        // Keep the previously rendered matched row to test the action's own
+        // latest-directory checks before the controller observes the change.
+        h.model.applySnapshotForTesting(changed)
+        #expect(!h.model.canRecheckConnectedClaudeSession)
+        #expect(!h.model.canControlClaudeSession(h.target))
+        await h.model.recheckConnectedClaudeSession()
+        #expect(await h.transport.controls.isEmpty)
+        #expect(await h.transport.selectedSessions.isEmpty)
+        #expect(h.model.selectedProviderContext == h.selected.context)
+        await h.service.shutdown()
+    }
+
+    @Test("Failed Claude reads invalidate settings badges and recover without losing directory or controls",
+          arguments: ["request", "decode"])
+    func failedClaudeReadInvalidatesSettingsEvidence(_ failure: String) async throws {
+        let sessions = [providerUISession(.claude, suffix: "ready"), providerUISession(.codex, suffix: "other")]
+        let snapshots = try unifiedUISnapshots(sessions)
+        let transport = ProviderUITransport(snapshots: snapshots)
+        let service = providerUIService()
+        let model = PetViewModel(transport: transport, externalApplicationOpener: PetFakeApplicationOpener(),
+            claudeConnection: providerUIClaudeConnection(), appService: service,
+            suggestionModeStore: ProviderUISuggestions())
+        model.applySnapshotForTesting(snapshots[0])
+        let entry = try #require(model.snapshot?.providerInbox?.sessions.first)
+        #expect(model.claudeSettingsSummary.tone == .confirmed)
+        #expect(model.claudeSessionSettingsStatus(entry).isReady)
+        if failure == "request" { await transport.failNextSnapshot() }
+        else { await transport.failNextSnapshotDecode() }
+        await model.refresh()
+        #expect(model.providerReadFailed && model.providerSessions == sessions)
+        #expect(model.snapshot?.providerDirectory == snapshots[0].providerDirectory)
+        #expect(model.hasVerifiedServiceConnection && service.state == .ready)
+        #expect(model.coordinatorTransportError == nil)
+        #expect(PetSettingsStatusTone.commonService(model.connectionReadiness) == .confirmed)
+        #expect(model.claudeSettingsSummary.title == "확인 전")
+        #expect(model.claudeSettingsSummary.tone == .neutral)
+        #expect(model.claudeSessionSettingsStatus(entry).tone == .neutral)
+        #expect(!model.claudeSessionSettingsStatus(entry).isReady)
+        #expect(model.canControlClaudeConnection && model.canControlClaudeSession(sessions[0]))
+
+        await model.checkClaudeConnection(session: sessions[0])
+        #expect(!model.providerReadFailed && model.lastError == nil)
+        #expect(model.claudeSettingsSummary.tone == .confirmed)
+        #expect(model.claudeSessionSettingsStatus(entry).isReady)
+        await model.disconnectClaudeSession(session: sessions[0])
+        let controls = await transport.controls
+        #expect(controls.map(\.0) == ["check", "disconnect"])
+        #expect(controls.allSatisfy { $0.1 == sessions[0].context })
+        #expect(await transport.selectedSessions.isEmpty)
+        await model.selectProviderSession(sessions[1])
+        #expect(model.provider == .codex && model.claudeSettingsSummary.tone == .confirmed)
+        await service.shutdown()
+    }
+
     @Test("Same-context snapshot recovery retains delivery failure without restoring selection authority",
           arguments: [PetProvider.codex, .claude])
     func deliveryNoticeSurvivesTransientProviderReads(_ provider: PetProvider) async throws {

@@ -72,95 +72,148 @@ package struct ProductServiceSettingsWriter {
         if action == .enable {
             try Self.requireRealProjectDirectory(project)
         }
-        let processMutex = Self.mutexRegistry.mutex(
-            for: Self.normalizedSystemAlias(paths.config.path)
+        return try withLockedConfiguration(paths: paths) { directories in
+            let current = try ProductServiceBootstrap.loadEnabledProjects(
+                directoryDescriptor: directories.config,
+                fileName: paths.config.lastPathComponent
+            )
+            var updated = current
+            let changed: Bool
+            switch action {
+            case .enable:
+                if current.contains(project) {
+                    changed = false
+                } else {
+                    guard current.count < ProductServiceBootstrap.maximumEnabledProjects else {
+                        throw CoordinatorError(
+                            "product_service_config_invalid",
+                            "the service config cannot contain more than 256 enabled projects"
+                        )
+                    }
+                    updated.append(project)
+                    updated.sort(by: Self.utf8Precedes)
+                    changed = true
+                }
+            case .disable:
+                let previousCount = updated.count
+                updated.removeAll { $0 == project }
+                changed = updated.count != previousCount
+            }
+
+            if changed {
+                let data = try Self.encode(enabledProjects: updated)
+                try writeAtomically(
+                    data,
+                    directoryDescriptor: directories.config,
+                    destinationName: paths.config.lastPathComponent
+                )
+            } else {
+                try synchronizeUnchangedDirectory(directories.config)
+            }
+            return ProductServiceSettingsResult(
+                changed: changed,
+                status: action.status,
+                project: project,
+                enabledProjects: updated
+            )
+        }
+    }
+
+    /// Seeds a new configuration once. An existing allowlist, including an
+    /// explicitly empty one, is authoritative and is never replaced by defaults.
+    package func initializeIfMissing(
+        defaultProject rawProject: String,
+        environment: ProductServiceEnvironment
+    ) throws -> ProductServiceSettingsResult {
+        let paths = try ProductServiceBootstrap.resolvePaths(environment: environment)
+        let project = try Self.normalizeProjectPath(rawProject)
+        return try withLockedConfiguration(paths: paths) { directories in
+            if let current = try ProductServiceBootstrap.loadEnabledProjectsIfPresent(
+                directoryDescriptor: directories.config, fileName: paths.config.lastPathComponent
+            ) {
+                try synchronizeUnchangedDirectory(directories.config)
+                return Self.initializationResult(project: project, enabledProjects: current, changed: false)
+            }
+            try Self.requireRealProjectDirectory(project)
+            do {
+                try writeAtomically(
+                    Self.encode(enabledProjects: [project]),
+                    directoryDescriptor: directories.config,
+                    destinationName: paths.config.lastPathComponent,
+                    createOnly: true
+                )
+            } catch ProductServiceSettingsPublicationError.alreadyExists {
+                // A writer that does not participate in our locks may have
+                // created the file since the missing check. Never overwrite it.
+                guard let current = try ProductServiceBootstrap.loadEnabledProjectsIfPresent(
+                    directoryDescriptor: directories.config, fileName: paths.config.lastPathComponent
+                ) else {
+                    throw Self.unsafeConfiguration("the concurrently created service config disappeared")
+                }
+                try Self.verifyDirectoryChain(directories)
+                try synchronizeUnchangedDirectory(directories.config)
+                return Self.initializationResult(project: project, enabledProjects: current, changed: false)
+            }
+            return Self.initializationResult(project: project, enabledProjects: [project], changed: true)
+        }
+    }
+
+    private static func initializationResult(
+        project: String, enabledProjects: [String], changed: Bool
+    ) -> ProductServiceSettingsResult {
+        ProductServiceSettingsResult(
+            changed: changed,
+            status: enabledProjects.contains(project) ? "enabled" : "disabled",
+            project: project, enabledProjects: enabledProjects
         )
+    }
+
+    private func withLockedConfiguration(
+        paths: ProductServicePaths,
+        operation: (ProductServiceSettingsDirectoryChain) throws -> ProductServiceSettingsResult
+    ) throws -> ProductServiceSettingsResult {
+        let processMutex = Self.mutexRegistry.mutex(for: Self.normalizedSystemAlias(paths.config.path))
         eventObserver?(.beforeProcessMutex)
         processMutex.lock()
         defer { processMutex.unlock() }
-
         let directories = try Self.openSecureConfigDirectories(paths: paths)
         defer {
             close(directories.config)
             close(directories.product)
             close(directories.applicationSupport)
         }
-        let lockDescriptor = try Self.openPersistentLock(
-            directoryDescriptor: directories.config
-        )
+        let lockDescriptor = try Self.openPersistentLock(directoryDescriptor: directories.config)
         defer { close(lockDescriptor) }
-
         eventObserver?(.beforeFileLock)
         try Self.acquireExclusiveLock(lockDescriptor)
         defer { _ = flock(lockDescriptor, LOCK_UN) }
-        try Self.verifyNamedLock(
-            lockDescriptor,
-            directoryDescriptor: directories.config
-        )
+        try Self.verifyNamedLock(lockDescriptor, directoryDescriptor: directories.config)
         try Self.verifyDirectoryChain(directories)
         eventObserver?(.fileLockAcquired)
+        return try operation(directories)
+    }
 
-        let current = try ProductServiceBootstrap.loadEnabledProjects(
-            directoryDescriptor: directories.config,
-            fileName: paths.config.lastPathComponent
-        )
-        var updated = current
-        let changed: Bool
-        switch action {
-        case .enable:
-            if current.contains(project) {
-                changed = false
-            } else {
-                guard current.count < ProductServiceBootstrap.maximumEnabledProjects else {
-                    throw CoordinatorError(
-                        "product_service_config_invalid",
-                        "the service config cannot contain more than 256 enabled projects"
-                    )
-                }
-                updated.append(project)
-                updated.sort(by: Self.utf8Precedes)
-                changed = true
-            }
-        case .disable:
-            let previousCount = updated.count
-            updated.removeAll { $0 == project }
-            changed = updated.count != previousCount
-        }
-
-        if changed {
-            let data = try Self.encode(enabledProjects: updated)
-            try writeAtomically(
-                data,
-                directoryDescriptor: directories.config,
-                destinationName: paths.config.lastPathComponent
+    private func synchronizeUnchangedDirectory(_ descriptor: Int32) throws {
+        do {
+            try failureInjector?(.beforeIdempotentDirectorySync)
+            try Self.sync(
+                descriptor,
+                code: "product_service_config_durability_uncertain",
+                message: "the service config directory cannot be synchronized"
             )
-        } else {
-            do {
-                try failureInjector?(.beforeIdempotentDirectorySync)
-                try Self.sync(
-                    directories.config,
-                    code: "product_service_config_durability_uncertain",
-                    message: "the service config directory cannot be synchronized"
-                )
-            } catch {
-                throw CoordinatorError(
-                    "product_service_config_durability_uncertain",
-                    "the unchanged service config directory durability is uncertain"
-                )
-            }
+        } catch {
+            throw CoordinatorError(
+                "product_service_config_durability_uncertain",
+                "the unchanged service config directory durability is uncertain"
+            )
         }
-        return ProductServiceSettingsResult(
-            changed: changed,
-            status: action.status,
-            project: project,
-            enabledProjects: updated
-        )
     }
 
     private func writeAtomically(
         _ data: Data,
         directoryDescriptor: Int32,
-        destinationName: String
+        destinationName: String,
+        createOnly: Bool = false
     ) throws {
         let temporaryName = ".service.json.\(getpid()).\(UUID().uuidString).tmp"
         let descriptor = openat(
@@ -229,12 +282,11 @@ package struct ProductServiceSettingsWriter {
             descriptorIsOpen = false
 
             try failureInjector?(.beforeRename)
-            guard renameat(
-                directoryDescriptor,
-                temporaryName,
-                directoryDescriptor,
-                destinationName
-            ) == 0 else {
+            let publication = createOnly
+                ? renameatx_np(directoryDescriptor, temporaryName, directoryDescriptor, destinationName, UInt32(RENAME_EXCL))
+                : renameat(directoryDescriptor, temporaryName, directoryDescriptor, destinationName)
+            guard publication == 0 else {
+                if createOnly, errno == EEXIST { throw ProductServiceSettingsPublicationError.alreadyExists }
                 throw CoordinatorError(
                     "product_service_config_write_failed",
                     "the service config cannot be replaced atomically"
@@ -695,6 +747,10 @@ package struct ProductServiceSettingsWriter {
     private static func unsafeConfiguration(_ message: String) -> CoordinatorError {
         CoordinatorError("product_service_config_unsafe", message)
     }
+}
+
+private enum ProductServiceSettingsPublicationError: Error {
+    case alreadyExists
 }
 
 private struct ProductServiceSettingsDirectoryChain {

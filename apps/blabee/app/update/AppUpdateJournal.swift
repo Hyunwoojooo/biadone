@@ -66,11 +66,16 @@ struct AppUpdateJournal: Codable, Equatable, Sendable {
     var updatedAt: Date
 
     /// Schema 1 records explicitly describe the old managed-session shutdown
-    /// flow. Schema 2 never grants authority to pause or restore a conversation.
-    var preservesConnections: Bool { schema == 2 }
+    /// flow. Schemas 2 and 3 never grant authority to pause or restore a
+    /// conversation. Schema 3 records the user's separate normal-shutdown
+    /// confirmation and requires connections to be closed, even if compatible.
+    var preservesConnections: Bool { schema == 2 || schema == 3 }
+    var connectionPolicy: AppUpdateConnectionPolicy {
+        schema == 3 ? .userConfirmedSessionClosure : .preserve
+    }
 
     func requireValid(jobID expectedID: String? = nil, nonce expectedNonce: String? = nil) throws {
-        guard [1, 2].contains(schema), !preservesConnections || sessions.isEmpty,
+        guard [1, 2, 3].contains(schema), !preservesConnections || sessions.isEmpty,
               UUID(uuidString: jobID)?.uuidString.lowercased() == jobID,
               UUID(uuidString: nonce)?.uuidString.lowercased() == nonce,
               expectedID == nil || expectedID == jobID, expectedNonce == nil || expectedNonce == nonce,

@@ -1,0 +1,19 @@
+specification {
+  element person {
+    style {
+      shape person
+    }
+  }
+
+  element system
+  element application
+  element component
+  element datastore
+  element external_system
+
+  tag implemented
+  tag external
+  tag planned
+  tag uncertain
+  tag sensitive
+}

@@ -38,7 +38,7 @@ test("lifecycle checker requires explicit execution, exact stable version and co
   python(`
 base = ["--codex", "/not-executed/codex", "--catalog", "/not-read/models.json", "--expected-sha256", "a" * 64]
 with mock.patch.object(module.subprocess, "run") as run, mock.patch.object(module.subprocess, "Popen") as popen:
-    for version in ["0.154.0", "0.155.0", "0.155.1", "0.156.0", "0.156.1", "0.157.0", "0.157.1", "0.158.0", "0.159.0", "0.159.1", "0.159.2", "0.159.3", "0.160.0", "0.160.1", "0.161.0", "0.162.0", "0.162.1", "0.163.0"]:
+    for version in ["0.154.0", "0.155.0", "0.155.1", "0.156.0", "0.156.1", "0.157.0", "0.157.1", "0.158.0", "0.159.0", "0.159.1", "0.159.2", "0.159.3", "0.160.0", "0.160.1", "0.161.0", "0.162.0", "0.162.1", "0.163.0", "0.164.0"]:
         parsed = module.parse_arguments(base + ["--execute", "--expected-version", version])
         assert parsed.expected_version == version
     invalid = [base + ["--execute"], base + ["--expected-version", "0.155.1"]]

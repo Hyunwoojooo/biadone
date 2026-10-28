@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Biadone · 기본 제작 키트 v0.1</title>
+  <link rel="stylesheet" href="biadone.css">
+  <link rel="stylesheet" href="guide.css">
+</head>
+<body class="biadone-theme">
+  <header class="biadone-site-header biadone-page">
+    <a href="#top" aria-label="Biadone 기본 제작 키트 처음으로">
+      <span class="biadone-logo" role="img" aria-label="Biadone">
+        <span class="biadone-logo__symbol"><img src="assets/logo/biadone-symbol.svg" width="64" height="64" alt=""></span>
+        <span class="biadone-logo__name" aria-hidden="true">Biadone</span>
+      </span>
+    </a>
+    <nav class="biadone-nav" aria-label="제작 키트 목차"><a href="#templates">템플릿</a><a href="#components">반복 요소</a><a href="#foundations">기초 자산</a></nav>
+  </header>
+  <main class="biadone-page" id="top">
+    <section class="kit-intro" aria-labelledby="kit-title">
+      <div class="biadone-header"><p class="biadone-source">기본 제작 키트 · v0.1</p><span class="biadone-signature" aria-hidden="true"><span></span><span></span></span></div>
+      <h1 class="biadone-title" id="kit-title">내용은 유연하게,<br>브랜드는 한결같게.</h1>
+      <p class="biadone-lead kit-intro-copy">Biadone의 색상·서체·로고와 정보 위계를 함께 쓰는 제작 기준입니다.<br>
+        내용은 필요한 만큼 담고, 접합 모티프는 여백과 경계에서 사용합니다.</p>
+      <div class="kit-actions"><a class="biadone-button" href="templates/company/">회사 홈페이지 보기</a><a class="biadone-link" href="templates/edu/">Edu 템플릿 보기</a></div>
+    </section>
+
+    <section class="biadone-section kit-section" id="templates" aria-labelledby="template-title">
+      <h2 class="biadone-section-title" id="template-title">바로 편집할 수 있는 두 가지 기본형</h2>
+      <div class="kit-template-list">
+        <a class="kit-template-row" href="templates/company/"><span class="kit-index">01</span><div><h3 class="biadone-subtitle">회사 소개 홈페이지</h3><p class="biadone-body">비전, 프로젝트, 교육 사업을 소개하는 가변 웹 페이지.</p></div><span class="kit-open" aria-hidden="true">↗</span></a>
+        <a class="kit-template-row" href="templates/edu/"><span class="kit-index">02</span><div><h3 class="biadone-subtitle">Biadone Edu 강의자료</h3><p class="biadone-body">1600×900 화면에서 내용을 나누는 표지·본문·비교·과정·요약 기본형.</p></div><span class="kit-open" aria-hidden="true">↗</span></a>
+      </div>
+      <p class="biadone-source kit-note">HTML/CSS 원본 템플릿입니다. 회사 문구와 교육 내용은 편집해서 사용합니다. <a href="templates/company/README.md">홈페이지 편집 안내</a> · <a href="templates/edu/README.md">Edu 편집 안내</a></p>
+    </section>
+
+    <section class="biadone-section kit-section" id="components" aria-labelledby="components-title">
+      <h2 class="biadone-section-title" id="components-title">반복해서 쓰는 정보 표현</h2>
+      <p class="biadone-body kit-section-copy">색상 상자나 장식 틀로 내용을 제한하지 않습니다. 제목·본문·비교·과정·출처를 같은 위계로 조합합니다.</p>
+      <article class="kit-component"><div><h3 class="biadone-subtitle">제목과 본문</h3><p class="biadone-source">한 화면의 중심 내용을 먼저.</p></div><div class="kit-sample"><h4 class="biadone-section-title">내 업무에서 시작하는 AI 활용</h4><p class="biadone-body">반복해서 하는 일부터 살펴봅니다. 어떤 자료를 넣고 어떤 결과를 얻을지 정하면, AI에 맡길 일과 직접 확인할 일이 분명해집니다.</p></div></article>
+      <article class="kit-component"><div><h3 class="biadone-subtitle">핵심 문장</h3><p class="biadone-source">크기와 여백으로 만드는 강조.</p></div><div class="kit-sample"><p class="biadone-message">나를 이해하고,<br>함께 실행하고,<br>일을 완성하다.</p></div></article>
+      <article class="kit-component"><div><h3 class="biadone-subtitle">비교표</h3><p class="biadone-source">같은 기준으로 비교.<br>좁은 화면에서는 표만 스크롤.</p></div><div class="biadone-table-scroll" role="region" aria-label="업무 흐름 비교 예시, 좁은 화면에서는 가로 스크롤" tabindex="0"><table class="biadone-table"><caption>업무를 연결하는 세 가지 기준</caption><thead><tr><th scope="col">기준</th><th scope="col">입력</th><th scope="col">결과</th><th scope="col">사람의 확인</th></tr></thead><tbody><tr><th scope="row">목적</th><td>독자와 필요한 항목</td><td>작성 기준</td><td>목적이 분명한가</td></tr><tr><th scope="row">초안</th><td>업무 메모와 양식</td><td>항목에 맞춘 초안</td><td>누락된 내용은 없는가</td></tr><tr><th scope="row">전달</th><td>검토한 문서</td><td>팀에서 쓰는 자료</td><td>담당자와 위치가 맞는가</td></tr></tbody></table></div></article>
+      <article class="kit-component"><div><h3 class="biadone-subtitle">과정과 설명</h3><p class="biadone-source">단계의 순서와 역할을 함께.</p></div><ol class="biadone-steps"><li><span class="biadone-step-number">01</span><div><h4>목적 정리</h4><p>원하는 결과와 빠지면 안 되는 항목을 정합니다.</p></div></li><li><span class="biadone-step-number">02</span><div><h4>초안 만들기</h4><p>자료와 형식을 연결해 초안을 작성합니다.</p></div></li><li><span class="biadone-step-number">03</span><div><h4>사람의 검토</h4><p>내용의 맥락과 해석을 확인하고 수정합니다.</p></div></li></ol></article>
+      <article class="kit-component"><div><h3 class="biadone-subtitle">출처와 주석</h3><p class="biadone-source">내용과 근거의 관계를 명확히.</p></div><div class="kit-sample"><p class="biadone-body">외부 자료를 쓰면 자료명, 기관 또는 저자, 기준 날짜와 원문 링크를 함께 적습니다.</p><p class="biadone-source">위 본문·표·과정은 디자인 검토를 위한 교육 예시입니다. 외부 자료를 인용하지 않았습니다.</p></div></article>
+      <p class="biadone-source kit-note">클래스 이름·길이 처리·사용 예시는 <a href="COMPONENTS.md">반복 요소 사용 가이드</a>에 정리했습니다.</p>
+    </section>
+
+    <section class="biadone-section kit-section" id="foundations" aria-labelledby="foundations-title">
+      <h2 class="biadone-section-title" id="foundations-title">공유하는 기초 자산</h2>
+      <div class="kit-palette"><div><span class="kit-swatch kit-swatch--brand"></span><strong>대표 블루</strong><p class="biadone-source">#2858F0</p></div><div><span class="kit-swatch kit-swatch--tint"></span><strong>밝은 바탕</strong><p class="biadone-source">#EEF5FF</p></div><div><span class="kit-swatch kit-swatch--ink"></span><strong>기본 글자</strong><p class="biadone-source">#23314D</p></div><div><span class="kit-swatch kit-swatch--white"></span><strong>기본 바탕</strong><p class="biadone-source">#FFFFFF</p></div></div>
+      <div class="kit-foundation-row"><p class="biadone-subtitle">SUITE</p><div><p class="biadone-message">생각을 실행과 완료로.</p><p class="biadone-source">선택한 제목 서체 · 700 · 로컬 Variable WOFF2</p></div></div>
+      <div class="kit-foundation-row"><p class="biadone-subtitle">Pretendard</p><div><p class="biadone-body">Before I ask, Done.<br>믿고 맡길 수 있고, 편안하게 함께 일할 수 있도록.</p><p class="biadone-source">본문·표·조작 요소 · 400 / 600 · 로고 이름 600</p></div></div>
+      <div class="kit-foundation-row"><span class="biadone-logo kit-logo-large" role="img" aria-label="Biadone"><span class="biadone-logo__symbol"><img src="assets/logo/biadone-symbol.svg" width="64" height="64" alt=""></span><span class="biadone-logo__name" aria-hidden="true">Biadone</span></span><div><p class="biadone-body">맞물린 두 면 · 균형형 로고</p><p class="biadone-source"><a href="assets/logo/biadone-symbol.svg">블루 SVG</a> · <a href="assets/logo/biadone-symbol-white.svg">흰색 SVG</a> · <a href="assets/logo/biadone-symbol-ink.svg">단색 SVG</a></p></div></div>
+      <p class="biadone-source kit-note"><a href="FOUNDATIONS.md">공통 기초</a> · <a href="SCREEN_STYLE.md">화면 스타일</a> · <a href="COMPONENTS.md">제작·확장 안내</a> · <a href="../BRAND_BRIEF.md">브랜드 브리프</a></p>
+      <p class="biadone-source kit-note">서체 검토 기록 · <a href="../concepts/round-10/">Pretendard와 세 후보를 실제 화면에서 비교하기</a></p>
+      <p class="biadone-source kit-note">제목 서체 SUITE 확정 · <a href="../concepts/round-11/">형태가 다른 다섯 가지 제목 서체</a></p>
+    </section>
+  </main>
+  <footer class="biadone-page kit-footer"><p class="biadone-source">Biadone · 기본 제작 키트 v0.1</p><span class="biadone-signature" aria-hidden="true"><span></span><span></span></span></footer>
+</body>
+</html>

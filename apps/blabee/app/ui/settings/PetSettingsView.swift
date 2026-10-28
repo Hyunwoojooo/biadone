@@ -1,6 +1,28 @@
 import CoordinatorSwift
 import SwiftUI
 
+/// A concise overview of the existing checks. Setup and card receipt do not
+/// establish that an arbitrary terminal session can return a selection.
+struct PetCodexSettingsSummary: Equatable, Sendable {
+    let title: String
+    let tone: PetSettingsStatusTone
+
+    init(readiness: PetConnectionReadiness) {
+        tone = .connection(readiness)
+        title = switch readiness.status {
+        case .checking: PetL10n.text("Checking", korean: "확인 중")
+        case .needsSetup: PetL10n.text("Setup needed", korean: "연결 설정 필요")
+        case .needsRestart: PetL10n.text("Apply settings", korean: "설정 적용 필요")
+        case .needsAttention: PetL10n.text("Needs attention", korean: "확인 필요")
+        case .awaitingVerification:
+            readiness.nextStep == .checkHooks
+                ? PetL10n.text("Approval not verified", korean: "승인 확인 전")
+                : PetL10n.text("Setup ready", korean: "설정 준비됨")
+        case .receiving: PetL10n.text("Cards received", korean: "카드 수신 확인")
+        }
+    }
+}
+
 /// Air settings keeps the existing model operations and drafts; tabs only change presentation.
 struct PetSettingsView: View {
     @ObservedObject private var localization = PetLocalization.shared
@@ -136,25 +158,26 @@ struct PetSettingsView: View {
             if let productAccess = viewModel.productAccess {
                 PetAccessStatusView(state: productAccess.effectiveState)
             }
-            Text(PetL10n.text("Connection status and actual operation are checked separately.", korean: "연결 상태와 실제 동작을 나누어 확인해요."))
-                .font(.blabee(.caption)).foregroundStyle(.secondary)
             VStack(spacing: 0) {
                 summaryRow(PetL10n.text("Shared Blabee service", korean: "Blabee 공통 서비스"), title: serviceSummary, tone: serviceTone)
                 Divider()
-                summaryRow("Codex Plugin", title: codexPluginSetupBadgeTitle,
-                           tone: .codexPlugin(viewModel.codexPluginSetupState))
+                VStack(alignment: .leading, spacing: 0) {
+                    summaryRow(PetL10n.text("Codex connection", korean: "Codex 연결"), title: codexSettingsSummary.title,
+                               tone: codexSettingsSummary.tone)
+                    Button(action: openCodexConnectionSettings) {
+                        Label(PetL10n.text("Connection Settings", korean: "연결 설정"), systemImage: "arrow.right")
+                    }
+                    .buttonStyle(.bordered)
+                    .petCapsuleButtonBorder()
+                    .controlSize(.small)
+                    .padding(.horizontal, 14)
+                    .padding(.bottom, 12)
+                    .accessibilityIdentifier("settings-codex-connection")
+                }
+                .accessibilityIdentifier("settings-codex-summary")
                 Divider()
                 summaryRow(PetL10n.text("Claude connection", korean: "Claude 연결"), title: claudeSettingsSummary.title,
                            tone: claudeSettingsSummary.tone)
-                Divider()
-                summaryRow(PetL10n.text("Codex Hook trust", korean: "Codex Hook 신뢰"), title: viewModel.codexHookReadiness.title,
-                           tone: .hookTrust(viewModel.codexHookReadiness))
-                Divider()
-                summaryRow(PetL10n.text("Codex watched projects", korean: "Codex 관찰 프로젝트"), title: viewModel.configuredProjectPathsAreAuthoritative
-                           ? PetL10n.text("\(viewModel.configuredProjectPaths.count)", korean: "\(viewModel.configuredProjectPaths.count)개") : PetL10n.text("Not checked", korean: "확인 전"),
-                           tone: projectTone)
-                Divider()
-                summaryRow(PetL10n.text("Codex selection delivery", korean: "Codex 선택 전달"), title: PetL10n.text("Needs attention", korean: "확인 필요"), tone: .neutral)
             }
             .petInsetSurface()
 
@@ -221,17 +244,16 @@ struct PetSettingsView: View {
         .commonService(viewModel.connectionReadiness)
     }
 
-    private var claudeSettingsSummary: PetClaudeSettingsSummary {
-        PetClaudeSettingsSummary(
-            sessions: viewModel.snapshot?.providerInbox?.sessions ?? [],
-            directoryVerified: viewModel.snapshot?.providerDirectory != nil,
-            serviceConnected: viewModel.hasVerifiedServiceConnection
-        )
+    private var codexSettingsSummary: PetCodexSettingsSummary {
+        .init(readiness: viewModel.connectionReadiness)
     }
 
-    private var projectTone: PetSettingsStatusTone {
-        viewModel.connectionReadiness.checks.first(where: { $0.id == "projects" })
-            .map { .check($0.state) } ?? .neutral
+    func openCodexConnectionSettings() {
+        viewModel.selectSettingsTab(.connection)
+    }
+
+    private var claudeSettingsSummary: PetClaudeSettingsSummary {
+        viewModel.claudeSettingsSummary
     }
 
     private var serviceSummary: String {
@@ -283,8 +305,8 @@ struct PetSettingsView: View {
                         .foregroundStyle(.secondary)
                     }
                     .buttonStyle(.plain)
-                    .help(PetL10n.text("App update and Codex auto-restore settings", korean: "앱 업데이트와 Codex 자동 복원 설정"))
-                    .accessibilityLabel(PetL10n.text("Update and Codex auto-restore settings", korean: "업데이트 및 Codex 자동 복원 설정"))
+                    .help(PetL10n.text("App update details", korean: "앱 업데이트 상세 정보"))
+                    .accessibilityLabel(PetL10n.text("App update details", korean: "앱 업데이트 상세 정보"))
                     .accessibilityIdentifier("app-update-details")
                     Spacer(minLength: 0)
                     PetAppUpdateCheckButton(state: viewModel.appUpdateState) {
@@ -322,20 +344,6 @@ struct PetSettingsView: View {
     private func connectionSettings(scroll: ScrollViewProxy) -> some View {
         VStack(alignment: .leading, spacing: 16) {
             PetConnectionSetupView(viewModel: viewModel)
-            HStack(spacing: 8) {
-                Text(PetL10n.text("Detailed tool connection and service settings", korean: "도구별 연결과 서비스의 세부 설정"))
-                    .font(.blabee(.caption)).foregroundStyle(.secondary)
-                Spacer(minLength: 0)
-                Button {
-                    Task { await viewModel.refreshConnectionSetup() }
-                } label: {
-                    Image(systemName: "arrow.clockwise")
-                }
-                .buttonStyle(.bordered).petCircleButtonBorder()
-                .disabled(viewModel.isOnboardingOperationInFlight || connectionSetup.isWorking)
-                .accessibilityLabel(PetL10n.text("Refresh Codex and Claude connection status", korean: "Codex와 Claude 연결 상태 새로고침"))
-                .accessibilityIdentifier("provider-settings-refresh")
-            }
             DisclosureGroup(isExpanded: $showCodexSettings) {
                 VStack(alignment: .leading, spacing: 14) {
                     connectionReadinessCard(scroll: scroll)
@@ -363,7 +371,7 @@ struct PetSettingsView: View {
             } label: {
                 HStack(spacing: 8) {
                     PetSettingsStatusDot(tone: .connection(viewModel.connectionReadiness))
-                    Text(PetL10n.text("Codex Connection · Installation", korean: "Codex 연결 · 설치 설정"))
+                    Text(PetL10n.text("Codex · Manual Settings and Diagnostics", korean: "Codex · 수동 설정과 진단"))
                     Text(codexPluginSetupBadgeTitle).font(.blabee(.caption2)).foregroundStyle(.secondary)
                 }
                 .accessibilityElement(children: .combine)
@@ -380,7 +388,7 @@ struct PetSettingsView: View {
             } label: {
                 HStack(spacing: 8) {
                     PetSettingsStatusDot(tone: claudeSettingsSummary.tone)
-                    Text(PetL10n.text("Claude Connection · Terminal", korean: "Claude 연결 · 터미널 설정"))
+                    Text(PetL10n.text("Claude · Terminal Settings", korean: "Claude · 터미널 설정"))
                     Text(claudeSettingsSummary.title)
                         .font(.blabee(.caption2)).foregroundStyle(.secondary)
                 }
@@ -403,7 +411,7 @@ struct PetSettingsView: View {
             } label: {
                 HStack(spacing: 8) {
                     PetSettingsStatusDot(tone: serviceTone)
-                    Text(PetL10n.text("Blabee service", korean: "Blabee 서비스"))
+                    Text(PetL10n.text("Advanced Service Settings", korean: "서비스 고급 설정"))
                 }
                 .accessibilityElement(children: .combine)
                 .accessibilityValue(viewModel.connectionReadiness.checks.first(where: { $0.id == "service" })?.detail ?? PetL10n.text("Service status not checked", korean: "서비스 상태 확인 전"))
@@ -660,10 +668,10 @@ struct PetSettingsView: View {
                         if let check = viewModel.connectionReadiness.checks.first(where: { $0.id == "projects" }) {
                             PetSettingsStatusDot(tone: .check(check.state))
                         }
-                        Text(PetL10n.text("Codex watched projects", korean: "Codex 관찰 프로젝트"))
+                        Text(PetL10n.text("Codex Working Folders", korean: "Codex 작업 폴더"))
                             .font(.blabee(.body, weight: .semibold))
                     }
-                    Text(PetL10n.text("Your current Codex working folder must be in this list. Settings apply only to registered folders and their subfolders.", korean: "현재 Codex 작업 폴더가 이 목록에 포함되어야 합니다. 등록한 폴더와 그 하위 경로에만 적용됩니다."))
+                    Text(PetL10n.text("Choose which working folders can send choices from Codex. Their subfolders are included.", korean: "Codex 선택지를 받을 작업 폴더를 관리합니다. 각 폴더의 하위 경로도 포함됩니다."))
                         .font(.blabee(.caption))
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
@@ -681,16 +689,13 @@ struct PetSettingsView: View {
                 .disabled(!viewModel.canMutateOnboardingProjects)
             }
 
-            if !viewModel.configuredProjectPathsAreAuthoritative {
-                projectMessageRow(
-                    PetL10n.text("Unable to verify project settings.", korean: "프로젝트 설정을 확인할 수 없습니다."),
-                    systemImage: "questionmark.folder"
-                )
-            } else if viewModel.configuredProjectPaths.isEmpty {
-                projectMessageRow(
-                    PetL10n.text("No projects configured.", korean: "설정된 프로젝트가 없습니다."),
-                    systemImage: "folder.badge.plus"
-                )
+            let scope = PetCodexWorkingFolderScope(
+                paths: viewModel.configuredProjectPaths,
+                areAuthoritative: viewModel.configuredProjectPathsAreAuthoritative,
+                scopeExists: viewModel.configuredProjectScopeExists
+            )
+            if scope != .configured {
+                projectMessageRow(scope.summary, systemImage: scope == .unverified ? "questionmark.folder" : "folder.badge.plus")
             } else {
                 ForEach(viewModel.configuredProjectPaths, id: \.self) { path in
                     configuredProjectRow(path)
@@ -763,6 +768,8 @@ struct PetSettingsView: View {
             if let report = viewModel.codexNativeRecheckReport {
                 CodexPluginRecheckReportView(report: report)
             }
+
+            CodexConnectionRecoveryView(viewModel: viewModel)
 
             if case let .legacyInstallationDetected(marketplaceName, _) = viewModel.codexPluginSetupState {
                 VStack(alignment: .leading, spacing: 8) {

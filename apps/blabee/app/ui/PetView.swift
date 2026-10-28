@@ -1,12 +1,57 @@
 import CoordinatorSwift
 import SwiftUI
 
+/// Only values that can alter the collapsed decision's rendered layout belong
+/// here. In particular, the per-poll expiry countdown is not a layout revision.
+struct PetDecisionLayoutIdentity: Sendable, Equatable {
+    let interaction: PetInteractionIdentity
+    let providerContext: PetViewModel.ProviderActionContext
+    let language: PetUILanguage
+    let renderedText: [String]
+    let renderedFlags: [Bool]
+    let actionAccessories: [PetActionAccessoryPresentation]
+
+    @MainActor
+    static func current(for model: PetViewModel, language: PetUILanguage) -> Self? {
+        guard !model.isProductAccessBlocked, !model.isExpanded,
+              !model.isShowingOnboarding, !model.isEditingShortcuts,
+              model.pendingManagedCommandApproval == nil, model.pendingPermissionRequest == nil,
+              model.choicePreview == nil, let interaction = model.displayInteraction else { return nil }
+        let status = model.snapshot?.providerStatus
+        let outcome = status?.latestOutcome
+        let notice = model.selectionDeliveryNotice
+        let texts = [
+            interaction.summary, interaction.suggestionKindLabel, model.presentationTitle,
+            model.providerPendingResultDescription ?? "", outcome?.selectionID ?? "",
+            outcome?.status ?? "", outcome?.summary ?? "", model.lastError ?? "",
+            model.visibleShortcutDiagnostic ?? "", model.providerDiagnostic ?? "",
+            notice?.id.uuidString ?? "", notice?.title ?? "", notice?.detail ?? "",
+            String(model.eventQueueCount), String(model.displayedEventQueuePosition ?? 0),
+        ] + interaction.actionChoices.flatMap { [String($0.slot), $0.displayTitle, $0.disabledReason ?? ""] }
+        let flags = [
+            model.isRecoveryCapable, model.feedback != nil, model.supportsProductSettings,
+            status?.selectionEnabled == false, model.pendingEventFocus != nil,
+            interaction.usesRankedNextActions, interaction.legacyPauseChoice?.enabled == true,
+            model.supportsDecisionDismissal, model.provider == .codex,
+            model.hasVisibleStatusMessage, notice?.requiresCodexRecheck == true,
+            notice?.nativeRecheckSucceeded == true, model.isCodexPluginOperationInFlight,
+        ]
+        return Self(interaction: interaction.identity,
+                    providerContext: model.captureProviderActionContext(), language: language,
+                    renderedText: texts, renderedFlags: flags,
+                    actionAccessories: interaction.actionChoices.map {
+                        model.actionAccessoryPresentation(interaction: interaction, choice: $0)
+                    })
+    }
+}
+
 struct PetRootView: View {
     @ObservedObject private var localization = PetLocalization.shared
     @ObservedObject var viewModel: PetViewModel
     // Offscreen view tests omit compositor-only glass; the installed panel uses
     // the default surface. Content and controls follow the same view hierarchy.
     var usesSystemGlassSurface = true
+    var onDecisionContentSize: ((PetDecisionContentMeasurement) -> Void)?
     @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
@@ -23,7 +68,36 @@ struct PetRootView: View {
             .environment(\.locale, localization.language.locale)
     }
 
+    @ViewBuilder
     private var panelBody: some View {
+        if let identity = PetDecisionLayoutIdentity.current(for: viewModel, language: PetL10n.language) {
+            PetAdaptiveDecisionViewport(identity: identity, onContentSize: onDecisionContentSize) {
+                VStack(spacing: 14) {
+                    header
+                    if viewModel.eventQueueCount > 1 {
+                        eventNavigationControls
+                    }
+                    decisionContent
+                    if let interaction = viewModel.displayInteraction {
+                        secondaryControls(interaction: interaction)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    if viewModel.hasVisibleStatusMessage {
+                        compactStatusMessages
+                    }
+                }
+                .padding(PetPanelVisualStyle.contentPadding)
+                .frame(maxWidth: .infinity, alignment: .top)
+            }
+            // A new card starts at its summary. Status/countdown changes on
+            // the same card keep the user's current reading position.
+            .id(identity.interaction)
+        } else {
+            fixedPanelBody
+        }
+    }
+
+    private var fixedPanelBody: some View {
         VStack(spacing: 14) {
             header
             if !viewModel.isProductAccessBlocked, viewModel.eventQueueCount > 1, viewModel.choicePreview == nil,
@@ -766,10 +840,6 @@ struct PetRootView: View {
     private func secondaryButtons(interaction: PetInteraction) -> some View {
             let context = viewModel.captureProviderActionContext()
             if interaction.usesRankedNextActions {
-                Button(action: viewModel.requestPanelToggle) {
-                    Label(PetL10n.text("Later", korean: "나중에"), systemImage: "clock")
-                }
-
                 if viewModel.supportsDecisionDismissal {
                     Button {
                         performProviderAction(context) { await viewModel.skipDecision(for: interaction.identity) }
@@ -961,6 +1031,77 @@ struct PetRootView: View {
         case .recoveryCapable: .green
         case .ready: .green
         case .disconnected, .working: .secondary
+        }
+    }
+}
+
+private struct PetDecisionMeasurementPreference: PreferenceKey {
+    static let defaultValue: PetDecisionContentMeasurement? = nil
+
+    static func reduce(value: inout PetDecisionContentMeasurement?, nextValue: () -> PetDecisionContentMeasurement?) {
+        if let next = nextValue() { value = next }
+    }
+}
+
+/// A single interactive tree measures its full, naturally wrapped height.
+/// Scrolling is enabled only when that content exceeds the available display;
+/// the footer follows the cards instead of being pushed to a fixed window edge.
+private struct PetAdaptiveDecisionViewport<Content: View>: View {
+    let identity: PetDecisionLayoutIdentity
+    let onContentSize: ((PetDecisionContentMeasurement) -> Void)?
+    let content: Content
+    @State private var measurement: PetDecisionContentMeasurement?
+
+    init(
+        identity: PetDecisionLayoutIdentity,
+        onContentSize: ((PetDecisionContentMeasurement) -> Void)?,
+        @ViewBuilder content: () -> Content
+    ) {
+        self.identity = identity
+        self.onContentSize = onContentSize
+        self.content = content()
+    }
+
+    var body: some View {
+        GeometryReader { geometry in
+            let outerWidth = geometry.size.width + 2
+            let naturalHeight = measurement?.accepted(for: identity, width: outerWidth).map { $0.height - 2 }
+            let needsScrolling = naturalHeight.map {
+                PetDecisionViewportPolicy.requiresScrolling(contentHeight: $0, availableHeight: geometry.size.height)
+            } ?? true
+            ScrollView(.vertical) {
+                content
+                    .fixedSize(horizontal: false, vertical: true)
+                    .background {
+                        GeometryReader { contentGeometry in
+                            Color.clear.preference(
+                                key: PetDecisionMeasurementPreference.self,
+                                value: PetDecisionContentMeasurement(
+                                    identity: identity,
+                                    size: CGSize(width: outerWidth, height: contentGeometry.size.height + 2)
+                                )
+                            )
+                        }
+                    }
+            }
+            .scrollDisabled(!needsScrolling)
+            .scrollIndicators(needsScrolling ? .visible : .hidden)
+            .frame(height: min(naturalHeight ?? geometry.size.height, geometry.size.height), alignment: .top)
+            .accessibilityIdentifier("decision-content-viewport")
+            .onPreferenceChange(PetDecisionMeasurementPreference.self) { newMeasurement in
+                guard let newMeasurement,
+                      newMeasurement.accepted(for: identity, width: outerWidth) != nil,
+                      newMeasurement != measurement else { return }
+                measurement = newMeasurement
+                // AppKit resizing happens after the current SwiftUI layout.
+                // The receiver checks the live model identity and width again.
+                Task { @MainActor in
+                    await Task.yield()
+                    onContentSize?(newMeasurement)
+                }
+            }
+            // Key/width acceptance invalidates the old value immediately,
+            // without a reset callback racing the next valid measurement.
         }
     }
 }

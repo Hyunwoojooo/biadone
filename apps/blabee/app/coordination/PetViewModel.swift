@@ -94,13 +94,21 @@ struct PetSelectionDeliveryNotice: Sendable, Equatable, Identifiable {
     var nativeRecheckSucceeded = false
     var nativeRecheckFailed = false
 
+    private var previewTooLarge: Bool {
+        provider == .codex && deliveryState == .notSubmitted && code == "queued_prompt_preview_invalid"
+    }
+
     var title: String {
+        if previewTooLarge { return PetL10n.text("Card content is too long", korean: "카드 내용이 너무 길어요") }
         if nativeRecheckSucceeded { return PetL10n.text("Codex check complete", korean: "Codex 검사를 마쳤어요") }
         return deliveryState == .notSubmitted
             ? PetL10n.text("Unable to send to \(provider.displayName)", korean: "\(provider.displayName)로 보내지 못했어요") : PetL10n.text("Delivery result unknown", korean: "전달 결과를 확인할 수 없어요")
     }
 
     var detail: String {
+        if previewTooLarge {
+            return PetL10n.text("Ask Codex for a shorter card, then choose the task again. The selected task was not sent.", korean: "Codex에 내용을 줄인 새 카드를 요청한 뒤 다시 선택해 주세요. 선택한 작업은 전달되지 않았어요.")
+        }
         if nativeRecheckSucceeded {
             return deliveryState == .notSubmitted
                 ? PetL10n.text("The previous selection was not resent. Request a new card and choose the task you want.", korean: "이전 선택은 다시 보내지 않았어요. 새 카드를 받아 원하는 작업을 선택해 주세요.")
@@ -143,6 +151,31 @@ final class PetViewModel: ObservableObject {
     private var connectionSetupChanges: AnyCancellable?
     private var claudeConnectionChanges: AnyCancellable?
     private var connectionSetupProjectIssue: String?
+    @Published private(set) var isContinuingCodexConnectionSetup = false
+    @Published private(set) var isCheckingConnectionSetupAfterReturn = false
+    private var codexSetupContinuationID: UUID?
+    private var codexSetupContinuationTask: Task<Void, Never>?
+    private var codexSetupContinuationContext: ConnectionSetupContext?
+    private var connectionSetupReturnCheckID: UUID?
+    private var connectionSetupReturnCheckTask: Task<Void, Never>?
+    private var connectionSetupScopeGeneration: UInt64 = 0
+
+    /// Observations and delayed setup work belong to one UI, selection and
+    /// service generation. Neither a matching project alone nor returning to
+    /// the foreground confers permission to continue an older setup attempt.
+    private struct ConnectionSetupContext: Equatable {
+        let action: ProviderActionContext
+        let selectedProviders: Set<PetConnectionSetupProvider>
+        let selectionGeneration: UInt64
+        let scopeGeneration: UInt64
+        let projects: [String]
+        let projectsAreAuthoritative: Bool
+        let hookProject: String?
+        let firstRunGeneration: UUID
+        let firstRunActive: Bool
+        let showingSettings: Bool
+        let settingsTab: PetSettingsTab
+    }
     lazy var connectionSetup: PetConnectionSetupController = {
         let controller = PetConnectionSetupController(store: connectionSetupStore,
             inspect: { [weak self] in
@@ -407,8 +440,10 @@ final class PetViewModel: ObservableObject {
     private var hookCheckGeneration = UUID()
     private var storageRecoveryGeneration = UUID()
     @Published private(set) var codexNativeRecheckReport: CodexPluginRecheckReport?
+    @Published private var activeCodexConnectionRecovery: PetCodexConnectionRecovery?
     @Published private(set) var configuredProjectPaths: [String] = []
     @Published private(set) var configuredProjectPathsAreAuthoritative = false
+    @Published private(set) var configuredProjectScopeExists = false
     @Published private(set) var onboardingError: String?
     @Published private(set) var appUpdateState: PetAppUpdateState = .notChecked
     @Published private(set) var appUpdateSettingsRequestID = UUID()
@@ -503,6 +538,7 @@ final class PetViewModel: ObservableObject {
     var onApprovalHeadChanged: ((PetApprovalHeadIdentity?) -> Void)?
     var onApprovalResolutionFailed: (() -> Void)?
     var onFeedbackRequested: ((String?) -> Void)?
+    var onAppUpdateRequested: ((PetAppUpdateRelease?) -> Void)?
 
     init(
         transport: any PetCoordinatorTransport,
@@ -1088,11 +1124,16 @@ final class PetViewModel: ObservableObject {
         updateClaudeConnection()
     }
 
-    func recheckConnectedClaudeSession() async {
+    var canRecheckConnectedClaudeSession: Bool {
         guard claudeConnection.phase == .needsProbe,
-              let row = claudeConnection.matchedSession,
-              row.context == selectedProviderContext else { return }
-        await checkClaudeConnection()
+              let row = claudeConnection.matchedSession else { return false }
+        return canControlClaudeSession(row)
+    }
+
+    func recheckConnectedClaudeSession() async {
+        guard canRecheckConnectedClaudeSession,
+              let row = claudeConnection.matchedSession else { return }
+        await checkClaudeConnection(session: row)
         updateClaudeConnection()
     }
 
@@ -1117,11 +1158,42 @@ final class PetViewModel: ObservableObject {
         await performClaudeConnectionOperation(disconnect: true, context: context)
     }
 
+    private var availableClaudeDirectory: PetProviderDirectoryStatus? {
+        guard let directory = snapshot?.providerDirectory else { return nil }
+        if let appService {
+            guard appService.state == .ready, appService.petProviderAccess != nil,
+                  directory.serviceGeneration == appService.generation else { return nil }
+        }
+        return directory
+    }
+
     func canControlClaudeSession(_ session: PetProviderSession) -> Bool {
-        supportsProviderSessions && session.context.provider == .claude
+        guard let directory = availableClaudeDirectory else { return false }
+        return supportsProviderSessions && session.context.provider == .claude
             && providerSessions.contains(session) && !isShuttingDown
             && !isProviderConnectionOperationInFlight && !isSwitchingProvider
-            && snapshot?.providerDirectory != nil
+            && session.context.serviceIncarnation == directory.serviceIncarnation
+    }
+
+    // A failed scoped read keeps the directory for navigation and recovery
+    // controls, but its cached ACK no longer proves current session readiness.
+    private var claudeSettingsDirectoryIsCurrent: Bool {
+        !providerReadFailed && availableClaudeDirectory != nil
+    }
+
+    var claudeSettingsSummary: PetClaudeSettingsSummary {
+        PetClaudeSettingsSummary(
+            sessions: snapshot?.providerInbox?.sessions ?? [],
+            directoryVerified: claudeSettingsDirectoryIsCurrent,
+            serviceConnected: hasVerifiedServiceConnection
+        )
+    }
+
+    func claudeSessionSettingsStatus(_ entry: PetProviderInboxSession) -> PetClaudeSessionSettingsStatus {
+        PetClaudeSessionSettingsStatus(
+            session: entry, directoryVerified: claudeSettingsDirectoryIsCurrent,
+            serviceConnected: hasVerifiedServiceConnection
+        )
     }
 
     func checkClaudeConnection(session: PetProviderSession) async {
@@ -1223,6 +1295,7 @@ final class PetViewModel: ObservableObject {
 
     var canChangeAppOwnedService: Bool {
         appService != nil && !isShuttingDown
+            && !isContinuingCodexConnectionSetup && !isCheckingConnectionSetupAfterReturn
             && !isOnboardingConfigurationOperationInFlight
             && !connectionSetup.isWorking && !claudeConnection.isWorking
             && appService?.isTransitioning != true
@@ -1307,6 +1380,160 @@ final class PetViewModel: ObservableObject {
         await connectionSetup.connect()
     }
 
+    /// One explicit recovery action resumes the complete setup flow. Keep the
+    /// Plugin-only retry API separate for advanced settings and delivery help.
+    func recoverAndContinueCodexSetup() async {
+        guard canRetryCodexPluginConnection,
+              connectionSetup.selectedProviders.contains(.codex) else { return }
+        refreshLocalOnboardingState()
+        let operation = UUID()
+        codexSetupContinuationID = operation
+        codexSetupContinuationContext = captureConnectionSetupContext()
+        isContinuingCodexConnectionSetup = true
+        activeCodexConnectionRecovery = codexConnectionRecovery
+        let task = Task { [weak self] in
+            guard let self else { return }
+            await runCodexNativeRecheck(connectWhenReady: false,
+                requestIsCurrent: { self.acceptsCodexSetupContinuation(operation) })
+            guard acceptsCodexSetupContinuation(operation), !Task.isCancelled else { return }
+            switch codexPluginSetupState {
+            case .notInstalled, .marketplaceInstalledNeedsPlugin, .updateAvailable, .installedNeedsHookReview:
+                connectionSetupProjectIssue = nil
+                await connectionSetup.connect(while: { self.acceptsCodexSetupContinuation(operation) })
+            default:
+                break
+            }
+        }
+        codexSetupContinuationTask = task
+        await withTaskCancellationHandler { await task.value } onCancel: { task.cancel() }
+        // Retain the single-flight reservation until the adapter returns, even
+        // after cancellation: it may be completing an atomic settings write.
+        codexSetupContinuationTask = nil
+        codexSetupContinuationID = nil
+        codexSetupContinuationContext = nil
+        isContinuingCodexConnectionSetup = false
+        activeCodexConnectionRecovery = nil
+        if codexNativeRecheckReport?.isChecking == true { codexNativeRecheckReport = nil }
+    }
+
+    func cancelConnectionSetup() {
+        codexSetupContinuationID = nil
+        codexSetupContinuationTask?.cancel()
+        connectionSetupReturnCheckID = nil
+        connectionSetupReturnCheckTask?.cancel()
+        connectionSetup.cancel()
+    }
+
+    var isAwaitingCodexHookReview: Bool {
+        guard connectionSetup.selectedProviders.contains(.codex),
+              case .installedNeedsHookReview = codexPluginSetupState,
+              connectionSetupProjectIssue == nil,
+              configuredProjectPathsAreAuthoritative, !configuredProjectPaths.isEmpty,
+              hasVerifiedServiceConnection, connectionSetupSnapshot?.codexSettingsEvidence != nil,
+              !projectSettingsNeedRestart, codexHookReadiness != .trusted else { return false }
+        return true
+    }
+
+    /// Returning from Codex can only observe an already prepared connection.
+    /// This deliberately avoids normal polling's consumer heartbeat/focus and
+    /// never installs, starts a service, accepts trust or launches a session.
+    func refreshConnectionSetupAfterReturningToApp() async {
+        guard !isOnboardingOperationInFlight, !isShuttingDown,
+              firstRunSetupActive || (isShowingSettings && selectedSettingsTab == .connection) else { return }
+        refreshLocalOnboardingState()
+        guard isAwaitingCodexHookReview, appService?.mayQueryCoordinator != false else { return }
+        let operation = UUID()
+        let context = captureConnectionSetupContext()
+        connectionSetupReturnCheckID = operation
+        isCheckingConnectionSetupAfterReturn = true
+        let task = Task { [weak self] in
+            guard let self else { return }
+            @MainActor func isCurrent() -> Bool {
+                !Task.isCancelled && connectionSetupReturnCheckID == operation
+                    && acceptsConnectionSetupContext(context)
+            }
+            let plugin = await codexPluginSetupManager.inspect()
+            guard isCurrent() else { return }
+            let hooks: PetHookReadinessState
+            if case .installedNeedsHookReview = plugin, let project = context.hookProject {
+                hooks = await hookReadinessManager.inspect(projectURL: URL(fileURLWithPath: project))
+            } else {
+                hooks = .unchecked
+            }
+            guard isCurrent() else { return }
+            nextSnapshotRequest &+= 1
+            let requestNumber = nextSnapshotRequest
+            do {
+                let data = try await transport.request(type: "get_state", payload: Data("{}".utf8), expectedContext: nil)
+                guard isCurrent() else { return }
+                let observed = try await transport.decodeSnapshot(data)
+                guard isCurrent(), requestNumber >= lastAppliedSnapshotRequest,
+                      context.action.serviceGeneration.map({ appService?.acceptsSnapshot(generation: $0) == true }) ?? true
+                else { return }
+                guard observed.hasVerifiedServiceResponse else {
+                    throw PetModelError.invalid("connection_setup_service_response_unverified")
+                }
+                codexPluginSetupState = plugin
+                checkedHookProjectPath = context.hookProject
+                rawCodexHookReadiness = hooks
+                coordinatorTransportError = nil
+                lastAppliedSnapshotRequest = requestNumber
+                if context.firstRunActive {
+                    firstRunSetupSnapshot = observed
+                } else {
+                    apply(observed)
+                }
+                publishConnectionSetupObservation()
+            } catch {
+                guard isCurrent(), requestNumber >= lastAppliedSnapshotRequest else { return }
+                // An observed failure revokes readiness; it never retries the
+                // write or restarts the otherwise running service.
+                invalidateHookReadiness()
+                coordinatorTransportError = String(describing: error)
+                lastAppliedSnapshotRequest = requestNumber
+                if context.firstRunActive {
+                    firstRunSetupSnapshot = nil
+                }
+                publishConnectionSetupObservation()
+            }
+        }
+        connectionSetupReturnCheckTask = task
+        await withTaskCancellationHandler { await task.value } onCancel: { task.cancel() }
+        connectionSetupReturnCheckTask = nil
+        connectionSetupReturnCheckID = nil
+        isCheckingConnectionSetupAfterReturn = false
+    }
+
+    private func captureConnectionSetupContext() -> ConnectionSetupContext {
+        .init(action: captureProviderActionContext(), selectedProviders: connectionSetup.selectedProviders,
+              selectionGeneration: connectionSetup.selectionGeneration,
+              scopeGeneration: connectionSetupScopeGeneration,
+              projects: configuredProjectPaths, projectsAreAuthoritative: configuredProjectPathsAreAuthoritative,
+              hookProject: hookReadinessProjectPath, firstRunGeneration: firstRunSetupGeneration,
+              firstRunActive: firstRunSetupActive, showingSettings: isShowingSettings,
+              settingsTab: selectedSettingsTab)
+    }
+
+    private func acceptsConnectionSetupContext(_ context: ConnectionSetupContext) -> Bool {
+        !isShuttingDown && context == captureConnectionSetupContext()
+    }
+
+    private func acceptsCodexSetupContinuation(_ operation: UUID) -> Bool {
+        codexSetupContinuationID == operation
+            && codexSetupContinuationContext.map(acceptsConnectionSetupContext) == true
+    }
+
+    private func requireCurrentSetupContinuation(_ operation: UUID?) throws {
+        try Task.checkCancellation()
+        guard !isShuttingDown,
+              operation.map(acceptsCodexSetupContinuation) != false else { throw CancellationError() }
+    }
+
+    private func acceptOwnSetupPrerequisiteChange(_ operation: UUID?) {
+        guard let operation, codexSetupContinuationID == operation else { return }
+        codexSetupContinuationContext = captureConnectionSetupContext()
+    }
+
     /// A separate user action is required after removing a legacy registration.
     /// Refreshing setup or completing the removal never starts a replacement.
     func restartConnectionSetupService() async {
@@ -1352,6 +1579,17 @@ final class PetViewModel: ObservableObject {
         return .waitingForSession
     }
 
+    private var codexProjectScopeIssue: String? {
+        if let connectionSetupProjectIssue { return connectionSetupProjectIssue }
+        if !configuredProjectPathsAreAuthoritative {
+            return PetL10n.text("Unable to verify working folder settings. Please check again.", korean: "작업 폴더 설정을 확인하지 못했습니다. 다시 확인해 주세요.")
+        }
+        if configuredProjectScopeExists && configuredProjectPaths.isEmpty {
+            return PetL10n.text("No working folders are enabled. Add a folder in advanced connection settings to use Codex cards.", korean: "사용할 작업 폴더가 없습니다. Codex 카드를 사용하려면 고급 연결 설정에서 폴더를 추가해 주세요.")
+        }
+        return nil
+    }
+
     private func currentConnectionSetupInspection() -> PetConnectionSetupInspection {
         let codex: PetConnectionSetupProviderState
         switch codexPluginSetupState {
@@ -1365,14 +1603,16 @@ final class PetViewModel: ObservableObject {
         case .legacyInstallationDetected, .conflict:
             codex = .init(status: .needsAction, detail: codexPluginSetupState.detail)
         case .notInstalled, .marketplaceInstalledNeedsPlugin, .updateAvailable:
-            codex = .init(status: .available, detail: PetL10n.text("Choose Connect to prepare the required Codex settings.", korean: "연결하기를 누르면 필요한 Codex 연결 설정을 준비합니다."))
+            if let issue = codexProjectScopeIssue {
+                codex = .init(status: .needsAction, detail: issue)
+            } else {
+                codex = .init(status: .available, detail: PetL10n.text("Choose Connect to prepare the required Codex settings.", korean: "연결하기를 누르면 필요한 Codex 연결 설정을 준비합니다."))
+            }
         case .installedNeedsHookReview:
-            if let connectionSetupProjectIssue {
-                codex = .init(status: .needsAction, detail: connectionSetupProjectIssue)
-            } else if !configuredProjectPathsAreAuthoritative {
-                codex = .init(status: .needsAction, detail: PetL10n.text("Unable to verify working folder settings. Please check again.", korean: "작업 폴더 설정을 확인하지 못했습니다. 다시 확인해 주세요."))
-            } else if configuredProjectPaths.isEmpty {
-                codex = .init(status: .available, detail: PetL10n.text("Choose Connect to select the working folder for Codex.", korean: "연결하기를 누르면 Codex에서 사용할 작업 폴더를 선택합니다."))
+            if let issue = codexProjectScopeIssue {
+                codex = .init(status: .needsAction, detail: issue)
+            } else if !configuredProjectScopeExists {
+                codex = .init(status: .available, detail: PetL10n.text("Choose Connect to use your home folder and its subfolders. You can change this in advanced settings.", korean: "연결하기를 누르면 홈 폴더와 하위 폴더를 사용합니다. 고급 설정에서 범위를 바꿀 수 있습니다."))
             } else if projectSettingsNeedRestart {
                 codex = .init(status: .needsAction, detail: PetL10n.text("The working folder was saved. Finish any active tasks, then restart the service in advanced settings to apply it.", korean: "작업 폴더는 저장됐습니다. 기존 작업을 마친 뒤 고급 설정에서 서비스를 다시 시작해 적용해 주세요."))
             } else if !hasVerifiedServiceConnection {
@@ -1412,7 +1652,8 @@ final class PetViewModel: ObservableObject {
         let detected = Set(states.compactMap { provider, state in
             state.status == .available || state.status == .configured ? provider : nil
         })
-        return .init(serviceReady: hasVerifiedServiceConnection, providers: states, recommendedProviders: detected)
+        return .init(serviceReady: hasVerifiedServiceConnection, providers: states, recommendedProviders: detected,
+                     serviceIssue: observedAppOwnedServiceIssue)
     }
 
     private func publishConnectionSetupObservation() {
@@ -1420,17 +1661,18 @@ final class PetViewModel: ObservableObject {
     }
 
     private func inspectConnectionSetup() async throws -> PetConnectionSetupInspection {
-        try Task.checkCancellation()
+        let continuation = codexSetupContinuationID
+        try requireCurrentSetupContinuation(continuation)
         await refreshOnboarding()
+        try requireCurrentSetupContinuation(continuation)
         await refreshCodexPluginSetup()
-        try Task.checkCancellation()
+        try requireCurrentSetupContinuation(continuation)
         await claudeConnection.refresh()
-        try Task.checkCancellation()
+        try requireCurrentSetupContinuation(continuation)
         if canInspectCodexHooks { await inspectCodexHooks() }
-        try Task.checkCancellation()
+        try requireCurrentSetupContinuation(continuation)
         await refreshConnectionSetupSnapshot()
-        try Task.checkCancellation()
-        guard !isShuttingDown else { throw CancellationError() }
+        try requireCurrentSetupContinuation(continuation)
         return currentConnectionSetupInspection()
     }
 
@@ -1440,7 +1682,8 @@ final class PetViewModel: ObservableObject {
     }
 
     private func prepareConnectionSetup() async throws {
-        try Task.checkCancellation()
+        let continuation = codexSetupContinuationID
+        try requireCurrentSetupContinuation(continuation)
         // Only an app-owned service can receive the account credential through
         // its private bootstrap. Never fall back to a newly registered agent.
         guard let appService else {
@@ -1451,39 +1694,50 @@ final class PetViewModel: ObservableObject {
         case .enabled, .requiresApproval, .unknown:
             throw PetClaudeConnectionController.Failure(detail: legacyServiceMigrationDetail)
         }
-        // Persist the explicitly chosen Codex root before the first service launch.
+        // Initialize only a missing Codex scope before the first service launch.
+        // A saved empty scope is intentional and must not expand on reconnect.
         // Claude uses the cwd of a later user-started session and needs no Codex root.
         if connectionSetup.selectedProviders.contains(.codex),
-           connectionSetup.states[.codex]?.status == .available,
-           configuredProjectPathsAreAuthoritative, configuredProjectPaths.isEmpty {
-            guard let project = projectFolderChooser.chooseProjectFolder() else { throw CancellationError() }
-            try Task.checkCancellation()
-            guard !isShuttingDown else { throw CancellationError() }
-            await performOnboardingOperation(.project) {
-                do {
-                    try onboardingAdapter.enableProject(at: project.standardizedFileURL.path)
-                    reloadOnboardingState()
-                } catch {
-                    connectionSetupProjectIssue = PetL10n.text("Unable to save the working folder. Check the folder in advanced settings and try again.", korean: "작업 폴더를 저장하지 못했습니다. 고급 설정에서 폴더를 확인한 뒤 다시 시도해 주세요.")
-                    reloadOnboardingState(operationError: String(describing: error))
+           connectionSetup.states[.codex]?.status == .available {
+            if let issue = codexProjectScopeIssue {
+                throw PetClaudeConnectionController.Failure(detail: issue)
+            }
+            if !configuredProjectScopeExists {
+                await performOnboardingOperation(.project) {
+                    do {
+                        try onboardingAdapter.initializeDefaultProjectScopeIfMissing()
+                        reloadOnboardingState()
+                    } catch {
+                        connectionSetupProjectIssue = PetL10n.text("Unable to save the default working folder. Check the folders in advanced settings and try again.", korean: "기본 작업 폴더를 저장하지 못했습니다. 고급 설정에서 폴더를 확인한 뒤 다시 시도해 주세요.")
+                        reloadOnboardingState(operationError: String(describing: error))
+                    }
+                    acceptOwnSetupPrerequisiteChange(continuation)
                 }
             }
+            try requireCurrentSetupContinuation(continuation)
+            guard configuredProjectScopeExists, configuredProjectPathsAreAuthoritative,
+                  !configuredProjectPaths.isEmpty, connectionSetupProjectIssue == nil else {
+                throw PetClaudeConnectionController.Failure(detail: codexProjectScopeIssue
+                    ?? PetL10n.text("The working folder was not saved. Please check again.", korean: "작업 폴더가 저장되지 않았습니다. 다시 확인해 주세요."))
+            }
         }
-        try Task.checkCancellation()
+        try requireCurrentSetupContinuation(continuation)
         if appService.state == .disabled {
             await performOnboardingOperation(.service) {
                 appService.enable()
                 reloadOnboardingState()
+                acceptOwnSetupPrerequisiteChange(continuation)
             }
         } else if appService.state == .stopped {
             appService.startAtAppLaunch()
+            acceptOwnSetupPrerequisiteChange(continuation)
         }
         let generation = appService.generation
         for attempt in 0..<connectionSetupPollLimit {
-            try Task.checkCancellation()
+            try requireCurrentSetupContinuation(continuation)
             guard !isShuttingDown, generation == appService.generation else { throw CancellationError() }
             await refreshConnectionSetupSnapshot()
-            try Task.checkCancellation()
+            try requireCurrentSetupContinuation(continuation)
             guard !isShuttingDown, generation == appService.generation else { throw CancellationError() }
             if hasVerifiedServiceConnection { return }
             switch appService.state {
@@ -1498,7 +1752,8 @@ final class PetViewModel: ObservableObject {
     }
 
     private func configureConnectionProvider(_ provider: PetConnectionSetupProvider) async throws {
-        try Task.checkCancellation()
+        let continuation = codexSetupContinuationID
+        try requireCurrentSetupContinuation(continuation)
         let errorContext = errorDiagnostics?.captureContext()
         switch provider {
         case .codex:
@@ -1508,13 +1763,16 @@ final class PetViewModel: ObservableObject {
             }
             if canConfigureCodexPlugin {
                 await performOnboardingOperation(.codexPlugin) {
-                    codexPluginSetupState = await codexPluginSetupManager.connect()
+                    let state = await codexPluginSetupManager.connect()
+                    guard (try? requireCurrentSetupContinuation(continuation)) != nil else { return }
+                    codexPluginSetupState = state
                     clearLegacyCodexPluginMigrationConfirmation()
                 }
-                try Task.checkCancellation()
+                try requireCurrentSetupContinuation(continuation)
                 recordConnectionDiagnostic(.codex(codexPluginSetupState, stage: .configuration), context: errorContext)
             }
             if canInspectCodexHooks { await inspectCodexHooks() }
+            try requireCurrentSetupContinuation(continuation)
         case .claude:
             _ = try await claudeConnection.configureAutomaticConnection()
         }
@@ -1522,10 +1780,12 @@ final class PetViewModel: ObservableObject {
 
     var canCheckCodexHooks: Bool {
         canInspectCodexHooks && !connectionSetup.isWorking
+            && !isContinuingCodexConnectionSetup && !isCheckingConnectionSetupAfterReturn
     }
 
     private var canInspectCodexHooks: Bool {
         guard !isShuttingDown, !isCodexPluginOperationInFlight, !isCodexHookCheckInFlight,
+              !isCheckingConnectionSetupAfterReturn,
               !isStorageRecoveryOperationInFlight, hookReadinessProjectPath != nil,
               case .installedNeedsHookReview = codexPluginSetupState else { return false }
         return true
@@ -1533,6 +1793,7 @@ final class PetViewModel: ObservableObject {
 
     func selectHookProject(_ path: String) {
         guard hookReadinessProjectPaths.contains(path), path != hookReadinessProjectPath else { return }
+        connectionSetupScopeGeneration &+= 1
         selectedHookProjectPath = path
         invalidateHookReadiness()
     }
@@ -1551,6 +1812,7 @@ final class PetViewModel: ObservableObject {
 
     private func inspectCodexHooks() async {
         guard canInspectCodexHooks, let path = hookReadinessProjectPath else { return }
+        let context = captureConnectionSetupContext()
         let errorContext = errorDiagnostics?.captureContext()
         let generation = UUID()
         hookCheckGeneration = generation
@@ -1560,6 +1822,7 @@ final class PetViewModel: ObservableObject {
         defer { isCodexHookCheckInFlight = false }
         let result = await hookReadinessManager.inspect(projectURL: URL(fileURLWithPath: path))
         guard hookCheckGeneration == generation, path == hookReadinessProjectPath,
+              acceptsConnectionSetupContext(context),
               !isShuttingDown, !Task.isCancelled else {
             if hookCheckGeneration == generation { invalidateHookReadiness() }
             return
@@ -1638,6 +1901,17 @@ final class PetViewModel: ObservableObject {
         (snapshot ?? firstRunSetupSnapshot)?.codexSettingsEvidence?.activeProjectPaths ?? []
     }
 
+    /// A normal disabled/stopped service can be prepared during onboarding.
+    /// Actual failures need their own action and must not be hidden by the
+    /// independently discovered installation state of either tool.
+    private var observedAppOwnedServiceIssue: String? {
+        guard isAppOwnedServiceEnabled else { return nil }
+        switch appOwnedServiceState {
+        case .failed, .blocked, .unresponsive: return appOwnedServiceDetail
+        default: return nil
+        }
+    }
+
     /// Installation, a responding service, and a received card are different
     /// evidence. In particular, persisted sessions do not prove Hook trust or
     /// the health of the user's currently focused terminal.
@@ -1651,11 +1925,8 @@ final class PetViewModel: ObservableObject {
             appOwnedServiceState == .blocked || appOwnedServiceState == .unresponsive
         )
         let serviceIssue: String?
-        if isAppOwnedServiceEnabled,
-           case .failed = appOwnedServiceState {
-            serviceIssue = appOwnedServiceDetail
-        } else if serviceIssueRequiresAction {
-            serviceIssue = appOwnedServiceDetail
+        if let observedAppOwnedServiceIssue {
+            serviceIssue = observedAppOwnedServiceIssue
         } else if coordinatorTransportError != nil, !transitioning {
             serviceIssue = PetL10n.text("Unable to confirm a service response. Reconnect in service settings.", korean: "서비스 응답을 확인하지 못했습니다. 서비스 설정에서 다시 연결해 주세요.")
         } else {
@@ -1712,6 +1983,7 @@ final class PetViewModel: ObservableObject {
             || isLegacyShellCleanupOperationInFlight
             || isCodexHookCheckInFlight || isStorageRecoveryOperationInFlight
             || connectionSetup.isWorking || claudeConnection.isWorking || isStartingClaude
+            || isContinuingCodexConnectionSetup || isCheckingConnectionSetupAfterReturn
     }
 
     private var isOnboardingConfigurationOperationInFlight: Bool {
@@ -1763,6 +2035,7 @@ final class PetViewModel: ObservableObject {
             || onboardingServiceState == .requiresApproval)
             && !isOnboardingConfigurationOperationInFlight
             && !connectionSetup.isWorking && !claudeConnection.isWorking
+            && !isContinuingCodexConnectionSetup && !isCheckingConnectionSetupAfterReturn
             && appService?.hasOwnedChild != true
     }
 
@@ -1777,7 +2050,8 @@ final class PetViewModel: ObservableObject {
 
     var canMutateOnboardingProjects: Bool {
         guard configuredProjectPathsAreAuthoritative, !connectionSetup.isWorking,
-              !claudeConnection.isWorking else { return false }
+              !claudeConnection.isWorking, !isContinuingCodexConnectionSetup,
+              !isCheckingConnectionSetupAfterReturn else { return false }
         if isAppOwnedServiceAvailable, onboardingServiceState == .notFound {
             return !isOnboardingConfigurationOperationInFlight
         }
@@ -1791,6 +2065,17 @@ final class PetViewModel: ObservableObject {
 
     var canConnectCodexPlugin: Bool {
         canConfigureCodexPlugin && !connectionSetup.isWorking && !claudeConnection.isWorking
+            && !isContinuingCodexConnectionSetup && !isCheckingConnectionSetupAfterReturn
+    }
+
+    var codexConnectionRecovery: PetCodexConnectionRecovery? {
+        activeCodexConnectionRecovery ?? PetCodexConnectionRecovery(state: codexPluginSetupState)
+    }
+
+    var canRetryCodexPluginConnection: Bool {
+        !isShuttingDown && !isOnboardingOperationInFlight
+            && !connectionSetup.isWorking && !claudeConnection.isWorking
+            && codexConnectionRecovery != nil
     }
 
     private var canConfigureCodexPlugin: Bool {
@@ -1803,7 +2088,8 @@ final class PetViewModel: ObservableObject {
 
     var canDisconnectCodexPlugin: Bool {
         guard !isCodexPluginOperationInFlight, !isCodexHookCheckInFlight,
-              !connectionSetup.isWorking, !claudeConnection.isWorking else { return false }
+              !connectionSetup.isWorking, !claudeConnection.isWorking,
+              !isContinuingCodexConnectionSetup, !isCheckingConnectionSetupAfterReturn else { return false }
         return switch codexPluginSetupState {
         case .marketplaceInstalledNeedsPlugin, .installedNeedsHookReview, .updateAvailable: true
         case .unchecked, .unavailable, .notInstalled, .legacyInstallationDetected, .conflict, .error: false
@@ -1812,7 +2098,8 @@ final class PetViewModel: ObservableObject {
 
     var canMigrateLegacyCodexPlugin: Bool {
         guard !isCodexPluginOperationInFlight, !isCodexHookCheckInFlight,
-              !connectionSetup.isWorking, !claudeConnection.isWorking else { return false }
+              !connectionSetup.isWorking, !claudeConnection.isWorking,
+              !isContinuingCodexConnectionSetup, !isCheckingConnectionSetupAfterReturn else { return false }
         return switch codexPluginSetupState {
         case .legacyInstallationDetected: true
         case .unchecked, .unavailable, .notInstalled, .marketplaceInstalledNeedsPlugin,
@@ -1870,6 +2157,7 @@ final class PetViewModel: ObservableObject {
 
     func selectSettingsTab(_ tab: PetSettingsTab) {
         guard isShowingSettings else { return }
+        if selectedSettingsTab != tab { cancelConnectionSetup() }
         if tab == .shortcuts, !isEditingShortcuts {
             beginShortcutSettings()
         } else {
@@ -1929,6 +2217,7 @@ final class PetViewModel: ObservableObject {
     }
 
     func closeOnboarding() {
+        cancelConnectionSetup()
         cancelStorageRecovery()
         clearLegacyCodexPluginMigrationConfirmation()
         cancelLegacyShellCleanup()
@@ -1941,6 +2230,10 @@ final class PetViewModel: ObservableObject {
     }
 
     var isCheckingForAppUpdate: Bool { appUpdateState.isChecking }
+
+    func showAppUpdateWindow(_ release: PetAppUpdateRelease?) {
+        onAppUpdateRequested?(release)
+    }
 
     func showAppUpdateSettings() {
         cancelShortcutSettings()
@@ -2128,7 +2421,7 @@ final class PetViewModel: ObservableObject {
     }
 
     func endFirstRunSetup() {
-        connectionSetup.cancel()
+        cancelConnectionSetup()
         cancelStorageRecovery()
         firstRunSetupActive = false
         firstRunSetupGeneration = UUID()
@@ -2161,24 +2454,30 @@ final class PetViewModel: ObservableObject {
         }
         let generation = appService?.generation
         let context = captureProviderActionContext()
+        nextSnapshotRequest &+= 1
+        let requestNumber = nextSnapshotRequest
         do {
             let data = try await transport.request(type: "get_state", payload: Data("{}".utf8), expectedContext: nil)
             guard acceptsProviderObservation(context) else { return }
             let parsed = try await transport.decodeSnapshot(data)
             guard acceptsProviderObservation(context), firstRunSetupActive, firstRunSetupGeneration == setupGeneration,
                   !isShuttingDown, !Task.isCancelled,
+                  requestNumber >= lastAppliedSnapshotRequest,
                   generation.map({ appService?.acceptsSnapshot(generation: $0) == true }) ?? true
             else { return }
             guard parsed.hasVerifiedServiceResponse else {
                 throw PetModelError.invalid("first_run_service_response_unverified")
             }
             if let generation { appService?.receivedVerifiedSnapshot(generation: generation) }
+            lastAppliedSnapshotRequest = requestNumber
             firstRunSetupSnapshot = parsed
             coordinatorTransportError = nil
         } catch {
             guard acceptsProviderObservation(context), firstRunSetupActive, firstRunSetupGeneration == setupGeneration,
                   !isShuttingDown, !Task.isCancelled,
+                  requestNumber >= lastAppliedSnapshotRequest,
                   generation == appService?.generation else { return }
+            lastAppliedSnapshotRequest = requestNumber
             firstRunSetupSnapshot = nil
             if supportsProviderSessions, context.expectedContext?.provider == .claude {
                 lastError = String(describing: error)
@@ -2190,22 +2489,45 @@ final class PetViewModel: ObservableObject {
     }
 
     func refreshCodexPluginSetup() async {
+        guard !isCheckingConnectionSetupAfterReturn else { return }
         invalidateHookReadiness()
         guard !isCodexPluginOperationInFlight else {
             codexPluginRefreshRequested = true
             return
         }
+        let continuation = codexSetupContinuationID
         await performOnboardingOperation(.codexPlugin) {
             let errorContext = errorDiagnostics?.captureContext()
-            codexPluginSetupState = await codexPluginSetupManager.inspect()
+            let state = await codexPluginSetupManager.inspect()
+            guard (try? requireCurrentSetupContinuation(continuation)) != nil else { return }
+            codexPluginSetupState = state
             recordConnectionDiagnostic(.codex(codexPluginSetupState, stage: .inspection), context: errorContext)
             clearLegacyCodexPluginMigrationConfirmation()
         }
     }
 
     func recheckCodexNativeExecutable() async {
+        guard !isContinuingCodexConnectionSetup, !isCheckingConnectionSetupAfterReturn else { return }
+        await runCodexNativeRecheck(connectWhenReady: false)
+    }
+
+    /// Explicit setup action only. Passive refreshes and delivery recovery never
+    /// install Plugins, clear a native failure guard, or resend selected work.
+    func retryCodexPluginConnection() async {
+        guard canRetryCodexPluginConnection else { return }
+        activeCodexConnectionRecovery = codexConnectionRecovery
+        defer { activeCodexConnectionRecovery = nil }
+        await runCodexNativeRecheck(connectWhenReady: true)
+    }
+
+    private func runCodexNativeRecheck(connectWhenReady: Bool, requestIsCurrent: (() -> Bool)? = nil) async {
         // Explicit retries are never queued behind another Plugin operation.
         guard !isCodexPluginOperationInFlight, !isCodexHookCheckInFlight else { return }
+        defer {
+            if !Task.isCancelled, !isShuttingDown, requestIsCurrent?() != false {
+                publishConnectionSetupObservation()
+            }
+        }
         let deliveryNoticeID = selectionDeliveryNotice?.id
         let deliveryContext = selectionDeliveryNoticeContext
         await performOnboardingOperation(.codexPlugin) {
@@ -2215,6 +2537,7 @@ final class PetViewModel: ObservableObject {
             let startedUptime = DispatchTime.now().uptimeNanoseconds
             codexNativeRecheckReport = report
             let result = await codexPluginSetupManager.recheckNativeExecutableWithReport()
+            guard !Task.isCancelled, !isShuttingDown, requestIsCurrent?() != false else { return }
             report.completedAt = Date()
             let finishedUptime = DispatchTime.now().uptimeNanoseconds
             report.elapsedSeconds = Double(finishedUptime - startedUptime) / 1_000_000_000
@@ -2245,6 +2568,28 @@ final class PetViewModel: ObservableObject {
                 }
                 usageAnalytics?.observeConnection(codexVersion: version, mode: mode,
                     compatibility: compatibility, context: insightContext)
+            }
+            // Keep the fresh check and optional connect under one operation
+            // guard, so repeated clicks cannot queue duplicate installations.
+            // Only these verified setup states can need a Plugin write.
+            if connectWhenReady, !Task.isCancelled, !isShuttingDown {
+                switch result.state {
+                case .notInstalled, .marketplaceInstalledNeedsPlugin, .updateAvailable:
+                    codexPluginSetupState = await codexPluginSetupManager.connect()
+                    recordConnectionDiagnostic(.codex(codexPluginSetupState, stage: .configuration),
+                                               context: errorContext)
+                    switch codexPluginSetupState {
+                    case .error, .unavailable, .conflict:
+                        // Coalesce refresh clicks made during this attempt. A
+                        // passive inspection must not erase the write failure
+                        // with an earlier/partial "not installed" observation.
+                        codexPluginRefreshRequested = false
+                    default:
+                        break
+                    }
+                default:
+                    break
+                }
             }
         }
     }
@@ -4015,7 +4360,8 @@ final class PetViewModel: ObservableObject {
             selectionDeliveryNoticeContext = actionContext
             selectionDeliveryNotice = PetSelectionDeliveryNotice(id: operation.id,
                 identity: current.identity, selectionID: operation.selectionID, provider: provider,
-                deliveryState: failure?.deliveryState ?? .unknown, code: code,
+                deliveryState: failure?.deliveryState
+                    ?? (provider == .codex && code == "queued_prompt_preview_invalid" ? .notSubmitted : .unknown), code: code,
                 requiresCodexRecheck: nativeFailure || (provider == .codex && failure?.cachedFailure == true))
             if nativeFailure, let code {
                 recordConnectionDiagnostic(.codex(.error(code: code), stage: .transport), context: errorContext)
@@ -4186,25 +4532,38 @@ final class PetViewModel: ObservableObject {
     private func drainCodexPluginRefreshRequests() async {
         while codexPluginRefreshRequested {
             codexPluginRefreshRequested = false
-            codexPluginSetupState = await codexPluginSetupManager.inspect()
+            let continuation = codexSetupContinuationID
+            let state = await codexPluginSetupManager.inspect()
+            guard (try? requireCurrentSetupContinuation(continuation)) != nil else { return }
+            codexPluginSetupState = state
             clearLegacyCodexPluginMigrationConfirmation()
         }
     }
 
     private func reloadOnboardingState(operationError: String? = nil) {
         let previousHookProject = hookReadinessProjectPath
+        let previousProjects = configuredProjectPaths
+        let previousAuthority = configuredProjectPathsAreAuthoritative
+        let previousScopeExists = configuredProjectScopeExists
         defer {
+            if previousProjects != configuredProjectPaths || previousAuthority != configuredProjectPathsAreAuthoritative
+                || previousScopeExists != configuredProjectScopeExists {
+                connectionSetupScopeGeneration &+= 1
+            }
             if previousHookProject != hookReadinessProjectPath { invalidateHookReadiness() }
             publishConnectionSetupObservation()
         }
         onboardingServiceState = onboardingAdapter.serviceRegistrationState()
         applySuggestionModeLoadResult(suggestionModeStore.load())
         do {
-            configuredProjectPaths = try onboardingAdapter.configuredProjectPaths()
+            let saved = try onboardingAdapter.configuredProjectPathsIfPresent()
+            configuredProjectPaths = saved ?? []
+            configuredProjectScopeExists = saved != nil
             configuredProjectPathsAreAuthoritative = true
             onboardingError = operationError
         } catch {
             configuredProjectPaths = []
+            configuredProjectScopeExists = false
             configuredProjectPathsAreAuthoritative = false
             let refreshError = String(describing: error)
             if let operationError {

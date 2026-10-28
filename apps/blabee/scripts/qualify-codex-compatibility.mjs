@@ -173,9 +173,9 @@ export async function qualifyCodexCompatibility(options, dependencies = {}) {
     if (hostPlatform !== "darwin" || !["arm64", "x64"].includes(hostArch)) fail("unsupported_host", "Qualification requires a native macOS runner");
     const runtimeRoot = resolve(options.runtimeDir);
     if (await realpath(runtimeRoot) !== runtimeRoot) fail("package_layout_invalid", "Runtime root or ancestor is a symlink; provide its canonical path");
-    const includesVoice = ["0.155.0", "0.155.1", "0.156.0", "0.156.1", "0.157.0", "0.157.1", "0.158.0", "0.159.0", "0.159.1", "0.159.2", "0.159.3", "0.160.0", "0.160.1", "0.161.0", "0.162.0", "0.162.1", "0.163.0"].includes(options.expectedVersion) && expectedTarget === "aarch64-apple-darwin";
-    // Only the reviewed 0.163.0 arm64 package retires the bundled shell.
-    const baseFiles = includesVoice && options.expectedVersion === "0.163.0"
+    const includesVoice = ["0.155.0", "0.155.1", "0.156.0", "0.156.1", "0.157.0", "0.157.1", "0.158.0", "0.159.0", "0.159.1", "0.159.2", "0.159.3", "0.160.0", "0.160.1", "0.161.0", "0.162.0", "0.162.1", "0.163.0", "0.164.0"].includes(options.expectedVersion) && expectedTarget === "aarch64-apple-darwin";
+    // Only the reviewed 0.163.0 and 0.164.0 arm64 packages retire the bundled shell.
+    const baseFiles = includesVoice && ["0.163.0", "0.164.0"].includes(options.expectedVersion)
       ? legacyFiles.filter((name) => name !== "codex-resources/zsh/bin/zsh") : legacyFiles;
     const baseExecutables = baseFiles.filter((name) => name !== "codex-package.json");
     const requiredFiles = includesVoice ? [...baseFiles, ...voiceFiles] : baseFiles;

@@ -195,7 +195,7 @@ final class PetClaudeConnectionController: ObservableObject {
         do {
             var inspected = await inspectSetup()
             guard operationID == operation, !Task.isCancelled else { return }
-            if !inspected.isEnabled, inspected.canEnable {
+            if !inspected.automaticConnectionReady, inspected.canEnable {
                 inspected = await enableSetup()
                 guard operationID == operation, !Task.isCancelled else { return }
             }

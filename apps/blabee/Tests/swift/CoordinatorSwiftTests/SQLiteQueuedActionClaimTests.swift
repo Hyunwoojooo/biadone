@@ -115,6 +115,8 @@ private final class SQLiteClaimIOMeter: @unchecked Sendable {
             workCounts.fullReplayNanoseconds.append(elapsedNanoseconds)
         case let .incrementalApplicationFinished(elapsedNanoseconds):
             workCounts.incrementalNanoseconds.append(elapsedNanoseconds)
+        case .sessionPendingSlotLookup:
+            break
         }
     }
 

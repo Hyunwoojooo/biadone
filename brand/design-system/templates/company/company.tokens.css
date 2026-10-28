@@ -1,0 +1,70 @@
+/* Design Tokens - Auto-generated */
+/* Do not edit directly - modify tokens.json instead */
+
+/* === PRIMITIVES === */
+:root {
+  --primitive-company-space-13: 13px;
+  --primitive-company-space-20: 20px;
+  --primitive-company-space-25: 25px;
+  --primitive-company-space-26: 26px;
+  --primitive-company-space-28: 28px;
+  --primitive-company-space-34: 34px;
+  --primitive-company-space-40: 40px;
+  --primitive-company-space-42: 42px;
+  --primitive-company-space-45: 45px;
+  --primitive-company-space-53: 53px;
+  --primitive-company-space-60: 60px;
+  --primitive-company-space-72: 72px;
+  --primitive-company-space-82: 82px;
+  --primitive-company-space-94: 94px;
+  --primitive-company-status-width: 64px;
+  --primitive-company-description-max: 670px;
+}
+
+/* === SEMANTIC === */
+:root {
+  --company-layout-hero-top: 82px;
+  --company-layout-support-offset: 34px;
+  --company-layout-flow-offset: 94px;
+  --company-layout-project-top: 72px;
+  --company-layout-project-bottom: 82px;
+  --company-layout-project-heading-gap: 42px;
+  --company-layout-project-status-width: 64px;
+  --company-layout-project-description-max: 670px;
+  --company-layout-footer-top: 28px;
+  --company-layout-footer-bottom: 40px;
+  --company-layout-support-gap-compact: 28px;
+  --company-layout-flow-offset-compact: 72px;
+  --company-layout-hero-top-mobile: 53px;
+  --company-layout-support-offset-mobile: 26px;
+  --company-layout-project-top-mobile: 45px;
+  --company-layout-project-heading-gap-mobile: 28px;
+  --company-layout-flow-offset-mobile: 60px;
+  --company-layout-project-row-gap-y-mobile: 13px;
+  --company-layout-project-row-gap-x-mobile: 20px;
+  --company-layout-project-padding-mobile: 25px;
+}
+
+/* === COMPONENTS === */
+:root {
+  --company-hero-top: 82px;
+  --company-support-offset: 34px;
+  --company-flow-offset: 94px;
+  --company-project-top: 72px;
+  --company-project-bottom: 82px;
+  --company-project-heading-gap: 42px;
+  --company-project-status-width: 64px;
+  --company-project-description-max: 670px;
+  --company-footer-top: 28px;
+  --company-footer-bottom: 40px;
+  --company-support-gap-compact: 28px;
+  --company-flow-offset-compact: 72px;
+  --company-hero-top-mobile: 53px;
+  --company-support-offset-mobile: 26px;
+  --company-project-top-mobile: 45px;
+  --company-project-heading-gap-mobile: 28px;
+  --company-flow-offset-mobile: 60px;
+  --company-project-row-gap-y-mobile: 13px;
+  --company-project-row-gap-x-mobile: 20px;
+  --company-project-padding-mobile: 25px;
+}

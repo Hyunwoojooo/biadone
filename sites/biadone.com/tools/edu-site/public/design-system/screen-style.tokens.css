@@ -1,0 +1,52 @@
+/* Design Tokens - Auto-generated */
+/* Do not edit directly - modify tokens.json instead */
+
+/* === PRIMITIVES === */
+:root {
+  --primitive-structure-corner: 4px;
+  --primitive-structure-line: 1px;
+  --primitive-structure-marker: 12px;
+  --primitive-structure-inline-gap: 24px;
+  --primitive-structure-column-gap: 32px;
+  --primitive-structure-section-gap: 96px;
+  --primitive-structure-page-desktop: 48px;
+  --primitive-structure-page-mobile: 24px;
+  --primitive-structure-content-max: 1280px;
+  --primitive-structure-slide-width: 1600px;
+  --primitive-structure-slide-height: 900px;
+  --primitive-structure-slide-inset: 72px;
+  --primitive-structure-slide-flow-gap: 48px;
+}
+
+/* === SEMANTIC === */
+:root {
+  --screen-radius: 4px;
+  --screen-line: 1px;
+  --screen-marker: 12px;
+  --screen-inline-gap: 24px;
+  --screen-column-gap: 32px;
+  --screen-section-gap: 96px;
+  --screen-page-inset-desktop: 48px;
+  --screen-page-inset-mobile: 24px;
+  --screen-content-max: 1280px;
+  --screen-slide-width: 1600px;
+  --screen-slide-height: 900px;
+  --screen-slide-inset: 72px;
+  --screen-slide-flow-gap: 48px;
+}
+
+/* === COMPONENTS === */
+:root {
+  --button-radius: 4px;
+  --page-inset-desktop: 48px;
+  --page-inset-mobile: 24px;
+  --page-content-max: 1280px;
+  --page-section-gap: 96px;
+  --flow-marker-size: 12px;
+  --flow-line-width: 1px;
+  --flow-column-gap: 32px;
+  --slide-width: 1600px;
+  --slide-height: 900px;
+  --slide-inset: 72px;
+  --slide-flow-gap: 48px;
+}

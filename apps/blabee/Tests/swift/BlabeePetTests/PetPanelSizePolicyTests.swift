@@ -1,4 +1,5 @@
 import CoreGraphics
+import Foundation
 import Testing
 @testable import BlabeeCoordinator
 
@@ -167,6 +168,81 @@ func blabeePetChoicePreviewFitsSmallerDisplay(visibleFrame: CGRect) {
     )
     #expect(restoredFrame == ordinaryFrame)
     #expect(PetPanelContentPolicy.allowsScrolling(in: .choicePreview))
+}
+
+@Test("Measured decisions have no arbitrary height floor and respect display bounds")
+@MainActor
+func blabeePetMeasuredDecisionSize() throws {
+    let model = try measuredDecisionModel()
+    defer { model.stopPolling() }
+    let identity = try #require(PetDecisionLayoutIdentity.current(for: model, language: .english))
+    let measurement = PetDecisionContentMeasurement(identity: identity, size: CGSize(width: 460, height: 382.2))
+    var state = PetPanelLayoutState(
+        isExpanded: false, isEditingShortcuts: false, isShowingOnboarding: false,
+        actionCount: 2, fifoQueueCount: 1, hasPermissionNotice: false, hasStatusMessage: false
+    )
+    func size(_ state: PetPanelLayoutState, available: CGSize = CGSize(width: 1440, height: 900)) -> CGSize {
+        PetPanelSizePolicy.preferredSize(for: state, decisionMeasurement: measurement,
+                                        decisionIdentity: identity, availableSize: available)
+    }
+    #expect(size(state) == CGSize(width: 460, height: 383))
+    #expect(size(state, available: CGSize(width: 460, height: 300)) == CGSize(width: 460, height: 300))
+    // A narrower display must not reuse the old wrapping measurement.
+    #expect(measurement.accepted(for: identity, width: 340) == nil)
+    let narrower = size(state, available: CGSize(width: 340, height: 900))
+    #expect(narrower.width == 340)
+    #expect(narrower.height != 383)
+    state = PetPanelLayoutState(
+        isExpanded: true, isEditingShortcuts: false, isShowingOnboarding: false,
+        actionCount: 2, fifoQueueCount: 1, hasPermissionNotice: false, hasStatusMessage: false
+    )
+    #expect(size(state).height == PetPanelSizePolicy.expandedHeight)
+    state = PetPanelLayoutState(
+        isExpanded: false, isEditingShortcuts: false, isShowingOnboarding: false,
+        actionCount: 2, fifoQueueCount: 1, hasPermissionNotice: true, hasStatusMessage: false
+    )
+    #expect(size(state).height == PetPanelSizePolicy.permissionRequestHeight)
+}
+
+@Test("Decision measurements reject stale sessions, modes, language and invalid geometry")
+@MainActor
+func blabeePetMeasuredDecisionIdentity() throws {
+    let model = try measuredDecisionModel()
+    defer { model.stopPolling() }
+    let identity = try #require(PetDecisionLayoutIdentity.current(for: model, language: .english))
+    let measurement = PetDecisionContentMeasurement(identity: identity, size: CGSize(width: 460, height: 380))
+    #expect(measurement.accepted(for: identity, width: 460) != nil)
+    for invalidSize in [CGSize(width: 460, height: CGFloat.infinity), CGSize(width: 460, height: CGFloat.nan),
+                        CGSize(width: 460, height: -1), CGSize(width: 0, height: 380)] {
+        #expect(PetDecisionContentMeasurement(identity: identity, size: invalidSize)
+            .accepted(for: identity, width: 460) == nil)
+    }
+    let sameCard = PetTestCard(suffix: "measured", millisecondsUntilExpiry: 80_000, rankedActionCount: 2)
+    try model.receiveSnapshotDataForTesting(petTestData(petTestSnapshotObject(cards: [sameCard], foregroundSuffix: "measured")))
+    #expect(PetDecisionLayoutIdentity.current(for: model, language: .english) == identity)
+    #expect(measurement.accepted(for: PetDecisionLayoutIdentity.current(for: model, language: .korean), width: 460) == nil)
+    let otherCard = PetTestCard(suffix: "other-session", rankedActionCount: 2)
+    try model.receiveSnapshotDataForTesting(petTestData(petTestSnapshotObject(cards: [otherCard], foregroundSuffix: "other-session")))
+    #expect(measurement.accepted(for: PetDecisionLayoutIdentity.current(for: model, language: .english), width: 460) == nil)
+    model.setExpanded(true)
+    #expect(PetDecisionLayoutIdentity.current(for: model, language: .english) == nil)
+    #expect(measurement.accepted(for: nil, width: 460) == nil)
+    model.setExpanded(false)
+    model.beginShortcutSettings()
+    #expect(PetDecisionLayoutIdentity.current(for: model, language: .english) == nil)
+}
+
+@MainActor
+private func measuredDecisionModel() throws -> PetViewModel {
+    let model = PetViewModel(
+        transport: PetFakeTransport(), externalApplicationOpener: PetFakeApplicationOpener(),
+        automaticAppUpdate: AppUpdateTransactionController(store: .init(
+            rootURL: FileManager.default.temporaryDirectory.appendingPathComponent("blabee-measured-panel-\(UUID().uuidString)")
+        ))
+    )
+    let card = PetTestCard(suffix: "measured", rankedActionCount: 2)
+    try model.receiveSnapshotDataForTesting(petTestData(petTestSnapshotObject(cards: [card], foregroundSuffix: "measured")))
+    return model
 }
 
 private func preferredPanelSize(

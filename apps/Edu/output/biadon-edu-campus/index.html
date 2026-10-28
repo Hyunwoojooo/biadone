@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#f7f7f3">
+  <meta name="description" content="Biadon Edu의 공간에서 캐릭터를 움직여, 내 사업에 필요한 AI 수업과 결과물을 살펴보세요.">
+  <title>Biadon Edu — 수업의 문을 열어보세요</title>
+  <link rel="stylesheet" href="assets/font.css">
+  <link rel="stylesheet" href="campus.css">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='3' fill='%233437ee'/%3E%3C/svg%3E">
+</head>
+<body>
+  <a class="skip-link" href="#room-list">수업 목록으로 건너뛰기</a>
+  <main class="campus-shell">
+    <section class="map-panel" aria-label="Biadon Edu 공간 탐색">
+      <div id="map-viewport" class="map-viewport" tabindex="0" role="application" aria-label="방향키로 걷는 Biadon Edu 수업 지도" aria-describedby="map-instructions near-hint">
+        <div id="world">
+          <img id="campus-art" src="assets/campus-world-v2.png" width="1200" height="900" alt="촬영 스튜디오, 웹페이지 설계실, 고객 문의 접수실, 매출 분석실, 업무 도구 제작실 등 일곱 수업 방과 중앙 복도">
+          <svg id="route-overlay" viewBox="0 0 1200 900" width="1200" height="900" aria-hidden="true"></svg>
+          <div id="door-markers" aria-hidden="true"></div>
+          <div id="room-markers"></div>
+          <div id="player" aria-hidden="true">
+            <span class="player-shadow"></span>
+            <span id="sprite" class="player-sprite"></span>
+            <span class="player-name">나</span>
+          </div>
+        </div>
+        <header class="map-brand" aria-label="Biadon Edu"><span class="brand-square" aria-hidden="true"></span><span>BIADON <span class="brand-edu">EDU</span></span></header>
+        <div class="map-intro">
+          <h1>내 사업에 필요한<br>AI를 한 공간에서.</h1>
+          <p id="map-instructions">방향키로 걷고, 수업의 문을 열어보세요.</p>
+        </div>
+        <div class="map-tools" role="group" aria-label="지도 크기 조절">
+          <button type="button" id="zoom-out" aria-label="지도 축소"><span aria-hidden="true">−</span></button>
+          <button type="button" id="zoom-in" aria-label="지도 확대"><span aria-hidden="true">+</span></button>
+          <button type="button" id="map-overview">전체 지도</button>
+        </div>
+      </div>
+      <p id="near-hint" class="near-hint" role="status" aria-live="polite">방향키로 이동하거나, 방 이름을 눌러 찾아가세요.</p>
+      <div class="controls-bar" aria-label="캐릭터 조작">
+        <div class="walk-controls">
+          <div class="directions" role="group" aria-label="걷는 방향">
+            <button type="button" data-direction="up" aria-label="위로 걷기"><span aria-hidden="true">↑</span></button>
+            <button type="button" data-direction="down" aria-label="아래로 걷기"><span aria-hidden="true">↓</span></button>
+            <button type="button" data-direction="left" aria-label="왼쪽으로 걷기"><span aria-hidden="true">←</span></button>
+            <button type="button" data-direction="right" aria-label="오른쪽으로 걷기"><span aria-hidden="true">→</span></button>
+          </div>
+          <span class="control-label">이동</span>
+        </div>
+        <div class="entry-controls">
+          <button type="button" id="enter-room" class="enter-room"><kbd>Enter</kbd><span>입장</span></button>
+          <span class="escape-hint"><kbd>Esc</kbd>나오기</span>
+          <button type="button" id="reset-walk" class="reset-walk">입구로</button>
+        </div>
+        <p class="visited-status">둘러본 방 <strong id="visited-count">0</strong><span class="visited-total"> / 7</span></p>
+      </div>
+    </section>
+    <aside class="sidebar" aria-labelledby="room-list-title">
+      <div class="sidebar-actions">
+        <button type="button" id="open-catalog" class="secondary-action"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 5h12M9 12h12M9 19h12M3 5h1M3 12h1M3 19h1"/></svg><span>전체 커리큘럼</span></button>
+        <button type="button" id="open-help" class="secondary-action"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M9.5 9a2.5 2.5 0 0 1 5 .2c0 1.8-2.5 2-2.5 4M12 17h.01"/></svg><span>조작 방법</span></button>
+      </div>
+      <div class="sidebar-intro">
+        <h2 id="room-list-title">어느 방부터 가볼까요?</h2>
+        <p>지금 내 사업에 필요한 수업을 골라보세요.</p>
+      </div>
+      <nav id="room-list" class="room-list" tabindex="-1" aria-label="일곱 수업 방"></nav>
+      <button type="button" id="open-operations" class="operations-button"><svg viewBox="0 0 24 28" aria-hidden="true"><path d="M5 1h10l6 6v18a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V3a2 2 0 0 1 2-2Z"/><path d="M15 1v7h6M7 13h10M7 18h10M7 23h7"/></svg><span>운영 안내 · 비용·보안·복구</span><span aria-hidden="true" class="operations-arrow">›</span></button>
+    </aside>
+  </main>
+  <dialog id="campus-dialog" aria-modal="true" aria-label="수업 안내"><div id="dialog-content"></div></dialog>
+  <noscript><div class="noscript-note">공간을 걷고 수업 안내를 열려면 브라우저에서 JavaScript를 켜주세요.</div></noscript>
+  <script src="curriculum.js"></script>
+  <script src="map-layout.js"></script>
+  <script src="movement.js"></script>
+  <script src="campus.js"></script>
+</body>
+</html>

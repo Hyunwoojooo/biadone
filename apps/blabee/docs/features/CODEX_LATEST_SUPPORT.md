@@ -1,5 +1,21 @@
 # Codex 버전별 지원·검증 기록
 
+## 2026-10-24: 0.164.0 지원과 Hook 신뢰 진단 보완
+
+공식 macOS arm64 Codex 0.164.0의 일반 Plugin·Hook·MCP·queue, Pet 일회성 승인,
+관리형 App Server와 업데이트 저장·복원 지원 정보를 소스에 반영했다. 버전·CDHash·
+41파일 runtime catalog·workspace 라우팅·lifecycle 및 회귀 기대값을 함께 갱신했다.
+`hooks/list`가 기존 신뢰 정보를 이전할 수 있어, Hook 진단의 읽기 전용·실패 시
+무변경 보장을 제거하고 검사 전·진행 중·실패 안내와 문서를 보완했다.
+[공식 근거와 검증 기록](CODEX_0164_QUALIFICATION.md).
+
+Node/Python 회귀 **233/233**, 공식 패키지의 **69개 native smoke**를 통과했다.
+별도 격리 검사에서도 MCP 초기화·목록·호출, 저장·종료·cold resume·압축 기록 복원과
+mode·uid/gid·macOS ACL 보존, 기본 설정 변경 뒤 저장된 read-only 권한 유지를 확인했다.
+inert Plugin의 Hook 신뢰 정보 이전·부분 이전·내용 변경 감지·공식 재승인 검사도 통과했다.
+Swift 컴파일·테스트와 앱 빌드·설치, 설치된 앱의 Hook/Pet/queue 및 업데이트 왕복은
+실행하지 않았다. 이번 소스 변경은 설치된 앱에 아직 반영하지 않았다.
+
 ## 2026-10-16: 0.163.0 지원과 공식 패키지 구성 변경
 
 공식 최신 안정 버전 0.163.0의 일반 Plugin·Hook·MCP·queue, Pet 일회성 승인,

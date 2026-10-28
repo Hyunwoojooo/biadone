@@ -1,7 +1,9 @@
+import AppKit
 import BlabeeProductSupport
 import CoordinatorSwift
 import Darwin
 import Foundation
+import SwiftUI
 import Testing
 @testable import BlabeeCoordinator
 
@@ -69,6 +71,245 @@ private final class InstallationLegacyConfirmationRecorder: @unchecked Sendable 
     private var confirmations: [Bool] = []
     func record(_ confirmed: Bool) { lock.withLock { confirmations.append(confirmed) } }
     var values: [Bool] { lock.withLock { confirmations } }
+}
+
+@Suite("DMG Claude connection recovery", .petLanguage(.korean)) @MainActor
+struct AppInstallationConnectionRecoveryTests {
+    @Test("preparation is single flight and cannot publish, launch, or continue before restart")
+    func preparationRequiresRestart() async throws {
+        var response: CheckedContinuation<ClaudeRuntimePayloadUse.RecoveryPreparation, Never>?
+        let f = try InstallationRecoveryFixture(recovery: {
+            await withCheckedContinuation { response = $0 }
+        })
+        defer { f.files.remove() }
+        await f.model.refresh()
+        await f.model.performPrimary()
+        #expect(f.model.showsReplacementConfirmation)
+        f.model.prepareConnectionRecoveryAfterRestart()
+        f.model.prepareConnectionRecoveryAfterRestart()
+        await f.model.confirmReplacement()
+        try await waitUntil { response != nil }
+        #expect(f.model.phase == .preparingConnectionRecovery)
+        #expect(f.effects.recoveryCalls == 1 && f.effects.installs.value == 0)
+        #expect(!f.model.canPerformPrimary && f.model.canClose)
+        #expect(!f.model.showsReplacementConfirmation)
+        response?.resume(returning: .restartRequired(outstandingUseCount: 1))
+        try await waitUntil { f.model.phase == .connectionRestartRequired }
+        await f.model.performPrimary()
+        await f.model.confirmReplacement()
+        await f.model.refresh()
+        f.model.prepareConnectionRecoveryAfterRestart()
+        #expect(f.model.phase == .connectionRestartRequired)
+        #expect(f.model.connectionRecoveryMessage == PetAppUpdatePresentation.connectionRecoveryRestartInstructions)
+        #expect(f.model.receipt == nil && f.model.plan?.comparison == .upgrade)
+        #expect(f.effects.recoveryCalls == 1 && f.effects.installs.value == 0 && f.effects.opens == 0)
+        #expect(f.model.requestClose())
+        #expect(f.model.phase == .connectionRestartRequired)
+    }
+
+    @Test("preparing during a readiness wait fences its late success and requires a fresh confirmation")
+    func preparationFencesInstallationWait() async throws {
+        var response: CheckedContinuation<Void, Never>?
+        var waits = 0
+        let f = try InstallationRecoveryFixture(waiter: .init(requireReady: { _ in
+            waits += 1
+            if waits == 1 { await withCheckedContinuation { response = $0 } }
+        }))
+        defer { f.files.remove() }
+        await f.model.refresh()
+        await f.model.performPrimary()
+        let pendingInstall = Task { await f.model.confirmReplacement() }
+        try await waitUntil { response != nil }
+        #expect(f.model.phase == .waitingForSafePoint)
+        f.model.prepareConnectionRecoveryAfterRestart()
+        try await waitUntil { f.model.phase == .ready }
+        response?.resume()
+        await pendingInstall.value
+        #expect(f.model.phase == .ready && f.model.canPerformPrimary)
+        #expect(f.model.connectionRecoveryMessage == PetAppUpdatePresentation.connectionRecoveryClear)
+        #expect(f.effects.installs.value == 0 && f.effects.opens == 0 && f.model.receipt == nil)
+        await f.model.performPrimary()
+        await f.model.confirmReplacement()
+        #expect(waits == 2 && f.effects.installs.value == 1 && f.effects.opens == 1)
+        #expect(f.model.phase == .launched)
+    }
+
+    @Test("close before recovery starts prevents preparation")
+    func closeBeforePreparationStarts() async throws {
+        let f = try InstallationRecoveryFixture()
+        defer { f.files.remove() }
+        await f.model.refresh()
+        f.model.prepareConnectionRecoveryAfterRestart()
+        #expect(f.model.requestClose())
+        for _ in 0..<5 { await Task.yield() }
+        #expect(f.effects.recoveryCalls == 0 && f.effects.installs.value == 0 && f.effects.opens == 0)
+        #expect(f.model.phase == .failed)
+    }
+
+    @Test("cancelled preparation cannot overwrite a later inspection", arguments: [false, true])
+    func cancelledPreparationCannotOverwriteInspection(fails: Bool) async throws {
+        var response: CheckedContinuation<ClaudeRuntimePayloadUse.RecoveryPreparation, any Error>?
+        let f = try InstallationRecoveryFixture(recovery: {
+            try await withCheckedThrowingContinuation { response = $0 }
+        })
+        defer { f.files.remove() }
+        await f.model.refresh()
+        f.model.prepareConnectionRecoveryAfterRestart()
+        try await waitUntil { response != nil }
+        #expect(f.model.requestClose())
+        await f.model.refresh()
+        if fails { response?.resume(throwing: AppUpdateAdmissionError.unavailable) }
+        else { response?.resume(returning: .restartRequired(outstandingUseCount: 1)) }
+        for _ in 0..<10 { await Task.yield() }
+        #expect(f.model.phase == .ready && f.model.connectionRecoveryMessage == nil)
+        #expect(f.model.message == nil && f.model.plan?.comparison == .upgrade)
+        #expect(f.effects.installs.value == 0 && f.effects.opens == 0)
+    }
+
+    @Test("failed preparation can be retried explicitly without publishing")
+    func preparationFailureIsRetryable() async throws {
+        var attempts = 0
+        let f = try InstallationRecoveryFixture(recovery: {
+            attempts += 1
+            if attempts == 1 { throw AppUpdateAdmissionError.unavailable }
+            return .clear
+        })
+        defer { f.files.remove() }
+        await f.model.refresh()
+        f.model.prepareConnectionRecoveryAfterRestart()
+        try await waitUntil { f.model.phase == .failed }
+        #expect(f.model.canPrepareConnectionRecovery)
+        f.model.prepareConnectionRecoveryAfterRestart()
+        try await waitUntil { f.model.phase == .ready }
+        #expect(attempts == 2 && f.effects.installs.value == 0 && f.effects.opens == 0)
+    }
+
+    @Test("a fresh reinstall blocked by leftover Claude records exposes recovery")
+    func freshInstallCanPrepareRecoveryAfterClaudeBlock() async throws {
+        let files = try InstallationFlowFixture()
+        defer { files.remove() }
+        let service = files.service, source = files.source
+        var recoveryCalls = 0
+        let model = AppInstallationViewModel(sourceURL: source, inspect: { try service.inspect(source: source) },
+            install: { _, _, _ in throw AppInstallationError(.claudeRuntimeBlocked) },
+            openInstalled: { _, _ in Issue.record("A blocked fresh install must not launch") },
+            prepareConnectionRecovery: {
+                recoveryCalls += 1
+                return .restartRequired(outstandingUseCount: 1)
+            })
+        await model.refresh()
+        #expect(!model.showsConnectionRecovery)
+        await model.performPrimary()
+        #expect(model.phase == .failed && model.canPrepareConnectionRecovery)
+        model.prepareConnectionRecoveryAfterRestart()
+        try await waitUntil { model.phase == .connectionRestartRequired }
+        #expect(recoveryCalls == 1 && model.receipt == nil)
+        #expect(!FileManager.default.fileExists(atPath: files.target.path))
+    }
+
+    @Test("fresh install transition failure exposes recovery before the later Claude guard",
+          arguments: [ClaudeRuntimePayloadUse.Status.inUse, .unavailable])
+    func freshInstallTransitionOrderingOffersRecovery(_ status: ClaudeRuntimePayloadUse.Status) async throws {
+        let files = try InstallationFlowFixture()
+        defer { files.remove() }
+        let transitionCalls = InstallationFlowCounter()
+        let claudeCalls = InstallationFlowCounter()
+        let copyCalls = InstallationFlowCounter()
+        let service = AppInstallationService(destinationURL: files.target,
+            expectedSourceIdentity: installationFlowIdentity, validator: { _ in installationFlowIdentity },
+            claudeInstallationGuard: { claudeCalls.increment(); return () },
+            updateTransitionGuard: { _ in
+                transitionCalls.increment()
+                try AppUpdateTransitionPreflight.recoverAndRequireClaudeReady(recover: { 0 }, inspect: {
+                    .init(status: status, outstandingUseCount: status == .inUse ? 1 : nil,
+                          referencedRuntimeIdentities: [])
+                })
+                return ()
+            }, copyBundle: { _, _ in copyCalls.increment() })
+        let source = files.source
+        var recoveryCalls = 0
+        let model = AppInstallationViewModel(sourceURL: source, inspect: { try service.inspect(source: source) },
+            install: { plan, approved, legacy in
+                try service.install(plan, replacementApproved: approved, legacyQuitConfirmed: legacy)
+            }, openInstalled: { _, _ in Issue.record("A failed transition must never open the app") },
+            prepareConnectionRecovery: {
+                recoveryCalls += 1
+                return .restartRequired(outstandingUseCount: 1)
+            })
+        await model.refresh()
+        #expect(model.plan?.comparison == .freshInstall && !model.showsConnectionRecovery)
+        await model.performPrimary()
+        #expect(transitionCalls.value == 1 && claudeCalls.value == 0 && copyCalls.value == 0)
+        #expect(model.phase == .failed && model.canPrepareConnectionRecovery)
+        model.prepareConnectionRecoveryAfterRestart()
+        try await waitUntil { model.phase == .connectionRestartRequired }
+        #expect(recoveryCalls == 1 && model.receipt == nil && !model.canPerformPrimary)
+        #expect(!FileManager.default.fileExists(atPath: files.target.path))
+        let entries = try FileManager.default.contentsOfDirectory(atPath: files.target.deletingLastPathComponent().path)
+        #expect(!entries.contains { $0.hasPrefix(".Blabee.install-") })
+    }
+
+    @Test("the actual DMG view renders restart instructions in both languages")
+    func installerRecoveryViewRenders() async throws {
+        for language in PetUILanguage.allCases {
+            try await PetL10n.$languageOverride.withValue(language) {
+                let f = try InstallationRecoveryFixture(recovery: { .restartRequired(outstandingUseCount: 1) })
+                defer { f.files.remove() }
+                await f.model.refresh()
+                f.model.prepareConnectionRecoveryAfterRestart()
+                try await waitUntil { f.model.phase == .connectionRestartRequired }
+                let host = NSHostingView(rootView: AppInstallationView(model: f.model, close: {}))
+                #expect(abs(host.fittingSize.width - 580) < 0.01)
+                #expect(abs(host.fittingSize.height - 570) < 0.01)
+                host.frame = NSRect(origin: .zero, size: host.fittingSize)
+                host.layoutSubtreeIfNeeded()
+                let bitmap = try #require(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+                host.cacheDisplay(in: host.bounds, to: bitmap)
+                #expect(bitmap.pixelsWide > 0 && bitmap.pixelsHigh > 0)
+                #expect(f.model.connectionRecoveryMessage == PetAppUpdatePresentation.connectionRecoveryRestartInstructions)
+                #expect(f.effects.installs.value == 0 && f.effects.opens == 0)
+            }
+        }
+    }
+
+    private func waitUntil(_ condition: @MainActor () -> Bool) async throws {
+        let deadline = ContinuousClock.now.advanced(by: .seconds(2))
+        while !condition(), ContinuousClock.now < deadline { await Task.yield() }
+        #expect(condition())
+    }
+}
+
+@MainActor
+private final class InstallationRecoveryEffects {
+    let installs = InstallationFlowCounter()
+    var recoveryCalls = 0
+    var opens = 0
+}
+
+@MainActor
+private struct InstallationRecoveryFixture {
+    let files: InstallationFlowFixture
+    let effects: InstallationRecoveryEffects
+    let model: AppInstallationViewModel
+
+    init(recovery: @escaping @MainActor () async throws -> ClaudeRuntimePayloadUse.RecoveryPreparation = { .clear },
+         waiter: AppUpdateSafePointWaiter = .init(requireReady: { _ in })) throws {
+        let files = try InstallationFlowFixture(existingBuild: "18")
+        self.files = files
+        let service = files.service, source = files.source
+        let effects = InstallationRecoveryEffects()
+        self.effects = effects
+        let installs = effects.installs
+        model = AppInstallationViewModel(sourceURL: source, inspect: { try service.inspect(source: source) },
+            install: { plan, approved, legacy in
+                installs.increment()
+                return try service.install(plan, replacementApproved: approved, legacyQuitConfirmed: legacy)
+            }, openInstalled: { _, _ in effects.opens += 1 }, safePointWaiter: waiter,
+            prepareConnectionRecovery: {
+                effects.recoveryCalls += 1
+                return try await recovery()
+            })
+    }
 }
 
 @Test("an installed matching app is not described as missing", .petLanguage(.korean)) @MainActor

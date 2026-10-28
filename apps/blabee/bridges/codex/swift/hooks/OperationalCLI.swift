@@ -146,7 +146,8 @@ enum HookRequestPolicy {
         monotonicNowMilliseconds: () -> UInt64 = { DispatchTime.now().uptimeNanoseconds / 1_000_000 },
         request: (HookRequestAttempt) throws -> [String: Any]
     ) -> HookRequestOutcome {
-        guard isExactQueuedPromptSubmit(eventName: eventName, payload: payload) else {
+        let queuedClassification = queuedPromptClassification(eventName: eventName, payload: payload)
+        guard let queuedClassification else {
             let attempt = HookRequestAttempt(
                 connectTimeoutMilliseconds: 2_000,
                 responseTimeoutMilliseconds: eventName == "PermissionRequest"
@@ -202,7 +203,12 @@ enum HookRequestPolicy {
             finalResult = .responseReceived
             return .response(result)
         } catch {
-            guard isAmbiguousResponseFailure(error) else { return .unavailable }
+            guard case .exact = queuedClassification,
+                  isAmbiguousResponseFailure(error)
+            else {
+                finalResult = .noActionContext
+                return .queuedPromptUnavailable
+            }
         }
 
         do {
@@ -215,21 +221,54 @@ enum HookRequestPolicy {
         }
     }
 
-    private static func isExactQueuedPromptSubmit(
+    static func queuedPromptClassification(
         eventName: String,
         payload: [String: Any]
-    ) -> Bool {
+    ) -> QueuedPromptEnvelope.Classification? {
         guard eventName == "UserPromptSubmit",
-              payload["hook_event_name"] as? String == "UserPromptSubmit",
-              let prompt = payload["prompt"] as? String,
-              case .exact = QueuedPromptEnvelope.classify(prompt)
-        else { return false }
-        return true
+              let prompt = payload["prompt"] as? String else { return nil }
+        let classification = QueuedPromptEnvelope.classify(prompt)
+        if case .human = classification { return nil }
+        return classification
     }
 
     private static func isAmbiguousResponseFailure(_ error: Error) -> Bool {
         guard let error = error as? CoordinatorError else { return false }
         return ambiguousResponseErrorCodes.contains(error.code)
+    }
+}
+
+/// A readable preview must never become a standalone executable prompt merely
+/// because the coordinator is disabled, rejects identity, or returns no action
+/// context. Runtime peer validation still supplies response authenticity; this
+/// is an additional output-shape and preview-consistency gate, not a claim.
+enum HookQueuedPromptOutputPolicy {
+    static func additionalContext(
+        result: [String: Any], eventName: String, payload: [String: Any]
+    ) -> String? {
+        guard let classification = HookRequestPolicy.queuedPromptClassification(
+            eventName: eventName, payload: payload
+        ) else { return nil }
+        guard result["enabled"] as? Bool == true,
+              let context = result["additionalContext"] as? String,
+              !context.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              context.utf8.count <= 65_536
+        else { return QueuedPromptEnvelope.unavailableAdditionalContext }
+        // Preserve the trusted service's rejection semantics. In particular a
+        // delayed replay must not emit a decision or disturb the newer prompt;
+        // generic recovery advice would discard those additional instructions.
+        if result["prompt_origin"] as? String == "blabee_rejected" { return context }
+        guard case .exact(let reference) = classification,
+              result["prompt_origin"] as? String == "blabee_next_turn",
+              let marker = context.range(of: QueuedPromptEnvelope.verifiedActionContextMarker),
+              let action = try? StrictJSONTransport.object(
+                  from: Data(context[marker.upperBound...].utf8),
+                  limits: StrictJSONLimits(maximumBytes: 60_000, maximumDepth: 16)
+              ),
+              let prompt = payload["prompt"] as? String,
+              QueuedPromptEnvelope.matches(prompt, reference: reference, action: action)
+        else { return QueuedPromptEnvelope.unavailableAdditionalContext }
+        return context
     }
 }
 
@@ -289,10 +328,10 @@ enum HookPermissionOutputPolicy {
 }
 
 func runHookCommand(arguments: [String]) {
-    // Ordinary Hooks are deliberately fail-open. Only an exact Blabee queued
-    // prompt gets one bounded response-loss retry and a safe no-action context
-    // when both attempts fail.
+    // Ordinary Hooks remain fail-open. Recognized queued envelopes fail closed
+    // with context; only an exact envelope gets one response-loss retry.
     let isPermissionRequest = arguments.first == "PermissionRequest"
+    var requiresQueuedPromptContext = false
     do {
         guard let eventName = arguments.first,
               let requestType = hookEvents[eventName]
@@ -309,13 +348,18 @@ func runHookCommand(arguments: [String]) {
             HookPermissionDiagnostics.record(.managedOwnershipBypass)
             return
         }
-        let socketFlag = try optionalSocketFlag(Array(arguments.dropFirst()))
-        let socketPath = try OperationalSocketPath.resolve(explicitPath: socketFlag)
         let inputData = try readStandardInput(maximumBytes: 1_048_576)
         let input = try StrictJSONTransport.object(
             from: inputData,
             limits: StrictJSONLimits(maximumBytes: 1_048_576, maximumDepth: 72)
         )
+        // Identify the preview before socket/identity preparation so these
+        // one-shot failures also supply a non-executable fallback context.
+        requiresQueuedPromptContext = HookRequestPolicy.queuedPromptClassification(
+            eventName: eventName, payload: input
+        ) != nil
+        let socketFlag = try optionalSocketFlag(Array(arguments.dropFirst()))
+        let socketPath = try OperationalSocketPath.resolve(explicitPath: socketFlag)
         // Use the same effective thread for admission, response validation and
         // delivery ACK. Native Hook output has no session field to rewrite.
         var payload = try HookThreadRoutingPolicy.routedPayload(
@@ -365,6 +409,17 @@ func runHookCommand(arguments: [String]) {
             ])
             return
         case .unavailable:
+            return
+        }
+        if let context = HookQueuedPromptOutputPolicy.additionalContext(
+            result: result, eventName: eventName, payload: payload
+        ) {
+            try writeStandardOutputJSON([
+                "hookSpecificOutput": [
+                    "hookEventName": "UserPromptSubmit",
+                    "additionalContext": context,
+                ],
+            ])
             return
         }
         guard result["enabled"] as? Bool != false else {
@@ -481,6 +536,14 @@ func runHookCommand(arguments: [String]) {
             ])
         }
     } catch {
+        if requiresQueuedPromptContext {
+            try? writeStandardOutputJSON([
+                "hookSpecificOutput": [
+                    "hookEventName": "UserPromptSubmit",
+                    "additionalContext": QueuedPromptEnvelope.unavailableAdditionalContext,
+                ],
+            ])
+        }
         if isPermissionRequest {
             HookPermissionDiagnostics.recordFailure(
                 .failed, code: HookPermissionDiagnostics.failureCode(for: error)
@@ -612,11 +675,21 @@ private func handleMCPMessage(
             let failure = publicEmitDecisionFailure(error)
             let errorCode = failure["error_code"] as? String ?? "coordinator_unavailable_or_rejected"
             let retryable = failure["retryable"] as? Bool ?? false
-            let explanation = errorCode == "decision_delivery_unconfirmed"
-                ? "Blabee did not receive a decision acknowledgement. The proposal may already "
+            let explanation: String
+            switch errorCode {
+            case "decision_delivery_unconfirmed":
+                explanation = "Blabee did not receive a decision acknowledgement. The proposal may already "
                     + "be stored; a missing acknowledgement does not mean rejection. "
                     + "Do not automatically retry or submit a new proposal. "
-                : "Blabee coordinator unavailable or rejected the proposal. "
+            case "decision_preview_too_large":
+                explanation = "Blabee rejected this new proposal before storing it because a complete "
+                    + "selected-action preview exceeds \(QueuedPromptEnvelope.maximumMessageBytes) UTF-8 bytes "
+                    + "after quoting and Unicode normalization. Shorten the next_actions text while preserving "
+                    + "its objective, constraints and completion conditions, then submit a corrected proposal. "
+                    + "Do not retry the unchanged proposal. "
+            default:
+                explanation = "Blabee coordinator unavailable or rejected the proposal. "
+            }
             try writeMCPResult(id: message["id"], value: [
                 "isError": true,
                 "content": [[
@@ -637,7 +710,7 @@ private func handleMCPMessage(
     }
 }
 
-private func publicEmitDecisionFailure(_ error: Error) -> [String: Any] {
+func publicEmitDecisionFailure(_ error: Error) -> [String: Any] {
     let code = error.coordinatorError.code
     switch code {
     case "operational_response_timeout",
@@ -654,6 +727,14 @@ private func publicEmitDecisionFailure(_ error: Error) -> [String: Any] {
         return [
             "accepted": false,
             "error_code": code,
+            "retryable": true,
+        ]
+    case "queued_prompt_preview_invalid":
+        return [
+            "accepted": false,
+            "error_code": "decision_preview_too_large",
+            // Only a corrected proposal can succeed. The MCP text explicitly
+            // forbids automatically repeating the unchanged rejected payload.
             "retryable": true,
         ]
     case "proposal_session_context_missing",

@@ -9,7 +9,8 @@ struct PetSettingsStatusToneTests {
         serviceIsTransitioning: Bool = false,
         serviceIssue: String? = nil,
         configuredProjectPaths: [String]? = ["/projects/gannet"],
-        receivedCardProjectPaths: Set<String> = []
+        receivedCardProjectPaths: Set<String> = [],
+        hookReadiness: PetHookReadinessState = .trusted
     ) -> PetConnectionReadiness {
         PetConnectionReadiness(
             pluginState: pluginState,
@@ -19,7 +20,7 @@ struct PetSettingsStatusToneTests {
             configuredProjectPaths: configuredProjectPaths,
             activeProjectPaths: ["/projects/gannet"],
             receivedCardProjectPaths: receivedCardProjectPaths,
-            hookReadiness: .trusted
+            hookReadiness: hookReadiness
         )
     }
 
@@ -100,7 +101,8 @@ struct PetSettingsStatusToneTests {
         #expect(PetSettingsStatusTone.connection(model) == .neutral)
         #expect(PetSettingsStatusTone.check(model.checks[3].state) == .neutral)
         #expect(model.nextStep == .verifyInCodex)
-        #expect(state.detail.contains("Hook 신뢰 완료 여부를 자동 확인할 수 없습니다"))
+        #expect(state.detail.contains("/hooks"))
+        #expect(state.detail.contains("현재 신뢰 상태를 확인"))
         #expect(model.checks[3].detail.contains("Codex 반환은 자동 판정하지 않습니다"))
     }
 
@@ -129,6 +131,42 @@ struct PetSettingsStatusToneTests {
             #expect(model.status == expectedStatus)
             #expect(PetSettingsStatusTone.connection(model) == expectedTone)
         }
+    }
+
+    @Test("The compact Codex summary reflects prerequisites without treating configuration as a live connection")
+    func compactCodexSummary() {
+        let cases: [(PetConnectionReadiness, String, PetSettingsStatusTone)] = [
+            (readiness(serviceIsTransitioning: true), "확인 중", .neutral),
+            (readiness(serviceConnected: false), "연결 설정 필요", .actionNeeded),
+            (readiness(pluginState: .notInstalled), "연결 설정 필요", .actionNeeded),
+            (readiness(configuredProjectPaths: []), "설정 적용 필요", .actionNeeded),
+            (readiness(configuredProjectPaths: ["/projects/changed"]), "설정 적용 필요", .actionNeeded),
+            (readiness(configuredProjectPaths: nil), "확인 중", .neutral),
+            (readiness(hookReadiness: .unchecked), "승인 확인 전", .neutral),
+            (readiness(hookReadiness: .reviewRequired), "확인 필요", .actionNeeded),
+            (readiness(), "설정 준비됨", .neutral),
+            (readiness(receivedCardProjectPaths: ["/projects/gannet"]), "카드 수신 확인", .confirmed),
+            (readiness(serviceIssue: "fixture failure", receivedCardProjectPaths: ["/projects/gannet"]), "확인 필요", .error),
+            (readiness(pluginState: .error(code: "fixture_failure"), receivedCardProjectPaths: ["/projects/gannet"]), "확인 필요", .error),
+        ]
+        for (readiness, title, tone) in cases {
+            let summary = PetCodexSettingsSummary(readiness: readiness)
+            #expect(summary.title == title)
+            #expect(summary.tone == tone)
+            #expect(!summary.title.contains("연결됨"))
+        }
+        let receivedWithoutTrust = PetCodexSettingsSummary(readiness: readiness(
+            receivedCardProjectPaths: ["/projects/gannet"], hookReadiness: .unchecked
+        ))
+        #expect(receivedWithoutTrust.title == "승인 확인 전")
+        #expect(receivedWithoutTrust.tone == .neutral)
+    }
+
+    @Test("The English summary distinguishes prepared setup from observed cards", .petLanguage(.english))
+    func englishCompactCodexSummary() {
+        #expect(PetCodexSettingsSummary(readiness: readiness()).title == "Setup ready")
+        #expect(PetCodexSettingsSummary(readiness: readiness(hookReadiness: .unchecked)).title == "Approval not verified")
+        #expect(PetCodexSettingsSummary(readiness: readiness(receivedCardProjectPaths: ["/projects/gannet"])).title == "Cards received")
     }
 
     @Test("Runtime or Plugin errors override otherwise confirmed settings and observed cards")

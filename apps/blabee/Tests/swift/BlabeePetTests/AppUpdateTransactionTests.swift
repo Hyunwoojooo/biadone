@@ -13,7 +13,8 @@ private func updateSession(_ number: Int, state: UpdateManagedSessionState = .ru
 }
 
 private func updateJournalFixture(sessions: [UpdateManagedSession] = [updateSession(1), updateSession(2)],
-                                  preservingConnections: Bool = false) throws -> AppUpdateJournal {
+                                  preservingConnections: Bool = false,
+                                  userConfirmedClosure: Bool = false) throws -> AppUpdateJournal {
     let version = try #require(PetAppUpdateVersion(version: "0.1.0", build: "41"))
     let name = AppUpdateDownloadPolicy.diskImageName(version)
     let base = URL(string: "https://github.com/test/Blabee/releases/download/blabee-v0.1.0+build.41/")!
@@ -26,8 +27,8 @@ private func updateJournalFixture(sessions: [UpdateManagedSession] = [updateSess
         applicationURL: root.appendingPathComponent("Blabee.app"), diskImageURL: root.appendingPathComponent(name),
         sha256: String(repeating: "b", count: 64), runtimeIdentity: updateNewIdentity)
     let jobID = UUID().uuidString.lowercased()
-    let helper = preservingConnections ? "helper-runtime-\(jobID)/Blabee.app" : "helper-runtime/Blabee.app"
-    return AppUpdateJournal(schema: preservingConnections ? 2 : 1, jobID: jobID, nonce: UUID().uuidString.lowercased(),
+    let helper = preservingConnections || userConfirmedClosure ? "helper-runtime-\(jobID)/Blabee.app" : "helper-runtime/Blabee.app"
+    return AppUpdateJournal(schema: userConfirmedClosure ? 3 : (preservingConnections ? 2 : 1), jobID: jobID, nonce: UUID().uuidString.lowercased(),
         parentPID: getpid(), parentStartTime: 1, createdAt: Date(),
         previousIdentity: updateOldIdentity, candidateIdentity: updateNewIdentity,
         download: try .init(prepared), helperApplicationURL: root.appendingPathComponent(helper, isDirectory: true),
@@ -51,6 +52,7 @@ private final class UpdateTransactionFixture {
     var claudeCheckCount = 0
     var blockedClaudeCheck: Int?
     var preservedCheckCount = 0
+    var connectionPolicies: [AppUpdateConnectionPolicy] = []
     var blockedPreservedCheck: Int?
     var failServiceHealth = false
     let backup = URL(fileURLWithPath: "/Applications/.Blabee.backup-0123.app")
@@ -87,8 +89,9 @@ private final class UpdateTransactionFixture {
                 if self.blockedClaudeCheck == self.claudeCheckCount {
                     throw AppInstallationError(.claudeRuntimeBlocked)
                 }
-            }, requirePreservedConnectionsReady: { _ in
+            }, requirePreservedConnectionsReady: { record in
                 self.preservedCheckCount += 1
+                self.connectionPolicies.append(record.connectionPolicy)
                 self.events.append("preserve-preflight")
                 if self.blockedPreservedCheck == self.preservedCheckCount { throw UpdateTestFailure.injected }
             }, requireLaunchedServiceHealthy: { identity in
@@ -332,6 +335,48 @@ struct AppUpdateTransactionTests {
         #expect(!fixture.records.contains { $0.phase == .succeeded })
         #expect(result.detail.contains("서비스가 정상 실행됐는지 확인하지 못했습니다"))
     }
+
+    @Test("explicit normal shutdown rechecks closed connections and requires healthy relaunch")
+    func userConfirmedShutdown() async throws {
+        let fixture = UpdateTransactionFixture()
+        let journal = try updateJournalFixture(sessions: [], userConfirmedClosure: true)
+        try journal.requireValid()
+        let result = await AppUpdateTransactionEngine(effects: fixture.effects).execute(journal)
+        #expect(result.phase == .succeeded && result.sessions.isEmpty)
+        #expect(fixture.events == ["verify", "preserve-preflight", "verify", "preserve-preflight", "install", "open:new", "health:new"])
+        #expect(fixture.connectionPolicies == [.userConfirmedSessionClosure, .userConfirmedSessionClosure])
+        #expect(result.detail.contains("업데이트와 재실행"))
+        #expect(!result.detail.contains("복원"))
+    }
+
+    @Test("new connections or unfinished work block confirmed shutdown before publication", arguments: [1, 2])
+    func confirmedShutdownRechecks(_ blockedCheck: Int) async throws {
+        let fixture = UpdateTransactionFixture(); fixture.blockedPreservedCheck = blockedCheck
+        let result = await AppUpdateTransactionEngine(effects: fixture.effects)
+            .execute(try updateJournalFixture(sessions: [], userConfirmedClosure: true))
+        #expect(result.phase == .failed)
+        #expect(!fixture.events.contains("install"))
+        #expect(!fixture.events.contains { $0.hasPrefix("pause:") || $0.hasPrefix("resume:") })
+    }
+
+    @Test("confirmation cannot grant legacy pause or resume authority")
+    func confirmedShutdownRejectsSessionEffects() async throws {
+        let fixture = UpdateTransactionFixture()
+        let journal = try updateJournalFixture(userConfirmedClosure: true)
+        #expect(throws: AppUpdateTransactionError.invalidJournal) { try journal.requireValid() }
+        let result = await AppUpdateTransactionEngine(effects: fixture.effects).execute(journal)
+        #expect(result.phase == .recoveryRequired && fixture.events.isEmpty)
+    }
+
+    @Test("a confirmed-shutdown update still requires the new service to be healthy")
+    func confirmedShutdownRequiresService() async throws {
+        let fixture = UpdateTransactionFixture(); fixture.failServiceHealth = true
+        let result = await AppUpdateTransactionEngine(effects: fixture.effects)
+            .execute(try updateJournalFixture(sessions: [], userConfirmedClosure: true))
+        #expect(result.phase == .recoveryRequired && fixture.identity == updateNewIdentity)
+        #expect(!fixture.records.contains { $0.phase == .succeeded })
+        #expect(!fixture.events.contains("open:old"))
+    }
 }
 
 @Suite("Updated app service health", .petLanguage(.korean)) @MainActor
@@ -437,6 +482,33 @@ struct AppUpdateSafePointTests {
         #expect(attempts == 3 && clock == 1)
     }
 
+    @Test("visible user-action waiting can continue beyond thirty seconds without restarting installation")
+    func interactiveWaiting() async throws {
+        var attempts = 0
+        var clock: TimeInterval = 0
+        let waiter = AppUpdateSafePointWaiter(requireReady: { _ in
+            attempts += 1
+            if attempts < 3 { throw AppUpdateTransitionError.waiting("Close the connection") }
+        }, uptime: { clock }, sleep: { duration in
+            #expect(duration == .seconds(2)); clock += 20
+        })
+        try await waiter.wait(candidateApplicationURL: candidate, waitForUser: true, onWaiting: { _ in })
+        #expect(attempts == 3 && clock == 40)
+    }
+
+    @Test("an unresponsive service remains bounded even in the user-action window")
+    func interactiveTransportTimeout() async throws {
+        var attempts = 0
+        var clock: TimeInterval = 0
+        let waiter = AppUpdateSafePointWaiter(requireReady: { _ in
+            attempts += 1; throw AppUpdateTransitionError.serviceUnavailable
+        }, uptime: { clock }, sleep: { _ in clock += 20 })
+        await #expect(throws: AppUpdateTransactionError.safePointTimedOut) {
+            try await waiter.wait(candidateApplicationURL: candidate, waitForUser: true, onWaiting: { _ in })
+        }
+        #expect(attempts == 3 && clock == 40)
+    }
+
     @Test("unsupported connection does not keep polling")
     func permanentBlocker() async throws {
         var attempts = 0
@@ -536,6 +608,7 @@ private actor UpdatePreparationFixture {
 
     init(download: AppUpdatePreparedDownload) { self.download = download }
     func setHoldDownload() { holdDownload = true }
+    func releaseFutureDownloads() { holdDownload = false }
     var isWaiting: Bool { continuation != nil }
     func prepare() async throws -> AppUpdatePreparedDownload {
         preparations += 1
@@ -550,7 +623,10 @@ private actor UpdatePreparationFixture {
 
 @Suite("Preserving update controller", .petLanguage(.korean)) @MainActor
 struct AppUpdatePreservingControllerTests {
-    private func fixture(waiter: AppUpdateSafePointWaiter = .init(requireReady: { _ in })) throws
+    private func fixture(waiter: AppUpdateSafePointWaiter = .init(requireReady: { _ in }),
+                         closedWaiter: AppUpdateSafePointWaiter = .init(requireReady: { _ in }),
+                         helper: ((AppUpdatePreparedDownload, AppUpdateConnectionPolicy) async throws -> Void)? = nil,
+                         terminate: @escaping () -> Void = {}) throws
         -> (AppUpdateTransactionController, UpdatePreparationFixture, PetAppUpdateRelease) {
         let download = try updateJournalFixture(sessions: [], preservingConnections: true).download.prepared()
         let preparation = UpdatePreparationFixture(download: download)
@@ -558,9 +634,11 @@ struct AppUpdatePreservingControllerTests {
         let controller = AppUpdateTransactionController(
             store: .init(rootURL: download.workRootURL.appendingPathComponent("unused-journal")),
             safePointWaiter: waiter,
+            closedSessionsWaiter: closedWaiter,
             prepareDownload: { _ in try await preparation.prepare() },
             cleanupDownload: { _ in await preparation.cleanup() },
-            installedVersion: { (version: current, identity: updateOldIdentity) })
+            installedVersion: { (version: current, identity: updateOldIdentity) },
+            prepareHelper: helper, terminateApplication: terminate)
         return (controller, preparation, download.release)
     }
 
@@ -613,6 +691,85 @@ struct AppUpdatePreservingControllerTests {
         #expect(readinessChecks == 2)
         #expect(await preparation.preparations == 1)
     }
+
+    @Test("download never confirms shutdown and duplicate confirmations start one helper")
+    func explicitConfirmationAndSingleStart() async throws {
+        var staged = 0
+        var terminations = 0
+        let (controller, preparation, release) = try fixture(helper: { _, policy in
+            #expect(policy == .userConfirmedSessionClosure)
+            staged += 1
+        }, terminate: { terminations += 1 })
+        controller.startInteractivePreparation(release)
+        controller.startInteractivePreparation(release)
+        while controller.phase != .review { await Task.yield() }
+        #expect(staged == 0 && terminations == 0)
+        #expect(await preparation.preparations == 1)
+        controller.confirmClosedSessionsAndInstall()
+        controller.confirmClosedSessionsAndInstall()
+        while controller.phase != .updating { await Task.yield() }
+        #expect(staged == 1 && terminations == 1)
+        #expect(!controller.canCancel)
+    }
+
+    @Test("closing the window invalidates pending readiness before asynchronous cleanup")
+    func closeCancelsReadiness() async throws {
+        var response: CheckedContinuation<Void, Never>?
+        var staged = 0
+        var terminations = 0
+        let (controller, _, release) = try fixture(closedWaiter: .init(requireReady: { _ in
+            await withCheckedContinuation { response = $0 }
+        }), helper: { _, _ in staged += 1 }, terminate: { terminations += 1 })
+        controller.startInteractivePreparation(release)
+        while controller.phase != .review { await Task.yield() }
+        controller.confirmClosedSessionsAndInstall()
+        while response == nil { await Task.yield() }
+        #expect(controller.phase == .waitingForSessionExit && controller.canCancel)
+        controller.cancelInteractiveUpdate()
+        #expect(controller.phase == .idle && controller.preparedReview == nil)
+        response?.resume()
+        for _ in 0..<20 { await Task.yield() }
+        #expect(controller.phase == .idle && staged == 0 && terminations == 0)
+    }
+
+    @Test("late cancelled download cannot start a newer preparation without fresh confirmation")
+    func oldWorkflowCannotStartNewPreparation() async throws {
+        var staged = 0
+        var terminations = 0
+        let (controller, oldPreparation, release) = try fixture(helper: { _, _ in staged += 1 },
+            terminate: { terminations += 1 })
+        await oldPreparation.setHoldDownload()
+        controller.startInteractivePreparation(release)
+        while !(await oldPreparation.isWaiting) { await Task.yield() }
+        controller.cancelInteractiveUpdate()
+        // The same fixture switches subsequent calls to immediate completion,
+        // retaining the old pending response until the new review is ready.
+        await oldPreparation.releaseFutureDownloads()
+        controller.startInteractivePreparation(release)
+        while controller.phase != .review { await Task.yield() }
+        await oldPreparation.finish()
+        for _ in 0..<20 { await Task.yield() }
+        #expect(controller.phase == .review && staged == 0 && terminations == 0)
+        controller.confirmClosedSessionsAndInstall()
+        while controller.phase != .updating { await Task.yield() }
+        #expect(staged == 1 && terminations == 1)
+    }
+
+    @Test("unverified connections report failure without repeatedly polling or terminating")
+    func interactiveVerificationFailure() async throws {
+        var inspections = 0
+        var staged = 0
+        var terminations = 0
+        let (controller, _, release) = try fixture(closedWaiter: .init(requireReady: { _ in
+            inspections += 1; throw AppUpdateTransitionError.unverified
+        }), helper: { _, _ in staged += 1 }, terminate: { terminations += 1 })
+        controller.startInteractivePreparation(release)
+        while controller.phase != .review { await Task.yield() }
+        controller.confirmClosedSessionsAndInstall()
+        while controller.phase != .deferred { await Task.yield() }
+        #expect(inspections == 1 && staged == 0 && terminations == 0)
+        #expect(controller.detail.contains("확인하지 못해"))
+    }
 }
 
 @Suite("Private update journal", .petLanguage(.korean))
@@ -657,6 +814,11 @@ struct AppUpdateJournalTests {
         let loaded = try store.load(jobID: current.jobID)
         #expect(loaded == current && loaded.preservesConnections && loaded.sessions.isEmpty)
         #expect(loaded.helperApplicationURL.path.contains("helper-runtime-\(loaded.jobID)/Blabee.app"))
+        let confirmed = try updateJournalFixture(sessions: [], userConfirmedClosure: true)
+        try store.save(confirmed)
+        let restored = try store.load(jobID: confirmed.jobID)
+        #expect(restored == confirmed && restored.connectionPolicy == .userConfirmedSessionClosure)
+        #expect(legacy.connectionPolicy == .preserve && loaded.connectionPolicy == .preserve)
     }
 
     @Test("physical private tmp path works while the tmp symlink alias remains refused")

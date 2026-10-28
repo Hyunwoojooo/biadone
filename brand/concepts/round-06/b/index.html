@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Biadone — 부드러운 연결</title>
+  <link rel="stylesheet" href="../shared/common.css">
+  <link rel="stylesheet" href="tokens.css">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body class="web-page">
+  <header class="web-header web-frame">
+    <a href="#vision" data-brand-logo></a>
+    <nav class="web-nav" aria-label="주요 메뉴">
+      <a href="#vision" data-copy="nav.vision"></a>
+      <a href="#projects" data-copy="nav.projects"></a>
+      <a href="#edu" data-copy="nav.edu"></a>
+    </nav>
+  </header>
+
+  <main>
+    <section class="vision web-frame" id="vision" aria-labelledby="vision-title">
+      <div class="vision-copy">
+        <h1 id="vision-title" data-copy="web.title"></h1>
+        <p class="vision-description" data-copy="web.description"></p>
+        <div class="vision-actions">
+          <a class="primary-action" href="#projects" data-copy="web.primary"></a>
+          <a class="secondary-action" href="#edu" data-copy="web.secondary"></a>
+        </div>
+      </div>
+
+      <div class="relationship">
+        <svg class="relationship-geometry" viewBox="0 0 560 520" preserveAspectRatio="none" aria-hidden="true">
+          <path class="connection-ribbon" d="M112 154 C112 238 194 290 280 290 H420 C420 378 342 430 254 430 H167"></path>
+          <path class="connection-line" d="M112 154 C112 238 194 290 280 290 H420 C420 378 342 430 254 430 H167"></path>
+          <g class="connection-points">
+            <circle cx="112" cy="154" r="10"></circle>
+            <circle cx="420" cy="290" r="10"></circle>
+            <circle cx="167" cy="430" r="10"></circle>
+          </g>
+        </svg>
+        <p class="relationship-stage relationship-stage-one" data-copy="concept.understand"></p>
+        <p class="relationship-stage relationship-stage-two" data-copy="concept.act"></p>
+        <p class="relationship-stage relationship-stage-three" data-copy="concept.finish"></p>
+      </div>
+    </section>
+
+    <section class="projects web-frame" id="projects" aria-labelledby="projects-title">
+      <h2 id="projects-title" data-copy="web.projectsTitle"></h2>
+      <div class="project-field">
+        <article class="project-entry">
+          <h3 data-copy="web.blabeeTitle"></h3>
+          <p data-copy="web.blabeeDescription"></p>
+        </article>
+        <article class="project-entry project-edu" id="edu">
+          <div class="project-heading">
+            <h3 data-copy="web.eduTitle"></h3>
+            <p class="project-status" data-copy="web.eduStatus"></p>
+          </div>
+          <p data-copy="web.eduDescription"></p>
+        </article>
+      </div>
+    </section>
+  </main>
+
+  <footer class="web-footer web-frame"><p>Biadone</p></footer>
+  <script src="../shared/content.js" defer></script>
+</body>
+</html>

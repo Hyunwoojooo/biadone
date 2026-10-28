@@ -498,6 +498,44 @@ struct CodexNativeFailureGuardTests {
         }
     }
 
+    @Test("Recoverable inspection timeout stays blocked when failure cleanup is not durable")
+    func inspectionTimeoutCleanupFailureKeepsUncertainty() throws {
+        let modes: [NativeFailureStorageFaults.Mode] = [.unlink, .directorySync, .restoreFileSync]
+        for mode in modes {
+            let fixture = try NativeFailureFixture()
+            let faults = NativeFailureStorageFaults(mode)
+            let guarded = CodexNativeFailureGuard(
+                directoryURL: fixture.directory,
+                storageFault: { try faults.inject($0) }
+            )
+            var attempts = 0
+            #expect(throws: CoordinatorError("codex_native_guard_unavailable")) {
+                try guarded.withAttempt(executable: fixture.executable) {
+                    attempts += 1
+                    faults.arm()
+                    throw CoordinatorError("codex_native_inspection_timeout")
+                }
+            }
+            #expect(attempts == 1)
+            #expect(try fixture.recordURLs().count == (mode == .restoreFileSync ? 0 : 1))
+            let reopened = fixture.makeGuard()
+            let cached = NativeFailureCounter()
+            #expect(throws: CoordinatorError("codex_native_execution_uncertain")) {
+                try reopened.withAttempt(
+                    executable: fixture.executable,
+                    onCachedFailure: { cached.increment() }
+                ) { attempts += 1 }
+            }
+            #expect(attempts == 1)
+            #expect(cached.value == 1)
+            // Recovery requires a separate explicit request after storage is
+            // available, and cannot rerun the timed-out command automatically.
+            try reopened.withAttempt(executable: fixture.executable, retry: true) { attempts += 1 }
+            #expect(attempts == 2)
+            #expect(try fixture.recordURLs().isEmpty)
+        }
+    }
+
     @Test("Changed executable invalidates process-local uncertainty after failed restoration")
     func replacementInvalidatesCleanupUncertainty() throws {
         let fixture = try NativeFailureFixture()

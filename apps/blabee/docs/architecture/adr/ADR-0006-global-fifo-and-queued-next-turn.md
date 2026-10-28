@@ -35,7 +35,7 @@
 - Pet focus와 선택은 현재 선두의 exact identity 전체가 일치할 때만 허용한다.
 - Hook PermissionRequest와 관리형 App Server approval은 각 transport binding을 유지하면서 공통 단조 `arrival_sequence`의 전역 FIFO를 사용한다.
 - 선택된 `pet_action`은 `queued_next_turn`만 사용한다. 원문 일회성 token은 process-local에서 dispatch 전에 소비한다.
-- `codex queue --thread <session> --message <reference envelope>`에는 continuation ID와 cwd에 결속된 참조값을 보낸다. 전체 action 본문은 인증된 journal에 유지한다.
+- `codex queue --thread <session> --message <reference envelope>`에는 continuation ID와 cwd에 결속된 참조값을 보낸다. 전체 action 본문은 인증된 journal에 유지한다. 2026-10-17 표시 확장으로 참조 첫 줄 뒤에 선택한 제목·목표·제약·완료 기준을 인용한 기록도 보낸다. 이 표시 본문은 journal action으로 재생성·비교하며 실행 권한이 되지 않는다. [현재 형식과 호환성](../../features/QUEUED_HOOK_ORDERING.md#선택-내용이-보이는-프롬프트-2026-10-17).
 - 정확한 `UserPromptSubmit` 재진입에서 봉인 action을 한 번 claim하고 Hook context에 제공한다. 임의 사용자 입력은 이 참조를 대신하지 않는다.
 - exact queue receipt 또는 기대한 queued-prompt digest가 일치하는 재진입으로 transport 완료를 판단한다. 재진입이 receipt보다 먼저 도착할 수도 있으며, 실제 작업 성공은 별도 outcome이다.
 - 불명확한 dispatch, timeout 또는 재시작 ambiguity에서는 자동 재전송하지 않는다.

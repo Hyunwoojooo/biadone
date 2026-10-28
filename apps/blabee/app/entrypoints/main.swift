@@ -1553,6 +1553,20 @@ private func runRuntimeIdentityInspection(arguments: [String]) throws {
     try FileHandle.standardOutput.write(contentsOf: response.outputData())
 }
 
+private func acquireCommandRuntimeLease(commandLine: [String]) throws -> AppRuntimeUseLease {
+    let startupAdmission = try AppBridgeRuntimeBootstrap.reexecIfNeeded(commandLine: commandLine)
+    defer { startupAdmission?.release() }
+    let runtimeUseLease = try AppRuntimeUseLease.acquireCurrent()
+    try AppBridgeRuntimeBootstrap.completeExecAdmission(runtimeLease: runtimeUseLease)
+    return runtimeUseLease
+}
+
+private func validateCommandDistributionProfile() throws {
+    guard BlabeeProductProfile.current.matchesDistributionMarker(
+        Bundle.main.object(forInfoDictionaryKey: "BlabeeDistributionProfile") as? String
+    ) else { throw CoordinatorError("distribution_profile_mismatch") }
+}
+
 do {
     let commandLine = CommandLine.arguments
     // These bounded, stateless build-inspection commands do not use their
@@ -1563,6 +1577,18 @@ do {
         try FileHandle.standardOutput.write(contentsOf: BlabeeProductProfile.current.distributionData())
         exit(0)
     }
+    #if BLABEE_TEST_APP
+    // The Test app must never reach product runtime admission, authority
+    // leases, CLI passthrough, installation, or the normal Pet's singleton lock.
+    if commandLine.dropFirst().first == "test-engine-service" {
+        try runBlabeeTestEngineService(arguments: Array(commandLine.dropFirst(2)))
+    } else if commandLine.dropFirst().first == "test-engine-check" {
+        try runBlabeeTestEngineCheck(arguments: Array(commandLine.dropFirst(2)))
+    } else {
+        try runBlabeeTestApplication(arguments: Array(commandLine.dropFirst()))
+    }
+    exit(0)
+    #endif
     if commandLine.dropFirst().first == "runtime-use-lease-protocol" {
         guard commandLine.count == 2 else {
             throw CoordinatorError("app_runtime_use_lease_protocol_arguments_invalid")
@@ -1575,23 +1601,23 @@ do {
         exit(0)
     }
     if commandLine.dropFirst().first == "claude-auto-launch" {
-        try ClaudeAutoConnectCommand.passthroughIfNeeded(Array(commandLine.dropFirst(2)))
+        exit(try ClaudeAutoConnectCommand.runWithStartupAdmission(
+            Array(commandLine.dropFirst(2)),
+            acquireRuntime: { try acquireCommandRuntimeLease(commandLine: commandLine) },
+            launch: { arguments in
+                try validateCommandDistributionProfile()
+                return try ClaudeAutoConnectCommand.run(arguments)
+            }
+        ))
     }
-    let startupAdmission = try AppBridgeRuntimeBootstrap.reexecIfNeeded(commandLine: commandLine)
-    defer { startupAdmission?.release() }
-    let runtimeUseLease = try AppRuntimeUseLease.acquireCurrent()
-    try AppBridgeRuntimeBootstrap.completeExecAdmission(runtimeLease: runtimeUseLease)
-    startupAdmission?.release()
+    let runtimeUseLease = try acquireCommandRuntimeLease(commandLine: commandLine)
     defer { withExtendedLifetime(runtimeUseLease) {} }
     let invocationEnvironment = ProductInvocationEnvironment.live()
     let mode = ProductInvocationResolver.mode(
         commandLineArguments: commandLine,
         environment: invocationEnvironment
     )
-    let profile = BlabeeProductProfile.current
-    guard profile.matchesDistributionMarker(
-        Bundle.main.object(forInfoDictionaryKey: "BlabeeDistributionProfile") as? String
-    ) else { throw CoordinatorError("distribution_profile_mismatch") }
+    try validateCommandDistributionProfile()
     switch mode {
     case "daemon":
         try runDaemon(arguments: Array(commandLine.dropFirst(2)))
@@ -1599,8 +1625,6 @@ do {
         try runClaudeNativeHost(arguments: Array(commandLine.dropFirst(2)))
     case "claude-installed-launcher":
         exit(try runClaudeInstalledLauncher(arguments: Array(commandLine.dropFirst(2))))
-    case "claude-auto-launch":
-        exit(try ClaudeAutoConnectCommand.run(Array(commandLine.dropFirst(2))))
     case "service":
         try runProductService(arguments: Array(commandLine.dropFirst(2)))
     case "app-service":

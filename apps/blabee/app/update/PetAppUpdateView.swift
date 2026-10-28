@@ -65,7 +65,8 @@ struct PetAppUpdateView: View {
             )
             PetAutomaticAppUpdateView(
                 controller: viewModel.automaticAppUpdate,
-                release: viewModel.appUpdateState.availableRelease
+                release: viewModel.appUpdateState.availableRelease,
+                openUpdateWindow: viewModel.showAppUpdateWindow
             )
         }
     }

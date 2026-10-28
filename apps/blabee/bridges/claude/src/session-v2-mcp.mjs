@@ -8,6 +8,41 @@ import { createSessionV2ChannelPoller } from './session-v2-channel-poller.mjs';
 import { SESSION_V2_WORKFLOW_INSTRUCTIONS, safeSessionV2ErrorCode, sessionV2Context } from './session-v2-context.mjs';
 import { SESSION_V2_TOOL_DEFINITIONS, createSessionV2ToolHandler, sessionV2ToolError } from './session-v2-tools.mjs';
 
+const diagnosticWriters = new WeakMap();
+
+/** Diagnostics are best-effort and never own their stream or bridge lifetime.
+ * Keep one error listener for the stream's lifetime: a write can report EPIPE
+ * even after runtime.closed or close has fired. Sharing the writer avoids
+ * accumulating listeners when multiple runtimes use the same caller stderr. */
+export function createSessionV2DiagnosticWriter(stream) {
+  if (!stream || (typeof stream !== 'object' && typeof stream !== 'function')) return () => false;
+  const existing = diagnosticWriters.get(stream);
+  if (existing) return existing;
+  let disabled = false;
+  const disable = () => { disabled = true; };
+  const write = message => {
+    if (disabled) return false;
+    try {
+      if (stream.destroyed || stream.closed || stream.writableEnded || stream.writableFinished || stream.writable === false) {
+        disable(); return false;
+      }
+      // A false return already queued these bytes. Drop later diagnostics to
+      // bound buffering on an unconsumed pipe; never wait for drain or resend.
+      if (stream.write(message, error => { if (error) disable(); }) === false) disable();
+      return !disabled;
+    } catch { disable(); return false; }
+  };
+  diagnosticWriters.set(stream, write);
+  try {
+    // Plain synchronous sinks remain useful to callers/tests. Real Writable
+    // streams must have their error handler installed before the first write.
+    stream.on?.('error', disable);
+    stream.on?.('close', disable);
+    stream.on?.('finish', disable);
+  } catch { disable(); }
+  return write;
+}
+
 /** Callers share one admission/open result. A cancelled caller removes its
  * listener and capacity immediately without cancelling or retaining another
  * continuation on the shared operation. */
@@ -206,6 +241,8 @@ export function createSessionV2BridgeServer({ handler } = {}) {
 export async function runSessionV2MCP({ env = process.env, args = process.argv.slice(2), input = process.stdin,
   output = process.stdout, errorOutput = process.stderr, createClient = createSessionV2Client, pollIntervalMs = 500,
   resolveContext, contextErrorCode = safeSessionV2ErrorCode } = {}) {
+  const writeDiagnostic = createSessionV2DiagnosticWriter(errorOutput);
+  const diagnostic = code => writeDiagnostic(`[blabee-claude] 제품 MCP 연결을 확인하지 못했습니다 (${code}).\n`);
   // App-button sessions are already enrolled. Automatic CLI sessions can only
   // enroll after SessionStart; their SDK handshake must be available before it.
   const context = resolveContext ? undefined
@@ -219,7 +256,6 @@ export async function runSessionV2MCP({ env = process.env, args = process.argv.s
   const admissionWaiters = createSessionV2Waiters();
   let finishClosed;
   const closed = new Promise(resolveClosed => { finishClosed = resolveClosed; });
-  const diagnostic = code => errorOutput.write(`[blabee-claude] 제품 MCP 연결을 확인하지 못했습니다 (${code}).\n`);
   const makeSession = (context, client) => createSessionV2BridgeSession({ client, authority: context.configuration.authority,
       channelSource: context.channelSource, pollIntervalMs,
       onError: code => { diagnostic(code); void cleanup(); },
@@ -317,5 +353,8 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     // valid, so only the dedicated MCP process may discard the remaining bytes.
     process.exit(await runtime.closed);
   }
-  catch (error) { process.stderr.write(`[blabee-claude] 제품 MCP 시작 실패 (${safeSessionV2ErrorCode(error)}).\n`); process.exitCode = 1; }
+  catch (error) {
+    createSessionV2DiagnosticWriter(process.stderr)(`[blabee-claude] 제품 MCP 시작 실패 (${safeSessionV2ErrorCode(error)}).\n`);
+    process.exitCode = 1;
+  }
 }

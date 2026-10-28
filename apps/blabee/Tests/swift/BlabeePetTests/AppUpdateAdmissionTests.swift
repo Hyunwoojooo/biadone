@@ -209,6 +209,38 @@ struct AppUpdateAdmissionTests {
         }
     }
 
+    @Test("Update preparation rechecks Claude evidence after prior-boot recovery", arguments: [false, true])
+    func claudeReadinessAfterRecovery(newUsePresent: Bool) throws {
+        var calls: [String] = []
+        let operation = {
+            try AppUpdateTransitionPreflight.recoverAndRequireClaudeReady(recover: {
+                calls.append("recover"); return 2
+            }, inspect: {
+                calls.append("inspect")
+                return .init(status: newUsePresent ? .inUse : .clear,
+                    outstandingUseCount: newUsePresent ? 1 : 0, referencedRuntimeIdentities: [])
+            })
+        }
+        if newUsePresent {
+            #expect(throws: AppUpdateTransitionError.self) { try operation() }
+        } else { try operation() }
+        #expect(calls == ["recover", "inspect"])
+    }
+
+    @Test("Failed Claude recovery never falls through to an apparently clear inspection")
+    func claudeRecoveryFailureBlocks() {
+        var inspected = false
+        #expect(throws: AppUpdateTransitionError.unverified) {
+            try AppUpdateTransitionPreflight.recoverAndRequireClaudeReady(recover: {
+                throw CoordinatorError("claude_runtime_payload_unavailable")
+            }, inspect: {
+                inspected = true
+                return .init(status: .clear, outstandingUseCount: 0, referencedRuntimeIdentities: [])
+            })
+        }
+        #expect(!inspected)
+    }
+
     @Test("Readiness rejects ambiguous replies and pending delivery acknowledgments")
     func readinessReply() throws {
         var object: [String: Any] = ["schema_version": "1.0", "kind": "blabee_update_status", "ready": true,
@@ -226,6 +258,75 @@ struct AppUpdateAdmissionTests {
         object["pending_deliveries"] = -1
         #expect(throws: (any Error).self) {
             try AppUpdateServiceReadiness.parse(JSONSerialization.data(withJSONObject: object))
+        }
+    }
+
+    @Test("Only explicit normal shutdown can leave volatile prompt context behind")
+    func confirmedShutdownReadiness() throws {
+        var object: [String: Any] = ["schema_version": "1.0", "kind": "blabee_update_status", "ready": false,
+            "pending_approvals": 0, "pending_deliveries": 0, "pending_cards": 0, "pending_queued_actions": 0,
+            "pending_reconciliation": 0, "pending_claim_responses": 0, "pending_prompt_contexts": 1,
+            "service_pid": 123, "service_parent_pid": 122]
+        let promptOnly = try AppUpdateServiceReadiness.parse(JSONSerialization.data(withJSONObject: object))
+        #expect(throws: AppUpdateTransitionError.self) { try promptOnly.requireReady() }
+        try promptOnly.requireReady(policy: .userConfirmedSessionClosure)
+        for counter in ["pending_approvals", "pending_deliveries", "pending_cards", "pending_queued_actions",
+                        "pending_reconciliation", "pending_claim_responses"] {
+            object[counter] = 1
+            let pending = try AppUpdateServiceReadiness.parse(JSONSerialization.data(withJSONObject: object))
+            #expect(throws: AppUpdateTransitionError.self) {
+                try pending.requireReady(policy: .userConfirmedSessionClosure)
+            }
+            object[counter] = 0
+        }
+        // Consent never relaxes parsing or turns a contradictory reply into authority.
+        object["ready"] = true
+        #expect(throws: AppUpdateTransitionError.unverified) {
+            try AppUpdateServiceReadiness.parse(JSONSerialization.data(withJSONObject: object))
+                .requireReady(policy: .userConfirmedSessionClosure)
+        }
+    }
+
+    @Test("User confirmation still requires every bridge runtime to close, including compatible ones")
+    func confirmedShutdownRequiresNoRuntimes() throws {
+        let current = "sha256:" + String(repeating: "a", count: 64)
+        let old = "sha256:" + String(repeating: "b", count: 64)
+        let candidate = OperationalRuntimeIdentitySnapshot(runtimeIdentity: current,
+            compatiblePreviousRuntimes: [.init(runtimeIdentity: old,
+                allowedRequestTypes: ["emit_decision", "session_start", "stop", "user_prompt_submit"])])
+        try AppUpdateTransitionPreflight.requireRuntimeConnections(candidate: candidate,
+            activeIdentities: [], policy: .userConfirmedSessionClosure)
+        for identity in [current, old] {
+            try AppUpdateTransitionPreflight.requireRuntimeConnections(candidate: candidate,
+                activeIdentities: [identity], policy: .preserve)
+            #expect(throws: AppUpdateTransitionError.self) {
+                try AppUpdateTransitionPreflight.requireRuntimeConnections(candidate: candidate,
+                    activeIdentities: [identity], policy: .userConfirmedSessionClosure)
+            }
+        }
+    }
+
+    @Test("The live status adapter retries only transport outages, never invalid identity or shape")
+    func statusFailureClassification() throws {
+        for code in ["operational_connect_failed", "operational_connect_timeout", "operational_connect_refused",
+                     "operational_socket_unavailable",
+                     "operational_response_timeout", "operational_transport_closed", "operational_transport_failed"] {
+            #expect(throws: AppUpdateTransitionError.serviceUnavailable) {
+                _ = try AppUpdateTransitionPreflight.serviceReadiness { throw CoordinatorError(code) }
+            }
+        }
+        for code in ["operational_runtime_identity_mismatch", "operational_response_invalid",
+                     "operational_peer_rejected", "operational_socket_unsafe", "operational_request_unknown"] {
+            #expect(throws: AppUpdateTransitionError.unverified) {
+                _ = try AppUpdateTransitionPreflight.serviceReadiness { throw CoordinatorError(code) }
+            }
+        }
+        let malformedReplies: [[String: Any]] = [[:], ["schema_version": "1.0", "kind": "wrong"],
+                                                ["ready": true, "pending_prompt_contexts": "zero"]]
+        for malformed in malformedReplies {
+            #expect(throws: AppUpdateTransitionError.unverified) {
+                _ = try AppUpdateTransitionPreflight.serviceReadiness { malformed }
+            }
         }
     }
 

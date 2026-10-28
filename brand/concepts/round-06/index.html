@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Biadone 전체 화면 스타일 비교</title><link rel="icon" href="data:,">
+<link rel="preload" href="../../design-system/assets/fonts/PretendardVariable.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="../../design-system/fonts.css"><link rel="stylesheet" href="../../design-system/tokens.css"><link rel="stylesheet" href="../../design-system/logo.css"><link rel="stylesheet" href="review.tokens.css"><link rel="stylesheet" href="review.css">
+<script src="review.js" defer></script>
+</head>
+<body>
+<a class="skip-link" href="#review">스타일 비교로 건너뛰기</a>
+<header class="review-header"><a class="biadone-logo" href="#overview" aria-label="Biadone 화면 스타일 비교"><span class="biadone-logo__symbol"><img src="../../design-system/assets/logo/biadone-symbol.svg" width="64" height="64" alt=""></span><span class="biadone-logo__name" aria-hidden="true">Biadone</span></a><span>전체 화면 스타일</span><a href="DESIGN_PLAN.md">비교 기준</a></header>
+<main class="review-page">
+<section class="intro"><h1>같은 브랜드,<br>세 가지 화면의 인상.</h1><p>로고·블루·Pretendard와 문구는 동일하게 두었습니다.<br>홈페이지와 Edu 자료에서 여백·형태·정보 배치가 어떻게 달라지는지 봐주세요.</p></section>
+<section class="candidate-choices" aria-label="크게 볼 스타일 선택">
+<button class="candidate-choice" type="button" data-choice="a" aria-pressed="false"><strong>A 정돈된 구조</strong><span>정렬과 흐름으로 명료하게.</span></button>
+<button class="candidate-choice" type="button" data-choice="b" aria-pressed="false"><strong>B 부드러운 연결</strong><span>넉넉한 여백과 곡선으로 편안하게.</span></button>
+<button class="candidate-choice" type="button" data-choice="c" aria-pressed="false"><strong>C 선명한 강조</strong><span>큰 제목과 블루 면으로 선명하게.</span></button>
+</section>
+<section id="review" class="review-content" aria-labelledby="review-title">
+<div class="review-toolbar"><h2 id="review-title">홈페이지와 Edu 자료를 나란히.</h2><div class="view-controls" role="group" aria-label="비교 방식"><button type="button" data-view="overview" aria-pressed="true">나란히 비교</button><button type="button" data-view="detail" aria-pressed="false">크게 보기</button></div></div>
+<div id="overview" class="overview-grid" aria-label="세 스타일의 홈페이지와 강의자료"></div>
+<section id="detail" hidden aria-label="선택한 스타일의 큰 미리보기">
+<div class="detail-toolbar"><div class="medium-controls" role="group" aria-label="볼 매체"><button type="button" data-medium="both" aria-pressed="true">둘 다</button><button type="button" data-medium="web" aria-pressed="false">홈페이지</button><button type="button" data-medium="edu" aria-pressed="false">Edu 슬라이드</button></div><div class="device-controls" role="group" aria-label="홈페이지 화면 크기"><button type="button" data-device="desktop" aria-pressed="true">데스크톱</button><button type="button" data-device="mobile" aria-pressed="false">휴대폰</button></div></div>
+<div id="detail-web" class="detail-surface"><div class="surface-heading"><h3>회사 홈페이지</h3><a id="web-link" target="_blank" rel="noopener">새 탭에서 보기</a></div><div class="detail-stage"><div id="web-shell" class="frame-shell" data-frame-width="1280" data-frame-height="800"><iframe id="web-frame" class="preview-frame" title="홈페이지 큰 미리보기"></iframe></div></div></div>
+<div id="detail-edu" class="detail-surface"><div class="surface-heading"><h3>Biadone Edu 개념 설명 슬라이드</h3><a id="edu-link" target="_blank" rel="noopener">새 탭에서 보기</a></div><div class="detail-stage"><div id="edu-shell" class="frame-shell" data-frame-width="1600" data-frame-height="900"><iframe id="edu-frame" class="preview-frame" title="강의자료 큰 미리보기"></iframe></div></div></div>
+</section>
+</section>
+<p class="review-hint"><strong>A 정돈된 구조로 확정했습니다.</strong> 넓은 흰 바탕, 정렬과 정보 위계, 작은 곡률과 직선적인 흐름을 공통 기준으로 사용합니다.</p>
+<p id="review-status" class="sr-only" role="status" aria-live="polite">세 방향을 나란히 비교합니다.</p>
+<footer><p>2026-10-27 A 화면 스타일 확정. 이 화면은 비교 기록입니다.</p><a href="../../design-system/SCREEN_STYLE.md">확정한 화면 스타일 기준</a></footer>
+</main>
+</body>
+</html>

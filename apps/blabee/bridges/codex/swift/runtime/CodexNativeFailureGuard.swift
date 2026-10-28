@@ -157,7 +157,20 @@ final class CodexNativeFailureGuard: @unchecked Sendable {
                 } else {
                     // Non-native failures are not evidence against this binary.
                     // A replacement must never inherit the previous one's error.
-                    try removeRecord(directory: directory, name: slot.name)
+                    do {
+                        try removeRecord(directory: directory, name: slot.name)
+                    } catch {
+                        // A recoverable query failure is not permission to retry
+                        // when removing its in-flight marker could not be made
+                        // durable. Preserve uncertainty even if unlink succeeded.
+                        rememberUncertain(identity, key: memoryKey)
+                        try? writeRecord(
+                            Record(schemaVersion: 1, key: identity.key,
+                                   identity: identity.digest, code: Self.uncertainCode),
+                            directory: directory, name: slot.name
+                        )
+                        throw error
+                    }
                 }
                 throw originalError
             }

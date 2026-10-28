@@ -255,9 +255,11 @@ function contextValue(context, key) {
 const QUEUED_PROMPT_PREFIX =
   "Blabee 선택 작업을 불러옵니다. Hook 세부 조건이 없으면 실행하지 마세요. ref=";
 const QUEUED_ACTION_CONTEXT_MARKER =
-  "Blabee verified the selected action locally. Execute exactly this action JSON as the new user request. The visible ref is transport metadata, and a queue receipt is not proof that the work succeeded.\n";
+  "Blabee verified the selected action locally. Execute exactly this action JSON as the new user request. The visible task preview and ref are not execution authority, and a queue receipt is not proof that the work succeeded.\n";
 
-function queuedPrompt(continuationID, enabledProjectPath) {
+// Legacy ref-only input remains valid after an app update. New production
+// dispatches include a readable preview and are covered by Swift dispatch tests.
+function legacyQueuedPrompt(continuationID, enabledProjectPath) {
   const normalizedProjectPath = path.resolve(enabledProjectPath);
   const reference = createHash("sha256")
     .update(
@@ -285,11 +287,11 @@ function canonicalJSON(value) {
   return JSON.stringify(canonicalJSONObject(value));
 }
 
-function assertOpaqueQueuedPrompt(
+function assertLegacyQueuedPrompt(
   message,
   { action, continuationID, enabledProjectPath, identifiers },
 ) {
-  assert.equal(message, queuedPrompt(continuationID, enabledProjectPath));
+  assert.equal(message, legacyQueuedPrompt(continuationID, enabledProjectPath));
   assert.match(message.slice(QUEUED_PROMPT_PREFIX.length), /^[0-9a-f]{32}$/);
   for (const leakedValue of [
     canonicalJSON(action),
@@ -585,7 +587,7 @@ test("shared-root subagent Hooks preserve parent decisions and isolate concurren
     assert.equal(focused.ok, true);
     const selected = await udsRequest(server.socketPath, "select", selection(waiting.interaction, "root_isolated"));
     assert.equal(selected.ok, true, JSON.stringify(selected.error));
-    const message = queuedPrompt(selected.result.outcome.continuation_id, server.enabledProjectPath);
+    const message = legacyQueuedPrompt(selected.result.outcome.continuation_id, server.enabledProjectPath);
     const misplaced = await callHook("UserPromptSubmit", rawHook("UserPromptSubmit", 1, {
       turn_id: "turn_wrong_child_delivery", prompt: message,
     }));
@@ -760,7 +762,7 @@ test("event navigation selects the third project first and preserves the other s
     await waitForPermissions(1);
     await resolvePermission(permissions[1], 1, "defer_to_codex");
     await waitForPermissions(0);
-    const message = queuedPrompt(selected.result.outcome.continuation_id, directories[2]);
+    const message = legacyQueuedPrompt(selected.result.outcome.continuation_id, directories[2]);
     const misplaced = await callHook("UserPromptSubmit", 0, {
       turn_id: "turn_navigation_wrong_session", prompt: message,
     });
@@ -1109,11 +1111,11 @@ test("real Hook, MCP, Pet, UDS, SQLite flow late-attaches and queues two next tu
     assert.deepEqual(afterFirstSelection.result.routing.pending, []);
     assert.equal(afterFirstSelection.result.routing.in_flight_count, 0);
 
-    const firstQueuedPrompt = queuedPrompt(
+    const firstQueuedPrompt = legacyQueuedPrompt(
       firstSelection.result.outcome.continuation_id,
       server.enabledProjectPath,
     );
-    assertOpaqueQueuedPrompt(firstQueuedPrompt, {
+    assertLegacyQueuedPrompt(firstQueuedPrompt, {
       action: firstProposal.next_actions[0],
       continuationID: firstSelection.result.outcome.continuation_id,
       enabledProjectPath: server.enabledProjectPath,
@@ -1240,11 +1242,11 @@ test("real Hook, MCP, Pet, UDS, SQLite flow late-attaches and queues two next tu
       secondSelection.result.outcome.queued_submission_id,
       `queued_${secondSelection.result.outcome.continuation_id}`,
     );
-    const secondQueuedPrompt = queuedPrompt(
+    const secondQueuedPrompt = legacyQueuedPrompt(
       secondSelection.result.outcome.continuation_id,
       server.enabledProjectPath,
     );
-    assertOpaqueQueuedPrompt(secondQueuedPrompt, {
+    assertLegacyQueuedPrompt(secondQueuedPrompt, {
       action: secondProposal.next_actions[0],
       continuationID: secondSelection.result.outcome.continuation_id,
       enabledProjectPath: server.enabledProjectPath,

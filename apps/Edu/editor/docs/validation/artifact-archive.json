@@ -1,0 +1,9 @@
+{
+  "reason": "Temporary QA artifacts moved out of the application; original source files and reusable bundle/npm caches retained.",
+  "directories": {
+    "/Users/joo/BiaDone/apps/Edu/editor/.cache/render-smoke": "/tmp/biadone-qa-archive-it52djny/render-smoke",
+    "/Users/joo/BiaDone/apps/Edu/editor/.cache/render-audio-check": "/tmp/biadone-qa-archive-it52djny/render-audio-check",
+    "/Users/joo/BiaDone/apps/Edu/editor/.cache/render-geometry-check": "/tmp/biadone-qa-archive-it52djny/render-geometry-check",
+    "/Users/joo/BiaDone/apps/Edu/editor/.cache/template-qa": "/tmp/biadone-qa-archive-it52djny/template-qa"
+  }
+}

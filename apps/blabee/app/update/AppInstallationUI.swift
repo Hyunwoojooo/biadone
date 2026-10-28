@@ -29,8 +29,10 @@ enum AppInstallationEntry {
 
 enum AppInstallationPhase: Equatable {
     case idle, inspecting, ready, waitingForSafePoint, installing, opening, failed, launched
+    case preparingConnectionRecovery, connectionRestartRequired
 
-    var isBusy: Bool { self == .inspecting || self == .waitingForSafePoint || self == .installing || self == .opening }
+    var isBusy: Bool { self == .inspecting || self == .waitingForSafePoint || self == .installing
+        || self == .opening || self == .preparingConnectionRecovery }
 }
 
 enum AppInstallationPrimaryAction: Equatable {
@@ -56,6 +58,7 @@ final class AppInstallationViewModel: ObservableObject {
     @Published private(set) var canConfirmLegacyQuit = false
     @Published var showsLegacyQuitConfirmation = false
     @Published private(set) var requiresFinderRecovery = false
+    @Published private(set) var connectionRecoveryMessage: String?
 
     let sourceURL: URL
     private let inspect: @Sendable () throws -> AppInstallationPlan
@@ -64,8 +67,14 @@ final class AppInstallationViewModel: ObservableObject {
     private let showInFinder: @MainActor (URL) throws -> Void
     private let didLaunch: @MainActor () -> Void
     private let safePointWaiter: AppUpdateSafePointWaiter
+    private let prepareConnectionRecovery: () async throws -> ClaudeRuntimePayloadUse.RecoveryPreparation
     private var replacementRequested = false
     private var legacyReplacementRequested = false
+    private var inspectedExistingInstallation = false
+    private var connectionRecoverySuggested = false
+    private var operationGeneration = 0
+    private var recoveryTask: Task<Void, Never>?
+    private var recoveryOperation: UUID?
 
     init(
         sourceURL: URL,
@@ -74,7 +83,10 @@ final class AppInstallationViewModel: ObservableObject {
         openInstalled: @escaping @MainActor (URL, String) async throws -> Void,
         showInFinder: @escaping @MainActor (URL) throws -> Void = { _ in },
         didLaunch: @escaping @MainActor () -> Void = {},
-        safePointWaiter: AppUpdateSafePointWaiter = .init(requireReady: { _ in })
+        safePointWaiter: AppUpdateSafePointWaiter = .init(requireReady: { _ in }),
+        prepareConnectionRecovery: @escaping () async throws -> ClaudeRuntimePayloadUse.RecoveryPreparation = {
+            try await AppClaudeConnectionRecoveryPreparation.prepare()
+        }
     ) {
         self.sourceURL = sourceURL
         self.inspect = inspect
@@ -83,6 +95,7 @@ final class AppInstallationViewModel: ObservableObject {
         self.showInFinder = showInFinder
         self.didLaunch = didLaunch
         self.safePointWaiter = safePointWaiter
+        self.prepareConnectionRecovery = prepareConnectionRecovery
     }
 
     static func live(sourceURL: URL, didLaunch: @escaping @MainActor () -> Void) -> AppInstallationViewModel {
@@ -116,6 +129,24 @@ final class AppInstallationViewModel: ObservableObject {
             ? PetL10n.text("Open Installed Blabee", korean: "설치된 Blabee 열기") : PetL10n.text("Install in Applications and Start", korean: "응용 프로그램에 설치하고 시작")
     }
 
+    var canPerformPrimary: Bool {
+        !phase.isBusy && phase != .launched && phase != .connectionRestartRequired
+            && (plan != nil || receipt != nil)
+    }
+
+    var canClose: Bool { !phase.isBusy || phase == .preparingConnectionRecovery }
+
+    var showsConnectionRecovery: Bool {
+        (inspectedExistingInstallation || connectionRecoverySuggested) && receipt == nil && !requiresFinderRecovery
+            && [.ready, .failed, .waitingForSafePoint, .preparingConnectionRecovery,
+                .connectionRestartRequired].contains(phase)
+    }
+
+    var canPrepareConnectionRecovery: Bool {
+        showsConnectionRecovery && [.ready, .failed, .waitingForSafePoint].contains(phase)
+            && recoveryTask == nil
+    }
+
     var title: String {
         if requiresFinderRecovery { return PetL10n.text("Check the installed app's launch", korean: "설치된 앱 실행을 확인해 주세요") }
         if receipt != nil || plan?.existing != nil { return PetL10n.text("Blabee is already installed", korean: "설치된 Blabee가 있습니다") }
@@ -144,6 +175,7 @@ final class AppInstallationViewModel: ObservableObject {
         case .waitingForSafePoint: PetL10n.text("Waiting for active requests to finish…", korean: "진행 중인 요청이 끝나기를 기다립니다…")
         case .installing: PetL10n.text("Copying and verifying the entire app…", korean: "앱 전체를 복사하고 검증하고 있습니다…")
         case .opening: PetL10n.text("Opening installed Blabee…", korean: "설치된 Blabee를 열고 있습니다…")
+        case .preparingConnectionRecovery: PetL10n.text("Preparing Claude connection recovery…", korean: "Claude 연결 복구를 준비하고 있습니다…")
         default: ""
         }
     }
@@ -163,11 +195,15 @@ final class AppInstallationViewModel: ObservableObject {
     }
 
     func refresh() async {
-        guard !phase.isBusy, phase != .launched, !requiresFinderRecovery else { return }
+        guard !phase.isBusy, phase != .launched, phase != .connectionRestartRequired,
+              !requiresFinderRecovery else { return }
         // After publication, a retry must open the same installation, never copy again.
         guard receipt == nil else { return }
+        operationGeneration += 1
+        let request = operationGeneration
         phase = .inspecting
         message = nil
+        connectionRecoveryMessage = nil
         recoveryURL = nil
         plan = nil
         showsReplacementConfirmation = false
@@ -176,13 +212,19 @@ final class AppInstallationViewModel: ObservableObject {
         cancelLegacyReplacement()
         let inspect = self.inspect
         do {
-            plan = try await Task.detached(priority: .userInitiated) { try inspect() }.value
+            let inspected = try await Task.detached(priority: .userInitiated) { try inspect() }.value
+            guard request == operationGeneration else { return }
+            plan = inspected
+            inspectedExistingInstallation = inspected.existing != nil
             phase = .ready
-        } catch { record(error) }
+        } catch {
+            guard request == operationGeneration else { return }
+            record(error)
+        }
     }
 
     func performPrimary() async {
-        guard !phase.isBusy, phase != .launched else { return }
+        guard canPerformPrimary else { return }
         if requiresFinderRecovery {
             if let destination = receipt?.destinationURL ?? plan?.destinationURL {
                 reveal(destination)
@@ -208,7 +250,7 @@ final class AppInstallationViewModel: ObservableObject {
 
     func confirmReplacement() async {
         // SwiftUI may dismiss the dialog binding before invoking its action.
-        guard replacementRequested, !phase.isBusy, let plan,
+        guard replacementRequested, !phase.isBusy, phase != .connectionRestartRequired, let plan,
               AppInstallationPrimaryAction.forComparison(plan.comparison) == .confirmReplacement
         else { return }
         showsReplacementConfirmation = false
@@ -222,7 +264,8 @@ final class AppInstallationViewModel: ObservableObject {
     }
 
     func prepareLegacyReplacement() async {
-        guard canConfirmLegacyQuit, !phase.isBusy, phase != .launched, receipt == nil else { return }
+        guard canConfirmLegacyQuit, !phase.isBusy, phase != .launched,
+              phase != .connectionRestartRequired, receipt == nil else { return }
         // A failed transaction invalidated the previous plan. Inspect again
         // before showing the exact versions and requesting one-use consent.
         await refresh()
@@ -235,6 +278,7 @@ final class AppInstallationViewModel: ObservableObject {
 
     func confirmLegacyReplacement() async {
         guard legacyReplacementRequested, !phase.isBusy, phase != .launched,
+              phase != .connectionRestartRequired,
               receipt == nil, let plan, plan.existing != nil,
               AppInstallationPrimaryAction.forComparison(plan.comparison) == .confirmReplacement
         else { return }
@@ -247,6 +291,64 @@ final class AppInstallationViewModel: ObservableObject {
         legacyReplacementRequested = false
     }
 
+    func prepareConnectionRecoveryAfterRestart() {
+        guard canPrepareConnectionRecovery else { return }
+        operationGeneration += 1
+        let request = operationGeneration
+        let operation = UUID()
+        recoveryOperation = operation
+        cancelReplacement()
+        cancelLegacyReplacement()
+        canConfirmLegacyQuit = false
+        phase = .preparingConnectionRecovery
+        message = nil
+        connectionRecoveryMessage = PetAppUpdatePresentation.connectionRecoveryPreparing
+        recoveryTask = Task { [weak self] in
+            guard let self, self.operationGeneration == request,
+                  self.recoveryOperation == operation, !Task.isCancelled else { return }
+            defer {
+                if self.recoveryOperation == operation {
+                    self.recoveryOperation = nil
+                    self.recoveryTask = nil
+                }
+            }
+            do {
+                let result = try await self.prepareConnectionRecovery()
+                try Task.checkCancellation()
+                guard self.operationGeneration == request, self.recoveryOperation == operation else { return }
+                switch result {
+                case .clear:
+                    self.phase = self.plan == nil ? .failed : .ready
+                    self.connectionRecoveryMessage = PetAppUpdatePresentation.connectionRecoveryClear
+                case .restartRequired:
+                    self.phase = .connectionRestartRequired
+                    self.connectionRecoveryMessage = PetAppUpdatePresentation.connectionRecoveryRestartInstructions
+                }
+            } catch {
+                guard self.operationGeneration == request, self.recoveryOperation == operation,
+                      !Task.isCancelled else { return }
+                self.connectionRecoveryMessage = nil
+                self.record(error)
+            }
+        }
+    }
+
+    /// Closing can cancel preparation, but cannot undo an atomic marker that
+    /// was already saved. Its late result must never publish or reopen the app.
+    @discardableResult
+    func requestClose() -> Bool {
+        guard canClose else { return false }
+        if phase == .preparingConnectionRecovery {
+            operationGeneration += 1
+            recoveryOperation = nil
+            recoveryTask?.cancel()
+            recoveryTask = nil
+            phase = .failed
+            connectionRecoveryMessage = nil
+        }
+        return true
+    }
+
     func reveal(_ url: URL) {
         guard !phase.isBusy else { return }
         do { try showInFinder(url) } catch { record(error) }
@@ -257,17 +359,23 @@ final class AppInstallationViewModel: ObservableObject {
         replacementApproved: Bool,
         legacyQuitConfirmed: Bool = false
     ) async {
+        operationGeneration += 1
+        let request = operationGeneration
         phase = .installing
         message = nil
+        connectionRecoveryMessage = nil
         canConfirmLegacyQuit = false
         cancelLegacyReplacement()
         let install = self.install
         do {
             if plan.existing != nil {
                 phase = .waitingForSafePoint
-                try await safePointWaiter.wait(candidateApplicationURL: sourceURL) { reason in
+                try await safePointWaiter.wait(candidateApplicationURL: sourceURL,
+                    isCurrent: { request == self.operationGeneration }) { reason in
+                    guard request == self.operationGeneration else { return }
                     self.message = reason
                 }
+                guard request == operationGeneration else { return }
                 phase = .installing
                 message = nil
             }
@@ -278,6 +386,17 @@ final class AppInstallationViewModel: ObservableObject {
             recoveryURL = receipt.backupURL
             await open(applicationURL: receipt.destinationURL, identity: receipt.identity)
         } catch {
+            guard request == operationGeneration else { return }
+            // The mandatory transition guard runs before the Claude guard,
+            // including on fresh reinstall. Offer the secondary recovery path
+            // after this verified attempt, without interpreting localized copy
+            // or treating the user's action as permission to bypass a guard.
+            if let transition = error as? AppUpdateTransitionError {
+                switch transition {
+                case .waiting, .unverified: connectionRecoverySuggested = true
+                case .reconnect, .serviceUnavailable: break
+                }
+            }
             // A new click must inspect and reconfirm after any failed transaction.
             self.plan = nil
             record(error)
@@ -310,6 +429,9 @@ final class AppInstallationViewModel: ObservableObject {
     }
 
     private func record(_ error: Error) {
+        if (error as? AppInstallationError)?.code == .claudeRuntimeBlocked {
+            connectionRecoverySuggested = true
+        }
         phase = .failed
         if let error = error as? AppInstallationError {
             message = error.userMessage
@@ -325,7 +447,7 @@ final class AppInstallationViewModel: ObservableObject {
     }
 }
 
-private struct AppInstallationView: View {
+struct AppInstallationView: View {
     @ObservedObject private var localization = PetLocalization.shared
     @ObservedObject var model: AppInstallationViewModel
     let close: () -> Void
@@ -362,6 +484,19 @@ private struct AppInstallationView: View {
                     Label(message, systemImage: "exclamationmark.triangle")
                         .foregroundStyle(.orange).fixedSize(horizontal: false, vertical: true)
                 }
+                if let recoveryMessage = model.connectionRecoveryMessage {
+                    Text(recoveryMessage)
+                        .foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                        .accessibilityIdentifier("installation-connection-recovery-status")
+                }
+                if model.showsConnectionRecovery {
+                    DisclosureGroup(PetAppUpdatePresentation.connectionRecoveryTitle) {
+                        PetAppUpdateConnectionRecoveryInstructionsView(
+                            canPrepare: model.canPrepareConnectionRecovery,
+                            prepare: model.prepareConnectionRecoveryAfterRestart)
+                    }
+                    .font(.blabee(.callout))
+                }
                 if model.requiresFinderRecovery {
                     GroupBox(PetL10n.text("Finish Installation in Finder", korean: "Finder에서 설치 마무리")) {
                         Text(model.finderRecoveryInstructions)
@@ -379,7 +514,7 @@ private struct AppInstallationView: View {
                 }
                 Button(model.primaryTitle) { Task { await model.performPrimary() } }
                     .buttonStyle(.borderedProminent).controlSize(.large)
-                    .disabled(model.phase.isBusy || (model.plan == nil && model.receipt == nil))
+                    .disabled(!model.canPerformPrimary)
                 if model.canConfirmLegacyQuit {
                     Button(PetL10n.text("Confirm Closed and Replace", korean: "종료 확인 후 교체")) { Task { await model.prepareLegacyReplacement() } }
                         .controlSize(.large).disabled(model.phase.isBusy)
@@ -388,12 +523,17 @@ private struct AppInstallationView: View {
                     Button(PetL10n.text("Open Applications Folder", korean: "응용 프로그램 폴더 열기")) {
                         model.reveal(URL(fileURLWithPath: "/Applications", isDirectory: true))
                     }
+                    .disabled(model.phase.isBusy)
                     if model.receipt == nil && !model.requiresFinderRecovery {
                         Button(PetL10n.text("Check Again", korean: "다시 확인")) { Task { await model.refresh() } }
+                            .disabled(model.phase.isBusy || model.phase == .connectionRestartRequired)
                     }
                     Spacer()
-                    Button(PetL10n.text("Close", korean: "닫기"), action: close)
-                }.disabled(model.phase.isBusy)
+                    Button(PetL10n.text("Close", korean: "닫기")) {
+                        if model.requestClose() { close() }
+                    }
+                    .disabled(!model.canClose)
+                }
                 Text(PetL10n.text("Review any permission request from macOS. If automatic installation fails, you can copy the app using Finder.", korean: "macOS가 권한을 요청하면 직접 확인해 주세요. 자동 설치가 안 되면 Finder에서 앱을 복사할 수 있습니다."))
                     .font(.blabee(.caption)).foregroundStyle(.secondary)
             }.padding(28)
@@ -436,9 +576,10 @@ private final class AppInstallationApplicationDelegate: NSObject, NSApplicationD
         NSApplication.shared.activate(ignoringOtherApps: true)
     }
 
-    func windowShouldClose(_ sender: NSWindow) -> Bool { model?.phase.isBusy != true }
+    func windowShouldClose(_ sender: NSWindow) -> Bool { model?.requestClose() ?? true }
+    func windowWillClose(_ notification: Notification) { model?.requestClose() }
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-        model?.phase.isBusy == true ? .terminateCancel : .terminateNow
+        model?.requestClose() == false ? .terminateCancel : .terminateNow
     }
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
 }

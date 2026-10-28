@@ -38,7 +38,7 @@ struct PetAccessControllerTests {
         await f.controller.synchronize()
         #expect(f.controller.allowsActions)
         #expect(f.controller.pollInterval == 5)
-        #expect(f.controller.remainingSeconds == 120)
+        #expect(f.controller.remainingSeconds == 119)
     }
 
     @Test("Local monotonic expiry locks actions even before the next status reply")
@@ -49,6 +49,165 @@ struct PetAccessControllerTests {
         #expect(f.controller.effectiveState == .expired)
         #expect(f.controller.remainingSeconds == 0)
         #expect(!f.controller.allowsActions)
+    }
+
+    @Test("A delayed rounded active reply cannot restart an expired grant",
+          arguments: ["status", "update", "refresh"])
+    func delayedStatusMustNotExtendGrant(operation: String) async {
+        let f = PetAccessTestFixture()
+        await f.activate(remaining: 2)
+        await f.transport.setState(.active, userID: f.credential.userID, remaining: 1)
+        if operation == "update" {
+            f.controller.receiveVerifiedCredential(.init(userID: f.credential.userID,
+                accessToken: "delayed-rotated-access", expiresAt: f.credential.expiresAt))
+        } else if operation == "refresh" {
+            f.controller.refresh()
+        }
+        let gate = PetAccessTestGate()
+        await f.transport.pauseNextResponse(gate)
+        let pending = Task { await f.controller.synchronize() }
+        await gate.waitUntilEntered() // The response's remaining=1 is already captured.
+        f.owner.nanoseconds += 1_500_000_000
+        #expect(!f.controller.allowsActions)
+        var published: [PetAccessState] = []
+        f.controller.onChange = { published.append(f.controller.state) }
+        await gate.release()
+        await pending.value
+        #expect(f.controller.state == .expired)
+        #expect(f.controller.effectiveState == .expired)
+        #expect(f.controller.remainingSeconds == 0)
+        #expect(!f.controller.allowsActions)
+        #expect(!published.contains(.active))
+        f.controller.onChange = nil
+    }
+
+    @Test("A shorter response delay consumes the original budget without discarding a fractional second")
+    func responseDelayUsesRequestStartDeadline() async {
+        let f = PetAccessTestFixture()
+        await f.activate(remaining: 4)
+        let gate = PetAccessTestGate()
+        await f.transport.pauseNextResponse(gate)
+        let pending = Task { await f.controller.synchronize() }
+        await gate.waitUntilEntered()
+        f.owner.nanoseconds += 1_250_000_000
+        await gate.release()
+        await pending.value
+        // 4 rounded seconds prove a 3-second budget from request start. Only
+        // 1.75 seconds remain at arrival; display rounding does not extend it.
+        #expect(f.controller.remainingSeconds == 2)
+        #expect(f.controller.allowsActions)
+        f.owner.nanoseconds += 1_749_999_999
+        #expect(f.controller.remainingSeconds == 1)
+        #expect(f.controller.allowsActions)
+        f.owner.nanoseconds += 1
+        #expect(f.controller.remainingSeconds == 0)
+        #expect(!f.controller.allowsActions)
+    }
+
+    @Test("One rounded service second has no positive provable UI budget")
+    func roundedSubsecondReplyIsExpiredImmediately() async {
+        let f = PetAccessTestFixture()
+        var published: [PetAccessState] = []
+        f.controller.onChange = { published.append(f.controller.state) }
+        await f.activate(remaining: 1)
+        #expect(f.controller.state == .expired)
+        #expect(!f.controller.allowsActions)
+        #expect(!published.contains(.active))
+        f.controller.onChange = nil
+    }
+
+    @Test("A timely fresh service grant can extend the previous deadline")
+    func freshRenewalExtendsGrant() async {
+        let f = PetAccessTestFixture()
+        await f.activate(remaining: 3)
+        f.owner.nanoseconds += 1_500_000_000
+        #expect(f.controller.allowsActions)
+        await f.transport.setState(.active, userID: f.credential.userID, remaining: 6)
+        await f.controller.synchronize()
+        #expect(f.controller.remainingSeconds == 5)
+        f.owner.nanoseconds += 1_000_000_000 // The old grant has now expired.
+        #expect(f.controller.allowsActions)
+        #expect(f.controller.remainingSeconds == 4)
+    }
+
+    @Test("Monotonic clock reversal during a request fails closed")
+    func reversedResponseClockIsRejected() async {
+        let f = PetAccessTestFixture()
+        await f.activate()
+        f.owner.nanoseconds += 2_000_000_000
+        let gate = PetAccessTestGate()
+        await f.transport.pauseNextResponse(gate)
+        let pending = Task { await f.controller.synchronize() }
+        await gate.waitUntilEntered()
+        f.owner.nanoseconds -= 1
+        await gate.release()
+        await pending.value
+        #expect(f.controller.state == .unavailable)
+        #expect(!f.controller.allowsActions)
+    }
+
+    @Test("Clock recovery alone cannot revive a cached grant; a new fenced reply is required")
+    func clockRegressionInvalidatesCachedGrant() async {
+        let f = PetAccessTestFixture()
+        await f.activate(remaining: 10)
+        f.owner.nanoseconds += 2_000_000_000
+        #expect(f.controller.allowsActions) // Record the high-water observation.
+        f.owner.nanoseconds -= 1
+        #expect(!f.controller.allowsActions)
+        let requestCount = await f.transport.requests.count
+        await f.controller.synchronize() // Request-start regression is rejected too.
+        #expect(await f.transport.requests.count == requestCount)
+        #expect(f.controller.state == .unavailable)
+        f.owner.nanoseconds += 1
+        #expect(!f.controller.allowsActions)
+        await f.controller.synchronize()
+        #expect(f.controller.allowsActions)
+    }
+
+    @Test("A grant deadline that overflows the monotonic clock fails closed")
+    func overflowingDeadlineIsRejected() async {
+        let f = PetAccessTestFixture()
+        f.owner.nanoseconds = UInt64.max - 2_000_000_000
+        await f.activate(remaining: 4)
+        #expect(f.controller.state == .unavailable)
+        #expect(f.controller.remainingSeconds == 0)
+        #expect(!f.controller.allowsActions)
+    }
+
+    @Test("Expiry sleeps only the request-anchored remainder and rechecks early wakes")
+    func expiryTimerUsesRemainingDeadline() async throws {
+        let sleeper = PetAccessTestSleeper()
+        let f = PetAccessTestFixture(automaticPolling: true, sleep: sleeper.sleep)
+        defer { f.controller.stop(); sleeper.releaseAll() }
+        // Do not start polling: manually drive the contract so the sole timer
+        // is expiry, using an explicitly controlled sleeper instead of wall time.
+        f.controller.receiveVerifiedCredential(f.credential)
+        await f.controller.synchronize()
+        await f.controller.synchronize()
+        await f.transport.setState(.active, userID: f.credential.userID, remaining: 4)
+        let gate = PetAccessTestGate()
+        await f.transport.pauseNextResponse(gate)
+        let pending = Task { await f.controller.synchronize() }
+        await gate.waitUntilEntered()
+        f.owner.nanoseconds += 1_250_000_000
+        await gate.release()
+        await pending.value
+        try await sleeper.waitForRequests(1)
+        #expect(sleeper.delays == [1.75])
+        f.owner.nanoseconds += 250_000_000
+        sleeper.releaseNext() // Simulate an early wake, not deadline passage.
+        try await sleeper.waitForRequests(2)
+        #expect(sleeper.delays == [1.75, 1.5])
+        #expect(f.controller.allowsActions)
+        f.owner.nanoseconds += 1_500_000_000
+        sleeper.releaseNext()
+        for _ in 0..<1_000 {
+            if f.controller.state == .expired { break }
+            await Task.yield()
+        }
+        #expect(f.controller.state == .expired)
+        #expect(!f.controller.allowsActions)
+        #expect(sleeper.delays.count == 2)
     }
 
     @Test("Every denied service state locks an existing grant", arguments: [
@@ -339,10 +498,14 @@ private final class PetAccessTestFixture {
     let credential = PetAccountVerifiedCredential(userID: UUID(uuidString: "11111111-1111-4111-8111-111111111111")!,
         accessToken: "verified-test-access", expiresAt: PetAccessTestFixture.wallTime.addingTimeInterval(3_600))
 
-    init() {
+    init(automaticPolling: Bool = false,
+         sleep: @escaping @MainActor (TimeInterval) async throws -> Void = {
+             try await Task.sleep(for: .seconds($0))
+         }) {
         let owner = owner
         controller = PetAccessController(transport: transport, ownedAccess: { owner.value },
-            now: { owner.nanoseconds }, wallNow: { Self.wallTime }, automaticPolling: false)
+            now: { owner.nanoseconds }, wallNow: { Self.wallTime },
+            automaticPolling: automaticPolling, sleep: sleep)
     }
 
     func activate(remaining: Int = 300) async {
@@ -351,6 +514,38 @@ private final class PetAccessTestFixture {
         await controller.synchronize()
         await transport.setState(.active, userID: credential.userID, remaining: remaining)
         await controller.synchronize()
+    }
+}
+
+@MainActor
+private final class PetAccessTestSleeper {
+    private(set) var delays: [TimeInterval] = []
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+
+    func sleep(_ delay: TimeInterval) async throws {
+        try Task.checkCancellation()
+        delays.append(delay)
+        await withCheckedContinuation { waiters.append($0) }
+        try Task.checkCancellation()
+    }
+
+    func waitForRequests(_ count: Int) async throws {
+        for _ in 0..<1_000 {
+            if delays.count >= count { return }
+            await Task.yield()
+        }
+        throw PetTestError.injected("expiry_timer_did_not_suspend")
+    }
+
+    func releaseNext() {
+        guard !waiters.isEmpty else { return }
+        waiters.removeFirst().resume()
+    }
+
+    func releaseAll() {
+        let pending = waiters
+        waiters.removeAll()
+        pending.forEach { $0.resume() }
     }
 }
 

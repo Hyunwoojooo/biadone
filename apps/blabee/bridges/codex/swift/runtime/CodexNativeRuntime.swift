@@ -14,6 +14,7 @@ enum CodexNativeDiagnostic: String, CaseIterable, Sendable {
     case executionTerminated = "codex_native_execution_terminated"
     case launchUnavailable = "codex_native_launch_unavailable"
     case probeTimeout = "codex_native_probe_timeout"
+    case inspectionTimeout = "codex_native_inspection_timeout"
     case probeOutputInvalid = "codex_native_probe_output_invalid"
     case binaryChanged = "codex_native_binary_changed"
     case guardUnavailable = "codex_native_guard_unavailable"
@@ -38,6 +39,8 @@ enum CodexNativeDiagnostic: String, CaseIterable, Sendable {
             PetL10n.text("Unable to start Codex. Check installation and macOS security settings, then retry.", korean: "Codex 프로세스를 시작하지 못했습니다. 설치 상태와 macOS 보안 설정을 확인한 뒤 다시 검사하세요.")
         case .probeTimeout:
             PetL10n.text("Codex checking or execution timed out. It will not run again automatically. Check the cause before retrying.", korean: "Codex 검사 또는 실행이 제한 시간을 초과했습니다. 자동으로 다시 실행하지 않습니다. 원인을 확인한 뒤 다시 검사하세요.")
+        case .inspectionTimeout:
+            PetL10n.text("The Codex plugin list took too long to load. The inspection has stopped. Check your network, then check the connection again.", korean: "Codex 플러그인 목록을 불러오는 데 시간이 오래 걸려 검사를 중단했습니다. 네트워크를 확인한 뒤 연결을 다시 검사하세요.")
         case .probeOutputInvalid:
             PetL10n.text("Unable to verify Codex's version or check response. Compatibility verification is required.", korean: "Codex의 버전 또는 검사 응답을 확인하지 못했습니다. 호환성 검증이 필요합니다.")
         case .binaryChanged:
@@ -74,8 +77,11 @@ enum CodexNativeDiagnostic: String, CaseIterable, Sendable {
             return Self.notInstalled.error
         case "codex_plugin_setup_signature_invalid":
             return Self.signatureInvalid.error
-        case "codex_plugin_setup_operation_timed_out", "managed_codex_version_probe_timeout":
+        case "codex_plugin_setup_operation_timed_out", "managed_codex_version_probe_timeout",
+             "managed_codex_version_probe_timeout_terminated":
             return Self.probeTimeout.error
+        case "managed_codex_version_probe_termination_uncertain":
+            return Self.executionUncertain.error
         case "managed_codex_version_probe_output_too_large", "managed_codex_version_probe_output_invalid":
             return Self.probeOutputInvalid.error
         default:
@@ -94,6 +100,9 @@ struct CodexNativeOperationObservation: Sendable, Equatable {
     var cachedFailure = false
     var codexVersion: String?
     var executableIdentity: String?
+    var elapsedMilliseconds: Int?
+    var preparationElapsedMilliseconds: Int?
+    var commandElapsedMilliseconds: Int?
 }
 
 typealias CodexNativeOperationObserving = @Sendable (CodexNativeOperationObservation) -> Void
@@ -104,17 +113,24 @@ final class CodexNativeOperationObservations: @unchecked Sendable {
     private let lock = NSLock()
     private var value: CodexNativeOperationObservation
     private let observer: CodexNativeOperationObserving
+    private let timingStartedAt: UInt64?
+    private var timingFinishedAt: UInt64?
+    private var commandStartedAt: UInt64?
+    private var commandFinishedAt: UInt64?
 
     init(stage: CoordinatorNextTurnDispatchFailure.Stage = .qualification,
          codexVersion: String? = nil,
+         timingStartedAt: UInt64? = nil,
          observer: @escaping CodexNativeOperationObserving = { _ in }) {
         value = .init(stage: stage, codexVersion: codexVersion)
+        self.timingStartedAt = timingStartedAt
         self.observer = observer
     }
 
     func snapshot() -> CodexNativeOperationObservation {
         lock.lock()
         defer { lock.unlock() }
+        refreshTimingsLocked()
         return value
     }
 
@@ -128,6 +144,7 @@ final class CodexNativeOperationObservations: @unchecked Sendable {
     private func update(_ change: (inout CodexNativeOperationObservation) -> Void) {
         lock.lock()
         change(&value)
+        refreshTimingsLocked()
         let observed = value
         lock.unlock()
         observer(observed)
@@ -142,7 +159,33 @@ final class CodexNativeOperationObservations: @unchecked Sendable {
     func version(_ version: String?) { update { $0.codexVersion = version } }
 
     func commandInvocationAttempted() {
-        update { $0.stage = .command; $0.commandInvocationAttempted = true }
+        update {
+            if timingStartedAt != nil { commandStartedAt = DispatchTime.now().uptimeNanoseconds }
+            $0.stage = .command
+            $0.commandInvocationAttempted = true
+        }
+    }
+
+    func commandFinished() {
+        update { _ in
+            if commandStartedAt != nil { commandFinishedAt = DispatchTime.now().uptimeNanoseconds }
+        }
+    }
+
+    func finishTiming() {
+        update { _ in
+            if timingStartedAt != nil { timingFinishedAt = DispatchTime.now().uptimeNanoseconds }
+        }
+    }
+
+    private func refreshTimingsLocked() {
+        guard let timingStartedAt else { return }
+        let now = timingFinishedAt ?? DispatchTime.now().uptimeNanoseconds
+        value.elapsedMilliseconds = Int((now - timingStartedAt) / 1_000_000)
+        value.preparationElapsedMilliseconds = Int(((commandStartedAt ?? now) - timingStartedAt) / 1_000_000)
+        value.commandElapsedMilliseconds = commandStartedAt.map {
+            Int(((commandFinishedAt ?? now) - $0) / 1_000_000)
+        }
     }
 
     func returned(exitCode: Int32, terminationSignal: Int32?) {
@@ -196,6 +239,8 @@ private final class CodexNativeQualificationObservation: @unchecked Sendable {
         guard let trustError = error as? CodexRuntimeTrustError else { return }
         lock.lock()
         defer { lock.unlock() }
+        // This may include a resolved target from a failed trust inspection.
+        // Keep it diagnostic-only; never promote it to canonicalPath or probe it.
         evidence.pathDiagnostic = trustError.pathDiagnostic
     }
 
@@ -210,6 +255,31 @@ typealias CodexNativeQualifying = @Sendable (
     URL, CodexPluginSetupProcessRunning, CodexNativePreflight, Int
 ) throws -> CodexPluginSetupQualifiedExecutable
 typealias CodexNativePreflight = @Sendable (URL, Int) throws -> Void
+
+/// Only these read-only queries may use the recoverable inspection timeout.
+/// Free-form commands retain the durable native failure guard.
+enum CodexPluginInspectionQuery: Sendable, CaseIterable {
+    case marketplaceList
+    case pluginList
+
+    var arguments: [String] {
+        switch self {
+        case .marketplaceList: ["plugin", "marketplace", "list", "--json"]
+        case .pluginList: ["plugin", "list", "--json"]
+        }
+    }
+
+    var preparationTimeoutMilliseconds: Int { 5_000 }
+
+    var commandTimeoutMilliseconds: Int {
+        switch self {
+        case .marketplaceList: 5_000
+        case .pluginList: 35_000
+        }
+    }
+
+    var timeoutMilliseconds: Int { preparationTimeoutMilliseconds + commandTimeoutMilliseconds }
+}
 
 /// Blabee's native integration only. Never replaces, copies, signs or wraps the
 /// user's `codex`. A successful probe is short-lived evidence, not a launch grant.
@@ -422,6 +492,70 @@ struct CodexNativeRuntime: Sendable {
         } catch let error as CodexRuntimeTrustError {
             // Initial identity inspection runs before the guarded callback.
             // Preserve its native diagnosis even if access changed since selection.
+            throw CodexNativeDiagnostic.normalize(error)
+        }
+    }
+
+    /// Trust preparation keeps its own short deadline. The plugin catalog query
+    /// can also fetch remote metadata, so it gets a separate bounded command budget.
+    /// A timeout is retryable only after this exact read-only child and its process
+    /// group have been confirmed terminated by the runner. No retry happens here.
+    func runPluginInspection(
+        selection: CodexPluginSetupQualifiedExecutable,
+        query: CodexPluginInspectionQuery,
+        timeoutMilliseconds: Int,
+        observer: @escaping CodexNativeOperationObserving = { _ in }
+    ) throws -> CodexPluginSetupProcessResult {
+        let started = DispatchTime.now().uptimeNanoseconds
+        let end = Self.deadline(after: min(timeoutMilliseconds, query.timeoutMilliseconds))
+        let preparationEnd = min(end, Self.deadline(after: query.preparationTimeoutMilliseconds))
+        let operation = CodexNativeOperationObservations(
+            stage: .revalidation, codexVersion: selection.version,
+            timingStartedAt: started, observer: observer)
+        observer(operation.snapshot())
+        defer { operation.finishTiming() }
+        do {
+            return try failureGuard.withAttempt(
+                executable: selection.sourceURL,
+                waitTimeoutMilliseconds: Self.remaining(preparationEnd),
+                onCachedFailure: { operation.cachedFailure() },
+                onExecutableIdentity: { operation.identified($0) }
+            ) {
+                do {
+                    _ = try Self.remaining(preparationEnd)
+                    let executable = try revalidator(selection)
+                    operation.enter(.notarization)
+                    try preflight(executable, Self.remaining(preparationEnd))
+                    // Keep both revalidations; equal query arguments do not prove
+                    // that the executable stayed unchanged during online assessment.
+                    _ = try Self.remaining(preparationEnd)
+                    operation.enter(.revalidation)
+                    guard try revalidator(selection) == executable else {
+                        throw CodexNativeDiagnostic.binaryChanged.error
+                    }
+                    _ = try Self.remaining(preparationEnd)
+                    let commandTimeout = try Self.remaining(end, maximum: query.commandTimeoutMilliseconds)
+                    operation.commandInvocationAttempted()
+                    let result: CodexPluginSetupProcessResult
+                    do {
+                        defer { operation.commandFinished() }
+                        result = try processRunner(executable, query.arguments, commandTimeout)
+                    } catch {
+                        // Never reinterpret preparation timeouts, signal deaths,
+                        // or an unconfirmed cleanup as a harmless inspection delay.
+                        if error.coordinatorError.code == "managed_codex_version_probe_timeout_terminated" {
+                            throw CodexNativeDiagnostic.inspectionTimeout.error
+                        }
+                        throw error
+                    }
+                    operation.returned(exitCode: result.exitCode, terminationSignal: result.terminationSignal)
+                    try Self.checkTermination(result)
+                    return result
+                } catch {
+                    throw CodexNativeDiagnostic.normalize(error)
+                }
+            }
+        } catch let error as CodexRuntimeTrustError {
             throw CodexNativeDiagnostic.normalize(error)
         }
     }

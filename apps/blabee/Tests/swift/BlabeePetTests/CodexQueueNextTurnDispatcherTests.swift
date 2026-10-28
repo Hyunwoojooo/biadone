@@ -134,10 +134,17 @@ func codexQueueDispatcherUsesExactArguments() async throws {
     ))
 }
 
-@Test("Codex queue native command runner receives one exact command", .petLanguage(.korean))
+@Test("Codex queue native command runner receives a readable multiline choice as one exact argument", .petLanguage(.korean))
 func codexQueueNativeCommandRunnerUsesExactArgumentsOnce() async throws {
     let recorder = QueueCommandInvocationRecorder()
-    let message = "다음 턴에서 권장 작업을 실행해."
+    let message = try #require(QueuedPromptEnvelope.message(
+        reference: String(repeating: "a", count: 32),
+        action: [
+            "title": "선택 내용 표시", "objective": "제목과 목표를 확인합니다.\n변조된 내용은 거절합니다.",
+            "constraints": ["기존 세션 유지", "`echo test`와 $(command)는 표시할 데이터입니다."],
+            "done_when": ["정확한 전달 인수가 하나입니다."],
+        ]
+    ))
     let dispatcher = CodexQueueNextTurnDispatcher(
         commandRunner: { arguments, timeoutMilliseconds in
             recorder.record(

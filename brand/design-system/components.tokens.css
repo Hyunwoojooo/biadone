@@ -1,0 +1,139 @@
+/* Design Tokens - Auto-generated */
+/* Do not edit directly - modify tokens.json instead */
+
+/* === PRIMITIVES === */
+:root {
+  --primitive-kit-space-xs: 8px;
+  --primitive-kit-space-sm: 16px;
+  --primitive-kit-space-md: 24px;
+  --primitive-kit-space-lg: 32px;
+  --primitive-kit-space-xl: 48px;
+  --primitive-kit-space-2xl: 64px;
+  --primitive-kit-body-small: 16px;
+  --primitive-kit-body: 18px;
+  --primitive-kit-lead-small: 17px;
+  --primitive-kit-lead: 20px;
+  --primitive-kit-source: 14px;
+  --primitive-kit-subtitle: 28px;
+  --primitive-kit-subtitle-small: 25px;
+  --primitive-kit-flow: 26px;
+  --primitive-kit-flow-small: 22px;
+  --primitive-kit-title-min: 48px;
+  --primitive-kit-title-max: 84px;
+  --primitive-kit-title-mobile-min: 32px;
+  --primitive-kit-section-title-max: 36px;
+  --primitive-kit-heading-weight: 700;
+  --primitive-kit-label-weight: 600;
+  --primitive-kit-title-leading: 1.19;
+  --primitive-kit-body-leading: 1.8;
+  --primitive-kit-title-tracking: -0.052em;
+  --primitive-kit-body-tracking: -0.025em;
+  --primitive-kit-logo: 24px;
+  --primitive-kit-header: 112px;
+  --primitive-kit-header-small: 88px;
+  --primitive-kit-control-min: 48px;
+  --primitive-kit-table-min: 720px;
+  --primitive-kit-signature-width: 96px;
+  --primitive-kit-signature-height: 32px;
+  --primitive-kit-focus-width: 2px;
+  --primitive-kit-focus-offset: 4px;
+  --primitive-kit-slide-title: 64px;
+  --primitive-kit-slide-body: 26px;
+  --primitive-kit-slide-detail: 24px;
+  --primitive-kit-slide-step-title: 32px;
+  --primitive-kit-slide-source: 18px;
+  --primitive-kit-slide-leading: 1.6;
+}
+
+/* === SEMANTIC === */
+:root {
+  --kit-text: var(--color-text-primary);
+  --kit-accent: var(--color-brand);
+  --kit-surface: var(--color-background);
+  --kit-line: color-mix(in srgb, var(--color-text-primary) 18%, var(--color-background));
+  --kit-space-compact: 16px;
+  --kit-space-related: 24px;
+  --kit-space-content: 32px;
+  --kit-space-section: 64px;
+  --kit-body-size: 18px;
+  --kit-body-small: 16px;
+  --kit-title-weight: 700;
+  --kit-label-weight: 600;
+  --kit-space-xs: 8px;
+  --kit-space-xl: 48px;
+  --kit-lead: 20px;
+  --kit-lead-small: 17px;
+  --kit-source: 14px;
+  --kit-title-min: 48px;
+  --kit-title-max: 84px;
+  --kit-title-mobile-min: 32px;
+  --kit-section-title-max: 36px;
+  --kit-subtitle: 28px;
+  --kit-subtitle-small: 25px;
+  --kit-flow: 26px;
+  --kit-flow-small: 22px;
+  --kit-title-leading: 1.19;
+  --kit-body-leading: 1.8;
+  --kit-title-tracking: -0.052em;
+  --kit-body-tracking: -0.025em;
+  --kit-logo: 24px;
+  --kit-header: 112px;
+  --kit-header-small: 88px;
+  --kit-control-min: 48px;
+  --kit-table-min: 720px;
+  --kit-signature-width: 96px;
+  --kit-signature-height: 32px;
+  --kit-focus-width: 2px;
+  --kit-focus-offset: 4px;
+  --kit-slide-title: 64px;
+  --kit-slide-body: 26px;
+  --kit-slide-detail: 24px;
+  --kit-slide-step-title: 32px;
+  --kit-slide-source: 18px;
+  --kit-slide-leading: 1.6;
+}
+
+/* === COMPONENTS === */
+:root {
+  --ui-space-xs: 8px;
+  --ui-space-sm: 16px;
+  --ui-space-md: 24px;
+  --ui-space-lg: 32px;
+  --ui-space-xl: 48px;
+  --ui-space-section: 64px;
+  --ui-body-size: 18px;
+  --ui-body-mobile-size: 16px;
+  --ui-lead-size: 20px;
+  --ui-lead-mobile-size: 17px;
+  --ui-source-size: 14px;
+  --ui-title-min: 48px;
+  --ui-title-max: 84px;
+  --ui-title-mobile-min: 32px;
+  --ui-section-title-max: 36px;
+  --ui-subtitle-size: 28px;
+  --ui-subtitle-mobile-size: 25px;
+  --ui-flow-size: 26px;
+  --ui-flow-mobile-size: 22px;
+  --ui-heading-weight: 700;
+  --ui-label-weight: 600;
+  --ui-title-leading: 1.19;
+  --ui-body-leading: 1.8;
+  --ui-title-tracking: -0.052em;
+  --ui-body-tracking: -0.025em;
+  --ui-logo-size: 24px;
+  --ui-header-height: 112px;
+  --ui-header-mobile-height: 88px;
+  --ui-control-min: 48px;
+  --ui-table-min: 720px;
+  --ui-signature-width: 96px;
+  --ui-signature-height: 32px;
+  --ui-focus-width: 2px;
+  --ui-focus-offset: 4px;
+  --ui-line-color: color-mix(in srgb, var(--color-text-primary) 18%, var(--color-background));
+  --ui-slide-title: 64px;
+  --ui-slide-body: 26px;
+  --ui-slide-detail: 24px;
+  --ui-slide-step-title: 32px;
+  --ui-slide-source: 18px;
+  --ui-slide-leading: 1.6;
+}

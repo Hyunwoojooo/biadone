@@ -173,7 +173,11 @@ public struct CoordinatorSemanticState: Sendable, Equatable {
     public let schemaVersion = "1.0"
     public internal(set) var eventSequence: Int64 = 0
     public internal(set) var eventIDs: Set<String> = []
-    public internal(set) var boundaries: [CoordinatorBindingKey: CoordinatorBoundaryState] = [:]
+    public private(set) var boundaries: [CoordinatorBindingKey: CoordinatorBoundaryState] = [:]
+    // Derived only from successfully replayed boundary transitions. Keeping
+    // both collections behind storeBoundary prevents a state copy or an
+    // incremental application from retaining an out-of-date pending owner.
+    private var pendingBoundaryBySession: [CoordinatorSessionKey: CoordinatorBindingKey] = [:]
     public internal(set) var boundaryIdentities: [CoordinatorBoundaryKey: CoordinatorBindingKey] = [:]
     public internal(set) var latestBoundaryByTurn: [CoordinatorTurnKey: CoordinatorBindingKey] = [:]
     public internal(set) var packetDocuments: [CoordinatorPacketRevision: CoordinatorPacketDocument] = [:]
@@ -263,13 +267,29 @@ public struct CoordinatorSemanticState: Sendable, Equatable {
         continuations.values.filter { $0.transport == nil }
     }
 
-    func assertSessionPendingSlotAvailable(for binding: CoordinatorBinding) throws {
-        let conflicting = boundaries.values.contains { candidate in
-            candidate.binding.fullKey != binding.fullKey
-                && candidate.binding.sessionKey == binding.sessionKey
-                && candidate.isPendingInteraction
+    fileprivate mutating func storeBoundary(_ boundary: CoordinatorBoundaryState) {
+        let key = boundary.binding.fullKey
+        let sessionKey = boundary.binding.sessionKey
+        boundaries[key] = boundary
+        if boundary.isPendingInteraction {
+            pendingBoundaryBySession[sessionKey] = key
+        } else if pendingBoundaryBySession[sessionKey] == key {
+            // An old boundary may finish after a newer boundary has sealed.
+            // It must only release its own pending slot.
+            pendingBoundaryBySession.removeValue(forKey: sessionKey)
         }
-        try require(!conflicting, "session_pending_interaction_conflict")
+    }
+
+    func assertSessionPendingSlotAvailable(
+        for binding: CoordinatorBinding,
+        observing observer: (@Sendable (CoordinatorSemanticReplayWork) -> Void)? = nil
+    ) throws {
+        observer?(.sessionPendingSlotLookup)
+        let pendingOwner = pendingBoundaryBySession[binding.sessionKey]
+        try require(
+            pendingOwner == nil || pendingOwner == binding.fullKey,
+            "session_pending_interaction_conflict"
+        )
     }
 }
 
@@ -278,6 +298,8 @@ public struct CoordinatorSemanticState: Sendable, Equatable {
 enum CoordinatorSemanticReplayWork: Sendable {
     case fullReplay(eventCount: Int)
     case incrementalApplication(eventCount: Int)
+    /// One indexed pending-slot check; excludes index maintenance writes.
+    case sessionPendingSlotLookup
     /// In-function wall time only; no storage or actor wait is included.
     /// Emitted on failure as well, so this is not a success receipt.
     case fullReplayFinished(elapsedNanoseconds: UInt64)
@@ -319,7 +341,13 @@ public enum CoordinatorSemanticReplay {
                 ))
             }
         }
-        return try replay(snapshot)
+        return try apply(
+            to: CoordinatorSemanticState(),
+            events: snapshot.events,
+            documents: snapshot.documents,
+            verificationRecords: snapshot.verificationRecords,
+            observing: observer
+        )
     }
 
     /// Operation-local suffix of an already fully replayed authority. The
@@ -344,7 +372,8 @@ public enum CoordinatorSemanticReplay {
             to: verifiedState,
             events: change.events,
             documents: change.documents,
-            verificationRecords: change.verificationRecords
+            verificationRecords: change.verificationRecords,
+            observing: observer
         )
     }
 
@@ -352,7 +381,8 @@ public enum CoordinatorSemanticReplay {
         to initialState: CoordinatorSemanticState,
         events: [Data],
         documents: [Data],
-        verificationRecords: [Data]
+        verificationRecords: [Data],
+        observing observer: (@Sendable (CoordinatorSemanticReplayWork) -> Void)? = nil
     ) throws -> CoordinatorSemanticState {
         var state = initialState
 
@@ -378,7 +408,7 @@ public enum CoordinatorSemanticReplay {
 
         for data in events {
             let event = try SemanticJSON.event(from: data)
-            try reduce(&state, event: event)
+            try reduce(&state, event: event, observing: observer)
         }
 
         for key in state.packetDocuments.keys {
@@ -390,7 +420,11 @@ public enum CoordinatorSemanticReplay {
         return state
     }
 
-    private static func reduce(_ state: inout CoordinatorSemanticState, event: SemanticEvent) throws {
+    private static func reduce(
+        _ state: inout CoordinatorSemanticState,
+        event: SemanticEvent,
+        observing observer: (@Sendable (CoordinatorSemanticReplayWork) -> Void)?
+    ) throws {
         try validateEnvelope(state, event: event)
         state.eventSequence = event.sequence
         state.eventIDs.insert(event.eventID)
@@ -437,7 +471,7 @@ public enum CoordinatorSemanticReplay {
 
         switch event.type {
         case "decision_packet_sealed":
-            try sealPacket(&state, boundary: &boundary, key: exactKey, event: event)
+            try sealPacket(&state, boundary: &boundary, key: exactKey, event: event, observing: observer)
         case "interaction_expired":
             try expireInteraction(&state, boundary: &boundary, key: exactKey, event: event)
         case "decision_selection_claimed":
@@ -489,7 +523,7 @@ public enum CoordinatorSemanticReplay {
             try require(event.binding.boundarySequence == 1, "boundary_sequence_not_contiguous")
         }
         let proposalID = try SemanticJSON.string(event.payload, "proposal_id", field: "proposal_id", identifier: true)
-        state.boundaries[key] = CoordinatorBoundaryState(
+        state.storeBoundary(CoordinatorBoundaryState(
             binding: event.binding,
             proposalID: proposalID,
             openedAt: event.occurredAt,
@@ -500,7 +534,7 @@ public enum CoordinatorSemanticReplay {
             selection: nil,
             dispatchedContinuationID: nil,
             repair: nil
-        )
+        ))
         state.boundaryIdentities[event.binding.boundaryKey] = key
         state.latestBoundaryByTurn[event.binding.turnKey] = key
     }
@@ -529,16 +563,17 @@ public enum CoordinatorSemanticReplay {
         try SemanticJSON.stableCode(reason, code: "close_reason_invalid")
         boundary.closed = true
         boundary.closeReason = reason
-        state.boundaries[key] = boundary
+        state.storeBoundary(boundary)
     }
 
     private static func sealPacket(
         _ state: inout CoordinatorSemanticState,
         boundary: inout CoordinatorBoundaryState,
         key: CoordinatorBindingKey,
-        event: SemanticEvent
+        event: SemanticEvent,
+        observing observer: (@Sendable (CoordinatorSemanticReplayWork) -> Void)?
     ) throws {
-        try state.assertSessionPendingSlotAvailable(for: event.binding)
+        try state.assertSessionPendingSlotAvailable(for: event.binding, observing: observer)
         try require(!boundary.expired, "interaction_already_expired")
         try require(boundary.selection == nil, "decision_packet_reseal_after_claim")
         try require(boundary.repair == nil || boundary.repair?.claimedAt != nil, "format_repair_not_claimed_before_packet")
@@ -580,7 +615,7 @@ public enum CoordinatorSemanticReplay {
             revision: revision,
             expiresAt: expiresAt
         )
-        state.boundaries[key] = boundary
+        state.storeBoundary(boundary)
     }
 
     private static func expireInteraction(
@@ -610,7 +645,7 @@ public enum CoordinatorSemanticReplay {
         try require(automaticSelection == false, "interaction_expiry_automatic_selection_forbidden")
         try require(event.occurredAt >= packet.expiresAt, "interaction_expired_before_packet_expiry")
         boundary.expired = true
-        state.boundaries[key] = boundary
+        state.storeBoundary(boundary)
     }
 
     private static func claimSelection(
@@ -647,7 +682,7 @@ public enum CoordinatorSemanticReplay {
             kind: choice.kind,
             actionID: choice.actionID
         )
-        state.boundaries[key] = boundary
+        state.storeBoundary(boundary)
     }
 
     private static func reserveRepair(
@@ -670,7 +705,7 @@ public enum CoordinatorSemanticReplay {
             reservedAt: event.occurredAt,
             claimedAt: nil
         )
-        state.boundaries[key] = boundary
+        state.storeBoundary(boundary)
         state.tokenFingerprints[repair.fingerprint] = CoordinatorTokenIdentity(
             kind: "internal_format_repair",
             continuationID: repair.continuationID
@@ -696,7 +731,7 @@ public enum CoordinatorSemanticReplay {
         try require(event.occurredAt >= existing.reservedAt && event.occurredAt < repair.expiresAt, "format_repair_time_invalid")
         existing.claimedAt = event.occurredAt
         boundary.repair = existing
-        state.boundaries[key] = boundary
+        state.storeBoundary(boundary)
     }
 
     private static func dispatchContinuation(
@@ -790,7 +825,7 @@ public enum CoordinatorSemanticReplay {
             boundaryKey: key
         )
         boundary.dispatchedContinuationID = continuationID
-        state.boundaries[key] = boundary
+        state.storeBoundary(boundary)
     }
 
     private static func continuation(

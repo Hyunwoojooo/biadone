@@ -12,6 +12,7 @@ struct ClaudeAutoConnectSettingsView: View {
     @State private var terminal: ClaudeInstalledLauncher.TerminalApplication = .terminal
     @State private var ghosttyNeedsUpdate = false
     @State private var didDetectTerminals = false
+    @State private var autoConnectUpdateError: String?
 
     init(viewModel: PetViewModel) {
         self.viewModel = viewModel
@@ -74,7 +75,7 @@ struct ClaudeAutoConnectSettingsView: View {
                 }
                 if connection.phase == .needsProbe {
                     Button(PetL10n.text("Recheck Connection", korean: "연결 다시 확인")) { Task { await viewModel.recheckConnectedClaudeSession() } }
-                        .disabled(!viewModel.canControlClaudeConnection)
+                        .disabled(!viewModel.canRecheckConnectedClaudeSession)
                 }
                 if connection.isWorking { ProgressView().controlSize(.small) }
             }
@@ -85,6 +86,25 @@ struct ClaudeAutoConnectSettingsView: View {
                         Text(inspection.isEnabled ? PetL10n.text("Auto-connect settings saved", korean: "자동 연결 설정 저장됨") : PetL10n.text("Auto-connect settings not saved", korean: "자동 연결 설정 저장 안 됨"))
                             .font(.blabee(.caption, weight: .semibold))
                         Text(inspection.detail).font(.blabee(.caption))
+                        if inspection.isEnabled, inspection.needsSetupRefresh, inspection.canEnable {
+                            Button(PetL10n.text("Update Auto-Connect Settings", korean: "자동 연결 설정 업데이트")) {
+                                Task {
+                                    autoConnectUpdateError = nil
+                                    do {
+                                        _ = try await connection.configureAutomaticConnection()
+                                    } catch is CancellationError {
+                                    } catch {
+                                        autoConnectUpdateError = (error as? LocalizedError)?.errorDescription
+                                            ?? PetL10n.text("Unable to update auto-connect settings. Please check again.", korean: "자동 연결 설정을 업데이트하지 못했습니다. 다시 확인해 주세요.")
+                                    }
+                                }
+                            }
+                            .disabled(connection.isWorking)
+                            .accessibilityIdentifier("claude-auto-connect-update")
+                        }
+                        if let autoConnectUpdateError {
+                            Text(autoConnectUpdateError).font(.blabee(.caption)).foregroundStyle(.secondary)
+                        }
                         if inspection.canDisable {
                             Button(PetL10n.text("Disable Terminal Auto-Connect", korean: "터미널 자동 연결 끄기")) {
                                 Task { await connection.disableAutomaticConnection() }
@@ -116,13 +136,8 @@ struct ClaudeAutoConnectSettingsView: View {
         }
     }
 
-    private var directoryVerified: Bool { viewModel.snapshot?.providerDirectory != nil }
-
     private var currentConnections: some View {
-        let summary = PetClaudeSettingsSummary(
-            sessions: sessionEntries, directoryVerified: directoryVerified,
-            serviceConnected: viewModel.hasVerifiedServiceConnection
-        )
+        let summary = viewModel.claudeSettingsSummary
         return VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 8) {
                 Text(PetL10n.text("Claude Connection Status", korean: "Claude 연결 상태")).font(.blabee(.body, weight: .semibold))
@@ -139,10 +154,7 @@ struct ClaudeAutoConnectSettingsView: View {
 
     private func currentSession(_ entry: PetProviderInboxSession) -> some View {
         let session = entry.session
-        let status = PetClaudeSessionSettingsStatus(
-            session: entry, directoryVerified: directoryVerified,
-            serviceConnected: viewModel.hasVerifiedServiceConnection
-        )
+        let status = viewModel.claudeSessionSettingsStatus(entry)
         return VStack(alignment: .leading, spacing: 8) {
             HStack(alignment: .top, spacing: 8) {
                 Text(session.title).font(.blabee(.caption, weight: .semibold))
@@ -171,6 +183,14 @@ struct ClaudeAutoConnectSettingsView: View {
     }
 
     private func detectTerminals() {
+        #if BLABEE_TEST_APP
+        // The shared settings screen must not inspect the user's installed
+        // terminals or running conversations while showing an M1 scenario.
+        terminals = [.terminal]
+        terminal = .terminal
+        ghosttyNeedsUpdate = false
+        didDetectTerminals = true
+        #else
         var installed = Set<String>()
         ghosttyNeedsUpdate = false
         for item in ClaudeInstalledLauncher.TerminalApplication.allCases {
@@ -191,5 +211,6 @@ struct ClaudeAutoConnectSettingsView: View {
             terminal = recommended
         }
         didDetectTerminals = true
+        #endif
     }
 }

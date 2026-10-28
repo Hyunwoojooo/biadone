@@ -1,0 +1,8 @@
+/* Review interface only; candidate styles and approved brand tokens are separate. */
+:root {
+ --review-space-2: .5rem; --review-space-3: .75rem; --review-space-4: 1rem; --review-space-5: 1.25rem; --review-space-6: 1.5rem; --review-space-8: 2rem; --review-space-10: 2.5rem; --review-space-12: 3rem;
+ --review-max: 100rem; --review-body: 1rem; --review-small: .875rem; --review-lead: 1.125rem; --review-title: clamp(2rem,3.5vw,3rem); --review-section: 1.25rem;
+ --review-control-height: 3rem; --review-radius: .5rem; --review-focus-width: 3px; --review-focus-offset: 4px;
+ --review-header-height: 5rem; --review-logo-size: 24px; --review-phone-width: 375px;
+ --review-line: var(--color-background-tint); --review-surface: var(--color-background); --review-ink: var(--color-text-primary);
+}

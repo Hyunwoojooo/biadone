@@ -1,0 +1,36 @@
+/* Native font weights only. No synthesized bold, no converted binaries. */
+@font-face {
+  font-family: "Study SUITE";
+  src: url("../round-03/assets/fonts/suite-variable.woff2") format("woff2");
+  font-weight: 300 900;
+  font-style: normal;
+  font-display: block;
+}
+@font-face {
+  font-family: "Study Gmarket";
+  src: url("./assets/fonts/GmarketSansTTFMedium.ttf") format("truetype");
+  font-weight: 500;
+  font-style: normal;
+  font-display: block;
+}
+@font-face {
+  font-family: "Study Maru";
+  src: url("./assets/fonts/MaruBuri-Bold.ttf") format("truetype");
+  font-weight: 700;
+  font-style: normal;
+  font-display: block;
+}
+@font-face {
+  font-family: "Study Gowun";
+  src: url("./assets/fonts/GowunDodum-Regular.ttf") format("truetype");
+  font-weight: 400;
+  font-style: normal;
+  font-display: block;
+}
+@font-face {
+  font-family: "Study Dohyeon";
+  src: url("./assets/fonts/DoHyeon-Regular.ttf") format("truetype");
+  font-weight: 400;
+  font-style: normal;
+  font-display: block;
+}

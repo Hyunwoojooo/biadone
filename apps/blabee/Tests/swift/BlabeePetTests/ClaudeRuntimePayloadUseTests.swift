@@ -86,7 +86,8 @@ struct ClaudeRuntimePayloadUseTests {
         let uses = fixture.storeRoot.appendingPathComponent("uses")
         let names = try FileManager.default.contentsOfDirectory(atPath: uses.path)
         let record = try StrictJSONTransport.object(from: Data(contentsOf: uses.appendingPathComponent(try #require(names.first))))
-        #expect(Set(record.keys) == ["schema_version", "use_id", "payload_digest", "runtime_identity"])
+        #expect(Set(record.keys) == ["schema_version", "use_id", "payload_digest", "runtime_identity", "boot_session_id"])
+        #expect(record["schema_version"] as? String == "blabee.claude-runtime-use.v2")
         #expect(record["runtime_identity"] as? String == identity)
         try use.complete()
         #expect(ClaudeRuntimePayloadUse.inspect(storeRootURL: fixture.storeRoot) == .clear)
@@ -131,8 +132,16 @@ struct ClaudeRuntimePayloadUseTests {
             #expect(inspection.referencedRuntimeIdentities.isEmpty)
         }
         #expect(throws: (any Error).self) { try ClaudeRuntimePayloadUse.acquireInstallationGuard(storeRootURL: fixture.storeRoot) }
-        #expect(throws: (any Error).self) { try use.complete() }
-        #expect(FileManager.default.fileExists(atPath: path.path))
+        if kind == "unknown" {
+            // An unrelated interrupted registration cannot suppress positive
+            // no-child/reaped completion of this owner's exact record.
+            try use.complete()
+            #expect(!FileManager.default.fileExists(atPath: path.path))
+            #expect(ClaudeRuntimePayloadUse.inspect(storeRootURL: fixture.storeRoot) == .unavailable)
+        } else {
+            #expect(throws: (any Error).self) { try use.complete() }
+            #expect(FileManager.default.fileExists(atPath: path.path))
+        }
     }
 
     @Test("Concurrent begin and installation have one winner and no admission gap")

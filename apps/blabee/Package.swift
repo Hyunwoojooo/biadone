@@ -2,6 +2,8 @@
 import Foundation
 import PackageDescription
 
+let packageDirectory = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+
 // Physical directories describe responsibility. These explicit source lists keep
 // the existing Swift modules and their internal access boundaries unchanged.
 let coordinatorSwiftSources: [String] = [
@@ -50,6 +52,22 @@ let blabeeProductSupportSources: [String] = [
     "app/service/product-support/ProductServiceConfiguration.swift",
     "app/service/product-support/ProductServiceSettingsWriter.swift",
 ]
+
+// Release source snapshots omit the independent development app. If its
+// directory is present, every declared file is required; never hide a partial
+// checkout with a per-file filter. A Test-flag build without this group fails
+// when main.swift references its Test-only entrypoint.
+let blabeeTestAppSources: [String] = [
+    "dev/test-app/swift/BlabeeTestRunStore.swift",
+    "dev/test-app/swift/BlabeeTestScenarios.swift",
+    "dev/test-app/swift/BlabeeTestApplication.swift",
+    "dev/test-app/swift/BlabeeTestComposition.swift",
+    "dev/test-app/swift/BlabeeTestEngineCore.swift",
+    "dev/test-app/swift/BlabeeTestEngineService.swift",
+]
+let hasBlabeeTestAppSourceDirectory = FileManager.default.fileExists(
+    atPath: packageDirectory.appendingPathComponent("dev/test-app/swift").path
+)
 
 let blabeeCoordinatorSources: [String] = [
     "Tests/swift/BlabeeCoordinatorSupport/ClaudeBridgeRoundTripFixture.swift",
@@ -135,6 +153,7 @@ let blabeeCoordinatorSources: [String] = [
     "app/update/AppUpdateTransitionPreflight.swift",
     "app/update/AppUpdateTransaction.swift",
     "app/update/PetAppUpdateView.swift",
+    "app/update/PetAppUpdateWindow.swift",
     "app/update/PetAppUpdates.swift",
     "app/update/PetAutomaticAppUpdateView.swift",
     "bridges/claude/swift/presentation/ClaudePetApplication.swift",
@@ -182,12 +201,11 @@ let blabeeCoordinatorSources: [String] = [
     "bridges/codex/swift/update/UpdateManagedCodexRuntime.swift",
     "bridges/codex/swift/update/UpdateManagedCodexSessions.swift",
     "bridges/codex/swift/update/UpdateManagedCodexTerminal.swift",
-]
+] + (hasBlabeeTestAppSourceDirectory ? blabeeTestAppSources : [])
 
 // A release source snapshot intentionally omits some repository-only inputs.
 // Filter only declared exclusions that exist; compilation inputs above remain
 // explicit and never come from a directory scan.
-let packageDirectory = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
 let repositorySupportPaths: [String] = [
     "AGENTS.md",
     "README.md",
@@ -210,7 +228,12 @@ let repositorySupportPaths: [String] = [
     "supabase",
     "scripts",
     "docs",
-    "dev",
+    "dev/claude-standalone",
+    "dev/experiments",
+    "dev/recording",
+    "dev/spikes",
+    "dev/ui-demos",
+    "demo-site",
     "build",
     "tmp",
     "output",

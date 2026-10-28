@@ -50,8 +50,9 @@ public enum HookPermissionPolicy {
     // Rechecked for 0.160.1/0.161.0/0.162.0/0.162.1; see
     // docs/features/CODEX_0162_QUALIFICATION.md. Managed runtime and update
     // lifecycle qualification remain separate gates from these Hook identities.
-    // The unchanged one-shot path was also reviewed for 0.163.0; see
-    // docs/features/CODEX_0163_QUALIFICATION.md.
+    // The unchanged one-shot path was also reviewed for 0.163.0 and 0.164.0;
+    // see docs/features/CODEX_0164_QUALIFICATION.md. Plugin content trust
+    // migration is separate from this live-caller one-shot approval identity.
     public static let qualifiedProfiles: [RuntimeProfile] = [
         .init(version: "0.153.4", cdHash: "9227334847123dd04d3369b05b27769de1987426"),
         .init(version: "0.154.0", cdHash: "506770a222b6e1e63c332cbfe40dc399876c1d2a"),
@@ -72,6 +73,7 @@ public enum HookPermissionPolicy {
         .init(version: "0.162.0", cdHash: "5f410845b5189c21ca0aa20c2ef91293e3145b13"),
         .init(version: "0.162.1", cdHash: "9ddc61acceef79aa2aad437ba1fe94239f2e0423"),
         .init(version: "0.163.0", cdHash: "5a4eec85679683d4b137579cb2555fe0b42a02dd"),
+        .init(version: "0.164.0", cdHash: "3a7d7f1461a52f92f4a4fdc2cc70fc06bee91285"),
     ]
 
     // Retain the original marker for existing fixtures and older callers.

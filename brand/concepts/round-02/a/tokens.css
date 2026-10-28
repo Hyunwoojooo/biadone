@@ -1,0 +1,49 @@
+/* Design Tokens - Auto-generated */
+/* Do not edit directly - modify tokens.json instead */
+
+/* === PRIMITIVES === */
+:root {
+  --primitive-color-ink: #172D39;
+  --primitive-color-white: #FFFFFF;
+  --primitive-color-mist: #E8EFF3;
+  --primitive-color-rose: #D7435B;
+  --primitive-color-blush: #F1D7DC;
+  --primitive-color-slate: #52656F;
+  --primitive-dimension-gutter: clamp(1.25rem, 4.4vw, 4.25rem);
+  --primitive-dimension-display: clamp(5.35rem, 14.7vw, 14.5rem);
+  --primitive-dimension-headline: clamp(1.85rem, 3.1vw, 3rem);
+  --primitive-dimension-mark: clamp(8rem, 24vw, 22rem);
+  --primitive-dimension-project: clamp(2rem, 3vw, 3rem);
+  --primitive-dimension-vision: clamp(2.5rem, 5vw, 4.75rem);
+  --primitive-dimension-radius: 0.5rem;
+  --primitive-dimension-header: 6rem;
+}
+
+/* === SEMANTIC === */
+:root {
+  --color-background: #FFFFFF;
+  --color-surface: #E8EFF3;
+  --color-text: #172D39;
+  --color-muted: #52656F;
+  --color-brand: #D7435B;
+  --color-focus: #172D39;
+  --color-border: #172D39;
+  --color-soft: #F1D7DC;
+  --type-display: clamp(5.35rem, 14.7vw, 14.5rem);
+  --type-headline: clamp(1.85rem, 3.1vw, 3rem);
+  --type-project: clamp(2rem, 3vw, 3rem);
+  --type-vision: clamp(2.5rem, 5vw, 4.75rem);
+  --layout-gutter: clamp(1.25rem, 4.4vw, 4.25rem);
+  --layout-header: 6rem;
+  --layout-mark: clamp(8rem, 24vw, 22rem);
+}
+
+/* === COMPONENTS === */
+:root {
+  --button-bg: #172D39;
+  --button-fg: #FFFFFF;
+  --button-hover-bg: #F1D7DC;
+  --button-hover-fg: #172D39;
+  --button-border: #172D39;
+  --button-radius: 0.5rem;
+}

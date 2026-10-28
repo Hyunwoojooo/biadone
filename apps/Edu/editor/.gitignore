@@ -1,0 +1,8 @@
+node_modules/
+dist/
+data/
+.cache/
+.env*
+!.env.example
+.DS_Store
+qa-artifacts/

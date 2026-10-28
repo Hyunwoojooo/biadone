@@ -1,0 +1,299 @@
+{
+  "async-exit0": {
+    "syncClaudeAiPlugins": false,
+    "disableClaudeAiConnectors": true,
+    "hooks": {
+      "SessionStart": [
+        {
+          "hooks": [
+            {
+              "type": "command",
+              "command": "/usr/bin/env",
+              "args": [
+                "-u",
+                "NODE_OPTIONS",
+                "-u",
+                "NODE_PATH",
+                "/ABSOLUTE/PATH/TO/node",
+                "/ABSOLUTE/P1/hook.mjs",
+                "--run",
+                "/ABSOLUTE/PRIVATE-RUN",
+                "--event",
+                "SessionStart"
+              ],
+              "timeout": 5
+            }
+          ]
+        }
+      ],
+      "UserPromptSubmit": [
+        {
+          "hooks": [
+            {
+              "type": "command",
+              "command": "/usr/bin/env",
+              "args": [
+                "-u",
+                "NODE_OPTIONS",
+                "-u",
+                "NODE_PATH",
+                "/ABSOLUTE/PATH/TO/node",
+                "/ABSOLUTE/P1/hook.mjs",
+                "--run",
+                "/ABSOLUTE/PRIVATE-RUN",
+                "--event",
+                "UserPromptSubmit"
+              ],
+              "timeout": 5
+            }
+          ]
+        }
+      ],
+      "Stop": [
+        {
+          "hooks": [
+            {
+              "type": "command",
+              "command": "/usr/bin/env",
+              "args": [
+                "-u",
+                "NODE_OPTIONS",
+                "-u",
+                "NODE_PATH",
+                "/ABSOLUTE/PATH/TO/node",
+                "/ABSOLUTE/P1/hook.mjs",
+                "--run",
+                "/ABSOLUTE/PRIVATE-RUN",
+                "--event",
+                "Stop"
+              ],
+              "timeout": 15,
+              "async": true
+            }
+          ]
+        }
+      ],
+      "SessionEnd": [
+        {
+          "hooks": [
+            {
+              "type": "command",
+              "command": "/usr/bin/env",
+              "args": [
+                "-u",
+                "NODE_OPTIONS",
+                "-u",
+                "NODE_PATH",
+                "/ABSOLUTE/PATH/TO/node",
+                "/ABSOLUTE/P1/hook.mjs",
+                "--run",
+                "/ABSOLUTE/PRIVATE-RUN",
+                "--event",
+                "SessionEnd"
+              ],
+              "timeout": 5
+            }
+          ]
+        }
+      ]
+    }
+  },
+  "rewake-exit0": {
+    "syncClaudeAiPlugins": false,
+    "disableClaudeAiConnectors": true,
+    "hooks": {
+      "SessionStart": [
+        {
+          "hooks": [
+            {
+              "type": "command",
+              "command": "/usr/bin/env",
+              "args": [
+                "-u",
+                "NODE_OPTIONS",
+                "-u",
+                "NODE_PATH",
+                "/ABSOLUTE/PATH/TO/node",
+                "/ABSOLUTE/P1/hook.mjs",
+                "--run",
+                "/ABSOLUTE/PRIVATE-RUN",
+                "--event",
+                "SessionStart"
+              ],
+              "timeout": 5
+            }
+          ]
+        }
+      ],
+      "UserPromptSubmit": [
+        {
+          "hooks": [
+            {
+              "type": "command",
+              "command": "/usr/bin/env",
+              "args": [
+                "-u",
+                "NODE_OPTIONS",
+                "-u",
+                "NODE_PATH",
+                "/ABSOLUTE/PATH/TO/node",
+                "/ABSOLUTE/P1/hook.mjs",
+                "--run",
+                "/ABSOLUTE/PRIVATE-RUN",
+                "--event",
+                "UserPromptSubmit"
+              ],
+              "timeout": 5
+            }
+          ]
+        }
+      ],
+      "Stop": [
+        {
+          "hooks": [
+            {
+              "type": "command",
+              "command": "/usr/bin/env",
+              "args": [
+                "-u",
+                "NODE_OPTIONS",
+                "-u",
+                "NODE_PATH",
+                "/ABSOLUTE/PATH/TO/node",
+                "/ABSOLUTE/P1/hook.mjs",
+                "--run",
+                "/ABSOLUTE/PRIVATE-RUN",
+                "--event",
+                "Stop"
+              ],
+              "timeout": 15,
+              "asyncRewake": true
+            }
+          ]
+        }
+      ],
+      "SessionEnd": [
+        {
+          "hooks": [
+            {
+              "type": "command",
+              "command": "/usr/bin/env",
+              "args": [
+                "-u",
+                "NODE_OPTIONS",
+                "-u",
+                "NODE_PATH",
+                "/ABSOLUTE/PATH/TO/node",
+                "/ABSOLUTE/P1/hook.mjs",
+                "--run",
+                "/ABSOLUTE/PRIVATE-RUN",
+                "--event",
+                "SessionEnd"
+              ],
+              "timeout": 5
+            }
+          ]
+        }
+      ]
+    }
+  },
+  "rewake-exit2": {
+    "syncClaudeAiPlugins": false,
+    "disableClaudeAiConnectors": true,
+    "hooks": {
+      "SessionStart": [
+        {
+          "hooks": [
+            {
+              "type": "command",
+              "command": "/usr/bin/env",
+              "args": [
+                "-u",
+                "NODE_OPTIONS",
+                "-u",
+                "NODE_PATH",
+                "/ABSOLUTE/PATH/TO/node",
+                "/ABSOLUTE/P1/hook.mjs",
+                "--run",
+                "/ABSOLUTE/PRIVATE-RUN",
+                "--event",
+                "SessionStart"
+              ],
+              "timeout": 5
+            }
+          ]
+        }
+      ],
+      "UserPromptSubmit": [
+        {
+          "hooks": [
+            {
+              "type": "command",
+              "command": "/usr/bin/env",
+              "args": [
+                "-u",
+                "NODE_OPTIONS",
+                "-u",
+                "NODE_PATH",
+                "/ABSOLUTE/PATH/TO/node",
+                "/ABSOLUTE/P1/hook.mjs",
+                "--run",
+                "/ABSOLUTE/PRIVATE-RUN",
+                "--event",
+                "UserPromptSubmit"
+              ],
+              "timeout": 5
+            }
+          ]
+        }
+      ],
+      "Stop": [
+        {
+          "hooks": [
+            {
+              "type": "command",
+              "command": "/usr/bin/env",
+              "args": [
+                "-u",
+                "NODE_OPTIONS",
+                "-u",
+                "NODE_PATH",
+                "/ABSOLUTE/PATH/TO/node",
+                "/ABSOLUTE/P1/hook.mjs",
+                "--run",
+                "/ABSOLUTE/PRIVATE-RUN",
+                "--event",
+                "Stop"
+              ],
+              "timeout": 15,
+              "asyncRewake": true
+            }
+          ]
+        }
+      ],
+      "SessionEnd": [
+        {
+          "hooks": [
+            {
+              "type": "command",
+              "command": "/usr/bin/env",
+              "args": [
+                "-u",
+                "NODE_OPTIONS",
+                "-u",
+                "NODE_PATH",
+                "/ABSOLUTE/PATH/TO/node",
+                "/ABSOLUTE/P1/hook.mjs",
+                "--run",
+                "/ABSOLUTE/PRIVATE-RUN",
+                "--event",
+                "SessionEnd"
+              ],
+              "timeout": 5
+            }
+          ]
+        }
+      ]
+    }
+  }
+}

@@ -1,6 +1,61 @@
 import Combine
 import Foundation
 
+/// Recovery presentation only. An error or a diagnostic path never grants
+/// permission to install a Plugin; an explicit retry must qualify Codex again.
+struct PetCodexConnectionRecovery: Equatable {
+    let diagnostic: CodexNativeDiagnostic
+
+    init?(state: CodexPluginSetupState) {
+        guard case .error(let code) = state else { return nil }
+        switch code {
+        case "codex_plugin_setup_executable_unavailable": diagnostic = .notInstalled
+        case "codex_plugin_setup_signature_invalid": diagnostic = .signatureInvalid
+        default:
+            guard let value = CodexNativeDiagnostic(rawValue: code) else { return nil }
+            diagnostic = value
+        }
+    }
+
+    var title: String {
+        switch diagnostic {
+        case .notInstalled:
+            PetL10n.text("Set up Codex first", korean: "Codex 설치부터 준비해 주세요")
+        case .pathUnsafe:
+            PetL10n.text("Check your Codex installation", korean: "Codex 설치 상태를 확인해 주세요")
+        case .versionUnqualified, .probeOutputInvalid:
+            PetL10n.text("Check Codex compatibility", korean: "Codex 호환성을 확인해 주세요")
+        default:
+            PetL10n.text("Resume your Codex connection", korean: "Codex 연결을 이어서 준비하세요")
+        }
+    }
+
+    var detail: String {
+        switch diagnostic {
+        case .notInstalled:
+            PetL10n.text("Install Codex using the official guide, then return here. Recheck and Connect will verify it and install the Blabee Plugin when needed.", korean: "공식 안내에 따라 Codex를 설치한 뒤 돌아오세요. ‘재검사 후 연결’이 실행 파일을 확인하고 필요한 Blabee Plugin을 연결합니다.")
+        case .pathUnsafe:
+            PetL10n.text("Blabee could not verify this installation path. This can depend on how Codex was installed and does not mean the file is malicious. Review the installation help below before changing folder permissions.", korean: "이 설치 경로를 확인하지 못했습니다. Codex 설치 방식에 따라 발생할 수 있으며, 악성 파일이라는 뜻은 아닙니다. 폴더 권한을 바꾸기 전에 아래 설치 도움말을 확인하세요.")
+        case .versionUnqualified, .probeOutputInvalid:
+            PetL10n.text("Blabee could not verify compatibility with this Codex version or version response. Check for a Blabee update before changing Codex. Installing the latest Codex alone may not resolve compatibility.", korean: "현재 Codex 버전 또는 버전 응답의 호환성을 확인하지 못했습니다. Codex를 변경하기 전에 Blabee 업데이트를 확인하세요. Codex를 최신으로 설치하는 것만으로는 호환성이 해결되지 않을 수 있습니다.")
+        default:
+            diagnostic.detail
+        }
+    }
+
+    var offersInstallGuide: Bool {
+        switch diagnostic {
+        case .notInstalled, .pathUnsafe, .signatureInvalid, .launchUnavailable: true
+        default: false
+        }
+    }
+
+    var offersAppUpdate: Bool {
+        diagnostic == .versionUnqualified || diagnostic == .probeOutputInvalid
+    }
+
+}
+
 enum PetConnectionSetupProvider: String, CaseIterable, Codable, Hashable, Identifiable, Sendable {
     case codex, claude
 
@@ -54,6 +109,9 @@ struct PetConnectionSetupInspection: Equatable, Sendable {
     var serviceReady: Bool
     var providers: [PetConnectionSetupProvider: PetConnectionSetupProviderState]
     var recommendedProviders: Set<PetConnectionSetupProvider> = []
+    /// A failure observed in the shared service, separate from a failed setup
+    /// operation. Merely rereading provider settings does not resolve it.
+    var serviceIssue: String? = nil
 }
 
 /// Only selection intent survives app restarts, never settings-success flags,
@@ -124,11 +182,13 @@ final class PetConnectionSetupController: ObservableObject {
     @Published private(set) var selectedProviders: Set<PetConnectionSetupProvider>
     @Published private(set) var states: [PetConnectionSetupProvider: PetConnectionSetupProviderState] = [:]
     @Published private(set) var serviceReady = false
+    @Published private(set) var serviceIssue: String?
     @Published private(set) var isWorking = false
     @Published private(set) var phase: Phase = .idle
     @Published private var detailMessage = PetLocalizedMessage("Choose the tools you want to use.", korean: "사용할 도구를 선택해 주세요.")
     var detail: String { detailMessage.text }
     @Published private(set) var hasCurrentInspection = false
+    private(set) var selectionGeneration: UInt64 = 0
 
     private let store: any PetConnectionSetupSelectionStoring
     private let inspect: @MainActor () async throws -> PetConnectionSetupInspection
@@ -136,9 +196,13 @@ final class PetConnectionSetupController: ObservableObject {
     private let configure: @MainActor (PetConnectionSetupProvider) async throws -> Void
     private var hasExplicitSelection: Bool
     private var failures: [PetConnectionSetupProvider: String] = [:]
+    // Common preparation/inspection errors must survive ordinary health polls.
+    // A poll observing "available" is not evidence that the failed step worked.
+    private var operationFailure: String?
     private var operationID: UUID?
     private var operationTask: Task<Void, Never>?
     private var cancellationRequested = false
+    private var operationContextIsCurrent: (@MainActor () -> Bool)?
 
     init(
         store: (any PetConnectionSetupSelectionStoring)? = nil,
@@ -160,8 +224,21 @@ final class PetConnectionSetupController: ObservableObject {
 
     var canConnect: Bool { !isWorking && !selectedProviders.isEmpty }
 
+    /// Provider order is stable in both action titles and partial-setup copy.
+    var availableProviders: [PetConnectionSetupProvider] {
+        PetConnectionSetupProvider.allCases.filter {
+            selectedProviders.contains($0) && state(for: $0).status == .available
+        }
+    }
+
+    var pendingProviders: [PetConnectionSetupProvider] {
+        PetConnectionSetupProvider.allCases.filter {
+            selectedProviders.contains($0) && ![.available, .configured].contains(state(for: $0).status)
+        }
+    }
+
     var canFinish: Bool {
-        !isWorking && hasCurrentInspection && serviceReady && !selectedProviders.isEmpty
+        !isWorking && hasCurrentInspection && serviceReady && serviceIssue == nil && !selectedProviders.isEmpty
             && selectedProviders.allSatisfy { state(for: $0).status == .configured }
     }
 
@@ -171,6 +248,7 @@ final class PetConnectionSetupController: ObservableObject {
 
     func setSelected(_ selected: Bool, for provider: PetConnectionSetupProvider) {
         guard !isWorking else { return }
+        if selectedProviders.contains(provider) != selected { selectionGeneration &+= 1 }
         if selected { selectedProviders.insert(provider) } else { selectedProviders.remove(provider) }
         hasExplicitSelection = true
         store.save(selectedProviders)
@@ -188,11 +266,11 @@ final class PetConnectionSetupController: ObservableObject {
         summarize()
     }
 
-    func connect() async {
+    func connect(while contextIsCurrent: @escaping @MainActor () -> Bool = { true }) async {
         guard canConnect else { return }
         hasExplicitSelection = true
         store.save(selectedProviders)
-        await run(applySettings: true)
+        await run(applySettings: true, contextIsCurrent: contextIsCurrent)
     }
 
     func cancel() {
@@ -206,10 +284,12 @@ final class PetConnectionSetupController: ObservableObject {
         // atomic settings write may still be completing and must not overlap.
     }
 
-    private func run(applySettings: Bool) async {
+    private func run(applySettings: Bool, contextIsCurrent: (@MainActor () -> Bool)? = nil) async {
         guard !isWorking else { return }
         let operation = UUID()
         operationID = operation
+        operationContextIsCurrent = contextIsCurrent
+        operationFailure = nil
         cancellationRequested = false
         isWorking = true
         invalidateInspection()
@@ -226,6 +306,7 @@ final class PetConnectionSetupController: ObservableObject {
         guard operationID == operation else { return }
         operationTask = nil
         operationID = nil
+        operationContextIsCurrent = nil
         isWorking = false
     }
 
@@ -233,6 +314,9 @@ final class PetConnectionSetupController: ObservableObject {
         do {
             guard try await refreshInspection(operation: operation) else { return }
             guard applySettings, !selectedProviders.isEmpty else { summarize(); return }
+            // A known failed service needs its explicit recovery path. Do not
+            // rewrite projects or tool settings while that failure is unresolved.
+            guard serviceIssue == nil else { summarize(); return }
             let selected = PetConnectionSetupProvider.allCases.filter(selectedProviders.contains)
             let canPrepare = selected.contains { [.available, .configured].contains(state(for: $0).status) }
             let hasPendingConfiguration = selected.contains { state(for: $0).status == .available }
@@ -248,10 +332,10 @@ final class PetConnectionSetupController: ObservableObject {
             }
             // Saved provider settings alone cannot substitute for a current
             // shared-service response. The adapter decides what is ready.
-            guard serviceReady else { summarize(); return }
+            guard serviceReady, serviceIssue == nil else { summarize(); return }
             for provider in selected {
                 guard isCurrent(operation) else { return }
-                guard serviceReady else { summarize(); return }
+                guard serviceReady, serviceIssue == nil else { summarize(); return }
                 guard state(for: provider).status == .available else { continue }
                 phase = .configuring(provider)
                 detailMessage = PetLocalizedMessage("Preparing connection settings for \(provider.title).", korean: "\(provider.title)의 연결 설정을 준비하고 있어요.")
@@ -274,8 +358,14 @@ final class PetConnectionSetupController: ObservableObject {
         } catch {
             guard isCurrent(operation) else { return }
             invalidateInspection()
-            phase = .failed
-            detailMessage = .verbatim(failureDetail(error))
+            let failure = failureDetail(error)
+            operationFailure = failure
+            if serviceIssue != nil {
+                summarize()
+            } else {
+                phase = .failed
+                detailMessage = .verbatim(failure)
+            }
         }
     }
 
@@ -288,11 +378,16 @@ final class PetConnectionSetupController: ObservableObject {
     }
 
     private func apply(_ observed: PetConnectionSetupInspection, suggestProviders: Bool) {
+        // A stopped/starting service or an absent response is not proof that a
+        // previously observed failure recovered. Only fresh healthy evidence
+        // clears it; this state is transient and is never written to preferences.
+        let observedIssue = observed.serviceIssue ?? (observed.serviceReady ? nil : serviceIssue)
+        let observedServiceReady = observed.serviceReady && observedIssue == nil
         var observedStates = Dictionary(uniqueKeysWithValues: PetConnectionSetupProvider.allCases.map { provider in
             (provider, observed.providers[provider] ?? .init(status: .needsAction, detail: PetL10n.text("Unable to check your environment.", korean: "사용 환경을 확인하지 못했습니다.")))
         })
         for provider in PetConnectionSetupProvider.allCases {
-            if !observed.serviceReady,
+            if !observedServiceReady,
                observedStates[provider]?.sessionEvidence == .ready || observedStates[provider]?.sessionEvidence == .receivingCards {
                 observedStates[provider]?.sessionEvidence = .unavailable
             }
@@ -305,20 +400,28 @@ final class PetConnectionSetupController: ObservableObject {
         }
         // Normal service polling may repeat the same evidence indefinitely.
         // Preserve the Pet's idle behavior instead of invalidating every view.
-        if serviceReady != observed.serviceReady { serviceReady = observed.serviceReady }
+        if serviceIssue != observedIssue { serviceIssue = observedIssue }
+        if serviceReady != observedServiceReady { serviceReady = observedServiceReady }
         if states != observedStates { states = observedStates }
         if suggestProviders, !hasExplicitSelection {
             let recommended = observed.recommendedProviders.filter {
                 [.available, .configured].contains(state(for: $0).status)
             }
-            if selectedProviders != recommended { selectedProviders = recommended }
+            if selectedProviders != recommended {
+                selectionGeneration &+= 1
+                selectedProviders = recommended
+            }
         }
         if !hasCurrentInspection { hasCurrentInspection = true }
+        if observedServiceReady, !selectedProviders.isEmpty,
+           selectedProviders.allSatisfy({ state(for: $0).status == .configured }) {
+            operationFailure = nil
+        }
     }
 
     private func isCurrent(_ operation: UUID) -> Bool {
         guard operationID == operation else { return false }
-        guard !cancellationRequested, !Task.isCancelled else {
+        guard !cancellationRequested, !Task.isCancelled, operationContextIsCurrent?() != false else {
             invalidateInspection()
             phase = .cancelled
             detailMessage = PetLocalizedMessage("Setup stopped. Trying again will check the current state first.", korean: "설정을 중단했습니다. 다시 시도하면 현재 상태부터 확인합니다.")
@@ -339,16 +442,27 @@ final class PetConnectionSetupController: ObservableObject {
         let nextPhase: Phase
         let nextDetail: PetLocalizedMessage
         let selected = PetConnectionSetupProvider.allCases.filter(selectedProviders.contains)
-        if selected.isEmpty {
+        if let serviceIssue {
+            nextPhase = .failed
+            nextDetail = .verbatim(serviceIssue)
+        } else if selected.isEmpty {
             nextPhase = .idle
             nextDetail = PetLocalizedMessage("Choose the tools you want to use.", korean: "사용할 도구를 선택해 주세요.")
         } else if hasCurrentInspection, serviceReady, selected.allSatisfy({ state(for: $0).status == .configured }) {
             nextPhase = .configured
             nextDetail = PetLocalizedMessage("Setup is ready. Start as usual in a new terminal.", korean: "설정이 준비됐어요. 새 터미널에서 평소처럼 시작하세요.")
+        } else if let operationFailure {
+            nextPhase = .failed
+            nextDetail = .verbatim(operationFailure)
+        } else if hasCurrentInspection, !availableProviders.isEmpty, !pendingProviders.isEmpty {
+            nextPhase = .needsAction
+            let available = availableProviders.map(\.title).joined(separator: ", ")
+            let pending = pendingProviders.map(\.title).joined(separator: ", ")
+            nextDetail = PetLocalizedMessage("\(available) can connect now. \(pending) still needs attention; you can review it separately or connect it later.", korean: "\(available)는 지금 연결할 수 있어요. \(pending)는 추가 확인이 필요하며, 따로 확인하거나 나중에 연결할 수 있습니다.")
         } else if selected.contains(where: { state(for: $0).status == .failed }) {
             nextPhase = .failed
             nextDetail = PetLocalizedMessage("Some settings could not be checked. Completed tool settings have been kept.", korean: "일부 설정을 확인하지 못했습니다. 준비된 도구의 설정은 유지됩니다.")
-        } else if hasCurrentInspection, selected.contains(where: { state(for: $0).status == .available }) {
+        } else if hasCurrentInspection, !availableProviders.isEmpty {
             nextPhase = .idle
             nextDetail = PetLocalizedMessage("The selected tools can connect. Choose Connect to prepare the settings.", korean: "선택한 도구를 연결할 수 있어요. 연결하기를 눌러 설정을 준비하세요.")
         } else {

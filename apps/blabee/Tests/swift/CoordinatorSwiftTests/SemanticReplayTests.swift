@@ -2,6 +2,36 @@ import Foundation
 import XCTest
 @testable import CoordinatorSwift
 
+private struct PendingSlotWorkCounts {
+    var lookups = 0
+    var fullEvents: [Int] = []
+    var incrementalEvents: [Int] = []
+    var fullNanoseconds: [UInt64] = []
+}
+
+private final class PendingSlotWorkMeter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var counts = PendingSlotWorkCounts()
+
+    func observe(_ work: CoordinatorSemanticReplayWork) {
+        lock.lock()
+        defer { lock.unlock() }
+        switch work {
+        case .sessionPendingSlotLookup: counts.lookups += 1
+        case let .fullReplay(eventCount): counts.fullEvents.append(eventCount)
+        case let .incrementalApplication(eventCount): counts.incrementalEvents.append(eventCount)
+        case let .fullReplayFinished(elapsedNanoseconds): counts.fullNanoseconds.append(elapsedNanoseconds)
+        case .incrementalApplicationFinished: break
+        }
+    }
+
+    func snapshot() -> PendingSlotWorkCounts {
+        lock.lock()
+        defer { lock.unlock() }
+        return counts
+    }
+}
+
 final class SemanticReplayTests: XCTestCase {
     func testEveryCommittedPrefixReplaysAndProjectsTerminalAction() throws {
         let binding = binding()
@@ -431,6 +461,270 @@ final class SemanticReplayTests: XCTestCase {
             )) { XCTAssertEqual($0.coordinatorError.code, expected, kind) }
             XCTAssertNil(prefix.continuation(id: "continuation_001")?.workOutcome)
             XCTAssertEqual(prefix.eventSequence, 7)
+        }
+    }
+
+    func testPendingIndexMatchesScanAcrossSessionsProjectsAndReseals() throws {
+        let first = pendingBinding("first")
+        let next = pendingBinding("next")
+        var otherProject = pendingBinding("project")
+        otherProject["project_id"] = "project_other"
+        var otherSession = pendingBinding("session")
+        otherSession["session_id"] = "session_other"
+        let probes = try [first, next, otherProject, otherSession].map(CoordinatorBinding.init(jsonObject:))
+        var changes = pendingActivation(first, suffix: "first", startingAt: 1)
+        changes.append(pendingSeal(first, suffix: "first", sequence: 3, revision: 2))
+        changes += pendingActivation(otherProject, suffix: "project", startingAt: 4)
+        changes += pendingActivation(otherSession, suffix: "session", startingAt: 6)
+        let state = try replayPendingTrace(changes, probes: probes)
+        XCTAssertEqual(state.pendingInteractions.count, 3)
+        XCTAssertNoThrow(try state.assertSessionPendingSlotAvailable(for: probes[0]))
+        XCTAssertThrowsError(try state.assertSessionPendingSlotAvailable(for: probes[1])) {
+            XCTAssertEqual($0.coordinatorError.code, "session_pending_interaction_conflict")
+        }
+        let conflicting = pendingActivation(next, suffix: "next", startingAt: 8)
+        XCTAssertThrowsError(try CoordinatorSemanticReplay.applying(
+            CoordinatorSemanticChange(
+                events: conflicting.flatMap(\.events), documents: conflicting.flatMap(\.documents)
+            ), to: state
+        )) { XCTAssertEqual($0.coordinatorError.code, "session_pending_interaction_conflict") }
+        try assertPendingIndexMatchesScan(state, probes: probes)
+        XCTAssertEqual(state.eventSequence, 7)
+    }
+
+    func testEverySupportedSelectionReleasesOnlyItsPendingSlot() throws {
+        // Rollback remains unsupported/disabled; do not enable it for this optimization.
+        for slot in 1...3 {
+            let first = pendingBinding("selected_\(slot)")
+            let next = pendingBinding("after_selection_\(slot)")
+            let probes = try [first, next].map(CoordinatorBinding.init(jsonObject:))
+            var changes = pendingActivation(first, suffix: "selected_\(slot)", startingAt: 1)
+            changes.append(CoordinatorSemanticChange(events: [data(event(
+                3, "decision_selection_claimed", "2026-08-21T01:00:02Z", first, [
+                    "selection_id": "selection_\(slot)", "interaction_id": "interaction_selected_\(slot)",
+                    "packet_id": "packet_selected_\(slot)", "revision": 1, "option_id": "option_\(slot)",
+                ]
+            ))]))
+            let selected = try replayPendingTrace(changes, probes: probes)
+            XCTAssertTrue(selected.pendingInteractions.isEmpty)
+            XCTAssertNoThrow(try selected.assertSessionPendingSlotAvailable(for: probes[1]))
+            changes += pendingActivation(next, suffix: "after_selection_\(slot)", startingAt: 4)
+            if slot == 3 {
+                // A delayed close of the old pause must retain the newer card's slot.
+                changes.append(CoordinatorSemanticChange(events: [data(event(
+                    6, "decision_boundary_closed", "2026-08-21T01:00:03Z", first,
+                    ["close_reason": "episode_paused"]
+                ))]))
+            }
+            let state = try replayPendingTrace(changes, probes: probes)
+            XCTAssertEqual(state.pendingInteractions.map(\.binding), [probes[1]])
+            XCTAssertThrowsError(try state.assertSessionPendingSlotAvailable(for: probes[0])) {
+                XCTAssertEqual($0.coordinatorError.code, "session_pending_interaction_conflict")
+            }
+        }
+    }
+
+    func testClosingAnUnsealedOldBoundaryKeepsTheNewPendingOwner() throws {
+        let old = pendingBinding("unsealed")
+        let current = pendingBinding("current")
+        let probes = try [old, current].map(CoordinatorBinding.init(jsonObject:))
+        let changes = [CoordinatorSemanticChange(events: [data(event(
+            1, "decision_boundary_opened", "2026-08-21T01:00:00Z", old,
+            ["proposal_id": "proposal_unsealed"]
+        ))])] + pendingActivation(current, suffix: "current", startingAt: 2) + [
+            CoordinatorSemanticChange(events: [data(event(
+                4, "decision_boundary_closed", "2026-08-21T01:00:03Z", old,
+                ["close_reason": "checkpoint_complete"]
+            ))]),
+        ]
+        let state = try replayPendingTrace(changes, probes: probes)
+        XCTAssertEqual(state.pendingInteractions.map(\.binding), [probes[1]])
+    }
+
+    func testPendingIndexRetainsAuthorityUntilExplicitExpiryAndRejectsInvalidSuffixes() throws {
+        let first = pendingBinding("expiry")
+        let next = pendingBinding("after_expiry")
+        let probes = try [first, next].map(CoordinatorBinding.init(jsonObject:))
+        let initial = pendingActivation(first, suffix: "expiry", startingAt: 1)
+        let prefix = try replayPendingTrace(initial, probes: probes)
+        let expiryPayload: [String: Any] = [
+            "interaction_id": "interaction_expiry", "packet_id": "packet_expiry", "revision": 1,
+            "reason": "decision_timeout", "automatic_selection": false,
+        ]
+        let early = data(event(3, "interaction_expired", "2026-08-21T01:02:00Z", first, expiryPayload))
+        XCTAssertThrowsError(try CoordinatorSemanticReplay.applying(
+            CoordinatorSemanticChange(events: [early]), to: prefix
+        )) { XCTAssertEqual($0.coordinatorError.code, "interaction_expired_before_packet_expiry") }
+        var stalePayload = expiryPayload
+        stalePayload["revision"] = 2
+        XCTAssertThrowsError(try CoordinatorSemanticReplay.applying(CoordinatorSemanticChange(events: [data(event(
+            3, "interaction_expired", "2026-08-21T01:02:01Z", first, stalePayload
+        ))]), to: prefix)) { XCTAssertEqual($0.coordinatorError.code, "decision_packet_revision_stale") }
+        // Wall-clock expiry alone does not mutate replay authority or release its slot.
+        let afterDeadline = pendingActivation(
+            next, suffix: "after_expiry", startingAt: 3,
+            sealedAt: "2026-08-21T01:03:01Z", expiresAt: "2026-08-21T01:05:01Z"
+        )
+        XCTAssertThrowsError(try CoordinatorSemanticReplay.applying(CoordinatorSemanticChange(
+            events: afterDeadline.flatMap(\.events), documents: afterDeadline.flatMap(\.documents)
+        ), to: prefix)) { XCTAssertEqual($0.coordinatorError.code, "session_pending_interaction_conflict") }
+
+        let expiry = CoordinatorSemanticChange(events: [data(event(
+            3, "interaction_expired", "2026-08-21T01:02:01Z", first, expiryPayload
+        ))])
+        let unknown = pendingBinding("unknown")
+        let invalidAfterRelease = CoordinatorSemanticChange(events: expiry.events + [data(event(
+            4, "decision_boundary_closed", "2026-08-21T01:02:02Z", unknown,
+            ["close_reason": "checkpoint_complete"]
+        ))])
+        XCTAssertThrowsError(try CoordinatorSemanticReplay.applying(invalidAfterRelease, to: prefix)) {
+            XCTAssertEqual($0.coordinatorError.code, "unknown_decision_boundary")
+        }
+        XCTAssertEqual(prefix.eventSequence, 2)
+        try assertPendingIndexMatchesScan(prefix, probes: probes)
+        XCTAssertThrowsError(try prefix.assertSessionPendingSlotAvailable(for: probes[1])) {
+            XCTAssertEqual($0.coordinatorError.code, "session_pending_interaction_conflict")
+        }
+        let changes = initial + [expiry] + pendingActivation(
+            next, suffix: "after_expiry", startingAt: 4,
+            sealedAt: "2026-08-21T01:03:01Z", expiresAt: "2026-08-21T01:05:01Z"
+        ) + [CoordinatorSemanticChange(events: [data(event(
+            6, "decision_boundary_closed", "2026-08-21T01:03:02Z", first,
+            ["close_reason": "checkpoint_complete"]
+        ))])]
+        let state = try replayPendingTrace(changes, probes: probes)
+        XCTAssertEqual(state.pendingInteractions.map(\.binding), [probes[1]])
+    }
+
+    func testPendingSlotLookupWorkDoesNotGrowWithClosedHistory() throws {
+        for cardCount in [100, 200, 400] {
+            var changes: [CoordinatorSemanticChange] = []
+            for index in 0..<cardCount {
+                let binding = pendingBinding("history_\(index)")
+                let start = index * 3 + 1
+                changes += pendingActivation(binding, suffix: "history_\(index)", startingAt: start)
+                changes.append(CoordinatorSemanticChange(events: [data(event(
+                    start + 2, "decision_boundary_closed", "2026-08-21T01:00:02Z", binding,
+                    ["close_reason": "checkpoint_complete"]
+                ))]))
+            }
+            let snapshot = JournalSnapshot(
+                events: changes.flatMap(\.events), documents: changes.flatMap(\.documents),
+                verificationRecords: [], journalSequence: Int64(cardCount * 3)
+            )
+            // Fixture construction and warmup are outside each measured replay.
+            _ = try CoordinatorSemanticReplay.replay(snapshot)
+            for sample in 1...3 {
+                let meter = PendingSlotWorkMeter()
+                let state = try CoordinatorSemanticReplay.replay(snapshot, observing: meter.observe)
+                let work = meter.snapshot()
+                XCTAssertEqual(work.lookups, cardCount)
+                XCTAssertEqual(work.fullEvents, [cardCount * 3])
+                XCTAssertTrue(work.incrementalEvents.isEmpty)
+                XCTAssertEqual(work.fullNanoseconds.count, 1)
+                XCTAssertEqual(state.boundaries.count, cardCount)
+                XCTAssertTrue(state.pendingInteractions.isEmpty)
+                print("pending_index_history cards=\(cardCount) sample=\(sample)"
+                    + " lookup_count=\(work.lookups) old_scan_candidates_calculated=\(cardCount * (cardCount + 1) / 2)"
+                    + " replay_ns=\(work.fullNanoseconds.first ?? 0)")
+
+                let next = pendingBinding("history_next")
+                let activation = pendingActivation(next, suffix: "history_next", startingAt: cardCount * 3 + 1)
+                let incrementalMeter = PendingSlotWorkMeter()
+                let updated = try CoordinatorSemanticReplay.applying(CoordinatorSemanticChange(
+                    events: activation.flatMap(\.events), documents: activation.flatMap(\.documents)
+                ), to: state, observing: incrementalMeter.observe)
+                let incrementalWork = incrementalMeter.snapshot()
+                XCTAssertEqual(incrementalWork.lookups, 1)
+                XCTAssertEqual(incrementalWork.incrementalEvents, [2])
+                XCTAssertTrue(incrementalWork.fullEvents.isEmpty)
+                XCTAssertEqual(updated.pendingInteractions.count, 1)
+                XCTAssertTrue(state.pendingInteractions.isEmpty)
+            }
+        }
+    }
+
+    private func pendingBinding(_ suffix: String) -> [String: Any] {
+        var value = binding()
+        value["source_turn_id"] = "turn_\(suffix)"
+        value["source_prompt_id"] = "prompt_\(suffix)"
+        value["episode_id"] = "episode_\(suffix)"
+        value["episode_root_prompt_id"] = "prompt_\(suffix)"
+        value["decision_boundary_id"] = "boundary_\(suffix)"
+        return value
+    }
+
+    private func pendingActivation(
+        _ binding: [String: Any], suffix: String, startingAt sequence: Int,
+        sealedAt: String = "2026-08-21T01:00:01Z", expiresAt: String = "2026-08-21T01:02:01Z"
+    ) -> [CoordinatorSemanticChange] {
+        [CoordinatorSemanticChange(events: [data(event(
+            sequence, "decision_boundary_opened", sealedAt, binding,
+            ["proposal_id": "proposal_\(suffix)"]
+        ))]), pendingSeal(binding, suffix: suffix, sequence: sequence + 1, sealedAt: sealedAt, expiresAt: expiresAt)]
+    }
+
+    private func pendingSeal(
+        _ binding: [String: Any], suffix: String, sequence: Int, revision: Int = 1,
+        sealedAt: String = "2026-08-21T01:00:01Z", expiresAt: String = "2026-08-21T01:02:01Z"
+    ) -> CoordinatorSemanticChange {
+        var document = packet(binding: binding)
+        document["interaction_id"] = "interaction_\(suffix)"
+        document["packet_id"] = "packet_\(suffix)"
+        document["revision"] = revision
+        document["valid_after_event_sequence"] = sequence
+        document["sealed_at"] = sealedAt
+        document["expires_at"] = expiresAt
+        var choices = document["choices"] as! [[String: Any]]
+        choices[1]["enabled"] = true
+        choices[1]["disabled_reason"] = NSNull()
+        choices[1]["action_id"] = "action_2"
+        choices[1]["action"] = action("Alternative")
+        document["choices"] = choices
+        return CoordinatorSemanticChange(events: [data(event(
+            sequence, "decision_packet_sealed", sealedAt, binding, [
+                "interaction_id": "interaction_\(suffix)", "packet_id": "packet_\(suffix)",
+                "revision": revision, "expires_at": expiresAt,
+            ]
+        ))], documents: [data(document)])
+    }
+
+    @discardableResult
+    private func replayPendingTrace(
+        _ changes: [CoordinatorSemanticChange], probes: [CoordinatorBinding]
+    ) throws -> CoordinatorSemanticState {
+        var incremental = CoordinatorSemanticState()
+        var events: [Data] = []
+        var documents: [Data] = []
+        for change in changes {
+            events += change.events
+            documents += change.documents
+            incremental = try CoordinatorSemanticReplay.applying(change, to: incremental)
+            let full = try CoordinatorSemanticReplay.replay(events: events, documents: documents)
+            XCTAssertEqual(incremental, full)
+            try assertPendingIndexMatchesScan(incremental, probes: probes)
+            try assertPendingIndexMatchesScan(full, probes: probes)
+        }
+        return incremental
+    }
+
+    private func assertPendingIndexMatchesScan(
+        _ state: CoordinatorSemanticState, probes: [CoordinatorBinding],
+        file: StaticString = #filePath, line: UInt = #line
+    ) throws {
+        for probe in probes {
+            // Independent oracle using the original guard, only in tests.
+            let conflicting = state.boundaries.values.contains {
+                $0.binding.fullKey != probe.fullKey && $0.binding.sessionKey == probe.sessionKey
+                    && $0.isPendingInteraction
+            }
+            if conflicting {
+                XCTAssertThrowsError(try state.assertSessionPendingSlotAvailable(for: probe), file: file, line: line) {
+                    XCTAssertEqual($0.coordinatorError.code, "session_pending_interaction_conflict", file: file, line: line)
+                }
+            } else {
+                XCTAssertNoThrow(try state.assertSessionPendingSlotAvailable(for: probe), file: file, line: line)
+            }
         }
     }
 
