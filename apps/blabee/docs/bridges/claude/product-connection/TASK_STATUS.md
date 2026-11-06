@@ -1,5 +1,11 @@
 # 제품 연결 작업 상태
 
+2026-11-06 r91 게시: 위 경량화·출처 배지·Codex 0.166.0·세션 변경 안내·제출 전 preflight 수정을 담은 r91을 빌드·공증하고
+`blabee-v0.1.0+build.91`로 GitHub에 게시했다(commit `aba89cb`). 공개 문서 저장소(Biadone/blabee)의 README·변경 이력 갱신은 `build/release-public-20261106-r91/github-publication/commit-and-push-docs.py`로 준비해 두었고 게시 여부는 별도 확인한다. 먼저 만든 r90은 `ClaudeRuntimePayload.packageVersions`가 zod 4.6.2·fast-uri 3.1.7에
+남아 실제 번들 런타임 qualifier 검사(`BLABEE_CLAUDE_PACKAGED_RUNTIME`)에서 `claude_runtime_payload_invalid`로 거부돼 게시하지 않았다.
+r91은 Swift 고정 목록을 번들과 맞추고 `Tests/AppPackaging/claude-runtime-package-pins.test.mjs`로 세 곳의 일치를 패키징 검사에 넣었다.
+설치 앱은 여전히 r89이며, 설치 뒤 새 세션에서 한 줄 Hook 안내문과 연결 확인 없는 emit→카드→선택→claim→complete 왕복 확인은 후속이다.
+
 2026-11-06 안내문 경량화: 같은 안내문(약 1,170자)이 MCP instructions, SessionStart Hook, 매 UserPromptSubmit Hook에
 세 번 들어가던 것을 줄였다. 이제 Hook에는 `blabee-claude boundary_id=<uuid>` 또는 boundary 없음 한 줄만 들어간다.
 규칙은 짧게 다시 쓴 MCP instructions(500자)에만 둔다. emit·complete 세부 규칙은 도구 description으로 옮겼다.
