@@ -1,0 +1,13 @@
+.build/
+.swiftpm/
+node_modules/
+build/
+tmp/
+output/
+
+# Claude Code local state
+.claude/settings.local.json
+.claude/worktrees/
+
+# Python bytecode from local check scripts
+__pycache__/

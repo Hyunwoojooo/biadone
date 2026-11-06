@@ -1,0 +1,37 @@
+/* Library composition. All recurring brand values come from biadone.css. */
+.kit-intro { padding-block: var(--ui-space-xl) var(--page-section-gap); }
+.kit-intro .biadone-title { margin-top: var(--ui-space-xl); }
+.kit-intro-copy { margin-top: var(--ui-space-lg); max-width: 42em; }
+.kit-actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--ui-space-md); margin-top: var(--ui-space-lg); }
+.kit-section { border-top: var(--screen-line) solid var(--color-text-primary); }
+.kit-section-copy { margin-top: var(--ui-space-md); max-width: 48em; }
+.kit-template-list { margin-top: var(--ui-space-xl); }
+.kit-template-row { display: grid; grid-template-columns: auto minmax(0,1fr) auto; gap: var(--ui-space-lg); align-items: baseline; padding-block: var(--ui-space-lg); border-top: var(--screen-line) solid var(--ui-line-color); text-decoration: none; }
+.kit-template-row:hover h3 { text-decoration: underline; text-underline-offset: .25em; }
+.kit-template-row .biadone-body { margin-top: var(--ui-space-xs); }
+.kit-index { color: var(--color-brand); font-weight: var(--ui-label-weight); }
+.kit-open { font-size: var(--ui-flow-size); color: var(--color-brand); }
+.kit-note { margin-top: var(--ui-space-lg); }
+.kit-component { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,3fr); gap: var(--ui-space-xl); padding-block: var(--ui-space-xl); border-bottom: var(--screen-line) solid var(--ui-line-color); }
+.kit-component:first-of-type { margin-top: var(--ui-space-lg); }
+.kit-component > div > .biadone-source { margin-top: var(--ui-space-sm); }
+.kit-sample > * + * { margin-top: var(--ui-space-md); }
+.kit-palette { display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); gap: var(--ui-space-lg); margin-top: var(--ui-space-xl); }
+.kit-swatch { display: block; height: var(--ui-space-section); margin-bottom: var(--ui-space-sm); border: var(--screen-line) solid var(--ui-line-color); }
+.kit-swatch--brand { background: var(--color-brand); }
+.kit-swatch--tint { background: var(--color-background-tint); }
+.kit-swatch--ink { background: var(--color-text-primary); }
+.kit-swatch--white { background: var(--color-background); }
+.kit-foundation-row { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,2fr); gap: var(--ui-space-xl); align-items: center; margin-top: var(--ui-space-xl); padding-top: var(--ui-space-xl); border-top: var(--screen-line) solid var(--ui-line-color); }
+.kit-logo-large { --biadone-logo-size: var(--ui-title-min); }
+.kit-footer { display: flex; align-items: center; justify-content: space-between; gap: var(--ui-space-md); padding-block: var(--ui-space-lg); border-top: var(--screen-line) solid var(--ui-line-color); }
+@media (max-width: 45em) {
+  .kit-intro { padding-top: var(--ui-space-lg); }
+  .kit-intro .biadone-title { margin-top: var(--ui-space-lg); }
+  .kit-intro-copy br { display: none; }
+  .kit-template-row { gap: var(--ui-space-sm); }
+  .kit-component { grid-template-columns: minmax(0,1fr); gap: var(--ui-space-lg); }
+  .kit-palette { grid-template-columns: repeat(2,minmax(0,1fr)); gap: var(--ui-space-md); }
+  .kit-foundation-row { grid-template-columns: minmax(0,1fr); gap: var(--ui-space-md); }
+  .kit-footer { flex-wrap: wrap; }
+}

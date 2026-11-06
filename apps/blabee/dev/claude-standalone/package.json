@@ -1,0 +1,20 @@
+{
+  "name": "blabee-claude",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "test": "node --test ../../Tests/bridges/claude/standalone/*.test.mjs",
+    "check": "node scripts/check.mjs",
+    "doctor": "node scripts/blabee-claude.mjs doctor",
+    "claude": "node scripts/blabee-claude.mjs launch",
+    "app": "node scripts/blabee-claude.mjs app"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.30.0"
+  }
+}

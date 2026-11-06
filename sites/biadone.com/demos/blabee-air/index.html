@@ -1,0 +1,178 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="robots" content="noindex, nofollow">
+    <meta name="referrer" content="no-referrer">
+    <meta name="theme-color" content="#f5f6f8">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; media-src 'self'; font-src 'self'; connect-src 'none'; base-uri 'none'; form-action 'none'">
+    <meta name="description" content="An independent Blabee Air landing-page design demo. Explore the choices, watch the real macOS demo, and preview the beta form.">
+    <title>Blabee Air — Landing concept</title>
+    <link rel="icon" href="./assets/blabee-panel-mark.svg" type="image/svg+xml">
+    <link rel="preload" href="./assets/fonts/PretendardVariable.ttf" as="font" type="font/ttf" crossorigin>
+    <link rel="stylesheet" href="./style.css">
+    <script src="./demo.js" defer></script>
+  </head>
+  <body>
+    <svg class="icon-library" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+      <symbol id="icon-arrow" viewBox="0 0 24 24"><path d="M5 12h14m-6-6 6 6-6 6"/></symbol>
+      <symbol id="icon-play" viewBox="0 0 24 24"><path d="m9 5 11 7-11 7Z"/></symbol>
+      <symbol id="icon-external" viewBox="0 0 24 24"><path d="M14 4h6v6m0-6L10 14m0-9H5v15h15v-6"/></symbol>
+      <symbol id="icon-file" viewBox="0 0 24 24"><path d="M14 3H6v18h13V8Zm0 0v6h5M9 13h7m-7 4h5"/></symbol>
+      <symbol id="icon-phone" viewBox="0 0 24 24"><rect x="6" y="2" width="12" height="20" rx="3"/><path d="M11 18h2"/></symbol>
+      <symbol id="icon-list" viewBox="0 0 24 24"><path d="M9 6h11M9 12h11M9 18h11M3 6h1m-1 6h1m-1 6h1"/></symbol>
+      <symbol id="icon-refresh" viewBox="0 0 24 24"><path d="M20 9a8 8 0 1 0 0 7M20 3v6h-6"/></symbol>
+      <symbol id="icon-check" viewBox="0 0 24 24"><path d="m5 12 5 5L20 6"/></symbol>
+      <symbol id="icon-code" viewBox="0 0 24 24"><path d="m8 5-6 7 6 7m8-14 6 7-6 7"/></symbol>
+      <symbol id="icon-plus" viewBox="0 0 24 24"><path d="M5 12h14M12 5v14"/></symbol>
+    </svg>
+
+    <a class="skip-link" href="#main">Skip to content</a>
+    <header class="site-header" id="top">
+      <div class="shell header-inner">
+        <a class="brand" href="#top" aria-label="Blabee, back to top">
+          <img src="./assets/blabee-panel-mark.svg" width="28" height="32" alt="">
+          <span>Blabee</span>
+        </a>
+        <nav class="header-nav" aria-label="Main navigation">
+          <a class="nav-link" href="#experience">Experience</a>
+          <a class="nav-link" href="#real-demo">Demo</a>
+          <a class="button button-primary header-cta" href="#beta">Request beta access</a>
+        </nav>
+      </div>
+    </header>
+
+    <main id="main">
+      <section class="experience" id="experience" aria-labelledby="hero-title">
+        <div class="shell hero-grid">
+          <div class="hero-copy">
+            <h1 id="hero-title"><span>Your flow.</span><span>With a little help</span><span>from Blabee.</span></h1>
+            <p class="hero-description">Keep working in any window. Blabee brings Codex’s next steps to you, so you can choose and carry on.</p>
+            <div class="hero-actions">
+              <a class="button button-primary" href="#beta">Request beta access</a>
+              <a class="watch-link" href="#real-demo"><span class="play-circle"><svg class="icon" aria-hidden="true"><use href="#icon-play"/></svg></span><span>Watch the 36-sec demo</span></a>
+            </div>
+            <p class="hero-note">For Codex on macOS. Private beta.</p>
+          </div>
+
+          <figure class="product-illustration">
+            <div class="desktop-scene">
+              <div class="document-window" aria-hidden="true">
+                <div class="window-chrome"><span class="traffic-lights"><i></i><i></i><i></i></span><span class="document-tab">Launch notes</span><span class="window-plus">+</span></div>
+                <div class="document-toolbar"><svg class="icon"><use href="#icon-file"/></svg><span class="toolbar-back">‹</span><span>Aa</span><svg class="icon"><use href="#icon-list"/></svg><span class="toolbar-spacer"></span><span>···</span></div>
+                <div class="document-content">
+                  <h2>Launch notes</h2>
+                  <h3>Overview</h3>
+                  <p>A little companion for your Codex workflow.<br>Keep the conversation moving, wherever you work.</p>
+                  <h3>Key updates</h3>
+                  <ul><li>Next steps, right in your menu bar</li><li>The same Codex conversation</li><li>A click or a keyboard shortcut</li></ul>
+                  <h3>Next steps</h3>
+                  <p class="note-check is-done"><span></span> Finalize landing page copy</p>
+                  <p class="note-check"><span></span> Add screenshots</p>
+                  <p class="note-check"><span></span> Polish demo recording</p>
+                  <p class="note-check"><span></span> Prepare beta invite flow</p>
+                </div>
+                <p class="document-status" data-document-status>Codex finished. Your next step is ready.</p>
+              </div>
+
+              <div class="air-panel" data-product-demo tabindex="0" role="group" aria-label="Interactive Blabee illustration. Focus here to use Option plus 1 through 4." aria-describedby="demo-caption">
+                <div class="panel-chrome">
+                  <span class="panel-brand"><img src="./assets/blabee-panel-mark.svg" width="21" height="25" alt=""><span>blabee</span></span>
+                  <span class="panel-status"><span class="status-dot" aria-hidden="true"></span><span data-demo-status>Ready for you</span></span>
+                  <button class="icon-button" type="button" data-demo-reset aria-label="Restart interactive illustration" title="Restart illustration"><svg class="icon" aria-hidden="true"><use href="#icon-refresh"/></svg></button>
+                </div>
+                <h2 class="panel-summary" data-demo-summary>The landing page is ready.
+What would you like to do next?</h2>
+                <div class="choice-grid">
+                  <button class="choice choice-recommended" type="button" data-choice="1" aria-pressed="false" aria-keyshortcuts="Alt+1">
+                    <span class="choice-top"><small class="recommended">Recommended</small><kbd>⌥1</kbd></span>
+                    <span class="choice-copy"><svg class="icon" aria-hidden="true"><use href="#icon-external"/></svg><span>Preview the page</span></span>
+                  </button>
+                  <button class="choice" type="button" data-choice="2" aria-pressed="false" aria-keyshortcuts="Alt+2">
+                    <span class="choice-top"><svg class="icon" aria-hidden="true"><use href="#icon-file"/></svg><kbd>⌥2</kbd></span>
+                    <span class="choice-copy">Review the changes</span>
+                  </button>
+                  <button class="choice" type="button" data-choice="3" aria-pressed="false" aria-keyshortcuts="Alt+3">
+                    <span class="choice-top"><svg class="icon" aria-hidden="true"><use href="#icon-phone"/></svg><kbd>⌥3</kbd></span>
+                    <span class="choice-copy">Check mobile layout</span>
+                  </button>
+                  <button class="choice" type="button" data-choice="4" aria-pressed="false" aria-keyshortcuts="Alt+4">
+                    <span class="choice-top"><svg class="icon" aria-hidden="true"><use href="#icon-list"/></svg><kbd>⌥4</kbd></span>
+                    <span class="choice-copy">Plan the next step</span>
+                  </button>
+                </div>
+                <div class="panel-feedback"><svg class="icon" aria-hidden="true"><use href="#icon-arrow"/></svg><p data-demo-feedback role="status" aria-live="polite" aria-atomic="true">Click a choice to try it</p></div>
+              </div>
+            </div>
+            <figcaption id="demo-caption">Interactive illustration · no task is executed</figcaption>
+          </figure>
+        </div>
+
+        <div class="workflow-band">
+          <div class="shell">
+            <h2>One small choice. Back in flow.</h2>
+            <ol class="workflow">
+              <li><span class="workflow-icon"><svg class="icon" aria-hidden="true"><use href="#icon-code"/></svg></span><span><b>1</b> Codex finishes</span></li>
+              <li><span class="workflow-icon"><img src="./assets/blabee-panel-mark.svg" width="24" height="28" alt=""></span><span><b>2</b> Blabee brings the choices</span></li>
+              <li><span class="workflow-icon"><svg class="icon" aria-hidden="true"><use href="#icon-check"/></svg></span><span><b>3</b> You keep going</span></li>
+            </ol>
+          </div>
+        </div>
+      </section>
+
+      <section class="real-demo-section" id="real-demo" aria-labelledby="demo-title">
+        <div class="shell">
+          <div class="section-heading">
+            <h2 id="demo-title">A small panel.<br>A real part of your day.</h2>
+            <p>Watch Blabee bring Codex’s next steps into the window you’re already using.</p>
+          </div>
+          <figure class="real-demo">
+            <div class="video-frame">
+              <video data-real-video controls playsinline preload="none" poster="./assets/demo/blabee-real-demo-en-poster.png" aria-label="36-second recording of Blabee on macOS">
+                <source src="./assets/demo/blabee-real-demo-en.mp4" type="video/mp4">
+                <track kind="captions" src="./assets/demo/blabee-real-demo-en.vtt" srclang="en" label="English" default>
+                Your browser does not support embedded video. <a href="./assets/demo/blabee-real-demo-en.mp4">Open the demo video.</a>
+              </video>
+            </div>
+            <figcaption><span>Real macOS footage · 36 seconds · English captions</span><a href="./assets/demo/blabee-real-demo-en.mp4" target="_blank" rel="noopener">Open video <svg class="icon" aria-hidden="true"><use href="#icon-external"/></svg></a></figcaption>
+            <p class="video-error" data-video-error hidden>Playback couldn’t start. <a href="./assets/demo/blabee-real-demo-en.mp4">Open the video directly.</a></p>
+          </figure>
+        </div>
+      </section>
+
+      <section class="beta-section" id="beta" aria-labelledby="beta-title">
+        <div class="shell beta-grid">
+          <div class="beta-copy">
+            <h2 id="beta-title">Your next Codex task.<br>A little more in flow.</h2>
+            <p>Request a place in the Mac private beta. Selected testers receive installation instructions by email.</p>
+            <ul class="beta-facts"><li>Works with Codex on macOS.</li><li>No separate AI API key.</li></ul>
+          </div>
+          <form class="beta-form" data-beta-form aria-describedby="form-note">
+            <label for="beta-email">Email</label>
+            <input id="beta-email" data-email type="email" autocomplete="off" inputmode="email" placeholder="you@example.com" maxlength="254" required disabled aria-describedby="form-note">
+            <button class="button button-primary form-submit" data-form-submit type="submit" disabled><span>Request beta access</span><svg class="icon" aria-hidden="true"><use href="#icon-arrow"/></svg></button>
+            <p class="form-note" id="form-note">Preview form — no email is sent or saved.</p>
+            <p class="form-feedback" data-form-feedback role="status" aria-live="polite" aria-atomic="true"></p>
+            <button class="text-button" data-form-reset type="button" hidden>Try the form again <svg class="icon" aria-hidden="true"><use href="#icon-refresh"/></svg></button>
+            <noscript><p class="form-note">Enable JavaScript to try this preview form. No request will be sent.</p></noscript>
+          </form>
+        </div>
+      </section>
+
+      <section class="faq-section shell" aria-labelledby="faq-title">
+        <h2 id="faq-title">A few things to know.</h2>
+        <div class="faq-list">
+          <details><summary>Who is the beta for?<span class="faq-toggle"><svg class="icon" aria-hidden="true"><use href="#icon-plus"/></svg></span></summary><p>The current private beta is for people using Codex on macOS. The live landing page has the current application information.</p></details>
+          <details><summary>Does Blabee create the suggestions?<span class="faq-toggle"><svg class="icon" aria-hidden="true"><use href="#icon-plus"/></svg></span></summary><p>Codex creates the suggestions. Blabee displays them in a small macOS panel and sends your choice back to the original conversation.</p></details>
+          <details><summary>What happens after I request access?<span class="faq-toggle"><svg class="icon" aria-hidden="true"><use href="#icon-plus"/></svg></span></summary><p>On the live site, selected testers receive installation instructions by email. This independent design demo only previews the form; it does not submit a beta request.</p></details>
+        </div>
+      </section>
+    </main>
+
+    <footer class="site-footer shell">
+      <div class="footer-brand"><a class="brand" href="#top"><img src="./assets/blabee-panel-mark.svg" width="28" height="32" alt=""><span>Blabee</span></a><span class="demo-label">Independent design demo</span></div>
+      <nav aria-label="Footer navigation"><a href="https://biadone.com/blabee/policies/" target="_blank" rel="noopener">Privacy &amp; support</a><a href="https://biadone.com/blabee/" target="_blank" rel="noopener">Original landing page <svg class="icon" aria-hidden="true"><use href="#icon-external"/></svg></a></nav>
+    </footer>
+  </body>
+</html>

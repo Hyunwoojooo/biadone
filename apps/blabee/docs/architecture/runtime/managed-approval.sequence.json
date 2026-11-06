@@ -1,0 +1,47 @@
+{
+  "schema_version": 1,
+  "diagram_type": "sequence",
+  "meta": {
+    "title": "Blabee 런타임 — 선택형 Managed Codex 승인 (a352baa)",
+    "output": "docs/architecture/runtime/managed-approval.html",
+    "animation": "none",
+    "visual_preset": "signal-flow",
+    "quality_profile": "showcase",
+    "viewBox": [1240, 740]
+  },
+  "participants": [
+    { "id": "developer", "type": "external", "label": "개발자", "sublabel": "명시적 opt-in" },
+    { "id": "bridge", "type": "backend", "label": "Bridge", "sublabel": "managed blabee-codex" },
+    { "id": "codex", "type": "external", "label": "App Server", "sublabel": "live gate pending" },
+    { "id": "coordinator", "type": "backend", "label": "Coordinator", "sublabel": "approval authority" },
+    { "id": "pet", "type": "frontend", "label": "macOS Pet", "sublabel": "3-way choice" }
+  ],
+  "segments": [
+    { "from": 150, "to": 266, "label": "Opt-in + preflight" },
+    { "from": 282, "to": 520, "label": "Bound approval" },
+    { "from": 518, "to": 674, "label": "응답 전달·자식 종료" }
+  ],
+  "messages": [
+    { "from": "developer", "to": "bridge", "y": 168, "label": "blabee-codex 실행 + preflight", "variant": "emphasis", "note": "신뢰 통과·첫 child 전 준비 실패만 native fallback" },
+    { "from": "bridge", "to": "codex", "y": 212, "label": "private App Server/TUI child 시작", "variant": "security", "note": "시작 뒤 같은 요청을 자동 재실행하지 않음" },
+    { "from": "codex", "to": "bridge", "y": 244, "label": "initialized", "variant": "return" },
+    { "from": "codex", "to": "bridge", "y": 292, "label": "approval request + original request ID", "variant": "default" },
+    { "from": "bridge", "to": "coordinator", "y": 324, "label": "managed_command_approval", "variant": "security" },
+    { "from": "coordinator", "to": "pet", "y": 356, "label": "exact focus + 3-way choice", "variant": "emphasis" },
+    { "from": "pet", "to": "developer", "y": 388, "label": "이번만 허용 | 거부 | 네이티브 이관", "variant": "emphasis" },
+    { "from": "developer", "to": "pet", "y": 420, "label": "한 선택", "variant": "emphasis" },
+    { "from": "pet", "to": "coordinator", "y": 452, "label": "selection + expected identity", "variant": "security" },
+    { "from": "coordinator", "to": "bridge", "y": 484, "label": "process-local resolution + delivery claim", "variant": "return" },
+    { "from": "bridge", "to": "codex", "y": 532, "label": "같은 request ID로 response stream write", "variant": "security", "note": "App Server 소비 확인은 아님" },
+    { "from": "bridge", "to": "coordinator", "y": 568, "label": "response stream write 완료 보고", "variant": "return", "note": "Bridge의 write completion만 증명" },
+    { "from": "codex", "to": "developer", "y": 608, "label": "실제 명령 결과 (별도)", "variant": "dashed" },
+    { "from": "bridge", "to": "codex", "y": 652, "label": "종료 시 소유한 App Server/TUI만 정리", "variant": "security", "note": "시간 제한이 있는 TERM/KILL · 같은 요청 자동 재실행 없음" }
+  ],
+  "activations": [
+    { "participant": "bridge", "from": 162, "to": 250, "type": "backend" },
+    { "participant": "codex", "from": 206, "to": 614, "type": "external" },
+    { "participant": "bridge", "from": 286, "to": 574, "type": "backend" },
+    { "participant": "coordinator", "from": 318, "to": 574, "type": "backend" },
+    { "participant": "pet", "from": 350, "to": 458, "type": "frontend" }
+  ]
+}

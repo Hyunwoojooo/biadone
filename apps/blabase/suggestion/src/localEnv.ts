@@ -29,6 +29,8 @@ const ALLOWED_SHARED_ENV_KEYS = new Set([
 ]);
 
 let loadedPath: string | null = null;
+const resolvedSharedLocalEnvSnapshots =
+  new WeakSet<NodeJS.ProcessEnv>();
 
 export type SharedLocalEnvSnapshotOptions = {
   cwd?: string;
@@ -46,19 +48,23 @@ export function createSharedLocalEnvSnapshot(
 ): NodeJS.ProcessEnv {
   const mode = options.mode ?? "maintain";
   const snapshot = copyOwnEnvironmentData(env, mode);
-  if (mode === "preserve") return snapshot;
+  if (mode === "preserve") {
+    return markSharedLocalEnvSnapshotResolved(snapshot);
+  }
 
   const cwd = options.cwd ?? process.cwd();
   const filePath =
     snapshot.BLABASE_SHARED_ENV_PATH?.trim() ??
     readLocalPointerFile(cwd);
-  if (!filePath) return snapshot;
+  if (!filePath) {
+    return markSharedLocalEnvSnapshotResolved(snapshot);
+  }
 
   let contents: string;
   try {
     contents = readFileSync(filePath, "utf8");
   } catch {
-    return snapshot;
+    return markSharedLocalEnvSnapshotResolved(snapshot);
   }
 
   const values = parseSharedEnvText(contents);
@@ -67,12 +73,13 @@ export function createSharedLocalEnvSnapshot(
       snapshot[key] = value;
     }
   }
-  return snapshot;
+  return markSharedLocalEnvSnapshotResolved(snapshot);
 }
 
 export function loadSharedLocalEnv(
   env: NodeJS.ProcessEnv = process.env
 ): void {
+  if (resolvedSharedLocalEnvSnapshots.has(env)) return;
   const filePath =
     env.BLABASE_SHARED_ENV_PATH?.trim() ?? readLocalPointerFile();
   if (!filePath || loadedPath === filePath) return;
@@ -93,6 +100,13 @@ export function loadSharedLocalEnv(
     }
   }
   loadedPath = filePath;
+}
+
+function markSharedLocalEnvSnapshotResolved(
+  snapshot: NodeJS.ProcessEnv
+): NodeJS.ProcessEnv {
+  resolvedSharedLocalEnvSnapshots.add(snapshot);
+  return snapshot;
 }
 
 function readLocalPointerFile(cwd = process.cwd()): string | undefined {

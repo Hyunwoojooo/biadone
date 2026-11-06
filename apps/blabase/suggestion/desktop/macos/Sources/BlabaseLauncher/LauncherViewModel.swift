@@ -11,6 +11,7 @@ final class LauncherViewModel: ObservableObject {
     @Published private(set) var route: LauncherRoute = .home
     @Published private(set) var isResolvingSourceNavigation = false
     @Published private(set) var sourceNavigationRecoveryMessage: String?
+    @Published private(set) var workBoardFallbackMessage: String?
 
     private let client: LauncherAgentClient
     private let dashboardRootContextClient: DashboardRootContextClient
@@ -18,11 +19,18 @@ final class LauncherViewModel: ObservableObject {
     private let sourceURLOpener: (URL) -> Bool
     private let dashboardBaseURLProvider: () -> URL?
     private let sourceModeProvider: () -> LauncherSourceMode
+    private let preferredProjectionProvider:
+        (Bool) async throws -> LauncherPreferredProjection
+    private let nowProvider: () -> Date
+    private let expirySleeper: (UInt64) async throws -> Void
     private var loadTask: Task<Void, Never>?
+    private var expiryTask: Task<Void, Never>?
     private var actionTask: Task<Void, Never>?
     private var sourceNavigationTask: Task<Void, Never>?
     private var lastSourceNavigationTarget: SourceNavigationTarget?
     private var configurationGeneration = UUID()
+    private var activeLoadGeneration = UUID()
+    private var workBoardDisplayGeneration = UUID()
 
     init(
         client: LauncherAgentClient = LauncherAgentClient(),
@@ -43,6 +51,12 @@ final class LauncherViewModel: ObservableObject {
             ProcessInfo.processInfo.environment[
                 "BLABASE_LAUNCHER_DATA_ROOT"
             ] == nil ? .managed : .readOnly
+        },
+        preferredProjectionProvider:
+            ((Bool) async throws -> LauncherPreferredProjection)? = nil,
+        nowProvider: @escaping () -> Date = Date.init,
+        expirySleeper: @escaping (UInt64) async throws -> Void = {
+            try await Task.sleep(nanoseconds: $0)
         }
     ) {
         self.client = client
@@ -53,11 +67,19 @@ final class LauncherViewModel: ObservableObject {
         self.sourceURLOpener = sourceURLOpener
         self.dashboardBaseURLProvider = dashboardBaseURLProvider
         self.sourceModeProvider = sourceModeProvider
+        self.preferredProjectionProvider = preferredProjectionProvider ?? {
+            try await client.getPreferredProjection(refresh: $0)
+        }
+        self.nowProvider = nowProvider
+        self.expirySleeper = expirySleeper
     }
 
     func load(refresh: Bool) {
         if refresh, isRefreshing { return }
         loadTask?.cancel()
+        let loadGeneration = UUID()
+        activeLoadGeneration = loadGeneration
+        reschedulePublishedWorkBoard(for: loadGeneration)
         isRefreshing = refresh
         if !refresh, currentProjection == nil {
             state = .loading
@@ -67,24 +89,29 @@ final class LauncherViewModel: ObservableObject {
         loadTask = Task { [weak self] in
             guard let self else { return }
             defer {
-                if generation == self.configurationGeneration {
+                if generation == self.configurationGeneration &&
+                    loadGeneration == self.activeLoadGeneration {
                     self.isRefreshing = false
                 }
             }
             do {
-                let projection = try await self.client.getAttention(
-                    refresh: refresh
-                )
+                let projection = try await self.preferredProjectionProvider(refresh)
                 guard
                     !Task.isCancelled,
-                    generation == self.configurationGeneration
+                    generation == self.configurationGeneration,
+                    loadGeneration == self.activeLoadGeneration
                 else { return }
-                self.state = LauncherScreenReducer.loaded(projection)
+                self.publish(
+                    projection,
+                    loadGeneration: loadGeneration
+                )
             } catch {
                 guard
                     !Task.isCancelled,
-                    generation == self.configurationGeneration
+                    generation == self.configurationGeneration,
+                    loadGeneration == self.activeLoadGeneration
                 else { return }
+                self.workBoardFallbackMessage = nil
                 self.state = .error(Self.message(for: error))
             }
         }
@@ -247,7 +274,15 @@ final class LauncherViewModel: ObservableObject {
     func stopForConfigurationChange() async throws {
         invalidateCurrentWork()
         state = .loading
-        try await client.stopForReconfiguration()
+        try await client.beginConfigurationStop()
+    }
+
+    func completeConfigurationChange() {
+        client.completeConfigurationChange()
+    }
+
+    func abortConfigurationChange() {
+        client.abortConfigurationChange()
     }
 
     func loadAfterConfigurationChange() {
@@ -255,11 +290,16 @@ final class LauncherViewModel: ObservableObject {
         load(refresh: false)
     }
 
-    func shutdown() {
+    func shutdown() async throws {
         loadTask?.cancel()
         actionTask?.cancel()
         sourceNavigationTask?.cancel()
-        client.shutdown()
+        expiryTask?.cancel()
+        try await client.shutdown()
+    }
+
+    func markAgentTerminationFailure() {
+        state = .error("Local Agent 종료를 확인하지 못했습니다.")
     }
 
     var currentProjection: LauncherAttentionProjection? {
@@ -328,6 +368,10 @@ final class LauncherViewModel: ObservableObject {
         configurationGeneration = UUID()
         loadTask?.cancel()
         loadTask = nil
+        activeLoadGeneration = UUID()
+        workBoardDisplayGeneration = UUID()
+        expiryTask?.cancel()
+        expiryTask = nil
         actionTask?.cancel()
         actionTask = nil
         sourceNavigationTask?.cancel()
@@ -336,9 +380,92 @@ final class LauncherViewModel: ObservableObject {
         isPerformingAction = false
         isResolvingSourceNavigation = false
         actionMessage = nil
+        workBoardFallbackMessage = nil
         sourceNavigationRecoveryMessage = nil
         lastSourceNavigationTarget = nil
         route = .home
+    }
+
+    private func publish(
+        _ projection: LauncherPreferredProjection,
+        loadGeneration: UUID
+    ) {
+        let nextState = LauncherScreenReducer.loaded(
+            projection,
+            now: nowProvider()
+        )
+        switch projection {
+        case .degradedAttention:
+            workBoardFallbackMessage =
+                LauncherWorkBoardPresentation.degradedAttentionText
+        case .workBoard, .attention:
+            workBoardFallbackMessage = nil
+        }
+        state = nextState
+        workBoardDisplayGeneration = UUID()
+        expiryTask?.cancel()
+        expiryTask = nil
+        if case .workBoard = nextState {
+            scheduleWorkBoardExpiry(
+                loadGeneration: loadGeneration,
+                displayGeneration: workBoardDisplayGeneration
+            )
+        }
+    }
+
+    private func reschedulePublishedWorkBoard(for loadGeneration: UUID) {
+        expiryTask?.cancel()
+        expiryTask = nil
+        guard case .workBoard(let display) = state else { return }
+        let refreshed = LauncherWorkBoardDisplayState(
+            projection: display.projection,
+            now: nowProvider()
+        )
+        state = .workBoard(refreshed)
+        workBoardDisplayGeneration = UUID()
+        scheduleWorkBoardExpiry(
+            loadGeneration: loadGeneration,
+            displayGeneration: workBoardDisplayGeneration
+        )
+    }
+
+    private func scheduleWorkBoardExpiry(
+        loadGeneration: UUID,
+        displayGeneration: UUID
+    ) {
+        guard
+            case .workBoard(let display) = state,
+            let nextExpiry = display.nextExpiry
+        else { return }
+        let delay = launcherWorkBoardExpiryDelayNanoseconds(
+            now: nowProvider(),
+            nextExpiry: nextExpiry
+        )
+        expiryTask = Task { [weak self] in
+            guard let self else { return }
+            do {
+                try await self.expirySleeper(delay)
+                try Task.checkCancellation()
+            } catch {
+                return
+            }
+            guard
+                loadGeneration == self.activeLoadGeneration,
+                displayGeneration == self.workBoardDisplayGeneration,
+                case .workBoard(let current) = self.state
+            else { return }
+            self.state = .workBoard(
+                LauncherWorkBoardDisplayState(
+                    projection: current.projection,
+                    now: self.nowProvider()
+                )
+            )
+            self.expiryTask = nil
+            self.scheduleWorkBoardExpiry(
+                loadGeneration: loadGeneration,
+                displayGeneration: displayGeneration
+            )
+        }
     }
 
     private func presentSourceNavigationBlock(

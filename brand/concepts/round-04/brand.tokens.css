@@ -1,0 +1,28 @@
+/* Design Tokens - Auto-generated */
+/* Do not edit directly - modify tokens.json instead */
+
+/* === PRIMITIVES === */
+:root {
+  --primitive-color-blue: #2858F0;
+  --primitive-color-blueTint: #EEF5FF;
+  --primitive-color-ink: #23314D;
+  --primitive-color-white: #FFFFFF;
+  --primitive-font-pretendard: "Pretendard", "Apple SD Gothic Neo", sans-serif;
+}
+
+/* === SEMANTIC === */
+:root {
+  --color-brand: #2858F0;
+  --color-on-brand: #FFFFFF;
+  --color-background: #FFFFFF;
+  --color-background-tint: #EEF5FF;
+  --color-text-primary: #23314D;
+  --font-primary: "Pretendard", "Apple SD Gothic Neo", sans-serif;
+}
+
+/* === COMPONENTS === */
+:root {
+  --button-bg: #2858F0;
+  --button-fg: #FFFFFF;
+  --button-font-family: "Pretendard", "Apple SD Gothic Neo", sans-serif;
+}

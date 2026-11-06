@@ -7,6 +7,26 @@ import { verifiedCandidateFixture } from "./helpers";
 
 const NOW = "2026-07-24T00:00:00.000Z";
 
+function screenSourceContext(
+  overrides: Partial<
+    ReturnType<typeof verifiedCandidateFixture>["sourceContexts"][number]
+  > = {}
+) {
+  return {
+    sourceId: "screen-source",
+    modality: "screen" as const,
+    authority: "screen_observation" as const,
+    observedFrom: "2026-07-23T23:59:00.000Z",
+    observedTo: "2026-07-24T00:00:00.000Z",
+    confidenceFloor: 0.99,
+    confidenceCeiling: 0.99,
+    coverageRatio: 1,
+    conflictCount: 0,
+    issueCount: 0,
+    ...overrides
+  };
+}
+
 describe("priority scoring and selection", () => {
   it("makes completed tasks ineligible", () => {
     const [candidate] = mergeTaskLineage([
@@ -90,5 +110,99 @@ describe("priority scoring and selection", () => {
 
     expect(result.status).toBe("suggested");
     expect(result.topSuggestion?.candidateId).toBe(candidates[0]?.id);
+  });
+
+  it("rejects low-confidence and low-coverage screen-only evidence", () => {
+    const [candidate] = mergeTaskLineage([
+      verifiedCandidateFixture({
+        sourceContexts: [
+          screenSourceContext({ confidenceFloor: 0.42, coverageRatio: 0.5 })
+        ]
+      })
+    ]);
+    const assessment = scorePriority(candidate, NOW);
+
+    expect(assessment.eligibility).toBe("ineligible");
+    expect(assessment.reasonCodes).toEqual(
+      expect.arrayContaining([
+        "SCREEN_COVERAGE_TOO_LOW",
+        "SCREEN_OBSERVATION_CONFIDENCE_TOO_LOW"
+      ])
+    );
+  });
+
+  it("rejects stale screen-only evidence beyond the five-minute boundary", () => {
+    const [candidate] = mergeTaskLineage([
+      verifiedCandidateFixture({
+        sourceContexts: [
+          screenSourceContext({ observedTo: "2026-07-23T23:54:59.000Z" })
+        ]
+      })
+    ]);
+    const assessment = scorePriority(candidate, NOW);
+
+    expect(assessment.eligibility).toBe("ineligible");
+    expect(assessment.reasonCodes).toContain("SCREEN_EVIDENCE_STALE");
+  });
+
+  it("rejects a screen-only planning option without actionable evidence", () => {
+    const [candidate] = mergeTaskLineage([
+      verifiedCandidateFixture({
+        sourceContexts: [screenSourceContext()],
+        evidence: [
+          {
+            conversationId: "conversation-1",
+            messageId: "msg-1",
+            kind: "proposal",
+            messageIndex: 1,
+            role: "user",
+            quote: "Storage options to consider",
+            startChar: 0,
+            endChar: 27
+          }
+        ]
+      })
+    ]);
+    const assessment = scorePriority(candidate, NOW);
+
+    expect(assessment.eligibility).toBe("ineligible");
+    expect(assessment.reasonCodes).toContain(
+      "SCREEN_ACTIONABLE_EVIDENCE_REQUIRED"
+    );
+  });
+
+  it("ranks a verified one-off blocker above a routine commitment", () => {
+    const [blocker] = mergeTaskLineage([
+      verifiedCandidateFixture({
+        canonicalKey: "restore deployment access",
+        title: "Restore deployment access",
+        state: "blocked",
+        origin: "unresolved_blocker",
+        blocks: ["deployment access"],
+        blockedBy: ["deployment access"],
+        evidence: [
+          {
+            conversationId: "conversation-1",
+            messageId: "msg-1",
+            kind: "blocking",
+            messageIndex: 1,
+            role: "user",
+            quote: "Restore deployment access before continuing.",
+            startChar: 0,
+            endChar: 44
+          }
+        ]
+      })
+    ]);
+    const [routine] = mergeTaskLineage([
+      verifiedCandidateFixture({
+        canonicalKey: "weekly access review",
+        title: "Weekly access review"
+      })
+    ]);
+
+    expect(scorePriority(blocker, NOW).score).toBeGreaterThan(
+      scorePriority(routine, NOW).score
+    );
   });
 });

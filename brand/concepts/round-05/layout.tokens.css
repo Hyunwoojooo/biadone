@@ -1,0 +1,10 @@
+/* Comparison-only values, separate from the approved brand foundation. */
+:root {
+ --space-1: .25rem; --space-2: .5rem; --space-3: .75rem; --space-4: 1rem; --space-5: 1.25rem; --space-6: 1.5rem; --space-8: 2rem; --space-10: 2.5rem; --space-12: 3rem; --space-16: 4rem;
+ --page-max: 90rem; --type-body: 1rem; --type-small: .875rem; --type-caption: .75rem; --type-label: 1.25rem;
+ --type-title: clamp(2rem,3.2vw,3rem); --wordmark-large: clamp(2.25rem,4vw,3rem); --wordmark-small: 1.25rem;
+ --weight-wordmark: 600; --tracking-wordmark: -.04em;
+ --focus-width: 3px; --focus-offset: 4px; --control-height: 3rem; --control-radius: .5rem; --motion-feedback: 160ms;
+ --choice-title-height: 7rem; --hero-height: 14rem; --hero-mobile-height: 12rem; --recommendation-width: 57rem;
+ --surface-logo: var(--color-background); --ink-logo: var(--color-text-primary); --border: var(--color-background-tint);
+}

@@ -1,0 +1,17 @@
+This repository contains selected Blabee integration source, contracts,
+synthetic fixtures, tests and documentation. The repository's MIT license
+applies to these published materials. It does not license the separately
+distributed Blabee application, other repositories, or earlier source releases.
+
+The Blabee name, logo and product artwork identify the official product.
+The MIT license does not grant trademark rights. Modified distributions
+should identify their own origin and must not imply endorsement by Biadone.
+
+Codex, Claude, Claude Code and their associated marks belong to their
+respective owners. This is an independent integration project.
+
+Third-party dependencies are obtained from npm and retain their own licenses:
+- @modelcontextprotocol/sdk: MIT
+- ajv: MIT
+Their transitive dependencies retain the license notices in their packages.
+No third-party CLI, model, Node runtime or signing material is bundled here.

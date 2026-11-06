@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Biadone Edu · HTML 소스 템플릿</title>
+  <link rel="stylesheet" href="../../biadone.css">
+  <link rel="stylesheet" href="edu.tokens.css">
+  <link rel="stylesheet" href="layout.css">
+  <script src="renderer.js" defer></script>
+</head>
+<body class="biadone-theme edu-viewer">
+  <header class="edu-toolbar" aria-label="템플릿 보기 도구">
+    <div class="edu-toolbar__identity">
+      <a class="biadone-link" href="../../index.html">Biadone 제작 키트</a>
+      <p>Edu · HTML 소스 템플릿 <span class="edu-sample-label">예시 교육 문구</span></p>
+    </div>
+    <div class="edu-toolbar__controls" role="group" aria-label="페이지와 보기 설정">
+      <button id="previous-page" type="button" disabled aria-label="이전 슬라이드">이전</button>
+      <label class="edu-page-picker" for="page-picker">
+        <span class="edu-visually-hidden">슬라이드 선택</span>
+        <select id="page-picker" disabled><option>불러오는 중</option></select>
+      </label>
+      <button id="next-page" type="button" disabled aria-label="다음 슬라이드">다음</button>
+      <label for="zoom-mode" class="edu-visually-hidden">캔버스 보기 크기</label>
+      <select id="zoom-mode">
+        <option value="fit">화면에 맞춤</option>
+        <option value="native">원본 크기 · 1600×900</option>
+      </select>
+      <label class="edu-show-all"><input id="show-all" type="checkbox"> 전체 보기</label>
+      <output id="zoom-value" aria-label="표시 배율">—</output>
+    </div>
+  </header>
+
+  <div class="edu-viewer-info">
+    <p id="viewer-status" role="status" aria-live="polite">콘텐츠와 글꼴을 불러오는 중입니다.</p>
+    <p>← → 이전·다음 <span aria-hidden="true">·</span> Home 처음 <span aria-hidden="true">·</span> End 마지막</p>
+  </div>
+
+  <main id="slides" class="edu-deck" aria-label="Edu HTML 소스 템플릿 미리보기" aria-busy="true"></main>
+  <div id="load-error" class="edu-load-error" role="alert" hidden></div>
+  <noscript><p class="edu-load-error">이 템플릿의 페이지 분할과 미리보기에는 JavaScript가 필요합니다. 원문은 content.json에서 편집할 수 있습니다.</p></noscript>
+
+  <!-- Editable slide structure. Shared brand, typography and components live in ../../biadone.css. -->
+  <template id="slide-template">
+    <article class="biadone-slide edu-slide" role="group" aria-roledescription="슬라이드">
+      <header class="biadone-header">
+        <span class="biadone-logo" role="img" aria-label="Biadone">
+          <span class="biadone-logo__symbol"><img src="../../assets/logo/biadone-symbol.svg" width="64" height="64" alt=""></span>
+          <span class="biadone-logo__name" aria-hidden="true">Biadone</span>
+        </span>
+        <p data-slide-label></p>
+        <span class="biadone-signature" aria-hidden="true"><span></span><span></span></span>
+      </header>
+      <div class="biadone-slide-content">
+        <div class="edu-slide__heading">
+          <h1 class="biadone-title" data-slide-title></h1>
+        </div>
+        <div class="edu-slide__body" data-slide-body></div>
+      </div>
+      <footer class="edu-slide__footer">
+        <p class="biadone-source" data-slide-source></p>
+        <p class="biadone-source edu-slide__page-number" data-page-number></p>
+      </footer>
+    </article>
+  </template>
+  <div id="measurement-host" class="edu-measurement-host" aria-hidden="true" inert></div>
+</body>
+</html>

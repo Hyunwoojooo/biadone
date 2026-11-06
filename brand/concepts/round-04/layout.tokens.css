@@ -1,0 +1,18 @@
+/* Presentation primitives for logo comparison, not approved brand layout rules. */
+:root {
+ --font-interface: var(--font-primary);
+ --space-1: .25rem; --space-2: .5rem; --space-3: .75rem; --space-4: 1rem; --space-5: 1.25rem; --space-6: 1.5rem; --space-8: 2rem; --space-10: 2.5rem; --space-12: 3rem; --space-16: 4rem;
+ --type-small: .875rem; --type-body: 1rem; --type-lead: 1.125rem; --type-caption: .75rem;
+ --type-title: clamp(1.75rem,3vw,2.75rem); --type-section: clamp(1.25rem,2vw,1.5rem);
+ --type-wordmark: clamp(2rem,2.7vw,2.5rem);
+ --radius-panel: 1rem; --radius-control: .5rem;
+ --content-max: 90rem; --control-height: 3rem; --focus-width: 3px; --focus-offset: 4px; --duration-feedback: 160ms;
+ --logo-main-size: 5rem; --logo-preview-height: 15rem; --logo-study-size: 3rem;
+ --color-shell-background: var(--color-background);
+ --color-shell-text: var(--color-text-primary);
+ --color-shell-border: var(--color-background-tint);
+ --color-logo-field: var(--color-background);
+ --color-wordmark: var(--color-text-primary);
+}
+[data-tone="blue"] { --color-logo-field: var(--color-brand); --color-wordmark: var(--color-on-brand); }
+

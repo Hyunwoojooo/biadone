@@ -1,0 +1,41 @@
+{
+  "schema_version": 1,
+  "diagram_type": "sequence",
+  "meta": {
+    "title": "Blabee 런타임 — Hook PermissionRequest (a352baa)",
+    "output": "docs/architecture/runtime/hook-permission.html",
+    "animation": "none",
+    "visual_preset": "editorial",
+    "quality_profile": "showcase",
+    "viewBox": [1120, 640]
+  },
+  "participants": [
+    { "id": "codex", "type": "external", "label": "Codex CLI", "sublabel": "native authority" },
+    { "id": "plugin", "type": "backend", "label": "Plugin", "sublabel": "Permission Hook" },
+    { "id": "coordinator", "type": "backend", "label": "Coordinator", "sublabel": "FIFO·eligibility" },
+    { "id": "pet", "type": "frontend", "label": "macOS Pet", "sublabel": "deny / native handoff" },
+    { "id": "developer", "type": "external", "label": "개발자", "sublabel": "권한 판단" }
+  ],
+  "segments": [
+    { "from": 150, "to": 270, "label": "Eligible request" },
+    { "from": 286, "to": 426, "label": "User choice" },
+    { "from": 442, "to": 566, "label": "Exactly one outcome" }
+  ],
+  "messages": [
+    { "from": "codex", "to": "plugin", "y": 172, "label": "PermissionRequest Hook payload", "variant": "default" },
+    { "from": "plugin", "to": "coordinator", "y": 218, "label": "자격 검사 후 permission_request", "variant": "security", "note": "단일행 Bash·위험 어휘·exact identity" },
+    { "from": "coordinator", "to": "pet", "y": 252, "label": "FIFO enqueue + exact focus", "variant": "emphasis" },
+    { "from": "pet", "to": "developer", "y": 310, "label": "거부 | 네이티브 권한 UI", "variant": "emphasis", "note": "Hook 경로는 allow를 발급하지 않음" },
+    { "from": "developer", "to": "pet", "y": 344, "label": "한 선택", "variant": "emphasis" },
+    { "from": "pet", "to": "coordinator", "y": 378, "label": "selection + expected identity", "variant": "security" },
+    { "from": "coordinator", "to": "plugin", "y": 458, "label": "[deny] deny JSON", "variant": "security", "note": "상호 배타적 분기" },
+    { "from": "coordinator", "to": "plugin", "y": 496, "label": "[native/timeout] 빈 stdout·EOF", "variant": "dashed", "note": "부적격·Pet 부재·timeout은 native 권한 UI로 귀환" },
+    { "from": "plugin", "to": "codex", "y": 534, "label": "정확히 한 Hook 결과", "variant": "return", "note": "도구 실행 성공은 Codex가 별도 관찰" }
+  ],
+  "activations": [
+    { "participant": "plugin", "from": 166, "to": 258, "type": "backend" },
+    { "participant": "coordinator", "from": 212, "to": 384, "type": "backend" },
+    { "participant": "pet", "from": 246, "to": 384, "type": "frontend" },
+    { "participant": "plugin", "from": 452, "to": 540, "type": "backend" }
+  ]
+}

@@ -1,0 +1,1230 @@
+{
+  "schema_version": 1,
+  "moves": [
+    {
+      "old": "src/coordinator-swift/Sources/BlabeeCoordinator/AppInstallation.swift",
+      "new": "app/update/AppInstallation.swift",
+      "target": "BlabeeCoordinator"
+    },
+    {
+      "old": "src/coordinator-swift/Sources/BlabeeCoordinator/AppInstallationPlatform.swift",
+      "new": "app/update/AppInstallationPlatform.swift",
+      "target": "BlabeeCoordinator"
+    },
+    {
+      "old": "src/coordinator-swift/Sources/BlabeeCoordinator/AppInstallationUI.swift",
+      "new": "app/update/AppInstallationUI.swift",
+      "target": "BlabeeCoordinator"
+    },
+    {
+      "old": "src/coordinator-swift/Sources/BlabeeCoordinator/AppOwnedServiceProcess.swift",
+      "new": "app/service/AppOwnedServiceProcess.swift",
+      "target": "BlabeeCoordinator"
+    },
+    {
+      "old": "src/coordinator-swift/Sources/BlabeeCoordinator/AppRuntimeUseLease.swift",
+      "new": "app/service/AppRuntimeUseLease.swift",
+      "target": "BlabeeCoordinator"
+    },
+    {
+      "old": "src/coordinator-swift/Sources/BlabeeCoordinator/AppUpdateDownload.swift",
+      "new": "app/update/AppUpdateDownload.swift",
+      "target": "BlabeeCoordinator"
+    },
+    {
+      "old": "src/coordinator-swift/Sources/BlabeeCoordinator/AppUpdateJournal.swift",
+      "new": "app/update/AppUpdateJournal.swift",
+      "target": "BlabeeCoordinator"
+    },
+    {
+      "old": "src/coordinator-swift/Sources/BlabeeCoordinator/AppUpdateRuntimeCopy.swift",
+      "new": "app/update/AppUpdateRuntimeCopy.swift",
+      "target": "BlabeeCoordinator"
+    },
+    {
+      "old": "src/coordinator-swift/Sources/BlabeeCoordinator/AppUpdateTransaction.swift",
+      "new": "app/update/AppUpdateTransaction.swift",
+      "target": "BlabeeCoordinator"
+    },
+    {
+      "old": "src/coordinator-swift/Sources/BlabeeCoordinator/BlabeeSuggestionModeStore.swift",
+      "new": "app/coordination/BlabeeSuggestionModeStore.swift",
+      "target": "BlabeeCoordinator"
+    },
+    {
+      "old": "src/coordinator-swift/Sources/BlabeeCoordinator/ClaudeBridgeCoordinator.swift",
+      "new": "bridges/claude/swift/service/ClaudeBridgeCoordinator.swift",
+      "target": "BlabeeCoordinator"
+    },
+    {
+      "old": "src/coordinator-swift/Sources/BlabeeCoordinator/ClaudeBridgeRoundTripFixture.swift",
+      "new": "Tests/swift/BlabeeCoordinatorSupport/ClaudeBridgeRoundTripFixture.swift",
+      "target": "BlabeeCoordinator"
+    },
+    {
+      "old": "src/coordinator-swift/Sources/BlabeeCoordinator/ClaudeNativeHost.swift",
+      "new": "bridges/claude/swift/service/ClaudeNativeHost.swift",
+      "target": "BlabeeCoordinator"
+    },
+    {
+      "old": "src/coordinator-swift/Sources/BlabeeCoordinator/ClaudeOwnerRenewalController.swift",
+      "new": "bridges/claude/swift/service/ClaudeOwnerRenewalController.swift",
+      "target": "BlabeeCoordinator"
+    },
+    {
+      "old": "src/coordinator-swift/Sources/BlabeeCoordinator/ClaudePetApplication.swift",
+      "new": "bridges/claude/swift/presentation/ClaudePetApplication.swift",
+      "target": "BlabeeCoordinator"
+    },
+    {
+      "old": "src/coordinator-swift/Sources/BlabeeCoordinator/ClaudePetTransport.swift",
+      "new": "bridges/claude/swift/presentation/ClaudePetTransport.swift",
+      "target": "BlabeeCoordinator"
+    },
+    {
+      "old": "src/coordinator-swift/Sources/BlabeeCoordinator/ClaudeProductServiceCoordinator.swift",
+      "new": "bridges/claude/swift/service/ClaudeProductServiceCoordinator.swift",
+      "target": "BlabeeCoordinator"
+    },
+    {
+      "old": "src/coordinator-swift/Sources/BlabeeCoordinator/ClaudeSessionEnrollment.swift",
+      "new": "bridges/claude/swift/session/ClaudeSessionEnrollment.swift",
+      "target": "BlabeeCoordinator"
+    },
+    {
+      "old": "src/coordinator-swift/Sources/BlabeeCoordinator/ClaudeSessionMetadataStore.swift",
+      "new": "bridges/claude/swift/session/ClaudeSessionMetadataStore.swift",
+      "target": "BlabeeCoordinator"
+    },
+    {
+      "old": "src/coordinator-swift/Sources/BlabeeCoordinator/ClaudeSessionRegistry.swift",
+      "new": "bridges/claude/swift/session/ClaudeSessionRegistry.swift",
+      "target": "BlabeeCoordinator"
+    },
+    {
+      "old": "src/coordinator-swift/Sources/BlabeeCoordinator/CodexAppServerApprovalAdapter.swift",
+      "new": "bridges/codex/swift/approval/CodexAppServerApprovalAdapter.swift",
+      "target": "BlabeeCoordinator"
+    },
+    {
+      "old": "src/coordinator-swift/Sources/BlabeeCoordinator/CodexCompatibility.swift",
+      "new": "bridges/codex/swift/setup/CodexCompatibility.swift",
+      "target": "BlabeeCoordinator"
+    },
+    {
+      "old": "src/coordinator-swift/Sources/BlabeeCoordinator/CodexHookApprovalQualification.swift",
+      "new": "bridges/codex/swift/hooks/CodexHookApprovalQualification.swift",
+      "target": "BlabeeCoordinator"
+    },
+    {
+      "old": "src/coordinator-swift/Sources/BlabeeCoordinator/CodexNativeFailureGuard.swift",
+      "new": "bridges/codex/swift/runtime/CodexNativeFailureGuard.swift",
+      "target": "BlabeeCoordinator"
+    },
+    {
+      "old": "src/coordinator-swift/Sources/BlabeeCoordinator/CodexNativeRuntime.swift",
+      "new": "bridges/codex/swift/runtime/CodexNativeRuntime.swift",
+      "target": "BlabeeCoordinator"
+    },
+    {
+      "old": "src/coordinator-swift/Sources/BlabeeCoordinator/CodexPluginCheckReport.swift",
+      "new": "bridges/codex/swift/setup/CodexPluginCheckReport.swift",
+      "target": "BlabeeCoordinator"
+    },
+    {
+      "old": "src/coordinator-swift/Sources/BlabeeCoordinator/CodexPluginRecheckReportView.swift",
+      "new": "app/ui/settings/CodexPluginRecheckReportView.swift",
+      "target": "BlabeeCoordinator"
+    },
+    {
+      "old": "src/coordinator-swift/Sources/BlabeeCoordinator/CodexPluginSetup.swift",
+      "new": "bridges/codex/swift/setup/CodexPluginSetup.swift",
+      "target": "BlabeeCoordinator"
+    },
+    {
+      "old": "src/coordinator-swift/Sources/BlabeeCoordinator/CodexQueueNextTurnDispatcher.swift",
+      "new": "bridges/codex/swift/delivery/CodexQueueNextTurnDispatcher.swift",
+      "target": "BlabeeCoordinator"
+    },
+    {
+      "old": "src/coordinator-swift/Sources/BlabeeCoordinator/CodexRuntimeBundle.swift",
+      "new": "bridges/codex/swift/runtime/CodexRuntimeBundle.swift",
+      "target": "BlabeeCoordinator"
+    },
+    {
+      "old": "src/coordinator-swift/Sources/BlabeeCoordinator/CodexRuntimeTrust.swift",
+      "new": "bridges/codex/swift/runtime/CodexRuntimeTrust.swift",
+      "target": "BlabeeCoordinator"
+    },
+    {
+      "old": "src/coordinator-swift/Sources/BlabeeCoordinator/DoctorApplication.swift",
+      "new": "app/service/DoctorApplication.swift",
+      "target": "BlabeeCoordinator"
+    },
+    {
+      "old": "src/coordinator-swift/Sources/BlabeeCoordinator/DoctorHookTrustInspector.swift",
+      "new": "bridges/codex/swift/hooks/DoctorHookTrustInspector.swift",
+      "target": "BlabeeCoordinator"
+    },
+    {
+      "old": "src/coordinator-swift/Sources/BlabeeCoordinator/FixtureTransportHandler.swift",
+      "new": "Tests/swift/BlabeeCoordinatorSupport/FixtureTransportHandler.swift",
+      "target": "BlabeeCoordinator"
+    },
+    {
+      "old": "src/coordinator-swift/Sources/BlabeeCoordinator/HookPermissionDiagnostics.swift",
+      "new": "bridges/codex/swift/hooks/HookPermissionDiagnostics.swift",
+      "target": "BlabeeCoordinator"
+    },
+    {
+      "old": "src/coordinator-swift/Sources/BlabeeCoordinator/LegacyCodexShellCleanup.swift",
+      "new": "bridges/codex/swift/setup/LegacyCodexShellCleanup.swift",
+      "target": "BlabeeCoordinator"
+    },
+    {
+      "old": "src/coordinator-swift/Sources/BlabeeCoordinator/LegacyCodexShellCleanupView.swift",
+      "new": "app/ui/settings/LegacyCodexShellCleanupView.swift",
+      "target": "BlabeeCoordinator"
+    },
+    {
+      "old": "src/coordinator-swift/Sources/BlabeeCoordinator/ManagedCodexApprovalRuntime.swift",
+      "new": "bridges/codex/swift/runtime/ManagedCodexApprovalRuntime.swift",
+      "target": "BlabeeCoordinator"
+    },
+    {
+      "old": "src/coordinator-swift/Sources/BlabeeCoordinator/ManagedCodexLauncher.swift",
+      "new": "bridges/codex/swift/runtime/ManagedCodexLauncher.swift",
+      "target": "BlabeeCoordinator"
+    },
+    {
+      "old": "src/coordinator-swift/Sources/BlabeeCoordinator/ManagedCodexResumeConflictObserver.swift",
+      "new": "bridges/codex/swift/runtime/ManagedCodexResumeConflictObserver.swift",
+      "target": "BlabeeCoordinator"
+    },
+    {
+      "old": "src/coordinator-swift/Sources/BlabeeCoordinator/ManagedCodexTrust.swift",
+      "new": "bridges/codex/swift/runtime/ManagedCodexTrust.swift",
+      "target": "BlabeeCoordinator"
+    },
+    {
+      "old": "src/coordinator-swift/Sources/BlabeeCoordinator/ManagedCodexWebSocket.swift",
+      "new": "bridges/codex/swift/runtime/ManagedCodexWebSocket.swift",
+      "target": "BlabeeCoordinator"
+    },
+    {
+      "old": "src/coordinator-swift/Sources/BlabeeCoordinator/OperationalCLI.swift",
+      "new": "bridges/codex/swift/hooks/OperationalCLI.swift",
+      "target": "BlabeeCoordinator"
+    },
+    {
+      "old": "src/coordinator-swift/Sources/BlabeeCoordinator/OperationalRoundTripTestSupport.swift",
+      "new": "Tests/swift/BlabeeCoordinatorSupport/OperationalRoundTripTestSupport.swift",
+      "target": "BlabeeCoordinator"
+    },
+    {
+      "old": "src/coordinator-swift/Sources/BlabeeCoordinator/PetAccountAuth.swift",
+      "new": "app/account/PetAccountAuth.swift",
+      "target": "BlabeeCoordinator"
+    },
+    {
+      "old": "src/coordinator-swift/Sources/BlabeeCoordinator/PetAccountBrowser.swift",
+      "new": "app/account/PetAccountBrowser.swift",
+      "target": "BlabeeCoordinator"
+    },
+    {
+      "old": "src/coordinator-swift/Sources/BlabeeCoordinator/PetAccountController.swift",
+      "new": "app/account/PetAccountController.swift",
+      "target": "BlabeeCoordinator"
+    },
+    {
+      "old": "src/coordinator-swift/Sources/BlabeeCoordinator/PetAccountKeychain.swift",
+      "new": "app/account/PetAccountKeychain.swift",
+      "target": "BlabeeCoordinator"
+    },
+    {
+      "old": "src/coordinator-swift/Sources/BlabeeCoordinator/PetAccountView.swift",
+      "new": "app/account/PetAccountView.swift",
+      "target": "BlabeeCoordinator"
+    },
+    {
+      "old": "src/coordinator-swift/Sources/BlabeeCoordinator/PetAirStyle.swift",
+      "new": "app/ui/PetAirStyle.swift",
+      "target": "BlabeeCoordinator"
+    },
+    {
+      "old": "src/coordinator-swift/Sources/BlabeeCoordinator/PetAppService.swift",
+      "new": "app/service/PetAppService.swift",
+      "target": "BlabeeCoordinator"
+    },
+    {
+      "old": "src/coordinator-swift/Sources/BlabeeCoordinator/PetAppUpdateView.swift",
+      "new": "app/update/PetAppUpdateView.swift",
+      "target": "BlabeeCoordinator"
+    },
+    {
+      "old": "src/coordinator-swift/Sources/BlabeeCoordinator/PetAppUpdates.swift",
+      "new": "app/update/PetAppUpdates.swift",
+      "target": "BlabeeCoordinator"
+    },
+    {
+      "old": "src/coordinator-swift/Sources/BlabeeCoordinator/PetApplication.swift",
+      "new": "app/ui/PetApplication.swift",
+      "target": "BlabeeCoordinator"
+    },
+    {
+      "old": "src/coordinator-swift/Sources/BlabeeCoordinator/PetApprovalHotKeys.swift",
+      "new": "app/ui/shortcuts/PetApprovalHotKeys.swift",
+      "target": "BlabeeCoordinator"
+    },
+    {
+      "old": "src/coordinator-swift/Sources/BlabeeCoordinator/PetAutomaticAppUpdateView.swift",
+      "new": "app/update/PetAutomaticAppUpdateView.swift",
+      "target": "BlabeeCoordinator"
+    },
+    {
+      "old": "src/coordinator-swift/Sources/BlabeeCoordinator/PetChoicePreview.swift",
+      "new": "app/ui/shortcuts/PetChoicePreview.swift",
+      "target": "BlabeeCoordinator"
+    },
+    {
+      "old": "src/coordinator-swift/Sources/BlabeeCoordinator/PetChoicePreviewView.swift",
+      "new": "app/ui/PetChoicePreviewView.swift",
+      "target": "BlabeeCoordinator"
+    },
+    {
+      "old": "src/coordinator-swift/Sources/BlabeeCoordinator/PetConnectionReadiness.swift",
+      "new": "app/ui/settings/PetConnectionReadiness.swift",
+      "target": "BlabeeCoordinator"
+    },
+    {
+      "old": "src/coordinator-swift/Sources/BlabeeCoordinator/PetConnectionRecoveryView.swift",
+      "new": "app/ui/settings/PetConnectionRecoveryView.swift",
+      "target": "BlabeeCoordinator"
+    },
+    {
+      "old": "src/coordinator-swift/Sources/BlabeeCoordinator/PetErrorDiagnostics.swift",
+      "new": "app/telemetry/PetErrorDiagnostics.swift",
+      "target": "BlabeeCoordinator"
+    },
+    {
+      "old": "src/coordinator-swift/Sources/BlabeeCoordinator/PetErrorDiagnosticsView.swift",
+      "new": "app/telemetry/PetErrorDiagnosticsView.swift",
+      "target": "BlabeeCoordinator"
+    },
+    {
+      "old": "src/coordinator-swift/Sources/BlabeeCoordinator/PetEventNavigation.swift",
+      "new": "app/ui/shortcuts/PetEventNavigation.swift",
+      "target": "BlabeeCoordinator"
+    },
+    {
+      "old": "src/coordinator-swift/Sources/BlabeeCoordinator/PetEventNavigationHotKeys.swift",
+      "new": "app/ui/shortcuts/PetEventNavigationHotKeys.swift",
+      "target": "BlabeeCoordinator"
+    },
+    {
+      "old": "src/coordinator-swift/Sources/BlabeeCoordinator/PetFeedback.swift",
+      "new": "app/telemetry/PetFeedback.swift",
+      "target": "BlabeeCoordinator"
+    },
+    {
+      "old": "src/coordinator-swift/Sources/BlabeeCoordinator/PetFeedbackView.swift",
+      "new": "app/telemetry/PetFeedbackView.swift",
+      "target": "BlabeeCoordinator"
+    },
+    {
+      "old": "src/coordinator-swift/Sources/BlabeeCoordinator/PetFeedbackWindow.swift",
+      "new": "app/telemetry/PetFeedbackWindow.swift",
+      "target": "BlabeeCoordinator"
+    },
+    {
+      "old": "src/coordinator-swift/Sources/BlabeeCoordinator/PetFirstRun.swift",
+      "new": "app/ui/onboarding/PetFirstRun.swift",
+      "target": "BlabeeCoordinator"
+    },
+    {
+      "old": "src/coordinator-swift/Sources/BlabeeCoordinator/PetFirstRunPreferences.swift",
+      "new": "app/ui/onboarding/PetFirstRunPreferences.swift",
+      "target": "BlabeeCoordinator"
+    },
+    {
+      "old": "src/coordinator-swift/Sources/BlabeeCoordinator/PetFirstRunView.swift",
+      "new": "app/ui/onboarding/PetFirstRunView.swift",
+      "target": "BlabeeCoordinator"
+    },
+    {
+      "old": "src/coordinator-swift/Sources/BlabeeCoordinator/PetFirstRunWindow.swift",
+      "new": "app/ui/onboarding/PetFirstRunWindow.swift",
+      "target": "BlabeeCoordinator"
+    },
+    {
+      "old": "src/coordinator-swift/Sources/BlabeeCoordinator/PetHookReadiness.swift",
+      "new": "bridges/codex/swift/hooks/PetHookReadiness.swift",
+      "target": "BlabeeCoordinator"
+    },
+    {
+      "old": "src/coordinator-swift/Sources/BlabeeCoordinator/PetHotKeys.swift",
+      "new": "app/ui/shortcuts/PetHotKeys.swift",
+      "target": "BlabeeCoordinator"
+    },
+    {
+      "old": "src/coordinator-swift/Sources/BlabeeCoordinator/PetInsightMetrics.swift",
+      "new": "app/telemetry/PetInsightMetrics.swift",
+      "target": "BlabeeCoordinator"
+    },
+    {
+      "old": "src/coordinator-swift/Sources/BlabeeCoordinator/PetModels.swift",
+      "new": "app/ui/PetModels.swift",
+      "target": "BlabeeCoordinator"
+    },
+    {
+      "old": "src/coordinator-swift/Sources/BlabeeCoordinator/PetOnboarding.swift",
+      "new": "app/ui/onboarding/PetOnboarding.swift",
+      "target": "BlabeeCoordinator"
+    },
+    {
+      "old": "src/coordinator-swift/Sources/BlabeeCoordinator/PetPanel.swift",
+      "new": "app/ui/PetPanel.swift",
+      "target": "BlabeeCoordinator"
+    },
+    {
+      "old": "src/coordinator-swift/Sources/BlabeeCoordinator/PetProductMetrics.swift",
+      "new": "app/telemetry/PetProductMetrics.swift",
+      "target": "BlabeeCoordinator"
+    },
+    {
+      "old": "src/coordinator-swift/Sources/BlabeeCoordinator/PetProductUpdateMetrics.swift",
+      "new": "app/telemetry/PetProductUpdateMetrics.swift",
+      "target": "BlabeeCoordinator"
+    },
+    {
+      "old": "src/coordinator-swift/Sources/BlabeeCoordinator/PetProviderPresentation.swift",
+      "new": "app/ui/PetProviderPresentation.swift",
+      "target": "BlabeeCoordinator"
+    },
+    {
+      "old": "src/coordinator-swift/Sources/BlabeeCoordinator/PetSettingsStatusIndicator.swift",
+      "new": "app/ui/settings/PetSettingsStatusIndicator.swift",
+      "target": "BlabeeCoordinator"
+    },
+    {
+      "old": "src/coordinator-swift/Sources/BlabeeCoordinator/PetSettingsStatusTone.swift",
+      "new": "app/ui/settings/PetSettingsStatusTone.swift",
+      "target": "BlabeeCoordinator"
+    },
+    {
+      "old": "src/coordinator-swift/Sources/BlabeeCoordinator/PetSettingsView.swift",
+      "new": "app/ui/settings/PetSettingsView.swift",
+      "target": "BlabeeCoordinator"
+    },
+    {
+      "old": "src/coordinator-swift/Sources/BlabeeCoordinator/PetStartupDiagnostics.swift",
+      "new": "app/service/PetStartupDiagnostics.swift",
+      "target": "BlabeeCoordinator"
+    },
+    {
+      "old": "src/coordinator-swift/Sources/BlabeeCoordinator/PetStorageRecovery.swift",
+      "new": "app/service/PetStorageRecovery.swift",
+      "target": "BlabeeCoordinator"
+    },
+    {
+      "old": "src/coordinator-swift/Sources/BlabeeCoordinator/PetTransport.swift",
+      "new": "app/service/PetTransport.swift",
+      "target": "BlabeeCoordinator"
+    },
+    {
+      "old": "src/coordinator-swift/Sources/BlabeeCoordinator/PetUsageAnalytics.swift",
+      "new": "app/telemetry/PetUsageAnalytics.swift",
+      "target": "BlabeeCoordinator"
+    },
+    {
+      "old": "src/coordinator-swift/Sources/BlabeeCoordinator/PetUsageAnalyticsView.swift",
+      "new": "app/telemetry/PetUsageAnalyticsView.swift",
+      "target": "BlabeeCoordinator"
+    },
+    {
+      "old": "src/coordinator-swift/Sources/BlabeeCoordinator/PetView.swift",
+      "new": "app/ui/PetView.swift",
+      "target": "BlabeeCoordinator"
+    },
+    {
+      "old": "src/coordinator-swift/Sources/BlabeeCoordinator/PetViewModel.swift",
+      "new": "app/coordination/PetViewModel.swift",
+      "target": "BlabeeCoordinator"
+    },
+    {
+      "old": "src/coordinator-swift/Sources/BlabeeCoordinator/UnixDomainSocketTransport.swift",
+      "new": "app/service/UnixDomainSocketTransport.swift",
+      "target": "BlabeeCoordinator"
+    },
+    {
+      "old": "src/coordinator-swift/Sources/BlabeeCoordinator/UpdateManagedCodexHost.swift",
+      "new": "bridges/codex/swift/update/UpdateManagedCodexHost.swift",
+      "target": "BlabeeCoordinator"
+    },
+    {
+      "old": "src/coordinator-swift/Sources/BlabeeCoordinator/UpdateManagedCodexObserver.swift",
+      "new": "bridges/codex/swift/update/UpdateManagedCodexObserver.swift",
+      "target": "BlabeeCoordinator"
+    },
+    {
+      "old": "src/coordinator-swift/Sources/BlabeeCoordinator/UpdateManagedCodexPersistence.swift",
+      "new": "bridges/codex/swift/update/UpdateManagedCodexPersistence.swift",
+      "target": "BlabeeCoordinator"
+    },
+    {
+      "old": "src/coordinator-swift/Sources/BlabeeCoordinator/UpdateManagedCodexRegistry.swift",
+      "new": "bridges/codex/swift/update/UpdateManagedCodexRegistry.swift",
+      "target": "BlabeeCoordinator"
+    },
+    {
+      "old": "src/coordinator-swift/Sources/BlabeeCoordinator/UpdateManagedCodexRuntime.swift",
+      "new": "bridges/codex/swift/update/UpdateManagedCodexRuntime.swift",
+      "target": "BlabeeCoordinator"
+    },
+    {
+      "old": "src/coordinator-swift/Sources/BlabeeCoordinator/UpdateManagedCodexSessions.swift",
+      "new": "bridges/codex/swift/update/UpdateManagedCodexSessions.swift",
+      "target": "BlabeeCoordinator"
+    },
+    {
+      "old": "src/coordinator-swift/Sources/BlabeeCoordinator/UpdateManagedCodexTerminal.swift",
+      "new": "bridges/codex/swift/update/UpdateManagedCodexTerminal.swift",
+      "target": "BlabeeCoordinator"
+    },
+    {
+      "old": "src/coordinator-swift/Sources/BlabeeCoordinator/main.swift",
+      "new": "app/entrypoints/main.swift",
+      "target": "BlabeeCoordinator"
+    },
+    {
+      "old": "src/coordinator-swift/Sources/BlabeeProductSupport/ProductInvocation.swift",
+      "new": "app/service/product-support/ProductInvocation.swift",
+      "target": "BlabeeProductSupport"
+    },
+    {
+      "old": "src/coordinator-swift/Sources/BlabeeProductSupport/ProductServiceConfiguration.swift",
+      "new": "app/service/product-support/ProductServiceConfiguration.swift",
+      "target": "BlabeeProductSupport"
+    },
+    {
+      "old": "src/coordinator-swift/Sources/BlabeeProductSupport/ProductServiceSettingsWriter.swift",
+      "new": "app/service/product-support/ProductServiceSettingsWriter.swift",
+      "target": "BlabeeProductSupport"
+    },
+    {
+      "old": "src/coordinator-swift/Sources/ClaudeCoreAdapter/ClaudeBridgeIngress.swift",
+      "new": "bridges/claude/swift/adapter/ClaudeBridgeIngress.swift",
+      "target": "ClaudeCoreAdapter"
+    },
+    {
+      "old": "src/coordinator-swift/Sources/ClaudeCoreAdapter/ClaudeCoreAdapter.swift",
+      "new": "bridges/claude/swift/adapter/ClaudeCoreAdapter.swift",
+      "target": "ClaudeCoreAdapter"
+    },
+    {
+      "old": "src/coordinator-swift/Sources/ClaudeCoreAdapter/ClaudeNativeReplayPort.swift",
+      "new": "bridges/claude/swift/adapter/ClaudeNativeReplayPort.swift",
+      "target": "ClaudeCoreAdapter"
+    },
+    {
+      "old": "src/coordinator-swift/Sources/ClaudeCoreAdapter/ClaudeNativeSession.swift",
+      "new": "bridges/claude/swift/adapter/ClaudeNativeSession.swift",
+      "target": "ClaudeCoreAdapter"
+    },
+    {
+      "old": "src/coordinator-swift/Sources/ClaudeCoreAdapter/ClaudeProductAuthorityJournal.swift",
+      "new": "bridges/claude/swift/adapter/ClaudeProductAuthorityJournal.swift",
+      "target": "ClaudeCoreAdapter"
+    },
+    {
+      "old": "src/coordinator-swift/Sources/ClaudeCoreAdapter/ClaudeProductWireCodec.swift",
+      "new": "bridges/claude/swift/adapter/ClaudeProductWireCodec.swift",
+      "target": "ClaudeCoreAdapter"
+    },
+    {
+      "old": "src/coordinator-swift/Sources/ClaudeCoreAdapter/ClaudeSessionAuthority.swift",
+      "new": "bridges/claude/swift/adapter/ClaudeSessionAuthority.swift",
+      "target": "ClaudeCoreAdapter"
+    },
+    {
+      "old": "src/coordinator-swift/Sources/CoordinatorSwift/BlabeeSuggestionMode.swift",
+      "new": "engine/semantic/BlabeeSuggestionMode.swift",
+      "target": "CoordinatorSwift"
+    },
+    {
+      "old": "src/coordinator-swift/Sources/CoordinatorSwift/ContinuationToken.swift",
+      "new": "engine/routing/ContinuationToken.swift",
+      "target": "CoordinatorSwift"
+    },
+    {
+      "old": "src/coordinator-swift/Sources/CoordinatorSwift/ContractPin.swift",
+      "new": "engine/validation/ContractPin.swift",
+      "target": "CoordinatorSwift"
+    },
+    {
+      "old": "src/coordinator-swift/Sources/CoordinatorSwift/CoordinatorBinding.swift",
+      "new": "engine/routing/CoordinatorBinding.swift",
+      "target": "CoordinatorSwift"
+    },
+    {
+      "old": "src/coordinator-swift/Sources/CoordinatorSwift/CoordinatorError.swift",
+      "new": "engine/validation/CoordinatorError.swift",
+      "target": "CoordinatorSwift"
+    },
+    {
+      "old": "src/coordinator-swift/Sources/CoordinatorSwift/CoordinatorNextTurnDispatcher.swift",
+      "new": "engine/routing/CoordinatorNextTurnDispatcher.swift",
+      "target": "CoordinatorSwift"
+    },
+    {
+      "old": "src/coordinator-swift/Sources/CoordinatorSwift/CoordinatorOperationalApplication.swift",
+      "new": "app/coordination/CoordinatorOperationalApplication.swift",
+      "target": "CoordinatorSwift"
+    },
+    {
+      "old": "src/coordinator-swift/Sources/CoordinatorSwift/CoordinatorRoutingApplication.swift",
+      "new": "engine/routing/CoordinatorRoutingApplication.swift",
+      "target": "CoordinatorSwift"
+    },
+    {
+      "old": "src/coordinator-swift/Sources/CoordinatorSwift/CoordinatorSemanticApplication.swift",
+      "new": "engine/semantic/CoordinatorSemanticApplication.swift",
+      "target": "CoordinatorSwift"
+    },
+    {
+      "old": "src/coordinator-swift/Sources/CoordinatorSwift/CoordinatorSemanticState.swift",
+      "new": "engine/semantic/CoordinatorSemanticState.swift",
+      "target": "CoordinatorSwift"
+    },
+    {
+      "old": "src/coordinator-swift/Sources/CoordinatorSwift/ExactJSONInteger.swift",
+      "new": "engine/validation/ExactJSONInteger.swift",
+      "target": "CoordinatorSwift"
+    },
+    {
+      "old": "src/coordinator-swift/Sources/CoordinatorSwift/FreshnessAnchor.swift",
+      "new": "engine/persistence/FreshnessAnchor.swift",
+      "target": "CoordinatorSwift"
+    },
+    {
+      "old": "src/coordinator-swift/Sources/CoordinatorSwift/HookPermissionPolicy.swift",
+      "new": "bridges/codex/swift/core/HookPermissionPolicy.swift",
+      "target": "CoordinatorSwift"
+    },
+    {
+      "old": "src/coordinator-swift/Sources/CoordinatorSwift/HookPermissionTimingPolicy.swift",
+      "new": "bridges/codex/swift/core/HookPermissionTimingPolicy.swift",
+      "target": "CoordinatorSwift"
+    },
+    {
+      "old": "src/coordinator-swift/Sources/CoordinatorSwift/IdentifierNormalization.swift",
+      "new": "engine/validation/IdentifierNormalization.swift",
+      "target": "CoordinatorSwift"
+    },
+    {
+      "old": "src/coordinator-swift/Sources/CoordinatorSwift/KeychainFreshnessAnchorStore.swift",
+      "new": "engine/persistence/KeychainFreshnessAnchorStore.swift",
+      "target": "CoordinatorSwift"
+    },
+    {
+      "old": "src/coordinator-swift/Sources/CoordinatorSwift/MissingStorageRecovery.swift",
+      "new": "engine/persistence/MissingStorageRecovery.swift",
+      "target": "CoordinatorSwift"
+    },
+    {
+      "old": "src/coordinator-swift/Sources/CoordinatorSwift/QueuedPromptEnvelope.swift",
+      "new": "bridges/codex/swift/core/QueuedPromptEnvelope.swift",
+      "target": "CoordinatorSwift"
+    },
+    {
+      "old": "src/coordinator-swift/Sources/CoordinatorSwift/RFC3339Instant.swift",
+      "new": "engine/validation/RFC3339Instant.swift",
+      "target": "CoordinatorSwift"
+    },
+    {
+      "old": "src/coordinator-swift/Sources/CoordinatorSwift/RuntimeSecretCorpus.swift",
+      "new": "engine/validation/RuntimeSecretCorpus.swift",
+      "target": "CoordinatorSwift"
+    },
+    {
+      "old": "src/coordinator-swift/Sources/CoordinatorSwift/SQLiteJournal.swift",
+      "new": "engine/persistence/SQLiteJournal.swift",
+      "target": "CoordinatorSwift"
+    },
+    {
+      "old": "src/coordinator-swift/Sources/CoordinatorSwift/StopObservationLedger.swift",
+      "new": "bridges/codex/swift/core/StopObservationLedger.swift",
+      "target": "CoordinatorSwift"
+    },
+    {
+      "old": "src/coordinator-swift/Sources/CoordinatorSwift/StorageKey.swift",
+      "new": "engine/persistence/StorageKey.swift",
+      "target": "CoordinatorSwift"
+    },
+    {
+      "old": "src/coordinator-swift/Sources/CoordinatorSwift/StorageProcessLock.swift",
+      "new": "engine/persistence/StorageProcessLock.swift",
+      "target": "CoordinatorSwift"
+    },
+    {
+      "old": "src/coordinator-swift/Sources/CoordinatorSwift/StrictJSON.swift",
+      "new": "engine/validation/StrictJSON.swift",
+      "target": "CoordinatorSwift"
+    },
+    {
+      "old": "src/coordinator-swift/Sources/CoordinatorSwift/V1IngressValidator.swift",
+      "new": "engine/validation/V1IngressValidator.swift",
+      "target": "CoordinatorSwift"
+    },
+    {
+      "old": "src/coordinator-swift/Tests/BlabeePetTests/AppInstallationFlowTests.swift",
+      "new": "Tests/swift/BlabeePetTests/AppInstallationFlowTests.swift",
+      "target": "BlabeePetTests"
+    },
+    {
+      "old": "src/coordinator-swift/Tests/BlabeePetTests/AppInstallationPlatformTests.swift",
+      "new": "Tests/swift/BlabeePetTests/AppInstallationPlatformTests.swift",
+      "target": "BlabeePetTests"
+    },
+    {
+      "old": "src/coordinator-swift/Tests/BlabeePetTests/AppInstallationTests.swift",
+      "new": "Tests/swift/BlabeePetTests/AppInstallationTests.swift",
+      "target": "BlabeePetTests"
+    },
+    {
+      "old": "src/coordinator-swift/Tests/BlabeePetTests/AppOwnedServiceProcessTests.swift",
+      "new": "Tests/swift/BlabeePetTests/AppOwnedServiceProcessTests.swift",
+      "target": "BlabeePetTests"
+    },
+    {
+      "old": "src/coordinator-swift/Tests/BlabeePetTests/AppRuntimeUseLeaseTests.swift",
+      "new": "Tests/swift/BlabeePetTests/AppRuntimeUseLeaseTests.swift",
+      "target": "BlabeePetTests"
+    },
+    {
+      "old": "src/coordinator-swift/Tests/BlabeePetTests/AppUpdateDownloadTests.swift",
+      "new": "Tests/swift/BlabeePetTests/AppUpdateDownloadTests.swift",
+      "target": "BlabeePetTests"
+    },
+    {
+      "old": "src/coordinator-swift/Tests/BlabeePetTests/AppUpdateRuntimeCopyTests.swift",
+      "new": "Tests/swift/BlabeePetTests/AppUpdateRuntimeCopyTests.swift",
+      "target": "BlabeePetTests"
+    },
+    {
+      "old": "src/coordinator-swift/Tests/BlabeePetTests/AppUpdateTransactionTests.swift",
+      "new": "Tests/swift/BlabeePetTests/AppUpdateTransactionTests.swift",
+      "target": "BlabeePetTests"
+    },
+    {
+      "old": "src/coordinator-swift/Tests/BlabeePetTests/BlabeeSuggestionModeStoreTests.swift",
+      "new": "Tests/swift/BlabeePetTests/BlabeeSuggestionModeStoreTests.swift",
+      "target": "BlabeePetTests"
+    },
+    {
+      "old": "src/coordinator-swift/Tests/BlabeePetTests/ClaudeOwnerRenewalControllerTests.swift",
+      "new": "Tests/swift/BlabeePetTests/ClaudeOwnerRenewalControllerTests.swift",
+      "target": "BlabeePetTests"
+    },
+    {
+      "old": "src/coordinator-swift/Tests/BlabeePetTests/ClaudePetPresentationTests.swift",
+      "new": "Tests/swift/BlabeePetTests/ClaudePetPresentationTests.swift",
+      "target": "BlabeePetTests"
+    },
+    {
+      "old": "src/coordinator-swift/Tests/BlabeePetTests/ClaudePetTransportTests.swift",
+      "new": "Tests/swift/BlabeePetTests/ClaudePetTransportTests.swift",
+      "target": "BlabeePetTests"
+    },
+    {
+      "old": "src/coordinator-swift/Tests/BlabeePetTests/ClaudeSessionEnrollmentTests.swift",
+      "new": "Tests/swift/BlabeePetTests/ClaudeSessionEnrollmentTests.swift",
+      "target": "BlabeePetTests"
+    },
+    {
+      "old": "src/coordinator-swift/Tests/BlabeePetTests/ClaudeSessionMetadataStoreTests.swift",
+      "new": "Tests/swift/BlabeePetTests/ClaudeSessionMetadataStoreTests.swift",
+      "target": "BlabeePetTests"
+    },
+    {
+      "old": "src/coordinator-swift/Tests/BlabeePetTests/ClaudeSessionRegistryTests.swift",
+      "new": "Tests/swift/BlabeePetTests/ClaudeSessionRegistryTests.swift",
+      "target": "BlabeePetTests"
+    },
+    {
+      "old": "src/coordinator-swift/Tests/BlabeePetTests/CodexAppServerApprovalAdapterTests.swift",
+      "new": "Tests/swift/BlabeePetTests/CodexAppServerApprovalAdapterTests.swift",
+      "target": "BlabeePetTests"
+    },
+    {
+      "old": "src/coordinator-swift/Tests/BlabeePetTests/CodexCompatibilityTests.swift",
+      "new": "Tests/swift/BlabeePetTests/CodexCompatibilityTests.swift",
+      "target": "BlabeePetTests"
+    },
+    {
+      "old": "src/coordinator-swift/Tests/BlabeePetTests/CodexHookApprovalQualificationTests.swift",
+      "new": "Tests/swift/BlabeePetTests/CodexHookApprovalQualificationTests.swift",
+      "target": "BlabeePetTests"
+    },
+    {
+      "old": "src/coordinator-swift/Tests/BlabeePetTests/CodexLaunchErrorMappingTests.swift",
+      "new": "Tests/swift/BlabeePetTests/CodexLaunchErrorMappingTests.swift",
+      "target": "BlabeePetTests"
+    },
+    {
+      "old": "src/coordinator-swift/Tests/BlabeePetTests/CodexNativeFailureGuardTests.swift",
+      "new": "Tests/swift/BlabeePetTests/CodexNativeFailureGuardTests.swift",
+      "target": "BlabeePetTests"
+    },
+    {
+      "old": "src/coordinator-swift/Tests/BlabeePetTests/CodexNativeLiveVerificationTests.swift",
+      "new": "Tests/swift/BlabeePetTests/CodexNativeLiveVerificationTests.swift",
+      "target": "BlabeePetTests"
+    },
+    {
+      "old": "src/coordinator-swift/Tests/BlabeePetTests/CodexNativeRuntimeTests.swift",
+      "new": "Tests/swift/BlabeePetTests/CodexNativeRuntimeTests.swift",
+      "target": "BlabeePetTests"
+    },
+    {
+      "old": "src/coordinator-swift/Tests/BlabeePetTests/CodexPluginCheckReportTests.swift",
+      "new": "Tests/swift/BlabeePetTests/CodexPluginCheckReportTests.swift",
+      "target": "BlabeePetTests"
+    },
+    {
+      "old": "src/coordinator-swift/Tests/BlabeePetTests/CodexPluginSetupTests.swift",
+      "new": "Tests/swift/BlabeePetTests/CodexPluginSetupTests.swift",
+      "target": "BlabeePetTests"
+    },
+    {
+      "old": "src/coordinator-swift/Tests/BlabeePetTests/CodexQueueNextTurnDispatcherTests.swift",
+      "new": "Tests/swift/BlabeePetTests/CodexQueueNextTurnDispatcherTests.swift",
+      "target": "BlabeePetTests"
+    },
+    {
+      "old": "src/coordinator-swift/Tests/BlabeePetTests/CodexRuntimeTrustTests.swift",
+      "new": "Tests/swift/BlabeePetTests/CodexRuntimeTrustTests.swift",
+      "target": "BlabeePetTests"
+    },
+    {
+      "old": "src/coordinator-swift/Tests/BlabeePetTests/DoctorApplicationTests.swift",
+      "new": "Tests/swift/BlabeePetTests/DoctorApplicationTests.swift",
+      "target": "BlabeePetTests"
+    },
+    {
+      "old": "src/coordinator-swift/Tests/BlabeePetTests/HookPermissionDiagnosticsTests.swift",
+      "new": "Tests/swift/BlabeePetTests/HookPermissionDiagnosticsTests.swift",
+      "target": "BlabeePetTests"
+    },
+    {
+      "old": "src/coordinator-swift/Tests/BlabeePetTests/HookPermissionOutputPolicyTests.swift",
+      "new": "Tests/swift/BlabeePetTests/HookPermissionOutputPolicyTests.swift",
+      "target": "BlabeePetTests"
+    },
+    {
+      "old": "src/coordinator-swift/Tests/BlabeePetTests/HookRequestPolicyTests.swift",
+      "new": "Tests/swift/BlabeePetTests/HookRequestPolicyTests.swift",
+      "target": "BlabeePetTests"
+    },
+    {
+      "old": "src/coordinator-swift/Tests/BlabeePetTests/HookThreadRoutingPolicyTests.swift",
+      "new": "Tests/swift/BlabeePetTests/HookThreadRoutingPolicyTests.swift",
+      "target": "BlabeePetTests"
+    },
+    {
+      "old": "src/coordinator-swift/Tests/BlabeePetTests/LegacyCodexShellCleanupTests.swift",
+      "new": "Tests/swift/BlabeePetTests/LegacyCodexShellCleanupTests.swift",
+      "target": "BlabeePetTests"
+    },
+    {
+      "old": "src/coordinator-swift/Tests/BlabeePetTests/ManagedCodexBrokerTests.swift",
+      "new": "Tests/swift/BlabeePetTests/ManagedCodexBrokerTests.swift",
+      "target": "BlabeePetTests"
+    },
+    {
+      "old": "src/coordinator-swift/Tests/BlabeePetTests/ManagedCodexResumeConflictObserverTests.swift",
+      "new": "Tests/swift/BlabeePetTests/ManagedCodexResumeConflictObserverTests.swift",
+      "target": "BlabeePetTests"
+    },
+    {
+      "old": "src/coordinator-swift/Tests/BlabeePetTests/OperationalRuntimeIdentityTests.swift",
+      "new": "Tests/swift/BlabeePetTests/OperationalRuntimeIdentityTests.swift",
+      "target": "BlabeePetTests"
+    },
+    {
+      "old": "src/coordinator-swift/Tests/BlabeePetTests/PetAccountAuthTests.swift",
+      "new": "Tests/swift/BlabeePetTests/PetAccountAuthTests.swift",
+      "target": "BlabeePetTests"
+    },
+    {
+      "old": "src/coordinator-swift/Tests/BlabeePetTests/PetAccountBrowserTests.swift",
+      "new": "Tests/swift/BlabeePetTests/PetAccountBrowserTests.swift",
+      "target": "BlabeePetTests"
+    },
+    {
+      "old": "src/coordinator-swift/Tests/BlabeePetTests/PetAccountControllerTests.swift",
+      "new": "Tests/swift/BlabeePetTests/PetAccountControllerTests.swift",
+      "target": "BlabeePetTests"
+    },
+    {
+      "old": "src/coordinator-swift/Tests/BlabeePetTests/PetAccountKeychainTests.swift",
+      "new": "Tests/swift/BlabeePetTests/PetAccountKeychainTests.swift",
+      "target": "BlabeePetTests"
+    },
+    {
+      "old": "src/coordinator-swift/Tests/BlabeePetTests/PetAccountViewTests.swift",
+      "new": "Tests/swift/BlabeePetTests/PetAccountViewTests.swift",
+      "target": "BlabeePetTests"
+    },
+    {
+      "old": "src/coordinator-swift/Tests/BlabeePetTests/PetActionGenerationTests.swift",
+      "new": "Tests/swift/BlabeePetTests/PetActionGenerationTests.swift",
+      "target": "BlabeePetTests"
+    },
+    {
+      "old": "src/coordinator-swift/Tests/BlabeePetTests/PetAirViewTests.swift",
+      "new": "Tests/swift/BlabeePetTests/PetAirViewTests.swift",
+      "target": "BlabeePetTests"
+    },
+    {
+      "old": "src/coordinator-swift/Tests/BlabeePetTests/PetAppServiceTests.swift",
+      "new": "Tests/swift/BlabeePetTests/PetAppServiceTests.swift",
+      "target": "BlabeePetTests"
+    },
+    {
+      "old": "src/coordinator-swift/Tests/BlabeePetTests/PetAppUpdateCheckFeedbackTests.swift",
+      "new": "Tests/swift/BlabeePetTests/PetAppUpdateCheckFeedbackTests.swift",
+      "target": "BlabeePetTests"
+    },
+    {
+      "old": "src/coordinator-swift/Tests/BlabeePetTests/PetAppUpdateTests.swift",
+      "new": "Tests/swift/BlabeePetTests/PetAppUpdateTests.swift",
+      "target": "BlabeePetTests"
+    },
+    {
+      "old": "src/coordinator-swift/Tests/BlabeePetTests/PetAppUpdateViewModelTests.swift",
+      "new": "Tests/swift/BlabeePetTests/PetAppUpdateViewModelTests.swift",
+      "target": "BlabeePetTests"
+    },
+    {
+      "old": "src/coordinator-swift/Tests/BlabeePetTests/PetAppUpdateViewTests.swift",
+      "new": "Tests/swift/BlabeePetTests/PetAppUpdateViewTests.swift",
+      "target": "BlabeePetTests"
+    },
+    {
+      "old": "src/coordinator-swift/Tests/BlabeePetTests/PetApprovalCommandPreviewTests.swift",
+      "new": "Tests/swift/BlabeePetTests/PetApprovalCommandPreviewTests.swift",
+      "target": "BlabeePetTests"
+    },
+    {
+      "old": "src/coordinator-swift/Tests/BlabeePetTests/PetApprovalHotKeyTests.swift",
+      "new": "Tests/swift/BlabeePetTests/PetApprovalHotKeyTests.swift",
+      "target": "BlabeePetTests"
+    },
+    {
+      "old": "src/coordinator-swift/Tests/BlabeePetTests/PetBehaviorTests.swift",
+      "new": "Tests/swift/BlabeePetTests/PetBehaviorTests.swift",
+      "target": "BlabeePetTests"
+    },
+    {
+      "old": "src/coordinator-swift/Tests/BlabeePetTests/PetChoicePreviewTests.swift",
+      "new": "Tests/swift/BlabeePetTests/PetChoicePreviewTests.swift",
+      "target": "BlabeePetTests"
+    },
+    {
+      "old": "src/coordinator-swift/Tests/BlabeePetTests/PetChoicePreviewViewTests.swift",
+      "new": "Tests/swift/BlabeePetTests/PetChoicePreviewViewTests.swift",
+      "target": "BlabeePetTests"
+    },
+    {
+      "old": "src/coordinator-swift/Tests/BlabeePetTests/PetCodexNativeRecheckTests.swift",
+      "new": "Tests/swift/BlabeePetTests/PetCodexNativeRecheckTests.swift",
+      "target": "BlabeePetTests"
+    },
+    {
+      "old": "src/coordinator-swift/Tests/BlabeePetTests/PetConnectionReadinessTests.swift",
+      "new": "Tests/swift/BlabeePetTests/PetConnectionReadinessTests.swift",
+      "target": "BlabeePetTests"
+    },
+    {
+      "old": "src/coordinator-swift/Tests/BlabeePetTests/PetConnectionRecoveryTests.swift",
+      "new": "Tests/swift/BlabeePetTests/PetConnectionRecoveryTests.swift",
+      "target": "BlabeePetTests"
+    },
+    {
+      "old": "src/coordinator-swift/Tests/BlabeePetTests/PetErrorDiagnosticsTests.swift",
+      "new": "Tests/swift/BlabeePetTests/PetErrorDiagnosticsTests.swift",
+      "target": "BlabeePetTests"
+    },
+    {
+      "old": "src/coordinator-swift/Tests/BlabeePetTests/PetErrorDiagnosticsViewTests.swift",
+      "new": "Tests/swift/BlabeePetTests/PetErrorDiagnosticsViewTests.swift",
+      "target": "BlabeePetTests"
+    },
+    {
+      "old": "src/coordinator-swift/Tests/BlabeePetTests/PetErrorIntegrationTests.swift",
+      "new": "Tests/swift/BlabeePetTests/PetErrorIntegrationTests.swift",
+      "target": "BlabeePetTests"
+    },
+    {
+      "old": "src/coordinator-swift/Tests/BlabeePetTests/PetEventActionGenerationTests.swift",
+      "new": "Tests/swift/BlabeePetTests/PetEventActionGenerationTests.swift",
+      "target": "BlabeePetTests"
+    },
+    {
+      "old": "src/coordinator-swift/Tests/BlabeePetTests/PetEventNavigationHotKeyTests.swift",
+      "new": "Tests/swift/BlabeePetTests/PetEventNavigationHotKeyTests.swift",
+      "target": "BlabeePetTests"
+    },
+    {
+      "old": "src/coordinator-swift/Tests/BlabeePetTests/PetEventNavigationTests.swift",
+      "new": "Tests/swift/BlabeePetTests/PetEventNavigationTests.swift",
+      "target": "BlabeePetTests"
+    },
+    {
+      "old": "src/coordinator-swift/Tests/BlabeePetTests/PetFeedbackTests.swift",
+      "new": "Tests/swift/BlabeePetTests/PetFeedbackTests.swift",
+      "target": "BlabeePetTests"
+    },
+    {
+      "old": "src/coordinator-swift/Tests/BlabeePetTests/PetFeedbackViewTests.swift",
+      "new": "Tests/swift/BlabeePetTests/PetFeedbackViewTests.swift",
+      "target": "BlabeePetTests"
+    },
+    {
+      "old": "src/coordinator-swift/Tests/BlabeePetTests/PetFirstRunPreferencesTests.swift",
+      "new": "Tests/swift/BlabeePetTests/PetFirstRunPreferencesTests.swift",
+      "target": "BlabeePetTests"
+    },
+    {
+      "old": "src/coordinator-swift/Tests/BlabeePetTests/PetFirstRunSetupTests.swift",
+      "new": "Tests/swift/BlabeePetTests/PetFirstRunSetupTests.swift",
+      "target": "BlabeePetTests"
+    },
+    {
+      "old": "src/coordinator-swift/Tests/BlabeePetTests/PetFirstRunTests.swift",
+      "new": "Tests/swift/BlabeePetTests/PetFirstRunTests.swift",
+      "target": "BlabeePetTests"
+    },
+    {
+      "old": "src/coordinator-swift/Tests/BlabeePetTests/PetFirstRunViewTests.swift",
+      "new": "Tests/swift/BlabeePetTests/PetFirstRunViewTests.swift",
+      "target": "BlabeePetTests"
+    },
+    {
+      "old": "src/coordinator-swift/Tests/BlabeePetTests/PetHookReadinessTests.swift",
+      "new": "Tests/swift/BlabeePetTests/PetHookReadinessTests.swift",
+      "target": "BlabeePetTests"
+    },
+    {
+      "old": "src/coordinator-swift/Tests/BlabeePetTests/PetIdleEfficiencyTests.swift",
+      "new": "Tests/swift/BlabeePetTests/PetIdleEfficiencyTests.swift",
+      "target": "BlabeePetTests"
+    },
+    {
+      "old": "src/coordinator-swift/Tests/BlabeePetTests/PetInsightMetricsTests.swift",
+      "new": "Tests/swift/BlabeePetTests/PetInsightMetricsTests.swift",
+      "target": "BlabeePetTests"
+    },
+    {
+      "old": "src/coordinator-swift/Tests/BlabeePetTests/PetInsightObservationTests.swift",
+      "new": "Tests/swift/BlabeePetTests/PetInsightObservationTests.swift",
+      "target": "BlabeePetTests"
+    },
+    {
+      "old": "src/coordinator-swift/Tests/BlabeePetTests/PetLegacyShellCleanupTests.swift",
+      "new": "Tests/swift/BlabeePetTests/PetLegacyShellCleanupTests.swift",
+      "target": "BlabeePetTests"
+    },
+    {
+      "old": "src/coordinator-swift/Tests/BlabeePetTests/PetModelTests.swift",
+      "new": "Tests/swift/BlabeePetTests/PetModelTests.swift",
+      "target": "BlabeePetTests"
+    },
+    {
+      "old": "src/coordinator-swift/Tests/BlabeePetTests/PetNativeSubagentPermissionTests.swift",
+      "new": "Tests/swift/BlabeePetTests/PetNativeSubagentPermissionTests.swift",
+      "target": "BlabeePetTests"
+    },
+    {
+      "old": "src/coordinator-swift/Tests/BlabeePetTests/PetOnboardingTests.swift",
+      "new": "Tests/swift/BlabeePetTests/PetOnboardingTests.swift",
+      "target": "BlabeePetTests"
+    },
+    {
+      "old": "src/coordinator-swift/Tests/BlabeePetTests/PetPanelSizePolicyTests.swift",
+      "new": "Tests/swift/BlabeePetTests/PetPanelSizePolicyTests.swift",
+      "target": "BlabeePetTests"
+    },
+    {
+      "old": "src/coordinator-swift/Tests/BlabeePetTests/PetPermissionDeliveryIntegrationTests.swift",
+      "new": "Tests/swift/BlabeePetTests/PetPermissionDeliveryIntegrationTests.swift",
+      "target": "BlabeePetTests"
+    },
+    {
+      "old": "src/coordinator-swift/Tests/BlabeePetTests/PetPermissionWaitTests.swift",
+      "new": "Tests/swift/BlabeePetTests/PetPermissionWaitTests.swift",
+      "target": "BlabeePetTests"
+    },
+    {
+      "old": "src/coordinator-swift/Tests/BlabeePetTests/PetPlatformPolicyTests.swift",
+      "new": "Tests/swift/BlabeePetTests/PetPlatformPolicyTests.swift",
+      "target": "BlabeePetTests"
+    },
+    {
+      "old": "src/coordinator-swift/Tests/BlabeePetTests/PetPreviewShortcutConfigurationTests.swift",
+      "new": "Tests/swift/BlabeePetTests/PetPreviewShortcutConfigurationTests.swift",
+      "target": "BlabeePetTests"
+    },
+    {
+      "old": "src/coordinator-swift/Tests/BlabeePetTests/PetProductMetricsTests.swift",
+      "new": "Tests/swift/BlabeePetTests/PetProductMetricsTests.swift",
+      "target": "BlabeePetTests"
+    },
+    {
+      "old": "src/coordinator-swift/Tests/BlabeePetTests/PetProductUpdateMetricsTests.swift",
+      "new": "Tests/swift/BlabeePetTests/PetProductUpdateMetricsTests.swift",
+      "target": "BlabeePetTests"
+    },
+    {
+      "old": "src/coordinator-swift/Tests/BlabeePetTests/PetQueuedSuccessorParsingTests.swift",
+      "new": "Tests/swift/BlabeePetTests/PetQueuedSuccessorParsingTests.swift",
+      "target": "BlabeePetTests"
+    },
+    {
+      "old": "src/coordinator-swift/Tests/BlabeePetTests/PetSettingsNavigationTests.swift",
+      "new": "Tests/swift/BlabeePetTests/PetSettingsNavigationTests.swift",
+      "target": "BlabeePetTests"
+    },
+    {
+      "old": "src/coordinator-swift/Tests/BlabeePetTests/PetSettingsStatusIndicatorTests.swift",
+      "new": "Tests/swift/BlabeePetTests/PetSettingsStatusIndicatorTests.swift",
+      "target": "BlabeePetTests"
+    },
+    {
+      "old": "src/coordinator-swift/Tests/BlabeePetTests/PetSettingsStatusToneTests.swift",
+      "new": "Tests/swift/BlabeePetTests/PetSettingsStatusToneTests.swift",
+      "target": "BlabeePetTests"
+    },
+    {
+      "old": "src/coordinator-swift/Tests/BlabeePetTests/PetSkipDecisionTests.swift",
+      "new": "Tests/swift/BlabeePetTests/PetSkipDecisionTests.swift",
+      "target": "BlabeePetTests"
+    },
+    {
+      "old": "src/coordinator-swift/Tests/BlabeePetTests/PetTestSupport.swift",
+      "new": "Tests/swift/BlabeePetTests/PetTestSupport.swift",
+      "target": "BlabeePetTests"
+    },
+    {
+      "old": "src/coordinator-swift/Tests/BlabeePetTests/PetTransportConcurrencyTests.swift",
+      "new": "Tests/swift/BlabeePetTests/PetTransportConcurrencyTests.swift",
+      "target": "BlabeePetTests"
+    },
+    {
+      "old": "src/coordinator-swift/Tests/BlabeePetTests/PetUsageAnalyticsTests.swift",
+      "new": "Tests/swift/BlabeePetTests/PetUsageAnalyticsTests.swift",
+      "target": "BlabeePetTests"
+    },
+    {
+      "old": "src/coordinator-swift/Tests/BlabeePetTests/PetUsageAnalyticsViewTests.swift",
+      "new": "Tests/swift/BlabeePetTests/PetUsageAnalyticsViewTests.swift",
+      "target": "BlabeePetTests"
+    },
+    {
+      "old": "src/coordinator-swift/Tests/BlabeePetTests/PetUsageIntegrationTests.swift",
+      "new": "Tests/swift/BlabeePetTests/PetUsageIntegrationTests.swift",
+      "target": "BlabeePetTests"
+    },
+    {
+      "old": "src/coordinator-swift/Tests/BlabeePetTests/ProductInvocationTests.swift",
+      "new": "Tests/swift/BlabeePetTests/ProductInvocationTests.swift",
+      "target": "BlabeePetTests"
+    },
+    {
+      "old": "src/coordinator-swift/Tests/BlabeePetTests/ProductServiceConfigurationTests.swift",
+      "new": "Tests/swift/BlabeePetTests/ProductServiceConfigurationTests.swift",
+      "target": "BlabeePetTests"
+    },
+    {
+      "old": "src/coordinator-swift/Tests/BlabeePetTests/ProductServiceSettingsWriterTests.swift",
+      "new": "Tests/swift/BlabeePetTests/ProductServiceSettingsWriterTests.swift",
+      "target": "BlabeePetTests"
+    },
+    {
+      "old": "src/coordinator-swift/Tests/BlabeePetTests/StorageRecoveryAuthorityTests.swift",
+      "new": "Tests/swift/BlabeePetTests/StorageRecoveryAuthorityTests.swift",
+      "target": "BlabeePetTests"
+    },
+    {
+      "old": "src/coordinator-swift/Tests/BlabeePetTests/UpdateManagedCodexObserverTests.swift",
+      "new": "Tests/swift/BlabeePetTests/UpdateManagedCodexObserverTests.swift",
+      "target": "BlabeePetTests"
+    },
+    {
+      "old": "src/coordinator-swift/Tests/BlabeePetTests/UpdateManagedCodexPersistenceTests.swift",
+      "new": "Tests/swift/BlabeePetTests/UpdateManagedCodexPersistenceTests.swift",
+      "target": "BlabeePetTests"
+    },
+    {
+      "old": "src/coordinator-swift/Tests/BlabeePetTests/UpdateManagedCodexRegistryTests.swift",
+      "new": "Tests/swift/BlabeePetTests/UpdateManagedCodexRegistryTests.swift",
+      "target": "BlabeePetTests"
+    },
+    {
+      "old": "src/coordinator-swift/Tests/BlabeePetTests/UpdateManagedCodexTerminalTests.swift",
+      "new": "Tests/swift/BlabeePetTests/UpdateManagedCodexTerminalTests.swift",
+      "target": "BlabeePetTests"
+    },
+    {
+      "old": "src/coordinator-swift/Tests/BlabeeSettingsTestHelper/main.swift",
+      "new": "Tests/swift/BlabeeSettingsTestHelper/main.swift",
+      "target": "BlabeeSettingsTestHelper"
+    },
+    {
+      "old": "src/coordinator-swift/Tests/CoordinatorSwiftTests/CoordinatorSwiftTests.swift",
+      "new": "Tests/swift/CoordinatorSwiftTests/CoordinatorSwiftTests.swift",
+      "target": "CoordinatorSwiftTests"
+    },
+    {
+      "old": "src/coordinator-swift/Tests/CoordinatorSwiftTests/MissingStorageKeychainRecoveryTests.swift",
+      "new": "Tests/swift/CoordinatorSwiftTests/MissingStorageKeychainRecoveryTests.swift",
+      "target": "CoordinatorSwiftTests"
+    },
+    {
+      "old": "src/coordinator-swift/Tests/CoordinatorSwiftTests/MissingStorageRecoveryTests.swift",
+      "new": "Tests/swift/CoordinatorSwiftTests/MissingStorageRecoveryTests.swift",
+      "target": "CoordinatorSwiftTests"
+    },
+    {
+      "old": "src/coordinator-swift/Tests/CoordinatorSwiftTests/OperationalApplicationTests.swift",
+      "new": "Tests/swift/CoordinatorSwiftTests/OperationalApplicationTests.swift",
+      "target": "CoordinatorSwiftTests"
+    },
+    {
+      "old": "src/coordinator-swift/Tests/CoordinatorSwiftTests/RoutingApplicationTests.swift",
+      "new": "Tests/swift/CoordinatorSwiftTests/RoutingApplicationTests.swift",
+      "target": "CoordinatorSwiftTests"
+    },
+    {
+      "old": "src/coordinator-swift/Tests/CoordinatorSwiftTests/SQLiteQueuedActionClaimTests.swift",
+      "new": "Tests/swift/CoordinatorSwiftTests/SQLiteQueuedActionClaimTests.swift",
+      "target": "CoordinatorSwiftTests"
+    },
+    {
+      "old": "src/coordinator-swift/Tests/CoordinatorSwiftTests/SemanticApplicationTests.swift",
+      "new": "Tests/swift/CoordinatorSwiftTests/SemanticApplicationTests.swift",
+      "target": "CoordinatorSwiftTests"
+    },
+    {
+      "old": "src/coordinator-swift/Tests/CoordinatorSwiftTests/SemanticFoundationTests.swift",
+      "new": "Tests/swift/CoordinatorSwiftTests/SemanticFoundationTests.swift",
+      "target": "CoordinatorSwiftTests"
+    },
+    {
+      "old": "src/coordinator-swift/Tests/CoordinatorSwiftTests/SemanticReplayTests.swift",
+      "new": "Tests/swift/CoordinatorSwiftTests/SemanticReplayTests.swift",
+      "target": "CoordinatorSwiftTests"
+    }
+  ]
+}

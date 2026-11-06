@@ -10,7 +10,10 @@ import {
   type SuggestionProviderConfig
 } from "./provider";
 import { mergeTaskLineage } from "./mergeTaskLineage";
-import { scorePriority } from "./scorePriority";
+import {
+  scorePriority,
+  screenSourceFailureCodes
+} from "./scorePriority";
 import {
   MINIMUM_SUGGESTION_SCORE,
   selectSuggestion
@@ -19,10 +22,15 @@ import type {
   PrioritySuggestionResult,
   ProviderUsage,
   RestoredConversation,
+  SuggestionProviderId,
   SourceStatus,
-  VerifiedTaskCandidate
+  VerifiedTaskCandidate,
+  VerifiedTaskStateSignal
 } from "./types";
-import { verifyTaskCandidates } from "./verifyCandidates";
+import {
+  verifyTaskCandidates,
+  verifyTaskStateSignals
+} from "./verifyCandidates";
 import {
   PRIORITY_SCORING_VERSION,
   SUGGESTION_ENGINE_VERSION,
@@ -38,6 +46,7 @@ export class SuggestionEngineError extends Error {
     public readonly code:
       | "NOT_ENOUGH_RESTORED_CONVERSATIONS"
       | "NOT_ENOUGH_SUCCESSFUL_EXTRACTIONS"
+      | "EXTRACTION_INPUT_MISMATCH"
       | "INVALID_LLM_OUTPUT",
     message: string,
     public readonly diagnostics: Array<{
@@ -49,6 +58,16 @@ export class SuggestionEngineError extends Error {
     this.name = "SuggestionEngineError";
   }
 }
+
+export type SuggestionCandidateExtraction = Readonly<{
+  status: "completed" | "failed";
+  inputIndex: number;
+  conversationId: string;
+  failureCode: string | null;
+  candidates: VerifiedTaskCandidate[];
+  stateSignals: VerifiedTaskStateSignal[];
+  usage: ProviderUsage;
+}>;
 
 export async function runSuggestionEngine(input: {
   restored: RestoredConversation[];
@@ -68,14 +87,43 @@ export async function runSuggestionEngine(input: {
   const providerConfig =
     input.providerConfig ?? readSuggestionProviderConfig();
   const startedAt = now;
-  const extractionResults = await mapWithConcurrency(
+  const extractionResults = await extractSuggestionCandidates({
+    restored: input.restored,
+    analysisTimestamp: now,
+    providerConfig,
+    fetchImpl: input.fetchImpl
+  });
+  const completedAt = input.now?.() ?? new Date().toISOString();
+
+  return resolveSuggestionCandidates({
+    restored: input.restored,
+    sources: input.sources,
+    extractionResults,
+    provider: providerConfig.id,
+    model: providerConfig.model,
+    analysisTimestamp: now,
+    startedAt,
+    completedAt
+  });
+}
+
+export async function extractSuggestionCandidates(input: {
+  restored: RestoredConversation[];
+  analysisTimestamp: string;
+  providerConfig: SuggestionProviderConfig;
+  fetchImpl?: typeof fetch;
+}): Promise<SuggestionCandidateExtraction[]> {
+  return mapWithConcurrency(
     input.restored,
     EXTRACTION_CONCURRENCY,
     async (restored) => {
       try {
-        const prompt = buildTaskCandidatePrompt(restored.conversation, now);
+        const prompt = buildTaskCandidatePrompt(
+          restored.conversation,
+          input.analysisTimestamp
+        );
         const response = await generateTaskCandidates(
-          providerConfig,
+          input.providerConfig,
           prompt.prompt,
           input.fetchImpl
         );
@@ -85,18 +133,27 @@ export async function runSuggestionEngine(input: {
           return {
             status: "failed" as const,
             inputIndex: restored.inputIndex,
+            conversationId: restored.conversation.id,
             failureCode: "LLM_SCHEMA_INVALID",
             candidates: [] as VerifiedTaskCandidate[],
+            stateSignals: [] as VerifiedTaskStateSignal[],
             usage: response.usage
           };
         }
         return {
           status: "completed" as const,
           inputIndex: restored.inputIndex,
+          conversationId: restored.conversation.id,
           failureCode: null,
           candidates: verifyTaskCandidates(
             restored.conversation,
-            parsed.data.candidates
+            parsed.data.candidates,
+            restored.sourceContext
+          ),
+          stateSignals: verifyTaskStateSignals(
+            restored.conversation,
+            parsed.data.stateSignals,
+            restored.sourceContext
           ),
           usage: response.usage
         };
@@ -104,15 +161,40 @@ export async function runSuggestionEngine(input: {
         return {
           status: "failed" as const,
           inputIndex: restored.inputIndex,
+          conversationId: restored.conversation.id,
           failureCode:
             error instanceof SuggestionProviderError
               ? error.code
               : "LLM_EXTRACTION_FAILED",
           candidates: [] as VerifiedTaskCandidate[],
+          stateSignals: [] as VerifiedTaskStateSignal[],
           usage: emptyUsage()
         };
       }
     }
+  );
+}
+
+export function resolveSuggestionCandidates(input: {
+  restored: RestoredConversation[];
+  sources: SourceStatus[];
+  extractionResults: readonly SuggestionCandidateExtraction[];
+  provider: SuggestionProviderId;
+  model: string;
+  analysisTimestamp: string;
+  startedAt: string;
+  completedAt: string;
+}): PrioritySuggestionResult {
+  if (input.restored.length < 3) {
+    throw new SuggestionEngineError(
+      "NOT_ENOUGH_RESTORED_CONVERSATIONS",
+      "복원에 성공한 고유 대화가 3개 이상 필요합니다."
+    );
+  }
+
+  const extractionResults = orderExtractionResults(
+    input.restored,
+    input.extractionResults
   );
   const successfulExtractions = extractionResults.filter(
     (result) => result.status === "completed"
@@ -131,12 +213,62 @@ export async function runSuggestionEngine(input: {
     );
   }
 
-  const verified = successfulExtractions.flatMap(
+  const candidates = successfulExtractions.flatMap(
     (result) => result.candidates
   );
-  const merged = mergeTaskLineage(verified);
+  const stateSignals = successfulExtractions.flatMap(
+    (result) => result.stateSignals
+  );
+  const candidateRejections = candidates.flatMap((candidate) => {
+    const reasonCodes = new Set(
+      screenSourceFailureCodes(candidate, input.analysisTimestamp)
+    );
+    if (
+      candidate.sourceContexts.length > 0 &&
+      candidate.sourceContexts.every(
+        (context) => context.modality === "screen"
+      ) &&
+      candidate.verificationIssues.length > 0
+    ) {
+      reasonCodes.add("SCREEN_CANDIDATE_VERIFICATION_FAILED");
+    }
+    return reasonCodes.size === 0
+      ? []
+      : [{ candidate, reasonCodes: [...reasonCodes].sort() }];
+  });
+  const stateSignalRejections = stateSignals.flatMap((candidate) => {
+    const reasonCodes = new Set(
+      screenSourceFailureCodes(candidate, input.analysisTimestamp)
+    );
+    if (candidate.verificationIssues.length > 0) {
+      reasonCodes.add("TERMINAL_STATE_SIGNAL_NOT_VERIFIED");
+    }
+    return reasonCodes.size === 0
+      ? []
+      : [{ candidate, reasonCodes: [...reasonCodes].sort() }];
+  });
+  const preMergeRejections = [
+    ...candidateRejections,
+    ...stateSignalRejections
+  ];
+  const rejectedCandidates = new Set(
+    candidateRejections.map((rejection) => rejection.candidate)
+  );
+  const rejectedStateSignals = new Set(
+    stateSignalRejections.map((rejection) => rejection.candidate)
+  );
+  const admittedCandidates = candidates.filter(
+    (candidate) => !rejectedCandidates.has(candidate)
+  );
+  const admittedStateSignals = stateSignals.filter(
+    (signal) => !rejectedStateSignals.has(signal)
+  );
+  const merged = mergeTaskLineage(
+    admittedCandidates,
+    admittedStateSignals
+  );
   const assessments = merged.map((candidate) =>
-    scorePriority(candidate, now)
+    scorePriority(candidate, input.analysisTimestamp)
   );
   const selection = selectSuggestion(merged, assessments);
   const decisionDiagnostics = {
@@ -156,13 +288,20 @@ export async function runSuggestionEngine(input: {
         .sort((left, right) => right.score - left.score)[0]?.score ?? null,
     minimumSuggestionScore: MINIMUM_SUGGESTION_SCORE,
     reasonCounts: countValues(
-      assessments.flatMap((assessment) => assessment.reasonCodes)
+      [
+        ...assessments.flatMap((assessment) => assessment.reasonCodes),
+        ...preMergeRejections.flatMap((rejection) => rejection.reasonCodes)
+      ]
     ),
     verificationIssueCounts: countValues(
-      merged.flatMap((candidate) => candidate.verificationIssues)
+      [
+        ...merged.flatMap((candidate) => candidate.verificationIssues),
+        ...preMergeRejections.flatMap(
+          (rejection) => rejection.candidate.verificationIssues
+        )
+      ]
     )
   };
-  const completedAt = input.now?.() ?? new Date().toISOString();
   const usage = extractionResults.reduce(
     (total, result) => addUsage(total, result.usage),
     emptyUsage()
@@ -179,10 +318,10 @@ export async function runSuggestionEngine(input: {
       promptVersion: TASK_CANDIDATE_PROMPT_VERSION,
       verifierVersion: TASK_EVIDENCE_VERIFIER_VERSION,
       scoringVersion: PRIORITY_SCORING_VERSION,
-      provider: providerConfig.id,
-      model: providerConfig.model,
-      startedAt,
-      completedAt,
+      provider: input.provider,
+      model: input.model,
+      startedAt: input.startedAt,
+      completedAt: input.completedAt,
       sourceCount: input.restored.length,
       candidateCount: merged.length,
       eligibleCount: assessments.filter(
@@ -195,6 +334,44 @@ export async function runSuggestionEngine(input: {
       usage
     }
   };
+}
+
+function orderExtractionResults(
+  restored: RestoredConversation[],
+  extractionResults: readonly SuggestionCandidateExtraction[]
+): SuggestionCandidateExtraction[] {
+  const bySource = new Map<string, SuggestionCandidateExtraction>();
+  for (const result of extractionResults) {
+    const key = `${result.inputIndex}|${result.conversationId}`;
+    if (bySource.has(key)) {
+      throw new SuggestionEngineError(
+        "EXTRACTION_INPUT_MISMATCH",
+        "동일한 복원 입력에 추출 결과가 중복 연결되었습니다.",
+        [{ inputIndex: result.inputIndex, code: "DUPLICATE_EXTRACTION" }]
+      );
+    }
+    bySource.set(key, result);
+  }
+  const ordered = restored.map((value) => {
+    const key = `${value.inputIndex}|${value.conversation.id}`;
+    const result = bySource.get(key);
+    if (!result) {
+      throw new SuggestionEngineError(
+        "EXTRACTION_INPUT_MISMATCH",
+        "복원 입력과 추출 결과를 정확히 연결할 수 없습니다.",
+        [{ inputIndex: value.inputIndex, code: "MISSING_EXTRACTION" }]
+      );
+    }
+    bySource.delete(key);
+    return result;
+  });
+  if (bySource.size > 0 || ordered.length !== extractionResults.length) {
+    throw new SuggestionEngineError(
+      "EXTRACTION_INPUT_MISMATCH",
+      "요청에 포함되지 않은 추출 결과가 전달되었습니다."
+    );
+  }
+  return ordered;
 }
 
 function countValues(values: string[]): Record<string, number> {

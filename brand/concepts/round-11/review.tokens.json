@@ -1,0 +1,75 @@
+{
+  "$description": "Five distinct headline fonts; exploratory values only.",
+  "primitive": {
+    "five": {
+      "title": {
+        "$value": "52px",
+        "$type": "dimension"
+      },
+      "title-mobile": {
+        "$value": "32px",
+        "$type": "dimension"
+      },
+      "latin": {
+        "$value": "24px",
+        "$type": "dimension"
+      },
+      "overview-width": {
+        "$value": "1280px",
+        "$type": "dimension"
+      },
+      "label-width": {
+        "$value": "216px",
+        "$type": "dimension"
+      }
+    }
+  },
+  "semantic": {
+    "five": {
+      "title": {
+        "$value": "{primitive.five.title}",
+        "$type": "dimension"
+      },
+      "title-mobile": {
+        "$value": "{primitive.five.title-mobile}",
+        "$type": "dimension"
+      },
+      "latin": {
+        "$value": "{primitive.five.latin}",
+        "$type": "dimension"
+      },
+      "overview-width": {
+        "$value": "{primitive.five.overview-width}",
+        "$type": "dimension"
+      },
+      "label-width": {
+        "$value": "{primitive.five.label-width}",
+        "$type": "dimension"
+      }
+    }
+  },
+  "component": {
+    "five": {
+      "title": {
+        "$value": "{semantic.five.title}",
+        "$type": "dimension"
+      },
+      "title-mobile": {
+        "$value": "{semantic.five.title-mobile}",
+        "$type": "dimension"
+      },
+      "latin": {
+        "$value": "{semantic.five.latin}",
+        "$type": "dimension"
+      },
+      "overview-width": {
+        "$value": "{semantic.five.overview-width}",
+        "$type": "dimension"
+      },
+      "label-width": {
+        "$value": "{semantic.five.label-width}",
+        "$type": "dimension"
+      }
+    }
+  }
+}

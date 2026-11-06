@@ -1,0 +1,51 @@
+{
+  "status": "passed",
+  "origin": "http://127.0.0.1:4317",
+  "system": {
+    "ffmpeg": true,
+    "transcription": true,
+    "appDirectory": "/Users/joo/BiaDone/apps/Edu/editor"
+  },
+  "persistedProject": {
+    "id": "project-d93fec82-85e7-4612-bf94-e465f3179f21",
+    "revision": 3,
+    "frames": 9986,
+    "captions": 78,
+    "scenes": 21
+  },
+  "persistedJob": {
+    "id": "a52aeefc-b0a3-4b86-b14e-1d29d9547b43",
+    "status": "completed",
+    "decodedFrames": 9986
+  },
+  "downloadRange": {
+    "status": 206,
+    "bytes": 128
+  },
+  "mcp": {
+    "tools": [
+      "list_projects",
+      "get_project",
+      "get_scene",
+      "create_project",
+      "edit_project",
+      "get_quality",
+      "import_captions",
+      "start_export",
+      "get_job",
+      "cancel_job"
+    ],
+    "projectRead": true,
+    "qualityRead": true,
+    "registeredInUserConfig": false
+  },
+  "browser": {
+    "errors": [],
+    "screenshots": [
+      "/tmp/biadone-studio-desktop-final.png",
+      "/tmp/biadone-studio-codex-final.png",
+      "/tmp/biadone-studio-laptop-final.png",
+      "/tmp/biadone-studio-mobile-final.png"
+    ]
+  }
+}

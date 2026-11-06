@@ -1,0 +1,566 @@
+{
+  "schema_version": "1.0",
+  "app_release": "0.1.0+build.85",
+  "files": [
+    {
+      "source": "docs/github/public/.github/ISSUE_TEMPLATE/bug_report.yml",
+      "path": ".github/ISSUE_TEMPLATE/bug_report.yml",
+      "origin": "public-template"
+    },
+    {
+      "source": "docs/github/public/.github/ISSUE_TEMPLATE/config.yml",
+      "path": ".github/ISSUE_TEMPLATE/config.yml",
+      "origin": "public-template"
+    },
+    {
+      "source": "docs/github/public/.github/ISSUE_TEMPLATE/feature_request.yml",
+      "path": ".github/ISSUE_TEMPLATE/feature_request.yml",
+      "origin": "public-template"
+    },
+    {
+      "source": "docs/github/public/.gitignore",
+      "path": ".gitignore",
+      "origin": "public-template"
+    },
+    {
+      "source": "docs/github/public/CHANGELOG.ko.md",
+      "path": "CHANGELOG.ko.md",
+      "origin": "public-template"
+    },
+    {
+      "source": "docs/github/public/CHANGELOG.md",
+      "path": "CHANGELOG.md",
+      "origin": "public-template"
+    },
+    {
+      "source": "docs/github/public/CONTRIBUTING.md",
+      "path": "CONTRIBUTING.md",
+      "origin": "public-template"
+    },
+    {
+      "source": "Contracts/v1/README.md",
+      "path": "Contracts/v1/README.md",
+      "origin": "source"
+    },
+    {
+      "source": "Contracts/v1/action.schema.json",
+      "path": "Contracts/v1/action.schema.json",
+      "origin": "source"
+    },
+    {
+      "source": "Contracts/v1/common.schema.json",
+      "path": "Contracts/v1/common.schema.json",
+      "origin": "source"
+    },
+    {
+      "source": "Contracts/v1/continuation-envelope.schema.json",
+      "path": "Contracts/v1/continuation-envelope.schema.json",
+      "origin": "source"
+    },
+    {
+      "source": "Contracts/v1/decision-packet.schema.json",
+      "path": "Contracts/v1/decision-packet.schema.json",
+      "origin": "source"
+    },
+    {
+      "source": "Contracts/v1/decision-proposal.schema.json",
+      "path": "Contracts/v1/decision-proposal.schema.json",
+      "origin": "source"
+    },
+    {
+      "source": "Contracts/v1/manifest.json",
+      "path": "Contracts/v1/manifest.json",
+      "origin": "source"
+    },
+    {
+      "source": "Contracts/v1/native-request.schema.json",
+      "path": "Contracts/v1/native-request.schema.json",
+      "origin": "source"
+    },
+    {
+      "source": "Contracts/v1/prompt-episode.schema.json",
+      "path": "Contracts/v1/prompt-episode.schema.json",
+      "origin": "source"
+    },
+    {
+      "source": "Contracts/v1/resume-capsule.schema.json",
+      "path": "Contracts/v1/resume-capsule.schema.json",
+      "origin": "source"
+    },
+    {
+      "source": "Contracts/v1/runtime-event.schema.json",
+      "path": "Contracts/v1/runtime-event.schema.json",
+      "origin": "source"
+    },
+    {
+      "source": "Contracts/v1/selection-request.schema.json",
+      "path": "Contracts/v1/selection-request.schema.json",
+      "origin": "source"
+    },
+    {
+      "source": "Fixtures/v1/contracts/invalid/continuation-format-repair-with-action-fields.json",
+      "path": "Fixtures/v1/contracts/invalid/continuation-format-repair-with-action-fields.json",
+      "origin": "source"
+    },
+    {
+      "source": "Fixtures/v1/contracts/invalid/continuation-pet-action-wrong-dispatch.json",
+      "path": "Fixtures/v1/contracts/invalid/continuation-pet-action-wrong-dispatch.json",
+      "origin": "source"
+    },
+    {
+      "source": "Fixtures/v1/contracts/invalid/decision-packet-disabled-option-with-action.json",
+      "path": "Fixtures/v1/contracts/invalid/decision-packet-disabled-option-with-action.json",
+      "origin": "source"
+    },
+    {
+      "source": "Fixtures/v1/contracts/invalid/decision-packet-wrong-slot-semantics.json",
+      "path": "Fixtures/v1/contracts/invalid/decision-packet-wrong-slot-semantics.json",
+      "origin": "source"
+    },
+    {
+      "source": "Fixtures/v1/contracts/invalid/runtime-format-repair-raw-correlation-token.json",
+      "path": "Fixtures/v1/contracts/invalid/runtime-format-repair-raw-correlation-token.json",
+      "origin": "source"
+    },
+    {
+      "source": "Fixtures/v1/contracts/invalid/runtime-queued-action-context-claim-raw-correlation-token.json",
+      "path": "Fixtures/v1/contracts/invalid/runtime-queued-action-context-claim-raw-correlation-token.json",
+      "origin": "source"
+    },
+    {
+      "source": "Fixtures/v1/contracts/invalid/runtime-timeout-automatic-retry.json",
+      "path": "Fixtures/v1/contracts/invalid/runtime-timeout-automatic-retry.json",
+      "origin": "source"
+    },
+    {
+      "source": "Fixtures/v1/contracts/invalid/runtime-timeout-marked-failed.json",
+      "path": "Fixtures/v1/contracts/invalid/runtime-timeout-marked-failed.json",
+      "origin": "source"
+    },
+    {
+      "source": "Fixtures/v1/contracts/invalid/runtime-transport-completed-claims-success.json",
+      "path": "Fixtures/v1/contracts/invalid/runtime-transport-completed-claims-success.json",
+      "origin": "source"
+    },
+    {
+      "source": "Fixtures/v1/contracts/invalid/selection-missing-boundary.json",
+      "path": "Fixtures/v1/contracts/invalid/selection-missing-boundary.json",
+      "origin": "source"
+    },
+    {
+      "source": "Fixtures/v1/contracts/invalid/selection-slot-number-only.json",
+      "path": "Fixtures/v1/contracts/invalid/selection-slot-number-only.json",
+      "origin": "source"
+    },
+    {
+      "source": "Fixtures/v1/contracts/valid/action.json",
+      "path": "Fixtures/v1/contracts/valid/action.json",
+      "origin": "source"
+    },
+    {
+      "source": "Fixtures/v1/contracts/valid/continuation-format-repair.json",
+      "path": "Fixtures/v1/contracts/valid/continuation-format-repair.json",
+      "origin": "source"
+    },
+    {
+      "source": "Fixtures/v1/contracts/valid/continuation-pet-action.json",
+      "path": "Fixtures/v1/contracts/valid/continuation-pet-action.json",
+      "origin": "source"
+    },
+    {
+      "source": "Fixtures/v1/contracts/valid/decision-packet-alternative-disabled.json",
+      "path": "Fixtures/v1/contracts/valid/decision-packet-alternative-disabled.json",
+      "origin": "source"
+    },
+    {
+      "source": "Fixtures/v1/contracts/valid/decision-packet-ranked-actions.json",
+      "path": "Fixtures/v1/contracts/valid/decision-packet-ranked-actions.json",
+      "origin": "source"
+    },
+    {
+      "source": "Fixtures/v1/contracts/valid/decision-packet-rollback-disabled.json",
+      "path": "Fixtures/v1/contracts/valid/decision-packet-rollback-disabled.json",
+      "origin": "source"
+    },
+    {
+      "source": "Fixtures/v1/contracts/valid/decision-proposal.json",
+      "path": "Fixtures/v1/contracts/valid/decision-proposal.json",
+      "origin": "source"
+    },
+    {
+      "source": "Fixtures/v1/contracts/valid/native-request-notification-only.json",
+      "path": "Fixtures/v1/contracts/valid/native-request-notification-only.json",
+      "origin": "source"
+    },
+    {
+      "source": "Fixtures/v1/contracts/valid/prompt-episode.json",
+      "path": "Fixtures/v1/contracts/valid/prompt-episode.json",
+      "origin": "source"
+    },
+    {
+      "source": "Fixtures/v1/contracts/valid/resume-capsule.json",
+      "path": "Fixtures/v1/contracts/valid/resume-capsule.json",
+      "origin": "source"
+    },
+    {
+      "source": "Fixtures/v1/contracts/valid/runtime-format-repair-claimed.json",
+      "path": "Fixtures/v1/contracts/valid/runtime-format-repair-claimed.json",
+      "origin": "source"
+    },
+    {
+      "source": "Fixtures/v1/contracts/valid/runtime-format-repair-reserved.json",
+      "path": "Fixtures/v1/contracts/valid/runtime-format-repair-reserved.json",
+      "origin": "source"
+    },
+    {
+      "source": "Fixtures/v1/contracts/valid/runtime-queued-action-context-claimed.json",
+      "path": "Fixtures/v1/contracts/valid/runtime-queued-action-context-claimed.json",
+      "origin": "source"
+    },
+    {
+      "source": "Fixtures/v1/contracts/valid/runtime-timed-out-unknown.json",
+      "path": "Fixtures/v1/contracts/valid/runtime-timed-out-unknown.json",
+      "origin": "source"
+    },
+    {
+      "source": "Fixtures/v1/contracts/valid/runtime-transport-completed.json",
+      "path": "Fixtures/v1/contracts/valid/runtime-transport-completed.json",
+      "origin": "source"
+    },
+    {
+      "source": "Fixtures/v1/contracts/valid/runtime-work-outcome.json",
+      "path": "Fixtures/v1/contracts/valid/runtime-work-outcome.json",
+      "origin": "source"
+    },
+    {
+      "source": "Fixtures/v1/contracts/valid/selection-request.json",
+      "path": "Fixtures/v1/contracts/valid/selection-request.json",
+      "origin": "source"
+    },
+    {
+      "source": "Fixtures/v1/event-traces/format-repair-claimed-without-reservation.json",
+      "path": "Fixtures/v1/event-traces/format-repair-claimed-without-reservation.json",
+      "origin": "source"
+    },
+    {
+      "source": "Fixtures/v1/event-traces/format-repair-reserved-claimed.json",
+      "path": "Fixtures/v1/event-traces/format-repair-reserved-claimed.json",
+      "origin": "source"
+    },
+    {
+      "source": "Fixtures/v1/event-traces/format-repair-restart-duplicate-reservation.json",
+      "path": "Fixtures/v1/event-traces/format-repair-restart-duplicate-reservation.json",
+      "origin": "source"
+    },
+    {
+      "source": "Fixtures/v1/event-traces/in-flight-timeout-unknown.json",
+      "path": "Fixtures/v1/event-traces/in-flight-timeout-unknown.json",
+      "origin": "source"
+    },
+    {
+      "source": "Fixtures/v1/event-traces/same-turn-two-boundaries.json",
+      "path": "Fixtures/v1/event-traces/same-turn-two-boundaries.json",
+      "origin": "source"
+    },
+    {
+      "source": "Fixtures/v1/event-traces/selection-binding-mismatch.json",
+      "path": "Fixtures/v1/event-traces/selection-binding-mismatch.json",
+      "origin": "source"
+    },
+    {
+      "source": "Fixtures/v1/event-traces/stale-selection-prior-boundary.json",
+      "path": "Fixtures/v1/event-traces/stale-selection-prior-boundary.json",
+      "origin": "source"
+    },
+    {
+      "source": "Fixtures/v1/manifest.json",
+      "path": "Fixtures/v1/manifest.json",
+      "origin": "source"
+    },
+    {
+      "source": "docs/github/public/LICENSE",
+      "path": "LICENSE",
+      "origin": "public-template"
+    },
+    {
+      "source": "docs/github/public/NOTICE",
+      "path": "NOTICE",
+      "origin": "public-template"
+    },
+    {
+      "source": "docs/github/public/PUBLIC_SCOPE.md",
+      "path": "PUBLIC_SCOPE.md",
+      "origin": "public-template"
+    },
+    {
+      "source": "docs/github/public/README.ko.md",
+      "path": "README.ko.md",
+      "origin": "public-template"
+    },
+    {
+      "source": "docs/github/public/README.md",
+      "path": "README.md",
+      "origin": "public-template"
+    },
+    {
+      "source": "docs/github/public/SECURITY.md",
+      "path": "SECURITY.md",
+      "origin": "public-template"
+    },
+    {
+      "source": "Tests/Contracts/continuation-claim.mjs",
+      "path": "Tests/Contracts/continuation-claim.mjs",
+      "origin": "source"
+    },
+    {
+      "source": "Tests/Contracts/contract-harness.mjs",
+      "path": "Tests/Contracts/contract-harness.mjs",
+      "origin": "source"
+    },
+    {
+      "source": "Tests/Contracts/decision-packet-semantic.mjs",
+      "path": "Tests/Contracts/decision-packet-semantic.mjs",
+      "origin": "source"
+    },
+    {
+      "source": "Tests/Contracts/rfc3339.mjs",
+      "path": "Tests/Contracts/rfc3339.mjs",
+      "origin": "source"
+    },
+    {
+      "source": "Tests/Contracts/semantic-trace.mjs",
+      "path": "Tests/Contracts/semantic-trace.mjs",
+      "origin": "source"
+    },
+    {
+      "source": "Tests/Contracts/v1-contracts.test.mjs",
+      "path": "Tests/Contracts/v1-contracts.test.mjs",
+      "origin": "source"
+    },
+    {
+      "source": "Tests/CoordinatorOperational/plugin-package.test.mjs",
+      "path": "Tests/CoordinatorOperational/plugin-package.test.mjs",
+      "origin": "source"
+    },
+    {
+      "source": "docs/github/public/Tests/Public/public-scope.test.mjs",
+      "path": "Tests/Public/public-scope.test.mjs",
+      "origin": "public-template"
+    },
+    {
+      "source": "Tests/bridges/claude/auto-connect.test.mjs",
+      "path": "Tests/bridges/claude/auto-connect.test.mjs",
+      "origin": "source"
+    },
+    {
+      "source": "Tests/bridges/claude/fixtures/product-hook/selection-notice.json",
+      "path": "Tests/bridges/claude/fixtures/product-hook/selection-notice.json",
+      "origin": "source"
+    },
+    {
+      "source": "Tests/bridges/claude/session-v2-bridge.test.mjs",
+      "path": "Tests/bridges/claude/session-v2-bridge.test.mjs",
+      "origin": "source"
+    },
+    {
+      "source": "Tests/bridges/claude/session-v2-cancellation.test.mjs",
+      "path": "Tests/bridges/claude/session-v2-cancellation.test.mjs",
+      "origin": "source"
+    },
+    {
+      "source": "Tests/bridges/claude/session-v2-channel-poller.test.mjs",
+      "path": "Tests/bridges/claude/session-v2-channel-poller.test.mjs",
+      "origin": "source"
+    },
+    {
+      "source": "Tests/bridges/claude/session-v2-client.test.mjs",
+      "path": "Tests/bridges/claude/session-v2-client.test.mjs",
+      "origin": "source"
+    },
+    {
+      "source": "Tests/bridges/claude/session-v2-compatibility.test.mjs",
+      "path": "Tests/bridges/claude/session-v2-compatibility.test.mjs",
+      "origin": "source"
+    },
+    {
+      "source": "Tests/bridges/claude/session-v2-diagnostics.test.mjs",
+      "path": "Tests/bridges/claude/session-v2-diagnostics.test.mjs",
+      "origin": "source"
+    },
+    {
+      "source": "Tests/bridges/claude/session-v2-heartbeat.test.mjs",
+      "path": "Tests/bridges/claude/session-v2-heartbeat.test.mjs",
+      "origin": "source"
+    },
+    {
+      "source": "Tests/bridges/claude/session-v2-hook-input.test.mjs",
+      "path": "Tests/bridges/claude/session-v2-hook-input.test.mjs",
+      "origin": "source"
+    },
+    {
+      "source": "Tests/bridges/claude/session-v2-lifecycle.test.mjs",
+      "path": "Tests/bridges/claude/session-v2-lifecycle.test.mjs",
+      "origin": "source"
+    },
+    {
+      "source": "Tests/bridges/claude/session-v2-waiter.test.mjs",
+      "path": "Tests/bridges/claude/session-v2-waiter.test.mjs",
+      "origin": "source"
+    },
+    {
+      "source": "bridges/claude/src/auto-connect-client.mjs",
+      "path": "bridges/claude/src/auto-connect-client.mjs",
+      "origin": "source"
+    },
+    {
+      "source": "bridges/claude/src/auto-connect-hook.mjs",
+      "path": "bridges/claude/src/auto-connect-hook.mjs",
+      "origin": "source"
+    },
+    {
+      "source": "bridges/claude/src/auto-connect-mcp.mjs",
+      "path": "bridges/claude/src/auto-connect-mcp.mjs",
+      "origin": "source"
+    },
+    {
+      "source": "bridges/claude/src/native-session-client.mjs",
+      "path": "bridges/claude/src/native-session-client.mjs",
+      "origin": "source"
+    },
+    {
+      "source": "bridges/claude/src/product-context.mjs",
+      "path": "bridges/claude/src/product-context.mjs",
+      "origin": "source"
+    },
+    {
+      "source": "bridges/claude/src/product-core-client.mjs",
+      "path": "bridges/claude/src/product-core-client.mjs",
+      "origin": "source"
+    },
+    {
+      "source": "bridges/claude/src/product-tools.mjs",
+      "path": "bridges/claude/src/product-tools.mjs",
+      "origin": "source"
+    },
+    {
+      "source": "bridges/claude/src/session-v2-channel-poller.mjs",
+      "path": "bridges/claude/src/session-v2-channel-poller.mjs",
+      "origin": "source"
+    },
+    {
+      "source": "bridges/claude/src/session-v2-client.mjs",
+      "path": "bridges/claude/src/session-v2-client.mjs",
+      "origin": "source"
+    },
+    {
+      "source": "bridges/claude/src/session-v2-context.mjs",
+      "path": "bridges/claude/src/session-v2-context.mjs",
+      "origin": "source"
+    },
+    {
+      "source": "bridges/claude/src/session-v2-hook.mjs",
+      "path": "bridges/claude/src/session-v2-hook.mjs",
+      "origin": "source"
+    },
+    {
+      "source": "bridges/claude/src/session-v2-lifecycle.mjs",
+      "path": "bridges/claude/src/session-v2-lifecycle.mjs",
+      "origin": "source"
+    },
+    {
+      "source": "bridges/claude/src/session-v2-mcp.mjs",
+      "path": "bridges/claude/src/session-v2-mcp.mjs",
+      "origin": "source"
+    },
+    {
+      "source": "bridges/claude/src/session-v2-tools.mjs",
+      "path": "bridges/claude/src/session-v2-tools.mjs",
+      "origin": "source"
+    },
+    {
+      "source": "bridges/claude/src/session-v2-waiter.mjs",
+      "path": "bridges/claude/src/session-v2-waiter.mjs",
+      "origin": "source"
+    },
+    {
+      "source": "bridges/codex/plugin/.codex-plugin/plugin.json",
+      "path": "bridges/codex/plugin/.codex-plugin/plugin.json",
+      "origin": "source"
+    },
+    {
+      "source": "bridges/codex/plugin/.mcp.json",
+      "path": "bridges/codex/plugin/.mcp.json",
+      "origin": "source"
+    },
+    {
+      "source": "bridges/codex/plugin/hooks/hooks.json",
+      "path": "bridges/codex/plugin/hooks/hooks.json",
+      "origin": "source"
+    },
+    {
+      "source": "bridges/codex/plugin/scripts/blabee-launcher",
+      "path": "bridges/codex/plugin/scripts/blabee-launcher",
+      "origin": "source"
+    },
+    {
+      "source": "bridges/codex/plugin/skills/blabee-decision/SKILL.md",
+      "path": "bridges/codex/plugin/skills/blabee-decision/SKILL.md",
+      "origin": "source"
+    },
+    {
+      "source": "bridges/codex/plugin/skills/blabee-decision/agents/openai.yaml",
+      "path": "bridges/codex/plugin/skills/blabee-decision/agents/openai.yaml",
+      "origin": "source"
+    },
+    {
+      "source": "docs/github/blabee-hero-dark.svg",
+      "path": "docs/github/blabee-hero-dark.svg",
+      "origin": "source"
+    },
+    {
+      "source": "docs/github/blabee-hero-light.svg",
+      "path": "docs/github/blabee-hero-light.svg",
+      "origin": "source"
+    },
+    {
+      "source": "docs/github/blabee-social-preview.png",
+      "path": "docs/github/blabee-social-preview.png",
+      "origin": "source"
+    },
+    {
+      "source": "docs/github/public/docs/integrations.md",
+      "path": "docs/integrations.md",
+      "origin": "public-template"
+    },
+    {
+      "source": "docs/github/public/examples/validate-proposal.mjs",
+      "path": "examples/validate-proposal.mjs",
+      "origin": "public-template"
+    },
+    {
+      "source": "docs/github/public/package-lock.json",
+      "path": "package-lock.json",
+      "origin": "public-template"
+    },
+    {
+      "source": "docs/github/public/package.json",
+      "path": "package.json",
+      "origin": "public-template"
+    },
+    {
+      "source": "docs/github/public/scripts/check.mjs",
+      "path": "scripts/check.mjs",
+      "origin": "public-template"
+    },
+    {
+      "source": "docs/github/public/scripts/update-source-inventory.mjs",
+      "path": "scripts/update-source-inventory.mjs",
+      "origin": "public-template"
+    },
+    {
+      "source": "docs/github/public/scripts/verify-public-sources.mjs",
+      "path": "scripts/verify-public-sources.mjs",
+      "origin": "public-template"
+    }
+  ]
+}

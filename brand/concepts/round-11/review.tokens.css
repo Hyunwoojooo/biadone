@@ -1,0 +1,29 @@
+/* Design Tokens - Auto-generated */
+/* Do not edit directly - modify tokens.json instead */
+
+/* === PRIMITIVES === */
+:root {
+  --primitive-five-title: 52px;
+  --primitive-five-title-mobile: 32px;
+  --primitive-five-latin: 24px;
+  --primitive-five-overview-width: 1280px;
+  --primitive-five-label-width: 216px;
+}
+
+/* === SEMANTIC === */
+:root {
+  --five-title: 52px;
+  --five-title-mobile: 32px;
+  --five-latin: 24px;
+  --five-overview-width: 1280px;
+  --five-label-width: 216px;
+}
+
+/* === COMPONENTS === */
+:root {
+  --five-title: 52px;
+  --five-title-mobile: 32px;
+  --five-latin: 24px;
+  --five-overview-width: 1280px;
+  --five-label-width: 216px;
+}

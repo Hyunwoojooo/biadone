@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="description" content="A little home for the links worth keeping.">
+    <meta name="color-scheme" content="light">
+    <title>Link Shelf</title>
+    <link rel="icon" href="data:,">
+    <link rel="stylesheet" href="./styles.css">
+    <script type="module" src="./app.js"></script>
+  </head>
+  <body>
+    <main class="shelf" aria-labelledby="page-title">
+      <header class="shelf-header">
+        <h1 id="page-title">Link Shelf</h1>
+        <p class="shelf-description">A little home for the links worth keeping.</p>
+      </header>
+
+      <section class="add-link" aria-labelledby="add-link-title">
+        <div class="add-link-panel">
+          <div class="add-link-heading">
+            <h2 id="add-link-title">Add a link</h2>
+            <p>Keep something useful close.</p>
+          </div>
+
+          <form class="link-form" id="link-form" novalidate>
+            <div class="field">
+              <label for="link-title">Title</label>
+              <input id="link-title" name="title" type="text" maxlength="80" autocomplete="off" aria-describedby="title-error">
+              <p class="field-error" id="title-error"></p>
+            </div>
+
+            <div class="field field-url">
+              <label for="link-url">URL</label>
+              <input id="link-url" name="url" type="url" inputmode="url" autocomplete="url" placeholder="https://example.com" aria-describedby="url-error">
+              <p class="field-error" id="url-error"></p>
+            </div>
+
+            <div class="field">
+              <label for="link-category">Category</label>
+              <select id="link-category" name="category">
+                <option>Development</option>
+                <option>Design</option>
+                <option>Tools</option>
+              </select>
+              <p class="field-hint" aria-hidden="true">Choose one</p>
+            </div>
+
+            <div class="field field-description">
+              <label for="link-description">Description <span>(optional)</span></label>
+              <input id="link-description" name="description" type="text" maxlength="120" autocomplete="off" placeholder="Why is this worth keeping?">
+              <p class="field-hint" aria-hidden="true">Up to 120 characters</p>
+            </div>
+
+            <div class="form-actions">
+              <p class="form-status" id="form-status" role="status" aria-live="polite"></p>
+              <button type="submit">Save link</button>
+            </div>
+          </form>
+        </div>
+      </section>
+
+      <section class="collection" aria-labelledby="collection-title">
+        <div class="collection-heading">
+          <h2 id="collection-title">Your collection</h2>
+          <div class="collection-filters" role="group" aria-label="Filter links">
+            <button class="filter-button" id="filter-all" type="button" aria-pressed="true">All</button>
+            <button class="filter-button" id="filter-development" type="button" aria-pressed="false">Development</button>
+            <button class="filter-button" id="filter-design" type="button" aria-pressed="false">Design</button>
+            <button class="filter-button" id="filter-tools" type="button" aria-pressed="false">Tools</button>
+          </div>
+          <p class="collection-count" id="collection-count"></p>
+        </div>
+        <ul class="resource-grid" id="resource-grid"></ul>
+        <noscript>
+          <p class="noscript-message">Enable JavaScript to see your link collection.</p>
+        </noscript>
+      </section>
+    </main>
+
+    <template id="resource-card-template">
+      <li class="resource-item">
+        <a class="resource-card" target="_blank" rel="noopener noreferrer">
+          <p class="resource-category"></p>
+          <h3 class="resource-title"></h3>
+          <p class="resource-description"></p>
+          <div class="resource-footer">
+            <span class="resource-domain"></span>
+            <svg class="external-arrow" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <path d="M5 19 19 5M6 5h13v13" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />
+            </svg>
+          </div>
+        </a>
+      </li>
+    </template>
+  </body>
+</html>

@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#f5f4ee">
+  <meta name="description" content="내 사업에 필요한 것을 만들고, 활용하고, 스스로 수정하는 Biadon Edu. 필요한 과정을 골라 나만의 학습 경로를 만들어 보세요.">
+  <title>Biadon Edu — 내 사업을 위한 제작 스튜디오</title>
+  <link rel="icon" href="assets/mark.svg" type="image/svg+xml">
+  <link rel="preload" href="assets/PretendardVariable.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="stylesheet" href="styles.css">
+  <script src="curriculum.js" defer></script>
+  <script src="app.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#main-content">본문으로 건너뛰기</a>
+  <div class="page-shell">
+    <header class="site-header">
+      <button class="brand" data-view="overview" aria-label="Biadon Edu 한눈에 보기"><span class="brand-mark" aria-hidden="true">B</span><span>Biadon Edu</span></button>
+      <nav class="main-nav" role="tablist" aria-label="커리큘럼 탐색">
+        <button id="tab-overview" role="tab" aria-selected="true" aria-controls="view-overview" data-view="overview">한눈에 보기</button>
+        <button id="tab-courses" role="tab" aria-selected="false" aria-controls="view-courses" data-view="courses" tabindex="-1">과정 탐색</button>
+        <button id="tab-path" role="tab" aria-selected="false" aria-controls="view-path" data-view="path" tabindex="-1">나의 학습 경로<span class="path-count" hidden>0</span></button>
+      </nav>
+      <a class="motion-link" href="motion.html">영상으로 보기 <span aria-hidden="true">↗</span></a>
+    </header>
+
+    <main id="main-content" tabindex="-1">
+      <section id="view-overview" class="view" role="tabpanel" aria-labelledby="tab-overview">
+        <div class="hero">
+          <div class="hero-copy">
+            <div class="editorial-rule" aria-hidden="true"><span>01</span><i></i></div>
+            <h1><span>내 사업에 필요한 것,</span><span class="blue-text">이제 직접 만듭니다.</span></h1>
+            <p class="hero-subtitle">만들고, 활용하고, 스스로 수정하는 교육.</p>
+            <p class="hero-description">내 사업 자료로 시작해서, 반복해서 쓰는 결과물까지.</p>
+            <div class="hero-actions">
+              <button class="button primary" data-action="find-course">내게 맞는 과정 찾기 <span aria-hidden="true">↗</span></button>
+              <button class="button" data-view="courses">전체 커리큘럼 열기 <span aria-hidden="true">+</span></button>
+            </div>
+          </div>
+
+          <div class="desk" aria-label="눌러서 살펴보는 교육 결과물 예시">
+            <p class="desk-note">눌러서 살펴보세요 <span aria-hidden="true">↴</span></p>
+            <button class="paper web-paper" data-course="B" aria-label="사업 소개 웹페이지 과정 살펴보기">
+              <span class="mini-browser"><b>Biadon Cafe</b><span>소개&nbsp;&nbsp; 메뉴&nbsp;&nbsp; 문의</span></span>
+              <span class="web-paper-body"><strong>우리 가게를<br>소개합니다.</strong><span class="web-copy">좋은 커피가 만드는<br>일상의 작은 변화.</span><svg class="plant-drawing" viewBox="0 0 120 220" fill="none" aria-hidden="true"><g stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"><path d="M43 162h53l-7 48H51zM68 163C65 112 66 70 86 30M70 127C49 101 26 94 17 99C22 117 46 131 70 136M71 104C89 81 107 78 115 82C111 102 91 113 71 115M72 76C56 51 41 47 32 49C30 69 49 86 71 89M80 49C84 23 102 10 111 8C116 30 102 46 80 58M66 153C47 138 28 136 23 140C28 154 46 164 67 162"/><path d="M42 59l29 21M29 106l39 25M83 52l22-33M75 110l29-20"/></g></svg><span class="mini-contact">문의하기&nbsp; →</span></span>
+            </button>
+            <button class="paper report-paper" data-course="D" aria-label="매출 보고서 과정 살펴보기">
+              <span class="binder-hole"></span><span class="binder-hole second"></span>
+              <span class="paper-heading">매출 보고서</span><span class="example-note">실습 예시</span>
+              <span class="mini-bars" aria-hidden="true"><i></i><i></i><i></i></span>
+              <span class="chart-labels"><span>1월</span><span>2월</span><span>3월</span></span>
+              <span class="ledger-line"><span>매출</span><span>—</span></span><span class="ledger-line"><span>비용</span><span>—</span></span><span class="ledger-line"><span>검증</span><span>원본 대조</span></span>
+            </button>
+            <button class="paper promo-paper" data-course="A" aria-label="홍보 콘텐츠 과정 살펴보기">
+              <span class="paper-heading">상품을 매력적으로.</span>
+              <span class="promo-layout"><span>좋은 이야기와<br>우리의 가치를,<br>더 많은 사람에게.</span><svg viewBox="0 0 120 110" class="cup-drawing" fill="none" aria-hidden="true"><g stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M22 44c0 0 2 41 11 46c8 6 29 5 37-1c8-6 11-45 11-45M81 51c34-8 35 32-6 29M15 95c13 13 67 13 78-2M24 44c16 9 41 8 56 0c-11-7-43-9-56 0M43 32c-12-13 7-14 0-27M61 30c-11-12 8-15 4-27"/></g></svg></span>
+              <span class="promo-bottom"><b>Biadon 블렌드 커피</b><b>15,000원</b></span><span class="tiny">실습 예시 · 상품 소개문과 재사용 템플릿</span>
+            </button>
+            <button class="paper quote-paper" data-course="E" aria-label="맞춤 업무 도구 과정 살펴보기">
+              <span class="binder-hole"></span><span class="paper-heading">견적 계산기</span>
+              <span class="quote-line"><span>수량</span><b>10</b></span><span class="quote-line"><span>단가</span><b>15,000원</b></span><span class="quote-total"><small>예상 견적 · 실습 예시</small><strong>150,000원</strong></span>
+            </button>
+            <button class="paper process-paper" data-course="C" aria-label="고객 업무 자동화 과정 살펴보기"><b>문의</b><span>→</span><b>저장</b><span>→</span><b>알림</b></button>
+          </div>
+        </div>
+
+        <div class="editorial-rule rail-rule" aria-hidden="true"><span>02</span><i></i></div>
+        <section class="learning-rail" aria-labelledby="rail-title">
+          <h2 id="rail-title">하나씩 만들다 보면,<br>내 사업의 시스템이 됩니다.</h2>
+          <button class="rail-step" data-course="F"><span class="rail-number">01</span><strong>공통 기초</strong><span>2시간</span><i aria-hidden="true">→</i></button>
+          <button class="rail-step" data-view="courses"><span class="rail-number">02</span><strong>필요한 과정 선택</strong><span>A · B · C · D · E</span><i aria-hidden="true">→</i></button>
+          <button class="rail-step" data-course="T"><span class="rail-number">03</span><strong>AI 업무팀 운영</strong><span>12시간</span><i aria-hidden="true">↗</i></button>
+        </section>
+      </section>
+
+      <section id="view-courses" class="view" role="tabpanel" aria-labelledby="tab-courses" hidden>
+        <div class="section-intro"><div><p class="section-number">02 / 과정 탐색</p><h1>무엇부터 만들어 볼까요?</h1><p>필요한 과정을 골라 열어보세요.</p></div><button class="text-button" data-view="path">나의 학습 경로 보기 <span aria-hidden="true">↗</span></button></div>
+        <div class="course-heading" aria-hidden="true"><span>과정</span><span>내 사업에 가져올 변화</span><span>교육 시간¹</span><span></span></div>
+        <div id="course-list" class="course-list"></div>
+        <section class="common-flow"><h2>만들고 끝내지 않습니다.</h2><p id="intro-copy"></p><ol id="flow-list"></ol></section>
+      </section>
+
+      <section id="view-path" class="view" role="tabpanel" aria-labelledby="tab-path" hidden>
+        <div class="section-intro"><div><p class="section-number">03 / 나의 학습 경로</p><h1>내 일에 맞게 골라보세요.</h1><p>공통 기초를 시작으로, 필요한 선택 과정과 심화 과정을 담습니다.</p></div><button class="button" data-view="courses">과정 더 살펴보기 <span aria-hidden="true">+</span></button></div>
+        <div class="path-layout"><section class="path-sequence" aria-label="선택한 학습 경로" id="path-sequence"></section><aside class="path-receipt"><p class="receipt-title">나의 교육 구성</p><div class="receipt-rule"></div><p class="receipt-hours"><strong id="total-hours">2</strong><span>시간</span></p><p id="variable-hours" class="variable-note" hidden>+ 선택 E는 과제 범위에 따라 별도 편성</p><p id="path-summary"></p><p class="receipt-note">비용·계정·보안·오류 관리는<br>모든 과정에 포함됩니다.</p><button class="button primary" id="download-path">학습 경로 저장 <span aria-hidden="true">↓</span></button><button class="text-button reset-path" id="reset-path">선택한 과정 비우기</button><p class="tiny">선택 내용은 이 브라우저에 저장됩니다.<br>공유 기기에서는 사용 후 비워주세요.</p></aside></div>
+        <section class="path-picker"><h2>경로에 더 담기</h2><div id="path-options"></div></section>
+      </section>
+    </main>
+
+    <footer class="site-footer"><span>¹ 교육 시간은 현재 편성안 기준입니다.</span><button class="footer-safety" data-course="S">비용·계정·보안·오류 관리 <span aria-hidden="true">↗</span></button><span>Biadon Edu</span></footer>
+  </div>
+
+  <dialog id="course-dialog" class="course-dialog" aria-labelledby="dialog-title">
+    <div class="dialog-head"><span id="dialog-group"></span><button id="close-dialog" class="text-button">닫기 <span aria-hidden="true">×</span></button></div>
+    <div class="dialog-title-area"><h2 id="dialog-title"></h2><p id="dialog-time"></p></div>
+    <div class="detail-tabs" role="tablist" aria-label="과정 상세">
+      <button id="detail-tab-learn" role="tab" data-detail="learn" aria-selected="true" aria-controls="detail-panel">배우는 내용</button>
+      <button id="detail-tab-outputs" role="tab" data-detail="outputs" aria-selected="false" aria-controls="detail-panel" tabindex="-1">가져갈 결과물</button>
+    </div>
+    <div id="detail-panel" class="detail-panel" role="tabpanel" aria-labelledby="detail-tab-learn" tabindex="0"></div>
+    <div class="dialog-footer"><p id="dialog-footer-note"></p><button id="toggle-course" class="button primary"></button></div>
+  </dialog>
+  <dialog id="finder-dialog" class="finder-dialog" aria-labelledby="finder-title"><div class="dialog-head"><span>내게 맞는 과정 찾기</span><button class="text-button" id="close-finder">닫기 <span aria-hidden="true">×</span></button></div><h2 id="finder-title">지금, 어떤 일이<br>조금 편해졌으면 하나요?</h2><p>가장 먼저 해결하고 싶은 일을 골라보세요.</p><div id="finder-options"></div><p class="tiny">공통 기초는 어떤 경로에서도 함께 시작합니다.</p></dialog>
+  <p id="live-message" class="sr-only" role="status" aria-live="polite"></p>
+</body>
+</html>

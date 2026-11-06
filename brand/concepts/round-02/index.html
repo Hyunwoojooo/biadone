@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="ko" data-concept="a" data-preview="desktop">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Biadone 브랜드 방향 2차</title>
+<link rel="stylesheet" href="shared/base.tokens.css">
+<link rel="stylesheet" href="shared/review.tokens.css">
+<link rel="stylesheet" href="shared/specimen.tokens.css">
+<link rel="stylesheet" href="shared/common.css">
+<link rel="stylesheet" href="shared/review.css">
+<script src="shared/review.js" defer></script>
+</head>
+<body>
+<a class="skip-link" href="#review-main">시안으로 건너뛰기</a>
+<header class="review-header">
+  <div class="review-heading"><a class="review-brand" href="#a">Biadone</a><h1>새로운 세 가지 방향</h1><span class="review-state">방향 검토용</span></div>
+  <nav class="concept-choices" aria-label="브랜드 시안 선택">
+    <button type="button" data-select="a" aria-pressed="true"><span>A</span> 이름이 곧 화면</button>
+    <button type="button" data-select="b" aria-pressed="false"><span>B</span> 나란히 읽는 두 흐름</button>
+    <button type="button" data-select="c" aria-pressed="false"><span>C</span> 확장되는 프레임</button>
+  </nav>
+</header>
+<main id="review-main" class="review-main">
+<section class="review-summary" aria-labelledby="concept-title">
+  <div><h2 id="concept-title">이름이 곧 화면이 되는 타이포그래피</h2><p id="concept-description">Before I ask, Done.을 브랜드의 가장 큰 시각 자산으로 씁니다. 하나의 I 옆에 또 하나의 I가 생깁니다.</p></div>
+  <div class="preview-actions">
+    <div class="size-choices" role="group" aria-label="미리보기 화면 크기">
+      <button type="button" data-size="desktop" aria-pressed="true">데스크톱</button>
+      <button type="button" data-size="mobile" aria-pressed="false">휴대폰</button>
+    </div>
+    <a id="open-preview" class="text-link" href="a/" target="_blank" rel="noopener">시안만 크게 보기<svg aria-hidden="true" viewBox="0 0 20 20"><path d="M6 4h10v10M16 4 4 16" fill="none" stroke="currentColor" stroke-width="1.6"/></svg></a>
+  </div>
+</section>
+<div class="preview-stage">
+  <iframe id="concept-frame" title="A 이름이 곧 화면 홈페이지 시안" src="a/" loading="eager"></iframe>
+</div>
+<p id="review-status" class="sr-only" role="status" aria-live="polite">A 시안을 표시했습니다.</p>
+<section class="extensions" aria-labelledby="extensions-heading">
+  <div class="extensions-heading"><h2 id="extensions-heading">같은 언어로, 다른 매체까지.</h2><p>홈페이지에서 고른 시각적 특징이 교육과 콘텐츠로 어떻게 이어지는지 살펴보세요.</p></div>
+  <div class="specimen-grid">
+    <figure class="specimen">
+      <div class="slide-sample sample">
+        <div class="sample-top"><span>Biadone Edu</span><span>개념과 실습</span></div>
+        <h3>AI를 이해하고,<br>내 일에 적용하기.</h3>
+        <svg class="sample-twin" aria-hidden="true" viewBox="0 0 160 160"><path d="M10 42h56v16H48v78h18v16H10v-16h18V58H10z" fill="currentColor"/><path d="M91 10h56v16h-18v78h18v16H91v-16h18V26H91z" fill="none" stroke="currentColor" stroke-width="3"/></svg>
+        <div class="sample-bottom"><span>AI, AX, 자동화</span><span>Before I ask, Done.</span></div>
+      </div>
+      <figcaption>강의 표지 적용 예시</figcaption>
+    </figure>
+    <figure class="specimen social-specimen">
+      <div class="social-sample sample">
+        <span class="social-brand">Biadone</span>
+        <h3>하고 싶은 일이<br>많은 사람에게.</h3>
+        <svg class="social-twin" aria-hidden="true" viewBox="0 0 160 160"><path d="M10 42h56v16H48v78h18v16H10v-16h18V58H10z" fill="currentColor"/><path d="M91 10h56v16h-18v78h18v16H91v-16h18V26H91z" fill="none" stroke="currentColor" stroke-width="3"/></svg>
+        <span class="social-signature">Before I ask, Done.</span>
+      </div>
+      <figcaption>SNS 콘텐츠 적용 예시</figcaption>
+    </figure>
+  </div>
+</section>
+<details class="design-details">
+<summary>이 시안의 설계 기준</summary>
+<div class="details-body">
+  <p id="design-principle">큰 영문 조판 하나에 대담함을 집중하고, 한국어 정보와 프로젝트는 차분하게 정돈합니다.</p>
+  <div class="swatches" aria-label="후보 색상의 역할"><div><span class="swatch swatch-background"></span>바탕</div><div><span class="swatch swatch-text"></span>글자</div><div><span class="swatch swatch-brand"></span>대표 색상</div><div><span class="swatch swatch-soft"></span>보조 면</div></div>
+  <p id="type-description">영문: Barlow Condensed ExtraBold / 한글: Pretendard Variable</p>
+  <p>기초값, 용도, 컴포넌트의 세 층으로 토큰을 연결했습니다. 후보별 색상과 서체는 비교를 위한 제안입니다.</p>
+</div>
+</details>
+<footer class="review-footer"><span>아직 선택되지 않은 브랜드 탐색안입니다.</span><a class="text-link" href="DESIGN_PLAN.md">디자인 계획 보기</a></footer>
+</main>
+</body>
+</html>
+

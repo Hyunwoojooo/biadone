@@ -1,0 +1,55 @@
+{
+  "status": "passed",
+  "method": "pixel-aligned shared composition preview at 960×540 versus decoded H.264 frames; luminance SSIM > 0.90 (H.264 chroma subsampling excluded)",
+  "projectId": "project-360b7de4-4f9d-43e6-89c0-fb5c0d7d4c1f",
+  "samples": [
+    {
+      "frame": 0,
+      "ssim": 0.945651,
+      "ui": "/tmp/biadone-preview-export-frames/ui-0.png",
+      "encoded": "/tmp/biadone-preview-export-frames/export-0.png"
+    },
+    {
+      "frame": 42,
+      "ssim": 0.938332,
+      "ui": "/tmp/biadone-preview-export-frames/ui-42.png",
+      "encoded": "/tmp/biadone-preview-export-frames/export-42.png"
+    },
+    {
+      "frame": 59,
+      "ssim": 0.938402,
+      "ui": "/tmp/biadone-preview-export-frames/ui-59.png",
+      "encoded": "/tmp/biadone-preview-export-frames/export-59.png"
+    },
+    {
+      "frame": 60,
+      "ssim": 0.951407,
+      "ui": "/tmp/biadone-preview-export-frames/ui-60.png",
+      "encoded": "/tmp/biadone-preview-export-frames/export-60.png"
+    },
+    {
+      "frame": 222,
+      "ssim": 0.960544,
+      "ui": "/tmp/biadone-preview-export-frames/ui-222.png",
+      "encoded": "/tmp/biadone-preview-export-frames/export-222.png"
+    },
+    {
+      "frame": 342,
+      "ssim": 0.975204,
+      "ui": "/tmp/biadone-preview-export-frames/ui-342.png",
+      "encoded": "/tmp/biadone-preview-export-frames/export-342.png"
+    },
+    {
+      "frame": 402,
+      "ssim": 0.943194,
+      "ui": "/tmp/biadone-preview-export-frames/ui-402.png",
+      "encoded": "/tmp/biadone-preview-export-frames/export-402.png"
+    },
+    {
+      "frame": 419,
+      "ssim": 0.915267,
+      "ui": "/tmp/biadone-preview-export-frames/ui-419.png",
+      "encoded": "/tmp/biadone-preview-export-frames/export-419.png"
+    }
+  ]
+}

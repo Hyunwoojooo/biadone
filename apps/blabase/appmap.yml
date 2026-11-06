@@ -1,0 +1,25 @@
+name: blabase-architecture-traces
+language: javascript
+appmap_dir: tmp/appmap
+packages:
+  - path: src
+    exclude:
+      - ".css"
+      - "/generated/"
+      - ".generated."
+      - "core/extractors/providers"
+      - "core/golden-sheet"
+  - path: tests/integration
+  - path: suggestion/app
+    exclude:
+      - ".css"
+      - "/generated/"
+      - ".generated."
+  - path: suggestion/src
+    exclude:
+      - "/generated/"
+      - ".generated."
+      - "connectors/"
+  - path: suggestion/tests
+    exclude:
+      - "/fixtures/"

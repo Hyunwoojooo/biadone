@@ -1,0 +1,1332 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta
+      name="description"
+      content="blabase 실행 계획 대시보드의 목적과 정보를 유지한 세 가지 디자인 프로토타입"
+    />
+    <title>blabase · Execution Dashboard Prototypes</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --green: #59e391;
+        --blue: #6ba8ff;
+        --violet: #b394ff;
+        --amber: #f4b95e;
+        --rose: #f18498;
+        --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+        --ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);
+        font-family: Inter, Pretendard, "Noto Sans KR", -apple-system, BlinkMacSystemFont,
+          "Segoe UI", sans-serif;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      html,
+      body {
+        min-width: 320px;
+        min-height: 100%;
+        margin: 0;
+      }
+
+      button,
+      a,
+      summary {
+        -webkit-tap-highlight-color: transparent;
+      }
+
+      button:focus-visible,
+      a:focus-visible,
+      summary:focus-visible {
+        outline: 2px solid var(--blue);
+        outline-offset: 3px;
+      }
+
+      #stage {
+        min-height: 100vh;
+      }
+
+      .prototype-note {
+        font-family: "SFMono-Regular", Consolas, monospace;
+        font-size: 10px;
+        font-weight: 700;
+        letter-spacing: 0.13em;
+        text-transform: uppercase;
+      }
+
+      .status-dot {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        font-family: "SFMono-Regular", Consolas, monospace;
+        font-size: 9px;
+        font-weight: 700;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+      }
+
+      .status-dot::before {
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
+        background: currentColor;
+        content: "";
+      }
+
+      .status-dot[data-status="verified"] { color: var(--green); }
+      .status-dot[data-status="local"] { color: var(--blue); }
+      .status-dot[data-status="shadow"] { color: var(--violet); }
+      .status-dot[data-status="partial"] { color: var(--amber); }
+      .status-dot[data-status="planned"] { color: #a8afb9; }
+      .status-dot[data-status="gate"] { color: var(--rose); }
+
+      .pressable {
+        transform: scale(1);
+        transition: transform 140ms var(--ease-out);
+      }
+
+      .pressable:active {
+        transform: scale(0.97);
+      }
+
+      /* Command — dense operating surface */
+      .command {
+        min-height: 100vh;
+        padding: 0 0 110px;
+        background:
+          linear-gradient(rgba(255, 255, 255, 0.018) 1px, transparent 1px),
+          linear-gradient(90deg, rgba(255, 255, 255, 0.018) 1px, transparent 1px),
+          #090b0e;
+        background-size: 40px 40px;
+        color: #f0eee9;
+      }
+
+      .command-shell {
+        width: min(1440px, calc(100% - 40px));
+        margin: 0 auto;
+      }
+
+      .command-header {
+        position: sticky;
+        top: 0;
+        z-index: 20;
+        display: flex;
+        min-height: 62px;
+        align-items: center;
+        justify-content: space-between;
+        gap: 16px;
+        border-bottom: 1px solid #282e38;
+        background: rgba(9, 11, 14, 0.88);
+        backdrop-filter: blur(16px);
+      }
+
+      .command-brand {
+        display: flex;
+        align-items: center;
+        gap: 11px;
+        font-size: 13px;
+        font-weight: 750;
+      }
+
+      .command-brand::before {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: var(--green);
+        box-shadow: 0 0 16px rgba(89, 227, 145, 0.66);
+        content: "";
+      }
+
+      .command-filter {
+        display: flex;
+        gap: 4px;
+      }
+
+      .command-filter button {
+        min-height: 30px;
+        padding: 0 12px;
+        border: 1px solid #303744;
+        border-radius: 8px;
+        background: #11151a;
+        color: #929aa7;
+        cursor: pointer;
+        font: 650 10px/1 inherit;
+      }
+
+      .command-filter button[aria-pressed="true"] {
+        border-color: #dce1e8;
+        background: #e9edf2;
+        color: #111318;
+      }
+
+      .command-hero {
+        display: grid;
+        grid-template-columns: minmax(0, 1.2fr) minmax(340px, 0.8fr);
+        gap: 36px;
+        padding: 68px 0 36px;
+        border-bottom: 1px solid #2b313b;
+      }
+
+      .command-hero h1 {
+        max-width: 870px;
+        margin: 12px 0 18px;
+        font-size: clamp(48px, 6vw, 88px);
+        letter-spacing: -0.065em;
+        line-height: 0.96;
+      }
+
+      .command-hero p {
+        max-width: 760px;
+        margin: 0;
+        color: #abb2bd;
+        font-size: 16px;
+        line-height: 1.6;
+      }
+
+      .frontier-stack {
+        display: grid;
+        gap: 8px;
+        align-content: end;
+      }
+
+      .frontier-row {
+        display: grid;
+        grid-template-columns: 90px minmax(0, 1fr) auto;
+        gap: 14px;
+        align-items: center;
+        min-height: 52px;
+        padding: 0 15px;
+        border: 1px solid #303744;
+        border-radius: 10px;
+        background: #11151a;
+      }
+
+      .frontier-row span:first-child {
+        color: #707987;
+        font: 700 9px/1 "SFMono-Regular", Consolas, monospace;
+        letter-spacing: 0.1em;
+        text-transform: uppercase;
+      }
+
+      .frontier-row strong {
+        font-size: 12px;
+      }
+
+      .command-section {
+        padding: 38px 0 0;
+      }
+
+      .command-titlebar {
+        display: flex;
+        align-items: end;
+        justify-content: space-between;
+        gap: 22px;
+        margin-bottom: 15px;
+      }
+
+      .command-titlebar h2 {
+        margin: 5px 0 0;
+        font-size: 30px;
+        letter-spacing: -0.045em;
+      }
+
+      .command-titlebar p {
+        max-width: 620px;
+        margin: 0;
+        color: #858e9b;
+        font-size: 11px;
+        text-align: right;
+      }
+
+      .command-matrix {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        overflow: hidden;
+        border: 1px solid #303744;
+        border-radius: 14px;
+        background: #101318;
+      }
+
+      .command-card {
+        min-height: 176px;
+        padding: 18px;
+        border-right: 1px solid #292f38;
+        border-bottom: 1px solid #292f38;
+      }
+
+      .command-card:nth-child(4n) { border-right: 0; }
+      .command-card:nth-last-child(-n + 4) { border-bottom: 0; }
+
+      .command-card-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+      }
+
+      .command-card code {
+        color: #7b8593;
+        font-size: 9px;
+      }
+
+      .command-card h3 {
+        margin: 25px 0 8px;
+        font-size: 14px;
+      }
+
+      .command-card p {
+        margin: 0;
+        color: #9098a4;
+        font-size: 10px;
+        line-height: 1.55;
+      }
+
+      .command-board {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 10px;
+      }
+
+      .command-lane {
+        overflow: hidden;
+        border: 1px solid #303744;
+        border-radius: 14px;
+        background: #101318;
+      }
+
+      .command-lane > h3 {
+        margin: 0;
+        padding: 17px;
+        border-bottom: 1px solid #303744;
+        font-size: 15px;
+      }
+
+      .command-task {
+        padding: 15px 17px;
+        border-bottom: 1px solid #292f38;
+      }
+
+      .command-task:last-child { border-bottom: 0; }
+      .command-task code { color: var(--blue); font-size: 8px; }
+      .command-task strong { display: block; margin: 5px 0; font-size: 12px; }
+      .command-task span { color: #858e9b; font-size: 9px; line-height: 1.45; }
+
+      .command-bottom {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 10px;
+      }
+
+      .command-panel {
+        padding: 19px;
+        border: 1px solid #303744;
+        border-radius: 14px;
+        background: #101318;
+      }
+
+      .command-panel h3 { margin: 0 0 13px; font-size: 15px; }
+      .command-list { display: grid; gap: 7px; margin: 0; padding: 0; list-style: none; }
+      .command-list li { padding: 10px; border: 1px solid #292f38; border-radius: 8px; color: #949ca8; font-size: 9px; }
+
+      .command-semantic-path {
+        display: grid;
+        grid-template-columns: repeat(5, minmax(0, 1fr));
+        overflow: hidden;
+        border: 1px solid #303744;
+        border-radius: 14px;
+        background: #101318;
+      }
+
+      .command-semantic-step { min-height: 112px; padding: 17px; border-right: 1px solid #292f38; }
+      .command-semantic-step:last-child { border-right: 0; }
+      .command-semantic-step code { color: var(--violet); font-size: 8px; }
+      .command-semantic-step strong { display: block; margin-top: 26px; font-size: 12px; }
+      .command-source-ledger { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin-top: 10px; }
+
+      .source-links { display: grid; gap: 6px; }
+      .source-links a { display: block; padding: 9px 10px; border: 1px solid #292f38; border-radius: 7px; color: #aeb6c2; font-size: 9px; line-height: 1.4; text-decoration: none; }
+      .source-links a:hover { color: #fff; border-color: #4a5564; }
+
+      .command-enter {
+        animation: command-enter 280ms var(--ease-out) both;
+      }
+
+      @keyframes command-enter {
+        from { opacity: 0; transform: translateY(7px); }
+        to { opacity: 1; transform: translateY(0); }
+      }
+
+      /* Editorial — narrative, light, deliberate */
+      .editorial {
+        min-height: 100vh;
+        padding-bottom: 120px;
+        background: #f2efe8;
+        color: #181815;
+      }
+
+      .editorial-shell {
+        width: min(1260px, calc(100% - 48px));
+        margin: 0 auto;
+      }
+
+      .editorial-header {
+        display: flex;
+        min-height: 78px;
+        align-items: center;
+        justify-content: space-between;
+        border-bottom: 1px solid rgba(24, 24, 21, 0.24);
+      }
+
+      .editorial-brand {
+        font-size: 15px;
+        font-weight: 800;
+        letter-spacing: -0.02em;
+      }
+
+      .editorial-header span:last-child {
+        color: #686861;
+        font: 10px/1 "SFMono-Regular", Consolas, monospace;
+        letter-spacing: 0.1em;
+        text-transform: uppercase;
+      }
+
+      .editorial-hero {
+        display: grid;
+        grid-template-columns: minmax(0, 1.42fr) minmax(300px, 0.58fr);
+        gap: 70px;
+        padding: 92px 0 80px;
+        border-bottom: 1px solid rgba(24, 24, 21, 0.25);
+      }
+
+      .editorial-hero h1 {
+        max-width: 880px;
+        margin: 14px 0 25px;
+        font-family: Georgia, "Times New Roman", serif;
+        font-size: clamp(56px, 7vw, 106px);
+        font-weight: 500;
+        letter-spacing: -0.065em;
+        line-height: 0.9;
+      }
+
+      .editorial-hero p {
+        max-width: 720px;
+        margin: 0;
+        color: #55564f;
+        font-size: 18px;
+        line-height: 1.65;
+      }
+
+      .editorial-thesis {
+        align-self: end;
+        padding-left: 24px;
+        border-left: 2px solid #181815;
+      }
+
+      .editorial-thesis strong {
+        display: block;
+        margin-bottom: 10px;
+        font-family: Georgia, "Times New Roman", serif;
+        font-size: 25px;
+        font-weight: 500;
+        line-height: 1.2;
+      }
+
+      .editorial-thesis span {
+        color: #686861;
+        font-size: 12px;
+        line-height: 1.55;
+      }
+
+      .editorial-act {
+        display: grid;
+        grid-template-columns: 190px minmax(0, 1fr);
+        gap: 50px;
+        padding: 64px 0;
+        border-bottom: 1px solid rgba(24, 24, 21, 0.22);
+      }
+
+      .editorial-act-no {
+        position: sticky;
+        top: 28px;
+        align-self: start;
+        color: #66665f;
+        font: 700 10px/1.4 "SFMono-Regular", Consolas, monospace;
+        letter-spacing: 0.1em;
+        text-transform: uppercase;
+      }
+
+      .editorial-act h2 {
+        margin: 0 0 30px;
+        font-family: Georgia, "Times New Roman", serif;
+        font-size: clamp(36px, 4vw, 62px);
+        font-weight: 500;
+        letter-spacing: -0.045em;
+        line-height: 1;
+      }
+
+      .editorial-frontiers {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 1px;
+        background: rgba(24, 24, 21, 0.22);
+        border: 1px solid rgba(24, 24, 21, 0.22);
+      }
+
+      .editorial-frontier {
+        min-height: 220px;
+        padding: 22px;
+        background: #f2efe8;
+      }
+
+      .editorial-frontier code { color: #797970; font-size: 9px; }
+      .editorial-frontier h3 { margin: 50px 0 10px; font-size: 22px; line-height: 1.15; }
+      .editorial-frontier p { margin: 0; color: #5e5f58; font-size: 12px; line-height: 1.6; }
+
+      .editorial-track + .editorial-track { margin-top: 42px; }
+      .editorial-track-title { display: grid; grid-template-columns: 1fr auto; gap: 20px; align-items: end; margin-bottom: 12px; }
+      .editorial-track-title h3 { margin: 0; font-size: 24px; }
+      .editorial-track-title span { color: #66665f; font: 9px/1 "SFMono-Regular", Consolas, monospace; text-transform: uppercase; }
+
+      .editorial-steps {
+        border-top: 1px solid #181815;
+      }
+
+      .editorial-step {
+        display: grid;
+        grid-template-columns: 72px 190px minmax(0, 1fr) auto;
+        gap: 18px;
+        align-items: center;
+        min-height: 80px;
+        border-bottom: 1px solid rgba(24, 24, 21, 0.2);
+      }
+
+      .editorial-step code { color: #66665f; font-size: 9px; }
+      .editorial-step strong { font-size: 13px; }
+      .editorial-step p { margin: 0; color: #66665f; font-size: 11px; }
+
+      .editorial-plan {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 28px;
+      }
+
+      .editorial-plan-column h3 {
+        margin: 0 0 14px;
+        padding-bottom: 12px;
+        border-bottom: 2px solid #181815;
+        font-family: Georgia, "Times New Roman", serif;
+        font-size: 28px;
+        font-weight: 500;
+      }
+
+      .editorial-task {
+        padding: 17px 0;
+        border-bottom: 1px solid rgba(24, 24, 21, 0.2);
+      }
+
+      .editorial-task code { color: #74746b; font-size: 8px; }
+      .editorial-task strong { display: block; margin: 7px 0; font-size: 13px; }
+      .editorial-task p { margin: 0; color: #64645d; font-size: 10px; line-height: 1.55; }
+
+      .editorial-evidence {
+        display: grid;
+        grid-template-columns: 0.8fr 1.2fr;
+        gap: 50px;
+      }
+
+      .editorial-checks { display: grid; grid-template-columns: repeat(2, 1fr); gap: 1px; background: rgba(24,24,21,.18); border: 1px solid rgba(24,24,21,.18); }
+      .editorial-check { min-height: 120px; padding: 16px; background: #f2efe8; }
+      .editorial-check strong { display: block; margin-top: 28px; font-size: 17px; }
+      .editorial-check span { color: #696961; font-size: 10px; }
+      .editorial-risk { margin: 0; padding-left: 20px; color: #55564f; }
+      .editorial-risk li { margin-bottom: 13px; padding-left: 4px; font-size: 11px; line-height: 1.55; }
+      .editorial-sources { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 26px; margin-top: 34px; }
+      .editorial-source h3 { margin: 0 0 12px; font-family: Georgia, "Times New Roman", serif; font-size: 20px; font-weight: 500; }
+      .editorial-source .source-links a { border-color: rgba(24,24,21,.18); color: #55564f; }
+      .editorial-source .source-links a:hover { border-color: #181815; color: #181815; }
+
+      .editorial-enter {
+        animation: editorial-enter 280ms var(--ease-out) both;
+      }
+
+      @keyframes editorial-enter {
+        from { opacity: 0; transform: translateY(10px); }
+        to { opacity: 1; transform: translateY(0); }
+      }
+
+      /* Navigator — interactive decision surface */
+      .navigator {
+        min-height: 100vh;
+        padding-bottom: 110px;
+        background: #0d0f13;
+        color: #edf0f4;
+      }
+
+      .navigator-header {
+        position: sticky;
+        top: 0;
+        z-index: 20;
+        display: flex;
+        min-height: 64px;
+        align-items: center;
+        justify-content: space-between;
+        gap: 20px;
+        padding: 0 22px;
+        border-bottom: 1px solid #2c333e;
+        background: rgba(13, 15, 19, 0.9);
+        backdrop-filter: blur(16px);
+      }
+
+      .navigator-header strong { font-size: 13px; }
+      .navigator-header span { color: #7f8895; font: 9px/1 "SFMono-Regular", Consolas, monospace; letter-spacing: .08em; text-transform: uppercase; }
+
+      .navigator-layout {
+        display: grid;
+        grid-template-columns: 245px minmax(0, 1fr);
+        width: min(1500px, 100%);
+        margin: 0 auto;
+      }
+
+      .navigator-rail {
+        position: sticky;
+        top: 64px;
+        height: calc(100vh - 64px);
+        padding: 28px 18px 90px;
+        border-right: 1px solid #2c333e;
+        overflow-y: auto;
+      }
+
+      .navigator-rail-label {
+        margin: 0 10px 10px;
+        color: #697380;
+        font: 700 8px/1 "SFMono-Regular", Consolas, monospace;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+      }
+
+      .navigator-nav {
+        display: grid;
+        gap: 4px;
+        margin-bottom: 24px;
+      }
+
+      .navigator-nav button {
+        display: grid;
+        grid-template-columns: 28px 1fr auto;
+        gap: 8px;
+        align-items: center;
+        min-height: 44px;
+        padding: 0 10px;
+        border: 1px solid transparent;
+        border-radius: 9px;
+        background: transparent;
+        color: #8e97a3;
+        cursor: pointer;
+        font: 650 11px/1 inherit;
+        text-align: left;
+      }
+
+      .navigator-nav button[aria-pressed="true"] {
+        border-color: #3b4553;
+        background: #181c23;
+        color: #edf0f4;
+      }
+
+      .navigator-nav button span:first-child { color: #65707d; font: 9px/1 "SFMono-Regular", Consolas, monospace; }
+      .navigator-nav button span:last-child { color: #67717e; font: 8px/1 "SFMono-Regular", Consolas, monospace; }
+
+      .navigator-mini {
+        padding: 12px;
+        border: 1px solid #2d3540;
+        border-radius: 10px;
+        background: #12151a;
+      }
+
+      .navigator-mini strong { display: block; margin-bottom: 7px; font-size: 11px; }
+      .navigator-mini p { margin: 0; color: #7f8895; font-size: 9px; line-height: 1.5; }
+
+      .navigator-main {
+        min-width: 0;
+        padding: 52px 36px 80px;
+      }
+
+      .navigator-hero {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        gap: 32px;
+        align-items: end;
+        margin-bottom: 40px;
+      }
+
+      .navigator-hero h1 {
+        max-width: 840px;
+        margin: 12px 0 15px;
+        font-size: clamp(42px, 5vw, 72px);
+        letter-spacing: -0.06em;
+        line-height: 0.96;
+      }
+
+      .navigator-hero p { max-width: 720px; margin: 0; color: #929ba7; font-size: 14px; line-height: 1.6; }
+
+      .navigator-snapshot {
+        display: grid;
+        grid-template-columns: repeat(2, auto);
+        gap: 8px;
+      }
+
+      .navigator-metric {
+        min-width: 0;
+        min-width: 112px;
+        padding: 12px;
+        border: 1px solid #303946;
+        border-radius: 10px;
+        background: #141820;
+      }
+
+      .navigator-metric span { display: block; color: #6f7986; font: 8px/1 "SFMono-Regular", Consolas, monospace; text-transform: uppercase; }
+      .navigator-metric strong { display: block; margin-top: 8px; font-size: 13px; overflow-wrap: anywhere; }
+
+      .navigator-panel {
+        display: none;
+      }
+
+      .navigator-panel[data-active] {
+        display: block;
+      }
+
+      .navigator-panel-head {
+        display: flex;
+        align-items: end;
+        justify-content: space-between;
+        gap: 24px;
+        margin-bottom: 14px;
+        padding-bottom: 14px;
+        border-bottom: 1px solid #343c48;
+      }
+
+      .navigator-panel-head h2 { margin: 4px 0 0; font-size: 29px; letter-spacing: -.04em; }
+      .navigator-panel-head p { max-width: 570px; margin: 0; color: #808a97; font-size: 10px; text-align: right; }
+
+      .navigator-frontier-grid,
+      .navigator-capabilities {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 10px;
+      }
+
+      .navigator-card {
+        min-height: 200px;
+        padding: 18px;
+        border: 1px solid #303946;
+        border-radius: 12px;
+        background: #141820;
+      }
+
+      .navigator-card h3 { margin: 42px 0 9px; font-size: 18px; }
+      .navigator-card p { margin: 0; color: #8a94a1; font-size: 10px; line-height: 1.55; }
+
+      .navigator-roadmap {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 10px;
+      }
+
+      .navigator-track {
+        overflow: hidden;
+        border: 1px solid #303946;
+        border-radius: 12px;
+        background: #141820;
+      }
+
+      .navigator-track:nth-child(3) { grid-column: 1 / -1; }
+
+      .navigator-track h3 { margin: 0; padding: 16px 18px; border-bottom: 1px solid #303946; font-size: 15px; }
+      .navigator-track > p { margin: 0; padding: 13px 18px; border-bottom: 1px solid #303946; color: #808a97; font-size: 9px; line-height: 1.5; }
+
+      .navigator-step {
+        display: grid;
+        grid-template-columns: 48px minmax(120px, .6fr) minmax(0, 1fr) auto;
+        gap: 10px;
+        align-items: center;
+        min-height: 67px;
+        padding: 10px 15px;
+        border-bottom: 1px solid #29313b;
+      }
+
+      .navigator-step:last-child { border-bottom: 0; }
+      .navigator-step code { color: #7f8b99; font-size: 8px; }
+      .navigator-step strong { font-size: 10px; }
+      .navigator-step p { margin: 0; color: #808a97; font-size: 8px; line-height: 1.45; }
+
+      .navigator-task-list { display: grid; gap: 9px; }
+      .navigator-task { display: grid; grid-template-columns: 120px minmax(180px, .7fr) minmax(0, 1fr) auto; gap: 16px; align-items: center; min-height: 76px; padding: 12px 16px; border: 1px solid #303946; border-radius: 11px; background: #141820; }
+      .navigator-task code { color: var(--blue); font-size: 8px; }
+      .navigator-task strong { font-size: 12px; }
+      .navigator-task p { margin: 0; color: #87919e; font-size: 9px; line-height: 1.45; }
+      .navigator-task span { color: #636e7c; font: 8px/1 "SFMono-Regular", Consolas, monospace; text-transform: uppercase; }
+
+      .navigator-capabilities { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+      .navigator-capability { min-height: 188px; padding: 17px; border: 1px solid #303946; border-radius: 11px; background: #141820; }
+      .navigator-capability code { color: var(--blue); font-size: 8px; }
+      .navigator-capability h3 { margin: 35px 0 8px; font-size: 15px; }
+      .navigator-capability p { margin: 0; color: #858f9c; font-size: 9px; line-height: 1.5; }
+
+      .navigator-evidence { display: grid; grid-template-columns: .8fr 1.2fr; gap: 10px; }
+      .navigator-box { padding: 18px; border: 1px solid #303946; border-radius: 11px; background: #141820; }
+      .navigator-box h3 { margin: 0 0 12px; font-size: 14px; }
+      .navigator-box ul { display: grid; gap: 7px; margin: 0; padding: 0; list-style: none; }
+      .navigator-box li { padding: 9px; border: 1px solid #29313b; border-radius: 7px; color: #89939f; font-size: 9px; line-height: 1.45; }
+      .navigator-sources { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin-top: 10px; }
+
+      .navigator-enter {
+        animation: navigator-enter 240ms var(--ease-out) both;
+      }
+
+      @keyframes navigator-enter {
+        from { opacity: 0; transform: translateY(6px); }
+        to { opacity: 1; transform: translateY(0); }
+      }
+
+      @media (hover: hover) and (pointer: fine) {
+        .command-filter button:hover:not([aria-pressed="true"]),
+        .navigator-nav button:hover:not([aria-pressed="true"]) {
+          border-color: #4a5564;
+          color: #e5e8ec;
+        }
+
+        .command-card:hover,
+        .command-task:hover,
+        .navigator-card:hover,
+        .navigator-task:hover,
+        .navigator-capability:hover {
+          background: #181d24;
+        }
+
+        .editorial-step:hover,
+        .editorial-task:hover {
+          background: rgba(24, 24, 21, 0.035);
+        }
+      }
+
+      @media (max-width: 1000px) {
+        .command-hero,
+        .editorial-hero,
+        .editorial-evidence,
+        .navigator-hero {
+          grid-template-columns: 1fr;
+        }
+
+        .command-matrix { grid-template-columns: repeat(2, 1fr); }
+        .command-card:nth-child(2n) { border-right: 0; }
+        .command-card:nth-child(4n + 1), .command-card:nth-child(4n + 2) { border-bottom: 1px solid #292f38; }
+        .editorial-frontiers, .editorial-plan, .editorial-sources { grid-template-columns: 1fr; }
+        .navigator-layout { grid-template-columns: 190px minmax(0, 1fr); }
+        .navigator-frontier-grid, .navigator-capabilities { grid-template-columns: repeat(2, 1fr); }
+        .navigator-roadmap { grid-template-columns: 1fr; }
+        .navigator-track:nth-child(3) { grid-column: auto; }
+        .navigator-snapshot { grid-template-columns: repeat(4, 1fr); }
+      }
+
+      @media (max-width: 720px) {
+        .command-shell, .editorial-shell { width: min(100% - 24px, 640px); }
+        .command-header { align-items: flex-start; flex-direction: column; padding: 12px 0; }
+        .command-filter { width: 100%; overflow-x: auto; }
+        .command-filter button { flex: 0 0 auto; }
+        .command-hero { padding-top: 46px; }
+        .frontier-row { grid-template-columns: 70px minmax(0, 1fr); }
+        .frontier-row .status-dot { grid-column: 2; }
+        .command-titlebar { align-items: start; flex-direction: column; }
+        .command-titlebar p { text-align: left; }
+        .command-matrix, .command-board, .command-bottom, .command-source-ledger, .command-semantic-path { grid-template-columns: 1fr; }
+        .command-card { border-right: 0 !important; border-bottom: 1px solid #292f38 !important; }
+        .command-card:last-child { border-bottom: 0 !important; }
+        .command-semantic-step { border-right: 0; border-bottom: 1px solid #292f38; }
+        .command-semantic-step:last-child { border-bottom: 0; }
+
+        .editorial-header span:last-child { display: none; }
+        .editorial-hero { gap: 38px; padding: 58px 0; }
+        .editorial-act { grid-template-columns: 1fr; gap: 18px; padding: 44px 0; }
+        .editorial-act-no { position: static; }
+        .editorial-step { grid-template-columns: 48px minmax(100px, .7fr) auto; padding: 11px 0; }
+        .editorial-step p { grid-column: 2 / -1; }
+        .editorial-checks { grid-template-columns: 1fr; }
+
+        .navigator-header { align-items: flex-start; flex-direction: column; padding: 13px 14px; }
+        .navigator-layout { display: block; }
+        .navigator-rail { position: sticky; top: 89px; z-index: 15; display: flex; height: auto; gap: 7px; padding: 8px 12px; border-right: 0; border-bottom: 1px solid #2c333e; background: rgba(13, 15, 19, .92); overflow-x: auto; backdrop-filter: blur(14px); }
+        .navigator-rail-label, .navigator-mini { display: none; }
+        .navigator-nav { display: flex; flex: 0 0 auto; margin: 0; }
+        .navigator-nav button { grid-template-columns: 1fr; min-width: 84px; text-align: center; }
+        .navigator-nav button span:first-child, .navigator-nav button span:last-child { display: none; }
+        .navigator-main { padding: 36px 12px 80px; }
+        .navigator-snapshot { grid-template-columns: repeat(2, 1fr); }
+        .navigator-metric { min-width: 0; }
+        .navigator-panel-head { align-items: start; flex-direction: column; }
+        .navigator-panel-head p { text-align: left; }
+        .navigator-frontier-grid, .navigator-capabilities, .navigator-evidence, .navigator-sources { grid-template-columns: 1fr; }
+        .navigator-step { grid-template-columns: 40px minmax(0, 1fr) auto; }
+        .navigator-step p { grid-column: 2 / -1; }
+        .navigator-task { grid-template-columns: 1fr auto; gap: 7px; }
+        .navigator-task strong, .navigator-task p { grid-column: 1 / -1; }
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        .command-enter,
+        .editorial-enter,
+        .navigator-enter {
+          animation: none !important;
+          transform: none !important;
+        }
+      }
+
+      /* Picker spec — intentionally project-agnostic */
+      .proto-picker {
+        position: fixed;
+        bottom: 24px;
+        left: 50%;
+        transform: translateX(-50%);
+        z-index: 2147483647;
+        display: flex;
+        align-items: center;
+        gap: 2px;
+        padding: 4px;
+        border-radius: 999px;
+        background: rgba(10, 10, 10, 0.82);
+        -webkit-backdrop-filter: blur(12px) saturate(1.4);
+        backdrop-filter: blur(12px) saturate(1.4);
+        box-shadow:
+          0 0 0 1px rgba(255, 255, 255, 0.08) inset,
+          0 8px 24px rgba(0, 0, 0, 0.24),
+          0 2px 6px rgba(0, 0, 0, 0.12);
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        font-size: 13px;
+        line-height: 1;
+        -webkit-font-smoothing: antialiased;
+        user-select: none;
+        -webkit-user-select: none;
+      }
+
+      .proto-picker-highlight {
+        position: absolute;
+        top: 4px;
+        left: 0;
+        height: 28px;
+        border-radius: 999px;
+        background: rgba(255, 255, 255, 0.12);
+        will-change: transform;
+      }
+
+      .proto-picker[data-ready] .proto-picker-highlight {
+        transition:
+          transform 250ms cubic-bezier(0.23, 1, 0.32, 1),
+          width 250ms cubic-bezier(0.23, 1, 0.32, 1);
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        .proto-picker[data-ready] .proto-picker-highlight { transition: none; }
+      }
+
+      .proto-picker-item {
+        position: relative;
+        display: flex;
+        align-items: center;
+        height: 28px;
+        padding: 0 12px;
+        border: 0;
+        border-radius: 999px;
+        background: transparent;
+        color: rgba(255, 255, 255, 0.55);
+        font: inherit;
+        cursor: pointer;
+        transition: color 150ms ease-out;
+      }
+
+      .proto-picker-item:hover { color: rgba(255, 255, 255, 0.85); }
+      .proto-picker-item:active { transform: scale(0.97); }
+      .proto-picker-item:focus-visible { outline: 2px solid rgba(255, 255, 255, 0.4); outline-offset: 2px; }
+      .proto-picker-item[data-active] { color: #fff; }
+
+      .proto-picker-divider {
+        width: 1px;
+        height: 16px;
+        margin: 0 4px;
+        background: rgba(255, 255, 255, 0.12);
+      }
+
+      .proto-picker-replay { padding: 0 10px; font-size: 14px; }
+      .proto-picker[data-position="top"] { bottom: auto; top: 24px; }
+    </style>
+  </head>
+  <body>
+    <main id="stage"></main>
+
+    <nav class="proto-picker" aria-label="Prototype variants">
+      <span class="proto-picker-highlight" aria-hidden="true"></span>
+      <button class="proto-picker-item" data-active aria-current="true">Command</button>
+      <button class="proto-picker-item">Editorial</button>
+      <button class="proto-picker-item">Navigator</button>
+      <span class="proto-picker-divider" aria-hidden="true"></span>
+      <button class="proto-picker-item proto-picker-replay" aria-label="Replay animation (R)">↻</button>
+    </nav>
+
+    <script>
+      const statusLabels = {
+        verified: "verified",
+        local: "local beta",
+        shadow: "shadow",
+        partial: "partial",
+        planned: "planned",
+        gate: "human gate",
+      };
+
+      const snapshot = {
+        date: "2026-08-11",
+        revision: "44d2eed + dirty working tree",
+        commands: "npm test · npm run typecheck · npm run lint",
+      };
+
+      const frontiers = [
+        { id: "CORE", title: "Evidence까지 도달, 통합 결과는 아직", status: "partial", next: "Sprint 5C · Conflict Resolver" },
+        { id: "ATTN", title: "Phase 4C 로컬 베타", status: "local", next: "Current Focus · Shadow only" },
+        { id: "RELEASE", title: "코드는 앞서 있고 승인은 남아 있음", status: "gate", next: "Human Golden · Operations · Distribution" },
+      ];
+
+      const tracks = [
+        {
+          id: "core",
+          label: "Conversation Core",
+          description: "ChatGPT 공유 대화를 복원하고 근거 기반 구조로 바꾸는 현재 12-Type 런타임",
+          items: [
+            ["S0", "프로젝트 부트스트랩", "Next.js·TypeScript·Vitest와 URL 입력 화면", "verified"],
+            ["S1", "Share Adapter", "검증→fetch→decode→dereference→restore→normalize. fixture는 1개", "partial"],
+            ["S2", "Viewer & API", "Extraction Monitor가 동작하지만 세션 경계를 넘는 저장은 없음", "verified"],
+            ["S3–4", "Job & Canonical Segment", "동기 완료/실패 방식. staged job과 canonical segmenter는 없음", "partial"],
+            ["S4.5", "Rule Guardrails", "clean/context/internal 분리와 deterministic 구조·review diagnostics", "verified"],
+            ["S5A–5B", "LLM + Evidence", "세 provider, segment coverage, verified/review/rejected 분리", "shadow"],
+            ["S5C–6", "Conflict & Hybrid Result", "선택 결과와 이유를 기록하는 resolver·canonical builder가 다음", "planned"],
+            ["S7–9", "Structure · UI · Export", "Atlas와 Audit은 있으나 canonical builders·전체 export는 미완", "partial"],
+          ],
+        },
+        {
+          id: "attention",
+          label: "Attention & Work",
+          description: "연결된 최신 범위에서 안전하게 best-observed suggestion을 만드는 Observation + Action Layer",
+          items: [
+            ["P0–1", "Contract & WorkSignal", "평가 계약, strict envelope, 네 source normalizer", "verified"],
+            ["P2", "Sync & Observability", "coordinator, replay, managed Codex direct-fact timeline", "local"],
+            ["P3", "Identity & Authority", "explicit binding, artifact lineage, field authority/conflict", "local"],
+            ["P4–4C", "Attention & Launcher", "eligibility·ranking·Work Cockpit·AppKit launcher", "local"],
+            ["FOCUS", "Current Focus", "최근 의미 이벤트를 재구성하지만 실제 선택 효과는 none", "shadow"],
+            ["P5", "Calendar & Notion", "context adapter 완료. free-block과 task mapping은 후속", "partial"],
+            ["P6–7", "Evaluation & Release", "human-reviewed Golden·locked holdout·release decision 필요", "gate"],
+            ["P8", "Personalization & Action", "첫 release 이후 별도 승인 범위", "planned"],
+          ],
+        },
+      ];
+
+      const semanticCore = {
+        id: "semantic",
+        label: "Semantic Core v1 · Target contract",
+        description: "현재 12-Type 런타임을 즉시 교체하지 않고 별도 7-Type 후보·검증·Public Summary를 병렬로 구축하는 Draft 목표 계약. 기존 conversation Gold Core v0.1과도 별도입니다.",
+        items: [
+          ["01", "Contract approval", "planned"],
+          ["02", "Human Golden", "gate"],
+          ["03", "Extract + Verify", "planned"],
+          ["04", "Public Summary", "planned"],
+          ["05", "Feedback + Persistence", "planned"],
+        ],
+      };
+
+      const plan = {
+        now: [
+          ["NOW-CONV-01", "Sprint 5C Conflict Resolver", "Rule/LLM 충돌의 입력·선택·이유를 기록하고 Review Queue로 연결", "semantic trust"],
+          ["NOW-CONV-02", "대화 fixture 계약 보강", "영문·장문 planning·code·table/list fixture와 source drift 오류 계약", "source coverage"],
+          ["NOW-REL-01", "Release evidence package", "reviewer·adjudication·lawful sourcing·holdout 정책 승인", "human decision"],
+          ["NOW-OPS-01", "Launcher beta 재검증", "Swift suite·packaging·수동 focus/resume·실패 복구 기록", "manual gate"],
+        ],
+        next: [
+          ["NEXT-CONV-01", "Hybrid result · UI · Export", "검증된 항목만으로 canonical 구조와 동일한 UI·Markdown·JSON 생성", "depends: 5C"],
+          ["NEXT-CONV-02", "Durable analysis lifecycle", "process/isolate/browser 경계를 넘는 staged status와 보존·삭제 정책", "persistence"],
+          ["NEXT-ATTN-01", "Calendar fit", "importance가 아닌 first-step sizing에만 사용", "authority"],
+          ["NEXT-ATTN-02", "Notion task mapping", "명시적으로 선택한 DB/property만 후보 생성", "explicit mapping"],
+          ["NEXT-OPS-01", "Durable coordinator ownership", "단일 scheduler/lease, takeover, 중복 collector 방지", "operations"],
+        ],
+        gate: [
+          ["GATE-REL-01", "Semantic v1 / cross-source Golden", "독립 reviewer·adjudication, immutable dataset, locked holdout", "evidence class"],
+          ["GATE-ATTN-01", "Current Focus 활성화 결정", "candidate universe·eligibility 불변과 feature flag·rollback 검증", "behavior change"],
+          ["GATE-REL-02", "External beta / rollback", "품질·운영·macOS 배포 게이트와 release decision", "distribution"],
+          ["GATE-CONV-01", "Conversation Full MVP", "통합 결과·영속성·export·baseline·Engine Change Record", "end to end"],
+        ],
+      };
+
+      const capabilities = [
+        ["GitHub", "Direct candidate capable", "assigned work와 좁게 검증된 authored-PR actionability. native identity와 freshness 필수"],
+        ["Managed Codex", "Bounded direct facts", "직접 관찰 failure와 설정된 completion follow-through만 후보. 일반 inventory는 overview"],
+        ["Calendar", "Schedule context only", "event 자체는 중요한 task가 아니며 first-step sizing에만 사용"],
+        ["Notion", "Project context only", "명시적 DB/property mapping 전까지 일반 page 수정은 직접 후보가 아님"],
+      ];
+
+      const checks = [
+        ["Main app", "28 files · 159/159 tests"],
+        ["Suggestion", "105 files · 915/915 tests"],
+        ["Static checks", "both typecheck + lint"],
+        ["Not rerun", "build · E2E · Swift · deploy"],
+      ];
+
+      const risks = [
+        "Synthetic Dev Candidate는 실제 제품 품질이나 사용자 유용성을 증명하지 않음",
+        "대화 분석은 memory/session 경계이며 공유 가능한 장기 결과 URL이 없음",
+        "ChatGPT 공유 payload source drift에 비해 커밋된 fixture가 한 개뿐",
+        "local scheduler/lease와 multi-process ownership이 production 수준으로 닫히지 않음",
+        "macOS full XCTest/XCUITest, Developer ID, hardened runtime, notarization이 남음",
+        "cross-source 집계와 평가에는 최소 수집·삭제·동의·lawful review가 필요",
+        "미커밋 launcher 변경은 clean-provenance release 근거에서 제외",
+      ];
+
+      const sourceGroups = [
+        {
+          label: "Core sources",
+          links: [
+            ["../README.md", "README · 현재 MVP와 세션 저장 경계"],
+            ["SYSTEM_FLOW.md", "SYSTEM_FLOW · 현재 런타임 AS-IS"],
+            ["CODEX_IMPLEMENTATION_PLAN.md", "CODEX_IMPLEMENTATION_PLAN · Sprint 0–9 초안"],
+            ["BLABASE_SEMANTIC_CORE_V1.md", "SEMANTIC_CORE_V1 · 7-Type 목표 계약"],
+            ["ENGINE_DEVELOPMENT_RECORDS.md", "ENGINE_DEVELOPMENT_RECORDS · 평가·개인정보·버전 규칙"],
+          ],
+        },
+        {
+          label: "Work intelligence sources",
+          links: [
+            ["../suggestion/docs/CROSS_SOURCE_SUGGESTION_IMPLEMENTATION_PLAN.md", "Cross-source 구현 계획 · Phase 0–8"],
+            ["../suggestion/docs/CROSS_SOURCE_EVALUATION_GUIDE.md", "Evaluation Guide · dataset lifecycle와 해석 제한"],
+            ["../suggestion/docs/CURRENT_FOCUS_IMPLEMENTATION_PLAN.md", "Current Focus · Phase 1 Shadow"],
+            ["../suggestion/docs/CURRENT_FOCUS_PHASE2_REVIEW.md", "Current Focus Phase 2 · 사람 승인 체크리스트"],
+            ["../suggestion/docs/RECENT_WORK_CONTINUATION_IMPLEMENTATION_PLAN.md", "Recent Work · display-only checkpoint와 후속 계획"],
+            ["../suggestion/docs/LOCAL_LAUNCHER_CONTRACT.md", "Local Launcher · beta와 배포 게이트"],
+          ],
+        },
+      ];
+
+      function status(status) {
+        return `<span class="status-dot" data-status="${status}">${statusLabels[status]}</span>`;
+      }
+
+      function sourceLinks(group) {
+        return `<div class="source-links">${group.links.map((link) => `<a href="${link[0]}">${link[1]}</a>`).join("")}</div>`;
+      }
+
+      function commandTrack(track) {
+        return `<section class="command-section command-track" data-command-track="${track.id}">
+          <div class="command-titlebar">
+            <div><span class="prototype-note" style="color:var(--green)">${track.id}</span><h2>${track.label}</h2></div>
+            <p>${track.description}</p>
+          </div>
+          <div class="command-matrix">${track.items.map((item) => `<article class="command-card">
+            <div class="command-card-head"><code>${item[0]}</code>${status(item[3])}</div>
+            <h3>${item[1]}</h3><p>${item[2]}</p>
+          </article>`).join("")}</div>
+        </section>`;
+      }
+
+      function commandLane(key, label) {
+        return `<section class="command-lane"><h3>${label}</h3>${plan[key].map((item) => `<article class="command-task">
+          <code>${item[0]}</code><strong>${item[1]}</strong><span>${item[2]}</span>
+        </article>`).join("")}</section>`;
+      }
+
+      function commandSemantic() {
+        return `<section class="command-section command-track" data-command-track="core">
+          <div class="command-titlebar"><div><span class="prototype-note" style="color:var(--violet)">Target contract · 7-Type</span><h2>${semanticCore.label}</h2></div><p>${semanticCore.description}</p></div>
+          <div class="command-semantic-path">${semanticCore.items.map((item) => `<article class="command-semantic-step"><code>${item[0]}</code><strong>${item[1]}</strong></article>`).join("")}</div>
+        </section>`;
+      }
+
+      function commandVariant() {
+        return `<div class="command command-enter">
+          <div class="command-shell">
+            <header class="command-header">
+              <div class="command-brand">blabase <span class="prototype-note" style="color:#697380">Command · ${snapshot.date} · ${snapshot.revision}</span></div>
+              <nav class="command-filter" aria-label="Command track filter">
+                <button class="pressable" data-command-filter="all" aria-pressed="true">전체</button>
+                <button class="pressable" data-command-filter="core" aria-pressed="false">Core</button>
+                <button class="pressable" data-command-filter="attention" aria-pressed="false">Attention</button>
+                <button class="pressable" data-command-filter="release" aria-pressed="false">Release</button>
+              </nav>
+            </header>
+            <section class="command-hero">
+              <div><span class="prototype-note" style="color:var(--green)">Evidence-backed execution dashboard</span>
+                <h1>지금 만든 것과<br>다음에 증명할 것.</h1>
+                <p>대화 구조화 엔진, 작업 인텔리전스, 출시 준비도를 하나의 운영 화면에서 읽습니다. 구현량과 출시 준비도를 섞지 않고 현재 최전선과 다음 게이트를 직접 연결합니다.</p>
+              </div>
+              <div class="frontier-stack">${frontiers.map((f) => `<div class="frontier-row" data-command-frontier="${f.id.toLowerCase()}"><span>${f.id}</span><strong>${f.next}</strong>${status(f.status)}</div>`).join("")}</div>
+            </section>
+            <div data-command-content>
+              ${commandTrack(tracks[0])}
+              ${commandSemantic()}
+              ${commandTrack(tracks[1])}
+              <section class="command-section command-plan">
+                <div class="command-titlebar"><div><span class="prototype-note" style="color:var(--green)">Execution order</span><h2>NOW → NEXT → GATE</h2></div><p>기간 약속이 아니라 의존성 순서. semantic trust를 고정하고 제품 흐름과 운영 기반을 닫은 뒤 사람과 배포 시스템이 승인합니다.</p></div>
+                <div class="command-board">${commandLane("now", "NOW · Trust first")}${commandLane("next", "NEXT · Close the loop")}${commandLane("gate", "GATE · Decision, not code")}</div>
+              </section>
+              <section class="command-section command-evidence"><div class="command-bottom">
+                <div class="command-panel"><h3>Recorded checks · ${snapshot.date}</h3><ul class="command-list">${checks.map((c) => `<li><strong>${c[0]}</strong> · ${c[1]}</li>`).join("")}<li><strong>Provenance</strong> · ${snapshot.revision} · ${snapshot.commands}</li></ul></div>
+                <div class="command-panel"><h3>Known risks</h3><ul class="command-list">${risks.map((r) => `<li>${r}</li>`).join("")}</ul></div>
+              </div><div class="command-source-ledger">${sourceGroups.map((group) => `<div class="command-panel"><h3>${group.label}</h3>${sourceLinks(group)}</div>`).join("")}</div></section>
+            </div>
+          </div>
+        </div>`;
+      }
+
+      function editorialTrack(track) {
+        return `<section class="editorial-track"><div class="editorial-track-title"><h3>${track.label}</h3><span>${track.description}</span></div>
+          <div class="editorial-steps">${track.items.map((item) => `<article class="editorial-step"><code>${item[0]}</code><strong>${item[1]}</strong><p>${item[2]}</p>${status(item[3])}</article>`).join("")}</div>
+        </section>`;
+      }
+
+      function editorialPlan(key, label) {
+        return `<section class="editorial-plan-column"><h3>${label}</h3>${plan[key].map((item) => `<article class="editorial-task"><code>${item[0]}</code><strong>${item[1]}</strong><p>${item[2]}</p></article>`).join("")}</section>`;
+      }
+
+      function editorialSemantic() {
+        return `<section class="editorial-track"><div class="editorial-track-title"><h3>${semanticCore.label}</h3><span>Draft · parallel path</span></div>
+          <div class="editorial-steps">${semanticCore.items.map((item) => `<article class="editorial-step"><code>${item[0]}</code><strong>${item[1]}</strong><p>${semanticCore.description}</p>${status(item[2])}</article>`).join("")}</div>
+        </section>`;
+      }
+
+      function editorialVariant() {
+        return `<div class="editorial editorial-enter"><div class="editorial-shell">
+          <header class="editorial-header"><div class="editorial-brand">blabase / build record</div><span>Evidence snapshot · ${snapshot.date} · ${snapshot.revision}</span></header>
+          <section class="editorial-hero"><div><span class="prototype-note">Execution thesis</span><h1>근거가 버틸 수 있는 만큼만 만든다.</h1><p>blabase의 목적은 기능을 많이 쌓는 것이 아니라, 대화와 작업에서 관찰한 사실을 근거로 검증하고 다음 행동까지 안전하게 연결하는 것입니다.</p></div>
+            <aside class="editorial-thesis"><strong>구현 진척과<br>출시 준비도는 다르다.</strong><span>합성 테스트의 녹색과 사람 검토 Golden, 운영 안전성, 배포 승인을 각각 다른 evidence class로 취급합니다.</span></aside>
+          </section>
+          <section class="editorial-act"><div class="editorial-act-no">Act I<br>Where we are</div><div><h2>세 개의 최전선.</h2><div class="editorial-frontiers">${frontiers.map((f) => `<article class="editorial-frontier"><code>${f.id}</code><h3>${f.title}</h3><p>${f.next}</p></article>`).join("")}</div></div></section>
+          <section class="editorial-act"><div class="editorial-act-no">Act II<br>What exists</div><div><h2>현재 구현과 목표 계약을 분리한다.</h2>${editorialTrack(tracks[0])}${editorialSemantic()}${editorialTrack(tracks[1])}</div></section>
+          <section class="editorial-act"><div class="editorial-act-no">Act III<br>What comes next</div><div><h2>신뢰 → 완결 → 승인.</h2><div class="editorial-plan">${editorialPlan("now", "NOW")}${editorialPlan("next", "NEXT")}${editorialPlan("gate", "GATE")}</div></div></section>
+          <section class="editorial-act"><div class="editorial-act-no">Act IV<br>What evidence says</div><div><h2>통과한 것과 아직 증명하지 않은 것.</h2><div class="editorial-evidence"><div class="editorial-checks">${checks.map((c) => `<div class="editorial-check"><span>${c[0]}</span><strong>${c[1]}</strong></div>`).join("")}</div><ol class="editorial-risk">${risks.map((r) => `<li>${r}</li>`).join("")}<li><strong>Provenance.</strong> ${snapshot.revision} · ${snapshot.commands}</li></ol></div><div class="editorial-sources">${sourceGroups.map((group) => `<section class="editorial-source"><h3>${group.label}</h3>${sourceLinks(group)}</section>`).join("")}</div></div></section>
+        </div></div>`;
+      }
+
+      function navigatorRoadmapTrack(track) {
+        return `<section class="navigator-track"><h3>${track.label}</h3>${track.items.map((item) => `<article class="navigator-step"><code>${item[0]}</code><strong>${item[1]}</strong><p>${item[2]}</p>${status(item[3])}</article>`).join("")}</section>`;
+      }
+
+      function navigatorSemantic() {
+        return `<section class="navigator-track"><h3>${semanticCore.label}</h3><p>${semanticCore.description}</p>${semanticCore.items.map((item) => `<article class="navigator-step"><code>${item[0]}</code><strong>${item[1]}</strong><p>별도 milestone</p>${status(item[2])}</article>`).join("")}</section>`;
+      }
+
+      function navigatorTaskPanel(key, label, description) {
+        return `<section class="navigator-panel" data-navigator-panel="${key}"><header class="navigator-panel-head"><div><span class="prototype-note" style="color:var(--green)">Execution lane</span><h2>${label}</h2></div><p>${description}</p></header><div class="navigator-task-list">${plan[key].map((item) => `<article class="navigator-task"><code>${item[0]}</code><strong>${item[1]}</strong><p>${item[2]}</p><span>${item[3]}</span></article>`).join("")}</div></section>`;
+      }
+
+      function navigatorVariant() {
+        return `<div class="navigator navigator-enter">
+          <header class="navigator-header"><strong>blabase · Execution Navigator</strong><span>Purpose unchanged · decision flow redesigned</span></header>
+          <div class="navigator-layout">
+            <aside class="navigator-rail"><div><p class="navigator-rail-label">Read</p><nav class="navigator-nav" aria-label="Navigator sections">
+              <button class="pressable" data-navigator-tab="overview" aria-pressed="true"><span>01</span>Overview<span>3</span></button>
+              <button class="pressable" data-navigator-tab="roadmap" aria-pressed="false"><span>02</span>Roadmap<span>21</span></button>
+              <button class="pressable" data-navigator-tab="now" aria-pressed="false"><span>03</span>NOW<span>4</span></button>
+              <button class="pressable" data-navigator-tab="next" aria-pressed="false"><span>04</span>NEXT<span>5</span></button>
+              <button class="pressable" data-navigator-tab="gate" aria-pressed="false"><span>05</span>GATE<span>4</span></button>
+              <button class="pressable" data-navigator-tab="sources" aria-pressed="false"><span>06</span>Sources<span>4</span></button>
+              <button class="pressable" data-navigator-tab="evidence" aria-pressed="false"><span>07</span>Evidence<span>11</span></button>
+            </nav><p class="navigator-rail-label">Boundary</p><div class="navigator-mini"><strong>Static snapshot</strong><p>${snapshot.date} · ${snapshot.revision}. 코드·테스트·계획 문서를 대조. 실시간 telemetry나 release approval이 아닙니다.</p></div></div></aside>
+            <main class="navigator-main"><section class="navigator-hero"><div><span class="prototype-note" style="color:var(--green)">Decision-oriented dashboard</span><h1>현재 위치에서<br>다음 게이트까지.</h1><p>같은 목적과 정보를 탐색 가능한 실행 지도로 재구성했습니다. 왼쪽에서 읽을 질문을 선택하면 필요한 정보만 즉시 바뀝니다.</p></div><div class="navigator-snapshot">${checks.map((c) => `<div class="navigator-metric"><span>${c[0]}</span><strong>${c[1]}</strong></div>`).join("")}</div></section>
+              <section class="navigator-panel" data-navigator-panel="overview" data-active><header class="navigator-panel-head"><div><span class="prototype-note" style="color:var(--green)">Current frontier</span><h2>지금 알아야 할 세 가지</h2></div><p>단일 완료율 대신 제품 트랙별 최전선과 다음 증거 게이트를 봅니다.</p></header><div class="navigator-frontier-grid">${frontiers.map((f) => `<article class="navigator-card">${status(f.status)}<h3>${f.title}</h3><p>${f.next}</p></article>`).join("")}</div></section>
+              <section class="navigator-panel" data-navigator-panel="roadmap"><header class="navigator-panel-head"><div><span class="prototype-note" style="color:var(--green)">Implementation map</span><h2>두 구현 트랙과 하나의 목표 계약</h2></div><p>현재 12-Type 대화 런타임, Draft 7-Type 목표 계약, 별도 Observation + Action Layer를 섞지 않습니다.</p></header><div class="navigator-roadmap">${navigatorRoadmapTrack(tracks[0])}${navigatorRoadmapTrack(tracks[1])}${navigatorSemantic()}</div></section>
+              ${navigatorTaskPanel("now", "NOW · Trust first", "Sprint 5C와 fixture coverage, release evidence package, launcher beta 경계를 먼저 고정합니다.")}
+              ${navigatorTaskPanel("next", "NEXT · Close the loop", "canonical result·영속성·source actionability·운영 ownership을 연결합니다.")}
+              ${navigatorTaskPanel("gate", "GATE · Decision, not code", "사람 검토와 frozen input, 배포 시스템이 release 또는 rollback을 승인합니다.")}
+              <section class="navigator-panel" data-navigator-panel="sources"><header class="navigator-panel-head"><div><span class="prototype-note" style="color:var(--green)">Source capability</span><h2>연결됨과 판단 가능함은 다르다</h2></div><p>관찰 가능한 데이터를 바로 추천 후보로 승격하지 않는 것이 핵심 안전 계약입니다.</p></header><div class="navigator-capabilities">${capabilities.map((c) => `<article class="navigator-capability"><code>${c[1]}</code><h3>${c[0]}</h3><p>${c[2]}</p></article>`).join("")}</div></section>
+              <section class="navigator-panel" data-navigator-panel="evidence"><header class="navigator-panel-head"><div><span class="prototype-note" style="color:var(--green)">Evidence boundary</span><h2>통과와 미검증을 함께 표시</h2></div><p>회귀 계약의 녹색은 제품 품질이나 외부 출시 승인이 아닙니다.</p></header><div class="navigator-evidence"><div class="navigator-box"><h3>Recorded checks · ${snapshot.date}</h3><ul>${checks.map((c) => `<li><strong>${c[0]}</strong> · ${c[1]}</li>`).join("")}<li><strong>Provenance</strong> · ${snapshot.revision} · ${snapshot.commands}</li></ul></div><div class="navigator-box"><h3>Known risks</h3><ul>${risks.map((r) => `<li>${r}</li>`).join("")}</ul></div></div><div class="navigator-sources">${sourceGroups.map((group) => `<div class="navigator-box"><h3>${group.label}</h3>${sourceLinks(group)}</div>`).join("")}</div></section>
+            </main>
+          </div>
+        </div>`;
+      }
+
+      const variants = [commandVariant, editorialVariant, navigatorVariant];
+      const stage = document.getElementById('stage');
+      const picker = document.querySelector('.proto-picker');
+      const highlight = picker.querySelector('.proto-picker-highlight');
+      const items = [...picker.querySelectorAll('.proto-picker-item:not(.proto-picker-replay)')];
+      const replay = picker.querySelector('.proto-picker-replay');
+      let current = 0;
+
+      function moveHighlight() {
+        const el = items[current];
+        highlight.style.width = el.offsetWidth + 'px';
+        highlight.style.transform = `translateX(${el.offsetLeft}px)`;
+      }
+
+      function mount(i) {
+        stage.innerHTML = '';
+        requestAnimationFrame(() => { stage.innerHTML = variants[i](); });
+      }
+
+      function setActive(i) {
+        if (i < 0 || i >= variants.length) return;
+        current = i;
+        items.forEach((el, j) => {
+          el.toggleAttribute('data-active', j === i);
+          if (j === i) el.setAttribute('aria-current', 'true');
+          else el.removeAttribute('aria-current');
+        });
+        moveHighlight();
+        const url = new URL(location);
+        url.searchParams.set('v', i + 1);
+        history.replaceState(null, '', url);
+        mount(i);
+      }
+
+      items.forEach((el, i) => el.addEventListener('click', () => setActive(i)));
+      replay?.addEventListener('click', () => mount(current));
+      window.addEventListener('resize', moveHighlight);
+
+      document.addEventListener('keydown', (e) => {
+        if (/^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName) || e.target.isContentEditable) return;
+        if (e.metaKey || e.ctrlKey || e.altKey) return;
+        const num = parseInt(e.key, 10);
+        if (num >= 1 && num <= variants.length) setActive(num - 1);
+        else if (e.key === 'ArrowRight') setActive((current + 1) % variants.length);
+        else if (e.key === 'ArrowLeft') setActive((current - 1 + variants.length) % variants.length);
+        else if (e.key === 'r' || e.key === 'R') mount(current);
+      });
+
+      stage.addEventListener("click", (event) => {
+        const commandButton = event.target.closest("[data-command-filter]");
+        if (commandButton) {
+          const filter = commandButton.dataset.commandFilter;
+          stage.querySelectorAll("[data-command-filter]").forEach((button) => {
+            button.setAttribute("aria-pressed", String(button === commandButton));
+          });
+          stage.querySelectorAll("[data-command-track]").forEach((element) => {
+            element.hidden = filter !== "all" && element.dataset.commandTrack !== filter;
+          });
+          stage.querySelector(".command-plan").hidden = filter !== "all" && filter !== "release";
+          stage.querySelector(".command-evidence").hidden = filter !== "all" && filter !== "release";
+          stage.querySelectorAll("[data-command-frontier]").forEach((element) => {
+            element.hidden = filter !== "all" && element.dataset.commandFrontier !== filter;
+          });
+        }
+
+        const navigatorButton = event.target.closest("[data-navigator-tab]");
+        if (navigatorButton) {
+          const panel = navigatorButton.dataset.navigatorTab;
+          stage.querySelectorAll("[data-navigator-tab]").forEach((button) => {
+            button.setAttribute("aria-pressed", String(button === navigatorButton));
+          });
+          stage.querySelectorAll("[data-navigator-panel]").forEach((element) => {
+            element.toggleAttribute("data-active", element.dataset.navigatorPanel === panel);
+          });
+        }
+      });
+
+      setActive((parseInt(new URLSearchParams(location.search).get('v'), 10) || 1) - 1);
+      requestAnimationFrame(() => requestAnimationFrame(() => picker.setAttribute('data-ready', '')));
+    </script>
+  </body>
+</html>

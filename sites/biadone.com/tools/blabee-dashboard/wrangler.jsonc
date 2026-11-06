@@ -1,0 +1,12 @@
+{
+  "name": "blabee-dashboard",
+  "compatibility_date": "2026-10-17",
+  "pages_build_output_dir": "./public",
+  "vars": {
+    "SUPABASE_URL": "https://vulnkqyqqbucvbhwjswr.supabase.co",
+    "DASHBOARD_OWNER_EMAIL": "biadone.official@gmail.com",
+    "SUPABASE_PUBLISHABLE_KEY": "sb_publishable_SGbGiqBjnIx7ct3EW_RGow_mUpB_y-b",
+    "DASHBOARD_OWNER_UID": "b0723835-2e5f-488c-b12e-dc50bf1cdc66",
+    "DASHBOARD_OWNER_UIDS": "b0723835-2e5f-488c-b12e-dc50bf1cdc66,338752c1-9293-47eb-ab45-b9832348860f,642f7cfe-003e-4d63-9bfa-c25056b1325a"
+  }
+}

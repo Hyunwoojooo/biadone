@@ -1,0 +1,59 @@
+{
+  "originalColorUnmodified": true,
+  "imageGenerationCalls": 0,
+  "assets": [
+    {
+      "source": "/Users/joo/Downloads/ChatGPT 이미지 2026년 10월 28일 오전 12_27_27-1.png",
+      "file": "public/character/color-v4/01-neutral.png",
+      "sha256": "8759684834eaa94fc046d2215509e20f2838a313aee7f3e266aaa2d48b204b42",
+      "copiedBytesIdentical": true
+    },
+    {
+      "source": "/Users/joo/Downloads/ChatGPT 이미지 2026년 10월 28일 오전 12_27_28-2.png",
+      "file": "public/character/color-v4/02-smile.png",
+      "sha256": "5dfe67091f72b0fa6866bf9aa0a4b1103ac7469adadde97e7b4bd958dd488dcc",
+      "copiedBytesIdentical": true
+    },
+    {
+      "source": "/Users/joo/Downloads/ChatGPT 이미지 2026년 10월 28일 오전 12_27_28-3.png",
+      "file": "public/character/color-v4/03-surprised.png",
+      "sha256": "5183ab894b74b3c0749e05017eeff1296fb0f2daf3c5e9439385240e2506ee42",
+      "copiedBytesIdentical": true
+    },
+    {
+      "source": "/Users/joo/Downloads/ChatGPT 이미지 2026년 10월 28일 오전 12_27_29-4.png",
+      "file": "public/character/color-v4/04-thinking.png",
+      "sha256": "be1c111602d8b7f92e3bbcf1ba12d74209a478231faeb982a4b7f3251e18205e",
+      "copiedBytesIdentical": true
+    },
+    {
+      "source": "/Users/joo/Downloads/ChatGPT 이미지 2026년 10월 28일 오전 12_27_30-5.png",
+      "file": "public/character/color-v4/05-determined.png",
+      "sha256": "5b3ae70c7dfa434ad3f7a3b5c3ba93444ecd8b64eeeffa7f687c3c7e75d83fda",
+      "copiedBytesIdentical": true
+    },
+    {
+      "source": "/Users/joo/Downloads/ChatGPT 이미지 2026년 10월 28일 오전 12_27_31-6.png",
+      "file": "public/character/color-v4/06-concerned.png",
+      "sha256": "15ad953eb67c146ac49c429cc74388c4b7ce4ec35965285ad11e5dd417fd4e58",
+      "copiedBytesIdentical": true
+    },
+    {
+      "source": "/Users/joo/Downloads/ChatGPT 이미지 2026년 10월 28일 오전 12_27_32-7.png",
+      "file": "public/character/color-v4/07-thumbs-up.png",
+      "sha256": "6242cbb1031ad0bba761e04b927229694fc22fe12b361f8a3edc3e33004b59f4",
+      "copiedBytesIdentical": true
+    },
+    {
+      "source": "/Users/joo/Downloads/ChatGPT 이미지 2026년 10월 28일 오전 12_27_33-8.png",
+      "file": "public/character/color-v4/08-explaining.png",
+      "sha256": "3b0bb69b2c454d1aa85c628de3d4dfb107f241b7b98770f0bae7dc88b94428e0",
+      "copiedBytesIdentical": true
+    }
+  ],
+  "mapping": {
+    "papers": "04-thinking.png",
+    "explain": "08-explaining.png",
+    "folder": "07-thumbs-up.png"
+  }
+}

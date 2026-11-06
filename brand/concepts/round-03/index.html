@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Biadone 색감과 서체 비교</title>
+<link rel="icon" href="data:,">
+<link rel="preload" href="assets/fonts/PretendardVariable.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="tokens.css"><link rel="stylesheet" href="styles.css">
+<script src="app.js" defer></script>
+</head>
+<body>
+<a class="skip-link" href="#colors">색감 비교로 건너뛰기</a>
+<header class="board-header"><span class="board-brand">Biadone</span><span>브랜드 색감과 서체 비교</span><a href="#fonts">서체부터 보기</a></header>
+<main class="board">
+<section class="board-intro" aria-labelledby="board-title">
+<h1 id="board-title">밝은 색감,<br>편안하게 읽히는 글자.</h1>
+<p>같은 화면에서 색감부터 비교한 뒤, 같은 색에서 글꼴의 차이를 살펴보세요.<br>로고는 별도 탐색 중이며, 여기서는 이름만 임시로 표기했습니다.</p>
+</section>
+<section id="colors" class="study" aria-labelledby="color-title">
+<div class="section-intro"><div><h2 id="color-title">먼저, 색감만.</h2><p>세 화면의 글꼴·문구·크기·구성은 같습니다. Pretendard를 기준으로 색감만 바꿨습니다.</p></div><span class="study-note">같은 글자, 다른 색</span></div>
+<div id="palette-grid" class="palette-grid"></div>
+</section>
+<section id="fonts" class="study" data-active-color="sky" aria-labelledby="font-title">
+<div class="section-intro"><div><h2 id="font-title">그다음, 서체만.</h2><p id="font-context">같은 색과 문구에서 Pretendard, Wanted Sans, SUITE를 비교합니다.</p></div><span class="study-note">제목 600, 본문 400</span></div>
+<div id="font-grid" class="font-grid"></div>
+</section>
+<section id="combination" class="study combination-study" data-active-color="sky" data-active-font="pretendard" aria-labelledby="combination-title">
+<div class="section-intro"><div><h2 id="combination-title">선택한 조합으로 보면.</h2><p id="combination-label">맑은 블루 + Pretendard</p></div><a class="text-link" href="#colors">다른 색감 비교하기</a></div>
+<div class="combined-preview">
+<div class="combined-nav"><span class="combined-brand">Biadone</span><a href="#combination-projects">만드는 것들</a></div>
+<div class="combined-hero"><div><h3>하고 싶은 일에,<br>또 하나의 나.</h3><p>생각과 생활, 작업을 이해하는 나의 분신.<br>Biadone은 그 미래를 향해 제품과 교육을 만듭니다.</p><a class="sample-action" href="#combination-projects">프로젝트 보기</a></div><div class="color-field" aria-hidden="true"><span>Before I ask,<br>Done.</span></div></div>
+<div id="combination-projects" class="combined-projects"><article><h4>Blabee</h4><p>AI 에이전트의 다음 선택을 한곳에서 보고,<br>원래 작업으로 이어갑니다.</p></article><article><div class="project-name"><h4>Biadone Edu</h4><span>준비 중</span></div><p>AI, AX, 자동화를 배우고 직접 적용하는 교육.</p></article></div>
+</div>
+</section>
+<p id="study-status" class="sr-only" role="status" aria-live="polite">색감과 서체를 눌러 비교 조합을 바꿀 수 있습니다.</p>
+<footer class="board-footer"><p>색감과 서체를 따로 골라도 됩니다. 모든 조합은 아직 검토용입니다.</p><a href="DESIGN_NOTES.md">서체 출처와 설계 기록</a></footer>
+</main>
+</body>
+</html>

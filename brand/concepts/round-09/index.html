@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Biadone 내용량에 따른 화면 검증</title><link rel="icon" href="data:,">
+<link rel="preload" href="../../design-system/assets/fonts/PretendardVariable.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="../../design-system/fonts.css"><link rel="stylesheet" href="../../design-system/tokens.css"><link rel="stylesheet" href="../../design-system/screen-style.tokens.css"><link rel="stylesheet" href="../../design-system/logo.css"><link rel="stylesheet" href="layout.tokens.css"><link rel="stylesheet" href="style.css">
+<script src="app.js" defer></script>
+</head>
+<body>
+<header class="review-header"><span>Biadone 디자인 연구</span><a href="DESIGN_NOTES.md">이번 검증의 기준</a></header>
+<main class="page">
+<section class="intro"><h1>내용이 늘어나도,<br>담을 수 있는 구조.</h1><p>본문은 가변 영역에 놓고, 브랜드의 사선 접합은 가장자리에서 시험합니다.<br>도형에 맞춰 내용을 줄이지 않고 긴 설명·비교표·여섯 단계를 넣었습니다.</p></section>
+<section class="review-controls" aria-label="내용량과 문서 형식 검토">
+<div class="demo-controls" role="group" aria-label="문서 형식"><button type="button" data-demo="text" aria-pressed="true">긴 설명</button><button type="button" data-demo="table" aria-pressed="false">비교표</button><button type="button" data-demo="process" aria-pressed="false">단계 설명</button></div>
+<div class="quantity-controls" role="group" aria-label="내용량"><button type="button" data-quantity="normal" aria-pressed="false">일반 분량</button><button type="button" data-quantity="long" aria-pressed="true">많은 분량</button></div>
+<button id="motif-toggle" type="button" aria-pressed="true">접합 표시 켜짐</button>
+</section>
+<p id="content-count" class="content-count" aria-live="polite">문서를 불러오고 있습니다.</p>
+<article id="document" class="document-surface" aria-busy="true">
+<header class="document-header"><span class="biadone-logo" role="img" aria-label="Biadone"><span class="biadone-logo__symbol"><img src="../../design-system/assets/logo/biadone-symbol.svg" width="64" height="64" alt=""></span><span class="biadone-logo__name" aria-hidden="true">Biadone</span></span><span class="document-label">Biadone Edu</span><span class="join-signature" aria-hidden="true"><span></span><span></span></span></header>
+<div id="document-content" class="document-content"></div>
+<footer class="document-footer"><span>Biadone Edu</span><span>교육 내용을 가정한 검토용 예시</span></footer>
+</article>
+<p class="study-note">접합 표시는 내용 영역을 자르지 않습니다. 웹 문서는 아래로 늘어나고, 슬라이드처럼 크기가 고정된 매체는 내용을 나눠 여러 장으로 구성합니다.</p>
+<footer class="review-footer"><p>2026-10-27 가변 정보 영역과 브랜드 표현의 역할 분리 방향을 확정했습니다.</p><a href="../../design-system/SCREEN_STYLE.md">공통 화면 기준</a></footer>
+</main>
+</body>
+</html>

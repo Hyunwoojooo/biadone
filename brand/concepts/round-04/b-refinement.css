@@ -1,0 +1,20 @@
+.refinement-grid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: var(--space-6); scroll-margin-top: var(--space-6); }
+.refinement-grid .card-title h2 { font-size: var(--type-lead); font-weight: 600; line-height: 1.5; margin-bottom: var(--space-2); }
+.refinement-grid .card-title p { min-height: 0; }
+.refinement-grid .main-lockup { min-height: calc(var(--logo-preview-height) + var(--space-10)); gap: var(--space-6); }
+.refinement-mark { position: relative; display: inline-flex; width: calc(var(--space-16) * 2); height: calc(var(--space-16) * 2); flex: none; }
+.refinement-mark img { display: block; width: 100%; height: 100%; }
+.refinement-mark::after { content: ""; position: absolute; inset: 12.5%; border: 1px dashed currentColor; opacity: .25; pointer-events: none; }
+.geometry-note { padding: var(--space-4) var(--space-6); border-top: 1px solid var(--color-shell-border); font-size: var(--type-small); text-align: center; }
+.size-section { padding-block: var(--space-12) var(--space-8); }
+.size-section h2 { font-size: var(--type-section); font-weight: 550; letter-spacing: -.03em; text-align: center; margin-bottom: var(--space-8); }
+.size-table { border-collapse: collapse; table-layout: fixed; width: min(100%,calc(var(--space-16) * 12)); margin-inline: auto; font-size: var(--type-small); }
+.size-table .size-label { width: var(--space-16); }
+.size-table th,.size-table td { padding: var(--space-4) var(--space-2); text-align: center; font-weight: 500; }
+.size-table thead { border-bottom: 1px solid var(--color-shell-border); }
+.size-table tbody tr + tr { border-top: 1px solid var(--color-shell-border); }
+.size-table img { display: block; margin-inline: auto; }
+.refinement-links { display: flex; flex-wrap: wrap; justify-content: center; gap: var(--space-6); padding-bottom: var(--space-12); }
+.refinement-links a { display: inline-flex; align-items: center; min-height: var(--control-height); color: var(--color-brand); font-size: var(--type-small); font-weight: 500; }
+@media (max-width: 60em) { .refinement-grid { gap: var(--space-4); }.refinement-grid .card-title { padding: var(--space-4); }.refinement-grid .main-lockup { flex-direction: column; gap: var(--space-3); min-height: var(--logo-preview-height); padding: var(--space-4); }.refinement-mark { width: var(--space-16); height: var(--space-16); }.refinement-grid .wordmark { font-size: var(--type-lead); }.geometry-note { padding: var(--space-3) var(--space-2); font-size: var(--type-caption); }.refinement-grid .card-title h2 { font-size: var(--type-body); }.refinement-grid .card-title p { font-size: var(--type-caption); min-height: 3.3em; }.size-section { padding-top: var(--space-8); }.refinement-links { gap: var(--space-4); } }
+

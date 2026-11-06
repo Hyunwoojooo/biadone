@@ -1,0 +1,381 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "Blabee C4 L3 — Coordinator 컴포넌트 (As-Is)",
+    "output": "docs/architecture/c4/coordinator-components.html",
+    "animation": "none",
+    "quality_profile": "showcase",
+    "repository": {
+      "url": "https://github.com/Hyunwoojooo/biadone.git",
+      "revision": "a352baa773e11a9be96c9d5b5aafca19aa5fb543"
+    },
+    "viewBox": [
+      1600,
+      920
+    ]
+  },
+  "components": [
+    {
+      "id": "clients",
+      "type": "external",
+      "label": "Plugin·Pet·Managed Bridge",
+      "sublabel": "허용된 로컬 client",
+      "pos": [
+        35,
+        355
+      ],
+      "size": [
+        205,
+        76
+      ],
+      "sources": [
+        {
+          "path": "apps/blabee/TECH_SPEC.md",
+          "line": 114,
+          "end_line": 122,
+          "label": "외부 allowlist"
+        }
+      ]
+    },
+    {
+      "id": "identity_gate",
+      "type": "security",
+      "label": "Runtime Identity Gate",
+      "sublabel": "namespace·CDHash·manifest",
+      "pos": [
+        300,
+        355
+      ],
+      "size": [
+        200,
+        76
+      ],
+      "sources": [
+        {
+          "path": "apps/blabee/src/coordinator-swift/Sources/BlabeeCoordinator/UnixDomainSocketTransport.swift",
+          "line": 23,
+          "end_line": 90,
+          "label": "runtime identity"
+        },
+        {
+          "path": "apps/blabee/TECH_SPEC.md",
+          "line": 124,
+          "end_line": 145,
+          "label": "호환 정책"
+        }
+      ]
+    },
+    {
+      "id": "uds",
+      "type": "backend",
+      "label": "UDS Transport Adapter",
+      "sublabel": "same UID·size·concurrency",
+      "pos": [
+        560,
+        355
+      ],
+      "size": [
+        190,
+        76
+      ],
+      "sources": [
+        {
+          "path": "apps/blabee/src/coordinator-swift/Sources/BlabeeCoordinator/UnixDomainSocketTransport.swift",
+          "line": 704,
+          "end_line": 770,
+          "label": "socket server"
+        }
+      ]
+    },
+    {
+      "id": "operational",
+      "type": "backend",
+      "label": "Operational Application",
+      "sublabel": "Hook·MCP·Pet 상태기계",
+      "tag": "public product API",
+      "pos": [
+        820,
+        335
+      ],
+      "size": [
+        215,
+        116
+      ],
+      "sources": [
+        {
+          "path": "apps/blabee/src/coordinator-swift/Sources/CoordinatorSwift/CoordinatorOperationalApplication.swift",
+          "line": 539,
+          "end_line": 638,
+          "label": "request dispatch"
+        }
+      ]
+    },
+    {
+      "id": "routing",
+      "type": "backend",
+      "label": "Routing Application",
+      "sublabel": "FIFO·foreground·continuous time",
+      "pos": [
+        1095,
+        335
+      ],
+      "size": [
+        215,
+        116
+      ],
+      "sources": [
+        {
+          "path": "apps/blabee/src/coordinator-swift/Sources/CoordinatorSwift/CoordinatorRoutingApplication.swift",
+          "line": 739,
+          "end_line": 820,
+          "label": "routing authority"
+        }
+      ]
+    },
+    {
+      "id": "semantic",
+      "type": "backend",
+      "label": "Semantic Application",
+      "sublabel": "typed command·replay·binding",
+      "pos": [
+        1370,
+        335
+      ],
+      "size": [
+        200,
+        116
+      ],
+      "sources": [
+        {
+          "path": "apps/blabee/src/coordinator-swift/Sources/CoordinatorSwift/CoordinatorSemanticApplication.swift",
+          "line": 79,
+          "end_line": 150,
+          "label": "semantic boundary"
+        }
+      ]
+    },
+    {
+      "id": "dispatcher",
+      "type": "messagebus",
+      "label": "Next-turn Dispatcher",
+      "sublabel": "codex queue·exact receipt",
+      "pos": [
+        820,
+        610
+      ],
+      "size": [
+        215,
+        78
+      ],
+      "sources": [
+        {
+          "path": "apps/blabee/TECH_SPEC.md",
+          "line": 164,
+          "end_line": 178,
+          "label": "queued next turn"
+        },
+        {
+          "path": "apps/blabee/CODEMAP.md",
+          "line": 495,
+          "end_line": 510,
+          "label": "선택 흐름"
+        }
+      ]
+    },
+    {
+      "id": "journal",
+      "type": "database",
+      "label": "SQLite Journal",
+      "sublabel": "CAS·MAC chain·sidecars",
+      "pos": [
+        1370,
+        610
+      ],
+      "size": [
+        200,
+        78
+      ],
+      "sources": [
+        {
+          "path": "apps/blabee/src/coordinator-swift/Sources/CoordinatorSwift/SQLiteJournal.swift",
+          "line": 46,
+          "end_line": 119,
+          "label": "durable store"
+        }
+      ]
+    },
+    {
+      "id": "freshness",
+      "type": "security",
+      "label": "Freshness + Lock",
+      "sublabel": "Keychain anchor·process authority",
+      "pos": [
+        1095,
+        610
+      ],
+      "size": [
+        215,
+        78
+      ],
+      "sources": [
+        {
+          "path": "apps/blabee/src/coordinator-swift/Sources/CoordinatorSwift/KeychainFreshnessAnchorStore.swift",
+          "line": 1,
+          "end_line": 40,
+          "label": "anchor store"
+        },
+        {
+          "path": "apps/blabee/src/coordinator-swift/Sources/CoordinatorSwift/StorageProcessLock.swift",
+          "line": 1,
+          "end_line": 45,
+          "label": "storage lock"
+        }
+      ]
+    }
+  ],
+  "boundaries": [
+    {
+      "kind": "security-group",
+      "label": "Blabee Coordinator 프로세스",
+      "wraps": [
+        "identity_gate",
+        "uds",
+        "operational",
+        "routing",
+        "semantic",
+        "dispatcher",
+        "journal",
+        "freshness"
+      ],
+      "pad": 26
+    },
+    {
+      "kind": "region",
+      "label": "영속 권위 경계",
+      "wraps": [
+        "routing",
+        "semantic",
+        "journal",
+        "freshness"
+      ],
+      "pad": 18
+    }
+  ],
+  "connections": [
+    {
+      "from": "clients",
+      "to": "identity_gate",
+      "label": "v1 request + identity",
+      "variant": "security",
+      "labelAt": [
+        270,
+        330
+      ]
+    },
+    {
+      "from": "identity_gate",
+      "to": "uds",
+      "label": "검증된 요청",
+      "variant": "security",
+      "labelDy": -25
+    },
+    {
+      "from": "uds",
+      "to": "operational",
+      "label": "allowlisted operation",
+      "labelDy": -52
+    },
+    {
+      "from": "operational",
+      "to": "routing",
+      "label": "시간·선택·복구",
+      "labelDy": -52
+    },
+    {
+      "from": "routing",
+      "to": "semantic",
+      "label": "typed transition",
+      "labelDy": -52
+    },
+    {
+      "from": "semantic",
+      "to": "journal",
+      "label": "atomic append / replay",
+      "variant": "security",
+      "labelAt": [
+        1530,
+        525
+      ]
+    },
+    {
+      "from": "journal",
+      "to": "freshness",
+      "label": "anchor CAS·lock",
+      "variant": "security",
+      "labelDy": 63
+    },
+    {
+      "from": "operational",
+      "to": "dispatcher",
+      "label": "참조 envelope 전달",
+      "variant": "emphasis",
+      "labelAt": [
+        1020,
+        535
+      ]
+    },
+    {
+      "from": "dispatcher",
+      "to": "clients",
+      "label": "새 Codex 사용자 턴",
+      "variant": "dashed",
+      "fromSide": "bottom",
+      "toSide": "bottom",
+      "via": [
+        [
+          927.5,
+          755
+        ],
+        [
+          137.5,
+          755
+        ],
+        [
+          137.5,
+          470
+        ]
+      ],
+      "labelAt": [
+        515,
+        775
+      ]
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "제품 API",
+      "items": [
+        "Operational Application만 Hook·MCP·Pet 고수준 요청을 받는다",
+        "저수준 append·직접 semantic selection은 외부에 노출하지 않는다"
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "실패 의미",
+      "items": [
+        "commit 뒤 응답 유실은 journal replay로 재조정한다",
+        "durable selection 뒤 dispatcher 실패는 자동 재전송하지 않는다"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "권위 분리",
+      "items": [
+        "runtime identity는 ingress 전에 요청 세대를 제한한다",
+        "SQLite와 freshness anchor가 영속 상태의 무결성을 함께 보호한다"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,13 @@
+node_modules/
+.DS_Store
+*.log
+.cache/
+.env
+.env.*
+*.sqlite
+*.sqlite3
+*.db
+*.key
+*.p12
+*.p8
+*.mobileprovision

@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="내 사업에 필요한 것을 만들고, 활용하고, 스스로 수정하는 Biadon Edu 커리큘럼 모션그래픽.">
+  <title>Biadon Edu — 움직이는 커리큘럼</title>
+  <link rel="icon" href="assets/mark.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="motion.css">
+</head>
+<body>
+  <header class="player-header">
+    <a class="player-brand" href="index.html"><span aria-hidden="true">B</span> Biadon Edu</a>
+    <a href="index.html">커리큘럼 살펴보기 ↗</a>
+  </header>
+  <main class="player-main">
+    <div class="player-caption"><h1>한 장씩, 내 사업의 일이 됩니다.</h1><p>100초로 살펴보는 교육 커리큘럼</p></div>
+    <section class="screen-shell" id="screen-shell" aria-label="커리큘럼 모션그래픽">
+      <div class="motion-stage" id="motion-stage" aria-live="off"></div>
+    </section>
+    <div class="transport" aria-label="재생 조절">
+      <button type="button" id="play" aria-label="영상 재생">재생 <span aria-hidden="true">▶</span></button>
+      <button type="button" id="replay" aria-label="처음부터 재생">처음부터 ↺</button>
+      <label class="seek-label" for="seek">재생 위치</label>
+      <input id="seek" type="range" min="0" max="100" value="0" step="0.05" aria-label="재생 위치 (초)">
+      <output id="time" for="seek">00:00 / 01:40</output>
+      <button type="button" id="sound" aria-pressed="false">소리 끔</button>
+      <button type="button" id="fullscreen" aria-label="전체 화면">전체 화면 ↗</button>
+    </div>
+    <nav class="chapters" id="chapters" aria-label="장면으로 이동"></nav>
+    <footer class="player-footer"><p>과정의 전체 설명과 결과물은 HTML에서 확인할 수 있습니다.</p><a href="Biadon-Edu-Curriculum-1080p.mp4" download>1080p 영상 내려받기 ↓</a></footer>
+  </main>
+  <audio id="soundtrack" src="assets/studio-score.wav" preload="metadata"></audio>
+  <script src="motion.js"></script>
+</body>
+</html>

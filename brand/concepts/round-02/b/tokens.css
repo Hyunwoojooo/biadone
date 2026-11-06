@@ -1,0 +1,66 @@
+/* Design Tokens - Auto-generated */
+/* Do not edit directly - modify tokens.json instead */
+
+/* === PRIMITIVES === */
+:root {
+  --primitive-color-mineral: #385A78;
+  --primitive-color-ink: #1D303B;
+  --primitive-color-white: #FFFFFF;
+  --primitive-color-mist: #E4EEF5;
+  --primitive-color-mint: #CDE3DE;
+  --primitive-color-sun: #F9D673;
+  --primitive-color-muted: #4F6572;
+  --primitive-color-rule: #B7CAD5;
+  --primitive-radius-control: 0.5rem;
+  --primitive-size-gutter: clamp(1.25rem, 5.2vw, 5rem);
+  --primitive-size-heading: clamp(1.9rem, 3.6vw, 3.5rem);
+  --primitive-size-flow: clamp(1.75rem, 4.8vw, 4rem);
+  --primitive-size-flowGap: clamp(0.5rem, 1.2vw, 1rem);
+  --primitive-size-panelPadding: clamp(1.25rem, 3.5vw, 2.5rem);
+  --primitive-size-panelMinHeight: clamp(14.5rem, 28vw, 23.5rem);
+  --primitive-size-sectionGap: clamp(3rem, 5.2vw, 5rem);
+  --primitive-size-projectTitle: clamp(1.75rem, 2.5vw, 2.5rem);
+  --primitive-size-wordmark: 1.625rem;
+  --primitive-size-logo: 2rem;
+  --primitive-size-measure: 39rem;
+  --primitive-size-summaryGap: clamp(1.5rem, 3.5vw, 3rem);
+  --primitive-size-heroHeadingPad: clamp(2rem, 3vw, 2.5rem);
+}
+
+/* === SEMANTIC === */
+:root {
+  --color-background: #FFFFFF;
+  --color-surface: #FFFFFF;
+  --color-text: #1D303B;
+  --color-muted: #4F6572;
+  --color-brand: #385A78;
+  --color-focus: #1D303B;
+  --color-border: #B7CAD5;
+  --color-canvas-left: #FFFFFF;
+  --color-canvas-right: #E4EEF5;
+  --color-signal: #F9D673;
+  --color-soft-accent: #CDE3DE;
+  --layout-gutter: clamp(1.25rem, 5.2vw, 5rem);
+  --layout-section-gap: clamp(3rem, 5.2vw, 5rem);
+  --layout-measure: 39rem;
+  --type-heading: clamp(1.9rem, 3.6vw, 3.5rem);
+  --type-flow: clamp(1.75rem, 4.8vw, 4rem);
+  --type-project-title: clamp(1.75rem, 2.5vw, 2.5rem);
+}
+
+/* === COMPONENTS === */
+:root {
+  --button-bg: #1D303B;
+  --button-fg: #FFFFFF;
+  --button-hover-bg: #385A78;
+  --button-hover-fg: #FFFFFF;
+  --button-border: #1D303B;
+  --button-radius: 0.5rem;
+  --flow-gap: clamp(0.5rem, 1.2vw, 1rem);
+  --flow-padding: clamp(1.25rem, 3.5vw, 2.5rem);
+  --flow-min-height: clamp(14.5rem, 28vw, 23.5rem);
+  --brand-type-size: 1.625rem;
+  --brand-mark-size: 2rem;
+  --hero-heading-padding: clamp(2rem, 3vw, 2.5rem);
+  --hero-summary-gap: clamp(1.5rem, 3.5vw, 3rem);
+}

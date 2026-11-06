@@ -1,0 +1,9 @@
+node_modules/
+out/
+.cache/
+.remotion/
+.DS_Store
+npm-debug.log*
+
+__pycache__/
+*.pyc

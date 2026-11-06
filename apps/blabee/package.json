@@ -1,0 +1,38 @@
+{
+  "name": "blabee",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Blabee contracts, Codex integration, and the macOS coordinator.",
+  "scripts": {
+    "test:access-sql": "node --test Tests/Cloud/access-control.test.mjs",
+    "test:connection-sql": "node --test Tests/Cloud/connection-diagnostics.test.mjs",
+    "test": "node --test --test-concurrency=1 Tests/Contracts/*.test.mjs Tests/CoordinatorCore/*.test.mjs Tests/CoordinatorOperational/*.test.mjs Tests/CoordinatorPersistence/*.test.mjs Tests/RuntimeQualification/*.test.mjs Tests/AppPackaging/*.test.mjs Tests/LocalDogfood/*.test.mjs",
+    "test:swift": "DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer /usr/bin/lockf -t 0 -k -w /tmp/blabee-coordinator-swift-tests.lock /usr/bin/xcrun swift test --package-path . --scratch-path /tmp/blabee-coordinator-swift-build --experimental-maximum-parallelization-width 1",
+    "test:swift:test-app": "env -u BLABEE_NATIVE_LIVE_VERIFY -u BLABEE_NATIVE_LIVE_EXECUTABLE -u BLABEE_PUBLIC_HOOK_NATIVE -u BLABEE_CLAUDE_PACKAGED_RUNTIME -u BLABEE_TEST_RECOVERY_KEYCHAIN -u BLABEE_SQLITE_RECEIPT_BENCHMARK -u BLABEE_SQLITE_QUEUED_CLAIM_BENCHMARK DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer /usr/bin/lockf -t 0 -k -w /tmp/blabee-coordinator-swift-tests.lock /usr/bin/xcrun swift test --package-path . --scratch-path /tmp/blabee-test-app-swift-tests --jobs 1 --disable-keychain --disable-netrc --experimental-maximum-parallelization-width 1 -Xswiftc -DBLABEE_TEST_APP --filter 'BlabeeTest(Profile|RunStore|Composition|Workspace|Engine|EngineService|EngineStorage)Tests'",
+    "test:contracts": "node --test --test-concurrency=1 Tests/Contracts/*.test.mjs",
+    "test:codex-compatibility": "node --test --test-concurrency=1 Tests/RuntimeQualification/codex-compatibility-qualification.test.mjs",
+    "qualify:codex-compatibility": "node scripts/qualify-codex-compatibility.mjs",
+    "test:t005": "node --test --test-concurrency=1 Tests/RuntimeQualification/*.test.mjs",
+    "test:t007a": "node --test --test-concurrency=1 Tests/CoordinatorCore/*.test.mjs",
+    "test:t007b-a": "node --test --test-concurrency=1 Tests/CoordinatorPersistence/*.test.mjs",
+    "test:t011": "node --test --test-concurrency=1 Tests/CoordinatorOperational/*.test.mjs",
+    "test:t012": "node --test --test-concurrency=1 Tests/AppPackaging/*.test.mjs",
+    "test:dogfood": "node --test --test-concurrency=1 Tests/LocalDogfood/*.test.mjs",
+    "build:macos-app": "node scripts/build-macos-app.mjs",
+    "build:test-app": "node scripts/build-test-app.mjs",
+    "prepare:claude-runtime": "node scripts/prepare-claude-runtime.mjs",
+    "build:internal-dmg": "node scripts/build-fresh-internal-dmg.mjs",
+    "build:release-dmg": "node scripts/build-release-dmg.mjs",
+    "notarize:dmg": "node scripts/notarize-dmg.mjs",
+    "prepare:dogfood": "node scripts/prepare-local-dogfood.mjs",
+    "m1:qualify": "node dev/spikes/m1/runtime-qualification/scripts/qualify-runtimes.mjs"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "devDependencies": {
+    "@electric-sql/pglite": "0.5.8",
+    "ajv": "^8.18.0"
+  }
+}

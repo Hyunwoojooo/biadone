@@ -1,0 +1,21 @@
+{
+  "name": "blabee-integrations",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Open integration components and offline contract tests for the Blabee macOS app.",
+  "license": "MIT",
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "check": "node scripts/check.mjs",
+    "verify:sources": "node scripts/verify-public-sources.mjs",
+    "example": "node examples/validate-proposal.mjs",
+    "test:contracts": "node --test --test-concurrency=1 Tests/Contracts/v1-contracts.test.mjs",
+    "test:codex": "node --test --test-concurrency=1 Tests/CoordinatorOperational/plugin-package.test.mjs",
+    "test:claude": "node --test --test-concurrency=1 Tests/bridges/claude/auto-connect.test.mjs Tests/bridges/claude/session-v2-bridge.test.mjs Tests/bridges/claude/session-v2-cancellation.test.mjs Tests/bridges/claude/session-v2-channel-poller.test.mjs Tests/bridges/claude/session-v2-client.test.mjs Tests/bridges/claude/session-v2-compatibility.test.mjs Tests/bridges/claude/session-v2-diagnostics.test.mjs Tests/bridges/claude/session-v2-heartbeat.test.mjs Tests/bridges/claude/session-v2-hook-input.test.mjs Tests/bridges/claude/session-v2-lifecycle.test.mjs Tests/bridges/claude/session-v2-waiter.test.mjs",
+    "test:scope": "node --test Tests/Public/public-scope.test.mjs",
+    "test": "npm run check && npm run verify:sources && npm run example && npm run test:scope && npm run test:contracts && npm run test:codex && npm run test:claude"
+  },
+  "dependencies": { "@modelcontextprotocol/sdk": "1.30.0" },
+  "devDependencies": { "ajv": "8.18.0" }
+}

@@ -1,0 +1,77 @@
+[
+  {
+    "old": "Plugin/blabee/.codex-plugin/plugin.json",
+    "new": "bridges/codex/plugin/.codex-plugin/plugin.json",
+    "role": "codex-plugin"
+  },
+  {
+    "old": "Plugin/blabee/.mcp.json",
+    "new": "bridges/codex/plugin/.mcp.json",
+    "role": "codex-plugin"
+  },
+  {
+    "old": "Plugin/blabee/hooks/hooks.json",
+    "new": "bridges/codex/plugin/hooks/hooks.json",
+    "role": "codex-plugin"
+  },
+  {
+    "old": "Plugin/blabee/scripts/blabee-launcher",
+    "new": "bridges/codex/plugin/scripts/blabee-launcher",
+    "role": "codex-plugin"
+  },
+  {
+    "old": "Plugin/blabee/skills/blabee-decision/SKILL.md",
+    "new": "bridges/codex/plugin/skills/blabee-decision/SKILL.md",
+    "role": "codex-plugin"
+  },
+  {
+    "old": "Plugin/blabee/skills/blabee-decision/agents/openai.yaml",
+    "new": "bridges/codex/plugin/skills/blabee-decision/agents/openai.yaml",
+    "role": "codex-plugin"
+  },
+  {
+    "old": "src/coordinator-core/README.md",
+    "new": "Tests/support/reference-engine/README.md",
+    "role": "test-reference-engine"
+  },
+  {
+    "old": "src/coordinator-core/decide.mjs",
+    "new": "Tests/support/reference-engine/decide.mjs",
+    "role": "test-reference-engine"
+  },
+  {
+    "old": "src/coordinator-core/errors.mjs",
+    "new": "Tests/support/reference-engine/errors.mjs",
+    "role": "test-reference-engine"
+  },
+  {
+    "old": "src/coordinator-core/index.mjs",
+    "new": "Tests/support/reference-engine/index.mjs",
+    "role": "test-reference-engine"
+  },
+  {
+    "old": "src/coordinator-core/journal.mjs",
+    "new": "Tests/support/reference-engine/journal.mjs",
+    "role": "test-reference-engine"
+  },
+  {
+    "old": "src/coordinator-core/shared.mjs",
+    "new": "Tests/support/reference-engine/shared.mjs",
+    "role": "test-reference-engine"
+  },
+  {
+    "old": "src/coordinator-core/state.mjs",
+    "new": "Tests/support/reference-engine/state.mjs",
+    "role": "test-reference-engine"
+  },
+  {
+    "old": "src/coordinator-core/token.mjs",
+    "new": "Tests/support/reference-engine/token.mjs",
+    "role": "test-reference-engine"
+  },
+  {
+    "old": "src/coordinator-swift/Package.swift",
+    "new": "Package.swift",
+    "role": "package-manifest"
+  }
+]

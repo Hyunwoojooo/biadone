@@ -1,0 +1,328 @@
+/* Presentation and viewer layout only. Brand and type sizes come from ../../biadone.css. */
+.edu-viewer {
+  margin: 0;
+  min-width: 0;
+  background: var(--color-background-tint);
+}
+
+.edu-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: center;
+  gap: var(--ui-space-sm) var(--ui-space-lg);
+  padding: var(--edu-viewer-inset-block) var(--ui-space-md);
+  background: var(--color-background);
+  border-bottom: var(--screen-line) solid var(--color-text-primary);
+}
+
+.edu-toolbar__identity {
+  display: grid;
+  gap: var(--ui-space-xs);
+}
+
+.edu-toolbar__identity p,
+.edu-viewer-info p {
+  margin: 0;
+}
+
+.edu-toolbar__identity p {
+  font-weight: var(--ui-label-weight);
+}
+
+.edu-sample-label {
+  display: inline-block;
+  margin-left: var(--edu-label-gap);
+  font-weight: 400;
+}
+
+.edu-toolbar__controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--ui-space-xs);
+}
+
+.edu-toolbar button,
+.edu-toolbar select,
+.edu-show-all {
+  min-height: var(--ui-control-min);
+  border: var(--screen-line) solid var(--color-text-primary);
+  border-radius: var(--screen-radius);
+  background: var(--color-background);
+  color: var(--color-text-primary);
+  font: inherit;
+}
+
+.edu-toolbar button,
+.edu-toolbar select {
+  padding: var(--ui-space-xs) var(--edu-label-gap);
+}
+
+.edu-toolbar button,
+.edu-toolbar select,
+.edu-show-all,
+.edu-show-all input {
+  cursor: pointer;
+}
+
+.edu-toolbar button:hover:enabled {
+  border-color: var(--color-brand);
+  color: var(--color-brand);
+}
+
+.edu-toolbar button:disabled,
+.edu-toolbar select:disabled {
+  cursor: default;
+  opacity: var(--edu-disabled-opacity);
+}
+
+.edu-toolbar :focus-visible {
+  outline: var(--ui-focus-width) solid var(--color-brand);
+  outline-offset: var(--ui-focus-offset);
+}
+
+.edu-page-picker select {
+  width: var(--edu-picker-width);
+}
+
+.edu-show-all {
+  display: inline-flex;
+  gap: var(--ui-space-xs);
+  align-items: center;
+  padding-inline: var(--edu-label-gap);
+}
+
+.edu-show-all input {
+  width: var(--edu-checkbox-size);
+  height: var(--edu-checkbox-size);
+  margin: 0;
+  accent-color: var(--color-brand);
+}
+
+#zoom-value {
+  min-width: var(--ui-space-xl);
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.edu-viewer-info {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: var(--ui-space-xs) var(--ui-space-md);
+  padding: var(--ui-space-sm) var(--ui-space-md) 0;
+  line-height: var(--ui-slide-leading);
+}
+
+.edu-deck {
+  display: grid;
+  align-content: start;
+  gap: var(--ui-space-lg);
+  min-width: 0;
+  padding: var(--ui-space-md);
+  overflow: auto;
+}
+
+.edu-slide-frame {
+  position: relative;
+  margin-inline: auto;
+  flex: none;
+}
+
+.edu-slide-frame[hidden] {
+  display: none;
+}
+
+.edu-slide {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  gap: var(--ui-space-lg);
+  width: var(--slide-width);
+  height: var(--slide-height);
+  min-width: var(--slide-width);
+  box-sizing: border-box;
+  padding: var(--slide-inset);
+  overflow: visible;
+  transform: scale(var(--edu-scale, 1));
+  transform-origin: top left;
+}
+
+.edu-slide .biadone-slide-content {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ui-space-lg);
+  min-width: 0;
+  min-height: 0;
+  margin: 0;
+  overflow: visible;
+}
+
+.edu-slide__heading,
+.edu-slide__body {
+  min-width: 0;
+  flex: none;
+}
+
+.edu-slide__heading .biadone-title {
+  margin: 0;
+  white-space: pre-line;
+  overflow-wrap: anywhere;
+}
+
+.edu-slide__body p {
+  overflow-wrap: anywhere;
+}
+
+.edu-slide__footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: var(--ui-space-lg);
+  padding-top: var(--edu-footer-inset);
+  border-top: var(--screen-line) solid var(--color-background-tint);
+}
+
+.edu-slide__footer p {
+  margin: 0;
+}
+
+.edu-slide__page-number {
+  min-width: var(--edu-page-number-width);
+  flex: none;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.edu-prose {
+  display: grid;
+  gap: var(--ui-space-md);
+}
+
+.edu-prose p {
+  margin: 0;
+}
+
+.edu-prose > p.biadone-body + p.biadone-body {
+  margin-top: 0;
+}
+
+.edu-cover {
+  display: grid;
+  gap: var(--ui-space-xl);
+}
+
+.edu-cover > p {
+  max-width: var(--edu-cover-copy-max);
+  margin: 0;
+}
+
+.edu-cover__outcomes {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--ui-space-xl);
+}
+
+.edu-cover__outcomes p {
+  margin: 0;
+}
+
+.edu-cover__outcomes .biadone-source {
+  margin-bottom: var(--ui-space-sm);
+}
+
+.edu-table {
+  width: 100%;
+  table-layout: fixed;
+  border-collapse: collapse;
+}
+
+.edu-table th,
+.edu-table td {
+  overflow-wrap: anywhere;
+}
+
+.edu-table th:first-child {
+  width: 18%;
+}
+
+.edu-slide .biadone-steps {
+  margin: 0;
+}
+
+.edu-summary-sources {
+  display: grid;
+  gap: var(--edu-source-gap);
+  margin-top: var(--ui-space-lg);
+  padding-top: var(--edu-footer-inset);
+  border-top: var(--screen-line) solid var(--color-background-tint);
+}
+
+.edu-summary-sources p {
+  margin: 0;
+  white-space: pre-line;
+}
+
+.edu-overflow-notice {
+  margin: var(--ui-space-sm) 0 0;
+  padding: var(--edu-notice-inset-block) var(--ui-space-sm);
+  border: var(--screen-line) solid currentColor;
+  color: var(--color-brand);
+}
+
+.edu-load-error {
+  margin: var(--ui-space-md);
+  padding: var(--ui-space-md);
+  background: var(--color-background);
+  border: var(--screen-line) solid var(--color-text-primary);
+  line-height: 1.8;
+}
+
+.edu-measurement-host {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: var(--slide-width);
+  visibility: hidden;
+  pointer-events: none;
+  z-index: -1;
+}
+
+.edu-visually-hidden {
+  position: absolute;
+  width: var(--edu-visually-hidden-size);
+  height: var(--edu-visually-hidden-size);
+  padding: 0;
+  border: 0;
+  margin: calc(var(--edu-visually-hidden-size) * -1);
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+@media (max-width: 37.5em) {
+  .edu-toolbar,
+  .edu-viewer-info {
+    padding-inline: var(--ui-space-sm);
+  }
+
+  .edu-deck {
+    padding: var(--ui-space-sm);
+  }
+
+  .edu-toolbar__controls {
+    width: 100%;
+  }
+
+  .edu-page-picker {
+    flex: 1;
+  }
+
+  .edu-page-picker select {
+    width: 100%;
+  }
+
+  .edu-sample-label {
+    margin-left: 0;
+  }
+}

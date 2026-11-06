@@ -1,0 +1,57 @@
+{
+  "$description": "Approved round-06 A screen direction: structured, open white surfaces, aligned content and linear flow. Core values taken from the selected website and Edu examples.",
+  "primitive": {
+    "structure": {
+      "corner": {"$value":"4px","$type":"dimension"},
+      "line": {"$value":"1px","$type":"dimension"},
+      "marker": {"$value":"12px","$type":"dimension"},
+      "inline-gap": {"$value":"24px","$type":"dimension"},
+      "column-gap": {"$value":"32px","$type":"dimension"},
+      "section-gap": {"$value":"96px","$type":"dimension"},
+      "page-desktop": {"$value":"48px","$type":"dimension"},
+      "page-mobile": {"$value":"24px","$type":"dimension"},
+      "content-max": {"$value":"1280px","$type":"dimension"},
+      "slide-width": {"$value":"1600px","$type":"dimension"},
+      "slide-height": {"$value":"900px","$type":"dimension"},
+      "slide-inset": {"$value":"72px","$type":"dimension"},
+      "slide-flow-gap": {"$value":"48px","$type":"dimension"}
+    }
+  },
+  "semantic": {
+    "screen": {
+      "radius": {"$value":"{primitive.structure.corner}","$type":"dimension"},
+      "line": {"$value":"{primitive.structure.line}","$type":"dimension"},
+      "marker": {"$value":"{primitive.structure.marker}","$type":"dimension"},
+      "inline-gap": {"$value":"{primitive.structure.inline-gap}","$type":"dimension"},
+      "column-gap": {"$value":"{primitive.structure.column-gap}","$type":"dimension"},
+      "section-gap": {"$value":"{primitive.structure.section-gap}","$type":"dimension"},
+      "page-inset-desktop": {"$value":"{primitive.structure.page-desktop}","$type":"dimension"},
+      "page-inset-mobile": {"$value":"{primitive.structure.page-mobile}","$type":"dimension"},
+      "content-max": {"$value":"{primitive.structure.content-max}","$type":"dimension"},
+      "slide-width": {"$value":"{primitive.structure.slide-width}","$type":"dimension"},
+      "slide-height": {"$value":"{primitive.structure.slide-height}","$type":"dimension"},
+      "slide-inset": {"$value":"{primitive.structure.slide-inset}","$type":"dimension"},
+      "slide-flow-gap": {"$value":"{primitive.structure.slide-flow-gap}","$type":"dimension"}
+    }
+  },
+  "component": {
+    "button": {"radius":{"$value":"{semantic.screen.radius}","$type":"dimension"}},
+    "page": {
+      "inset-desktop":{"$value":"{semantic.screen.page-inset-desktop}","$type":"dimension"},
+      "inset-mobile":{"$value":"{semantic.screen.page-inset-mobile}","$type":"dimension"},
+      "content-max":{"$value":"{semantic.screen.content-max}","$type":"dimension"},
+      "section-gap":{"$value":"{semantic.screen.section-gap}","$type":"dimension"}
+    },
+    "flow": {
+      "marker-size":{"$value":"{semantic.screen.marker}","$type":"dimension"},
+      "line-width":{"$value":"{semantic.screen.line}","$type":"dimension"},
+      "column-gap":{"$value":"{semantic.screen.column-gap}","$type":"dimension"}
+    },
+    "slide": {
+      "width":{"$value":"{semantic.screen.slide-width}","$type":"dimension"},
+      "height":{"$value":"{semantic.screen.slide-height}","$type":"dimension"},
+      "inset":{"$value":"{semantic.screen.slide-inset}","$type":"dimension"},
+      "flow-gap":{"$value":"{semantic.screen.slide-flow-gap}","$type":"dimension"}
+    }
+  }
+}

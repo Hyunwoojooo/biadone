@@ -1,0 +1,10 @@
+/* Draft review and content-layout values; core brand tokens are imported above. */
+:root {
+ --demo-space-small: 12px; --demo-space: 24px; --demo-space-wide: 32px; --demo-space-major: 48px;
+ --demo-max: 1280px; --demo-inset: 48px; --demo-inset-mobile: 24px;
+ --demo-review-type: 16px; --demo-small-type: 14px; --demo-body-type: 18px; --demo-title-type: clamp(32px,3.5vw,48px);
+ --demo-document-title: clamp(30px,3.7vw,52px); --demo-step-title: 24px; --demo-body-measure: 48em;
+ --demo-header-height: 80px; --demo-control-height: 48px; --demo-logo-size: 24px;
+ --demo-focus-width: 3px; --demo-focus-offset: 4px; --demo-table-min: 720px;
+ --signature-width: 96px; --signature-height: 32px;
+}

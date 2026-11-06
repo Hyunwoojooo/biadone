@@ -9,6 +9,7 @@ import { deleteStoredCodexConnection } from "../../../../../src/connectors/codex
 import type { CodexConnectionState } from "../../../../../src/connectors/codex/types";
 import { clearManagedCodexState } from "../../../../../src/managedCodex/store";
 import { clearWorkResumptionStateForCodexDisconnect } from "../../../../../src/resumption/store";
+import { purgeAllWorkBoardMonitoringData } from "../../../../../src/suggestionBoard/monitoring";
 import { noteRuntimeSourceDisconnected } from "../../../../../src/sync/runtime";
 
 export const runtime = "nodejs";
@@ -24,6 +25,7 @@ export async function POST(request: Request) {
 
   try {
     await clearWorkResumptionStateForCodexDisconnect(async () => {
+      await purgeAllWorkBoardMonitoringData();
       await clearManagedCodexState();
       await deleteStoredCodexConnection();
       await clearManagedCodexState();

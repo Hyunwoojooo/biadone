@@ -484,6 +484,7 @@ final class LauncherRootContextTests: XCTestCase {
         XCTAssertTrue(viewModel.isResolvingSourceNavigation)
 
         try await viewModel.stopForConfigurationChange()
+        viewModel.abortConfigurationChange()
         await Task.yield()
 
         XCTAssertFalse(viewModel.isResolvingSourceNavigation)

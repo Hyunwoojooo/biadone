@@ -1,0 +1,10 @@
+{
+  "title": "Review the fictional parser change",
+  "objective": "Inspect the fictional parser change for contract regressions.",
+  "constraints": [
+    "Do not modify files outside the fictional fixture project."
+  ],
+  "done_when": [
+    "The review findings are recorded."
+  ]
+}

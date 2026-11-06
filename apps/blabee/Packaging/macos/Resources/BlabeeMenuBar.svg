@@ -1,0 +1,10 @@
+<svg width="28" height="24" viewBox="0 0 28 24" xmlns="http://www.w3.org/2000/svg">
+  <!-- Same solid bee as PetAirBeeMark, centered in the menu-bar canvas. -->
+  <g transform="translate(2 0) scale(.75)" fill="#000000">
+    <path d="M13.1 16.1C6.1 15.5 2.6 6.3 5.3 3.2C8.4-.2 15.1 8.9 13.1 16.1Z"/>
+    <path d="M15 16.1C16.2 9.9 23.8 5.4 26.3 8.1C29 11.4 21.7 17.1 15 16.1Z"/>
+    <path d="M12 18H20Q21 19 21.1 20.7H10.9Q11 19 12 18Z"/>
+    <path d="M10.7 22.2H21.3V24.4H10.7Z"/>
+    <path d="M11.2 25.9H20.8C20 28.5 18.4 29.4 16 29.4C13.6 29.4 12 28.5 11.2 25.9Z"/>
+  </g>
+</svg>

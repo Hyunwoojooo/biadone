@@ -1,0 +1,42 @@
+{
+  "$description": "Edu template viewer and composition values. Brand, canvas, typography and repeated spacing use the shared Biadone tokens.",
+  "primitive": {
+    "edu": {
+      "space-fine": {"$value": "12px", "$type": "dimension"},
+      "space-viewer": {"$value": "20px", "$type": "dimension"},
+      "picker-width": {"$value": "190px", "$type": "dimension"},
+      "checkbox-size": {"$value": "18px", "$type": "dimension"},
+      "page-number-width": {"$value": "96px", "$type": "dimension"},
+      "cover-copy-max": {"$value": "1240px", "$type": "dimension"},
+      "visually-hidden-size": {"$value": "1px", "$type": "dimension"},
+      "disabled-opacity": {"$value": 0.45, "$type": "number"}
+    }
+  },
+  "semantic": {
+    "edu-layout": {
+      "fine-gap": {"$value": "{primitive.edu.space-fine}", "$type": "dimension"},
+      "viewer-inset": {"$value": "{primitive.edu.space-viewer}", "$type": "dimension"},
+      "picker-width": {"$value": "{primitive.edu.picker-width}", "$type": "dimension"},
+      "checkbox-size": {"$value": "{primitive.edu.checkbox-size}", "$type": "dimension"},
+      "page-number-width": {"$value": "{primitive.edu.page-number-width}", "$type": "dimension"},
+      "cover-copy-max": {"$value": "{primitive.edu.cover-copy-max}", "$type": "dimension"},
+      "visually-hidden-size": {"$value": "{primitive.edu.visually-hidden-size}", "$type": "dimension"},
+      "disabled-opacity": {"$value": "{primitive.edu.disabled-opacity}", "$type": "number"}
+    }
+  },
+  "component": {
+    "edu": {
+      "viewer-inset-block": {"$value": "{semantic.edu-layout.viewer-inset}", "$type": "dimension"},
+      "label-gap": {"$value": "{semantic.edu-layout.fine-gap}", "$type": "dimension"},
+      "source-gap": {"$value": "{semantic.edu-layout.fine-gap}", "$type": "dimension"},
+      "notice-inset-block": {"$value": "{semantic.edu-layout.fine-gap}", "$type": "dimension"},
+      "picker-width": {"$value": "{semantic.edu-layout.picker-width}", "$type": "dimension"},
+      "checkbox-size": {"$value": "{semantic.edu-layout.checkbox-size}", "$type": "dimension"},
+      "footer-inset": {"$value": "{semantic.edu-layout.viewer-inset}", "$type": "dimension"},
+      "page-number-width": {"$value": "{semantic.edu-layout.page-number-width}", "$type": "dimension"},
+      "cover-copy-max": {"$value": "{semantic.edu-layout.cover-copy-max}", "$type": "dimension"},
+      "visually-hidden-size": {"$value": "{semantic.edu-layout.visually-hidden-size}", "$type": "dimension"},
+      "disabled-opacity": {"$value": "{semantic.edu-layout.disabled-opacity}", "$type": "number"}
+    }
+  }
+}

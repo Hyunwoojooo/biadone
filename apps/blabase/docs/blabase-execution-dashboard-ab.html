@@ -1,0 +1,191 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>blabase · Execution Map · A/B Viewer</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        font-family: Inter, Pretendard, "Noto Sans KR", -apple-system, BlinkMacSystemFont,
+          "Segoe UI", sans-serif;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      html,
+      body {
+        width: 100%;
+        height: 100%;
+        margin: 0;
+        overflow: hidden;
+        background: #0b0c0f;
+      }
+
+      .bar {
+        display: flex;
+        height: 60px;
+        align-items: center;
+        justify-content: space-between;
+        gap: 20px;
+        padding: 0 18px;
+        border-bottom: 1px solid #303641;
+        background: #101217;
+      }
+
+      .label {
+        display: flex;
+        min-width: 0;
+        align-items: baseline;
+        gap: 10px;
+      }
+
+      .label strong {
+        color: #f0eee9;
+        font-size: 13px;
+      }
+
+      .label span {
+        overflow: hidden;
+        color: #929aa7;
+        font: 10px/1.2 "SFMono-Regular", Consolas, monospace;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .switcher {
+        display: flex;
+        flex: 0 0 auto;
+        gap: 3px;
+        padding: 3px;
+        border: 1px solid #3a414f;
+        border-radius: 999px;
+        background: #171a20;
+        overflow-x: auto;
+      }
+
+      button {
+        min-height: 32px;
+        padding: 0 14px;
+        border: 1px solid transparent;
+        border-radius: 999px;
+        background: transparent;
+        color: #aeb4be;
+        cursor: pointer;
+        font: 650 11px/1 inherit;
+      }
+
+      button[aria-pressed="true"] {
+        border-color: #f0eee9;
+        background: #f0eee9;
+        color: #111318;
+      }
+
+      button:focus-visible {
+        outline: 2px solid #65a9ff;
+        outline-offset: 3px;
+      }
+
+      iframe {
+        display: block;
+        width: 100%;
+        height: calc(100% - 60px);
+        border: 0;
+        background: #0b0c0f;
+      }
+
+      @media (max-width: 620px) {
+        .bar {
+          height: 68px;
+          padding: 0 10px;
+        }
+
+        .label { display: none; }
+        .switcher { width: 100%; border-radius: 12px; }
+
+        button {
+          flex: 0 0 auto;
+          padding: 0 11px;
+        }
+
+        iframe {
+          height: calc(100% - 68px);
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <header class="bar">
+      <div class="label">
+        <strong>blabase A/B</strong>
+        <span id="variant-description">A · 기존 실행 계획 대시보드</span>
+      </div>
+      <nav class="switcher" aria-label="대시보드 버전 선택">
+        <button type="button" data-variant="a" aria-pressed="true">A · Original</button>
+        <button type="button" data-variant="b1" aria-pressed="false">B1 · Command</button>
+        <button type="button" data-variant="b2" aria-pressed="false">B2 · Editorial</button>
+        <button type="button" data-variant="b3" aria-pressed="false">B3 · Navigator</button>
+      </nav>
+    </header>
+    <iframe
+      id="preview"
+      title="blabase 실행 계획 대시보드 A안"
+      src="blabase-execution-dashboard.html"
+    ></iframe>
+    <script>
+      (() => {
+        const variants = {
+          a: {
+            src: "blabase-execution-dashboard.html",
+            title: "blabase 실행 계획 대시보드 A안",
+            description: "A · 기존 실행 계획 대시보드",
+          },
+          b1: {
+            src: "blabase-execution-dashboard-prototype.html?v=1",
+            title: "blabase 실행 계획 대시보드 Command 안",
+            description: "B1 · 운영자가 최전선과 게이트를 빠르게 읽는 Command",
+          },
+          b2: {
+            src: "blabase-execution-dashboard-prototype.html?v=2",
+            title: "blabase 실행 계획 대시보드 Editorial 안",
+            description: "B2 · 왜 이 순서인지 서사로 설명하는 Editorial",
+          },
+          b3: {
+            src: "blabase-execution-dashboard-prototype.html?v=3",
+            title: "blabase 실행 계획 대시보드 Navigator 안",
+            description: "B3 · 질문별로 NOW/NEXT/GATE를 탐색하는 Navigator",
+          },
+        };
+        const frame = document.querySelector("#preview");
+        const description = document.querySelector("#variant-description");
+        const buttons = Array.from(document.querySelectorAll("[data-variant]"));
+
+        function showVariant(key) {
+          const variant = variants[key];
+          if (!variant || frame.dataset.variant === key) return;
+          frame.dataset.variant = key;
+          frame.src = variant.src;
+          frame.title = variant.title;
+          description.textContent = variant.description;
+          buttons.forEach((button) => {
+            button.setAttribute("aria-pressed", String(button.dataset.variant === key));
+          });
+        }
+
+        buttons.forEach((button) => {
+          button.addEventListener("click", () => showVariant(button.dataset.variant));
+        });
+
+        window.addEventListener("keydown", (event) => {
+          if (event.metaKey || event.ctrlKey || event.altKey) return;
+          const keyMap = { "0": "a", "1": "b1", "2": "b2", "3": "b3" };
+          if (keyMap[event.key]) showVariant(keyMap[event.key]);
+        });
+
+        frame.dataset.variant = "a";
+      })();
+    </script>
+  </body>
+</html>

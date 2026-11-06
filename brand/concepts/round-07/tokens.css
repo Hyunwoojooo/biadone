@@ -1,0 +1,58 @@
+/* Design Tokens - Auto-generated */
+/* Do not edit directly - modify tokens.json instead */
+
+/* === PRIMITIVES === */
+:root {
+  --primitive-graphic-space-small: 12px;
+  --primitive-graphic-space-medium: 24px;
+  --primitive-graphic-space-large: 32px;
+  --primitive-graphic-space-section: 48px;
+  --primitive-graphic-statement-size: 30px;
+  --primitive-graphic-body-size: 16px;
+  --primitive-graphic-label-size: 14px;
+  --primitive-graphic-heading-size: 20px;
+  --primitive-graphic-accent-width: 4px;
+  --primitive-graphic-bracket-edge: 20px;
+  --primitive-graphic-statement-height: 220px;
+  --primitive-graphic-comparison-height: 380px;
+  --primitive-graphic-process-height: 380px;
+  --primitive-graphic-preview-max: 960px;
+  --primitive-graphic-page-max: 1440px;
+  --primitive-graphic-control-height: 48px;
+}
+
+/* === SEMANTIC === */
+:root {
+  --graphic-padding: 24px;
+  --graphic-gap: 24px;
+  --graphic-small-gap: 12px;
+  --graphic-section-gap: 48px;
+  --graphic-statement-size: 30px;
+  --graphic-body-size: 16px;
+  --graphic-label-size: 14px;
+  --graphic-heading-size: 20px;
+  --graphic-accent-width: 4px;
+  --graphic-bracket-edge: 20px;
+}
+
+/* === COMPONENTS === */
+:root {
+  --specimen-padding: 24px;
+  --specimen-gap: 24px;
+  --specimen-small-gap: 12px;
+  --specimen-statement-size: 30px;
+  --specimen-body-size: 16px;
+  --specimen-label-size: 14px;
+  --specimen-heading-size: 20px;
+  --specimen-accent-width: 4px;
+  --specimen-bracket-edge: 20px;
+  --specimen-statement-height: 220px;
+  --specimen-comparison-height: 380px;
+  --specimen-process-height: 380px;
+  --review-gap: 24px;
+  --review-major-gap: 32px;
+  --review-section-gap: 48px;
+  --review-page-max: 1440px;
+  --review-preview-max: 960px;
+  --review-control-height: 48px;
+}

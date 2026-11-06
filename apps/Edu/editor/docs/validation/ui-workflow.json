@@ -1,0 +1,89 @@
+{
+  "origin": "http://127.0.0.1:61990",
+  "directory": "/var/folders/zb/hqjrlyvx79n59vrfnbsn0rm80000gn/T/biadone-studio-qa-zGe58j",
+  "browser": "Playwright Chromium (Browser plugin not available)",
+  "results": [
+    {
+      "name": "page identity, content, console and desktop layout",
+      "passed": true,
+      "detail": "1376 ms"
+    },
+    {
+      "name": "Codex connection uses the actual app path and dialog keyboard focus",
+      "passed": true,
+      "detail": "148 ms"
+    },
+    {
+      "name": "edit, autosave, reload, undo and redo",
+      "passed": true,
+      "detail": "1364 ms"
+    },
+    {
+      "name": "lock, scene split and merge",
+      "passed": true,
+      "detail": "475 ms"
+    },
+    {
+      "name": "long caption/heading blocks export and can be corrected",
+      "passed": true,
+      "detail": "413 ms"
+    },
+    {
+      "name": "preview plays, seeks and selects corresponding scene",
+      "passed": true,
+      "detail": "1139 ms"
+    },
+    {
+      "name": "delayed external poll cannot overwrite a newer user edit",
+      "passed": true,
+      "detail": "1567 ms"
+    },
+    {
+      "name": "failed conflict rebase preserves the draft until explicit discard",
+      "passed": true,
+      "detail": "159 ms"
+    },
+    {
+      "name": "responsive laptop and mobile retain editor controls",
+      "passed": true,
+      "detail": "545 ms"
+    },
+    {
+      "name": "new project and file input import retain files across async save",
+      "passed": true,
+      "detail": "365 ms"
+    },
+    {
+      "name": "local Korean transcription job and deterministic scene grouping",
+      "passed": true,
+      "detail": "3964 ms"
+    },
+    {
+      "name": "timed subtitle file import and manual caption correction",
+      "passed": true,
+      "detail": "621 ms"
+    },
+    {
+      "name": "image asset selection and actual preview",
+      "passed": true,
+      "detail": "567 ms"
+    },
+    {
+      "name": "export UI, live progress, verified MP4 download",
+      "passed": true,
+      "detail": "29152 ms"
+    },
+    {
+      "name": "cancel a live renderer and retry without changing the edit",
+      "passed": true,
+      "detail": "28010 ms"
+    },
+    {
+      "name": "30-minute timeline loads and seeks to the end",
+      "passed": true,
+      "detail": "1036 ms"
+    }
+  ],
+  "errors": [],
+  "status": "passed"
+}

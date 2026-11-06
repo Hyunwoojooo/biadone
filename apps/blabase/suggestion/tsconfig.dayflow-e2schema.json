@@ -1,0 +1,17 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "incremental": false,
+    "noEmit": true,
+    "types": ["node", "vitest/globals"]
+  },
+  "files": [
+    "src/dayflowEvidence/contracts.ts",
+    "src/dayflowEvidence/preprocessedEvidenceV0_1.ts",
+    "tests/dayflowPreprocessedEvidenceV0_1.test.ts",
+    "vitest.dayflow-e2schema.config.ts"
+  ],
+  "include": [],
+  "exclude": ["node_modules", ".next", ".local"]
+}
+

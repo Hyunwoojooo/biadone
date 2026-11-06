@@ -1,0 +1,28 @@
+{
+  "nav": {"vision":"비전","projects":"프로젝트","edu":"Biadone Edu"},
+  "web": {
+    "title":"하고 싶은 일을,\n더 많이 해낼 수 있도록.",
+    "description":"나를 이해하고 함께 일하는 AI를 만듭니다.\nBiadone은 서비스와 교육을 통해 그 여정을 이어갑니다.",
+    "primary":"프로젝트 보기",
+    "secondary":"Biadone Edu",
+    "projectsTitle":"생각을 실행으로 옮기는 여정",
+    "blabeeTitle":"Blabee",
+    "blabeeDescription":"나와 함께 일하는 AI를 향한 첫 번째 프로젝트.",
+    "eduTitle":"Biadone Edu",
+    "eduDescription":"AI·AX·자동화를 배우고, 나의 일에 적용하는 교육을 준비합니다.",
+    "eduStatus":"준비 중"
+  },
+  "concept": {"understand":"나를 이해하고","act":"함께 실행하고","finish":"일을 완성하다"},
+  "edu": {
+    "label":"Biadone Edu",
+    "title":"반복 업무를,\n나만의 자동화로.",
+    "description":"작업을 나누고, AI와 연결하고, 내 방식으로 개선합니다.",
+    "oneTitle":"업무 나누기",
+    "oneDescription":"반복되는 일을 작은 단계로 나눕니다.",
+    "twoTitle":"AI 연결하기",
+    "twoDescription":"각 단계에 맞는 도구와 흐름을 연결합니다.",
+    "threeTitle":"반복 개선하기",
+    "threeDescription":"결과를 확인하고 나의 방식으로 다듬습니다.",
+    "footer":"AI·AX·자동화"
+  }
+}

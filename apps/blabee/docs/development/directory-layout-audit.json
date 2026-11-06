@@ -1,0 +1,65 @@
+{
+  "baseline": "24ab36a75ce94e85ffca5932216c650fd2df1848",
+  "worktree": "/private/tmp/blabee-layout-20260920/apps/blabee",
+  "mapRows": 448,
+  "uniqueOriginalFiles": 446,
+  "uniqueDestinations": 448,
+  "missingDestinations": [],
+  "unmappedRemovedFiles": [
+    "src/coordinator-swift/.gitignore"
+  ],
+  "intentionalReplacement": {
+    "src/coordinator-swift/.gitignore": ".gitignore"
+  },
+  "ignoredDestinations": [],
+  "contractsFixturesPackagingChanges": [],
+  "originalSourceCheckoutModified": true,
+  "installedAppReplaced": false,
+  "committed": false,
+  "originalSourceCheckout": "/Users/joo/BiaDone/apps/blabee",
+  "applicationBackup": "/private/tmp/blabee-layout-source-backup-awz_xbe6",
+  "appliedFiles": 495,
+  "removedOldTrackedFiles": 447,
+  "appliedFilesVerifiedByHashAndMode": 495,
+  "releaseInputFingerprint": "c53a0ea2b1d056cd7ecc1580fb957010403c3c402375baabecaa00641d57d688",
+  "releaseInputFiles": 270,
+  "validation": {
+    "node": {
+      "pass": 444,
+      "fail": 0,
+      "skip": 1
+    },
+    "runtimeLeaseOptIn": {
+      "pass": 5,
+      "fail": 0,
+      "skip": 0
+    },
+    "swift": {
+      "xctest": 5,
+      "coordinatorTests": 217,
+      "petTests": 1295,
+      "issues": 0,
+      "existingOptInSkipped": 3
+    },
+    "claudeNativeSession": {
+      "pass": 28,
+      "fail": 0
+    },
+    "claudeProductIngress": {
+      "pass": 10,
+      "fail": 0
+    },
+    "claudeSharedEngine": {
+      "swiftTests": 77,
+      "nodeTests": 164,
+      "fail": 0
+    },
+    "releaseBuild": "passed",
+    "adHocSignature": "passed",
+    "originalPackageDescribe": "passed",
+    "originalBridgeSyntaxFiles": 30
+  },
+  "originalClaudeDependenciesInstalledFromExistingLocks": true,
+  "pushed": false,
+  "merged": false
+}

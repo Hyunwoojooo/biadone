@@ -1,0 +1,99 @@
+<svg width="1200" height="630" viewBox="0 0 1200 630" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <title>Blabee for Codex on macOS</title>
+  <desc>One small decision. Don’t go back to the terminal. A compact Blabee surface shows four numbered actions from Codex.</desc>
+
+  <defs>
+    <symbol id="blabee-mark" viewBox="0 0 28 24">
+      <path d="M6.65107 18.7385C8.79371 18.7385 10.5307 16.5895 10.5307 13.9385C10.5307 11.2875 8.79371 9.13849 6.65107 9.13849C4.50844 9.13849 2.77148 11.2875 2.77148 13.9385C2.77148 16.5895 4.50844 18.7385 6.65107 18.7385Z" fill="#18191D" fill-opacity="0.38" stroke="#18191D" stroke-opacity="0.38" stroke-width="1.23711"/>
+      <path d="M21.0612 18.7385C23.2039 18.7385 24.9408 16.5895 24.9408 13.9385C24.9408 11.2875 23.2039 9.13849 21.0612 9.13849C18.9186 9.13849 17.1816 11.2875 17.1816 13.9385C17.1816 16.5895 18.9186 18.7385 21.0612 18.7385Z" fill="#18191D" fill-opacity="0.38" stroke="#18191D" stroke-opacity="0.38" stroke-width="1.23711"/>
+      <path d="M10.9924 6.36926C10.2534 4.5231 9.14499 3.60003 8.12891 3.13849L10.9924 6.36926Z" fill="#18191D"/>
+      <path d="M10.9924 6.36926C10.2534 4.5231 9.14499 3.60003 8.12891 3.13849" stroke="#18191D" stroke-width="1.48454" stroke-linecap="round"/>
+      <path d="M7.75948 3.59997C8.1676 3.59997 8.49845 3.26935 8.49845 2.86151C8.49845 2.45367 8.1676 2.12305 7.75948 2.12305C7.35136 2.12305 7.02051 2.45367 7.02051 2.86151C7.02051 3.26935 7.35136 3.59997 7.75948 3.59997Z" fill="#18191D"/>
+      <path d="M16.7188 6.36926C17.4577 4.5231 18.5662 3.60003 19.5823 3.13849L16.7188 6.36926Z" fill="#18191D"/>
+      <path d="M16.7188 6.36926C17.4577 4.5231 18.5662 3.60003 19.5823 3.13849" stroke="#18191D" stroke-width="1.48454" stroke-linecap="round"/>
+      <path d="M19.9519 3.59997C20.36 3.59997 20.6908 3.26935 20.6908 2.86151C20.6908 2.45367 20.36 2.12305 19.9519 2.12305C19.5437 2.12305 19.2129 2.45367 19.2129 2.86151C19.2129 3.26935 19.5437 3.59997 19.9519 3.59997Z" fill="#18191D"/>
+      <path d="M5.72656 12.1846C5.72656 7.47692 8.95955 5.26154 13.8552 5.26154C18.7509 5.26154 21.9839 7.47692 21.9839 12.1846V16.4308C21.9839 19.3846 19.5822 21.5077 16.4416 21.5077H11.2688C8.12821 21.5077 5.72656 19.3846 5.72656 16.4308V12.1846Z" fill="#18191D" stroke="#18191D" stroke-width="1.48454"/>
+      <path d="M20.46 15.1385H7.25097C6.81735 15.1385 6.46582 15.4898 6.46582 15.9231C6.46582 16.3564 6.81735 16.7077 7.25097 16.7077H20.46C20.8937 16.7077 21.2452 16.3564 21.2452 15.9231C21.2452 15.4898 20.8937 15.1385 20.46 15.1385Z" fill="#E8E8E5"/>
+      <path d="M10.8995 12.6462C11.2566 12.6462 11.5461 12.2742 11.5461 11.8154C11.5461 11.3566 11.2566 10.9846 10.8995 10.9846C10.5424 10.9846 10.2529 11.3566 10.2529 11.8154C10.2529 12.2742 10.5424 12.6462 10.8995 12.6462Z" fill="#E8E8E5"/>
+      <path d="M16.8116 12.6462C17.1687 12.6462 17.4582 12.2742 17.4582 11.8154C17.4582 11.3566 17.1687 10.9846 16.8116 10.9846C16.4545 10.9846 16.165 11.3566 16.165 11.8154C16.165 12.2742 16.4545 12.6462 16.8116 12.6462Z" fill="#E8E8E5"/>
+      <path d="M13.209 13.3846C13.5785 13.7538 14.1327 13.7538 14.5022 13.3846H13.209Z" fill="#E8E8E5"/>
+      <path d="M13.209 13.3846C13.5785 13.7538 14.1327 13.7538 14.5022 13.3846" stroke="#E8E8E5" stroke-width="1.23711" stroke-linecap="round"/>
+      <path d="M9.32979 14.4C9.73791 14.4 10.0688 14.0694 10.0688 13.6616C10.0688 13.2537 9.73791 12.9231 9.32979 12.9231C8.92167 12.9231 8.59082 13.2537 8.59082 13.6616C8.59082 14.0694 8.92167 14.4 9.32979 14.4Z" fill="#18191D" fill-opacity="0.48"/>
+      <path d="M18.3815 14.4C18.7897 14.4 19.1205 14.0694 19.1205 13.6616C19.1205 13.2537 18.7897 12.9231 18.3815 12.9231C17.9734 12.9231 17.6426 13.2537 17.6426 13.6616C17.6426 14.0694 17.9734 14.4 18.3815 14.4Z" fill="#18191D" fill-opacity="0.48"/>
+      <path d="M8.03613 18.8308C8.03613 17.4462 9.05222 16.4308 10.4378 16.4308C11.8233 16.4308 12.8394 17.4462 12.8394 18.8308V21.5077H8.03613V18.8308Z" fill="#18191D" fill-opacity="0.54" stroke="#18191D" stroke-opacity="0.54" stroke-width="1.48454"/>
+      <path d="M14.8721 18.8308C14.8721 17.4462 15.8882 16.4308 17.2737 16.4308C18.6593 16.4308 19.6754 17.4462 19.6754 18.8308V21.5077H14.8721V18.8308Z" fill="#18191D" fill-opacity="0.54" stroke="#18191D" stroke-opacity="0.54" stroke-width="1.48454"/>
+    </symbol>
+
+    <style>
+      .sans { font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif; }
+      .mono { font-family: "SFMono-Regular", Menlo, Consolas, monospace; }
+    </style>
+  </defs>
+
+  <rect width="1200" height="630" fill="#000000"/>
+  <rect x="28" y="28" width="1144" height="574" stroke="#F3EFE4" stroke-opacity="0.13"/>
+
+  <!-- Brand -->
+  <rect x="52" y="48" width="42" height="34" fill="#FEE715"/>
+  <use href="#blabee-mark" x="59" y="53" width="28" height="24"/>
+  <text class="sans" x="108" y="74" fill="#F3EFE4" font-size="24" font-weight="760" letter-spacing="-0.6">Blabee</text>
+  <text class="mono" x="1148" y="71" fill="#9F9C94" font-size="12" font-weight="700" letter-spacing="1.8" text-anchor="end">PRIVATE BETA · macOS</text>
+
+  <!-- Editorial message -->
+  <rect x="52" y="139" width="11" height="11" fill="#FEE715"/>
+  <text class="mono" x="78" y="150" fill="#FEE715" font-size="15" font-weight="700" letter-spacing="3.2">FOR CODEX · macOS</text>
+
+  <text class="sans" x="52" y="231" fill="#F3EFE4" font-size="60" font-weight="760" letter-spacing="-2.8">One small decision.</text>
+  <text class="sans" x="52" y="300" fill="#F3EFE4" font-size="60" font-weight="760" letter-spacing="-2.8">Don’t go back to the</text>
+  <text class="sans" x="52" y="369" fill="#F3EFE4" font-size="60" font-weight="760" letter-spacing="-2.8">terminal.</text>
+
+  <text class="sans" x="52" y="432" fill="#C6C2B8" font-size="20" font-weight="400">Surface Codex’s next actions on your Mac.</text>
+  <text class="sans" x="52" y="462" fill="#C6C2B8" font-size="20" font-weight="400">Choose once. Continue in the same session.</text>
+
+  <line x1="52" y1="546" x2="94" y2="546" stroke="#FEE715" stroke-width="3"/>
+  <text class="mono" x="108" y="552" fill="#F3EFE4" font-size="14" font-weight="700" letter-spacing="1.1">ONE SHORTCUT. SAME SESSION. KEEP GOING.</text>
+
+  <!-- Codex terminal -->
+  <rect x="690" y="112" width="458" height="426" fill="#101115" stroke="#F3EFE4" stroke-opacity="0.22"/>
+  <rect x="690" y="112" width="458" height="42" fill="#191A1F"/>
+  <circle cx="712" cy="133" r="4" fill="#5D5E64"/>
+  <circle cx="727" cy="133" r="4" fill="#5D5E64"/>
+  <circle cx="742" cy="133" r="4" fill="#5D5E64"/>
+  <text class="mono" x="919" y="137" fill="#9F9C94" font-size="11" font-weight="700" letter-spacing="1.6" text-anchor="middle">CODEX</text>
+
+  <text class="mono" x="716" y="190" fill="#FEE715" font-size="13" font-weight="700">›</text>
+  <text class="mono" x="736" y="190" fill="#F3EFE4" font-size="13">Implement email login with secure sessions</text>
+  <text class="mono" x="716" y="224" fill="#8F8C85" font-size="12">✓ Edited app/api/auth/login/route.ts</text>
+  <text class="mono" x="716" y="248" fill="#8F8C85" font-size="12">✓ Added lib/auth/session.ts</text>
+  <text class="mono" x="716" y="272" fill="#8F8C85" font-size="12">✓ pnpm test -- auth · 12/12 passed</text>
+
+  <!-- Blabee decision surface -->
+  <rect x="716" y="300" width="406" height="216" fill="#000000" stroke="#FEE715"/>
+  <rect x="716" y="300" width="406" height="40" fill="#FEE715"/>
+  <use href="#blabee-mark" x="728" y="308" width="28" height="24"/>
+  <text class="sans" x="766" y="327" fill="#000000" font-size="14" font-weight="760">Blabee</text>
+  <text class="mono" x="1106" y="327" fill="#000000" font-size="11" font-weight="700" letter-spacing="1.1" text-anchor="end">⌥1 · ⌥2 · ⌥3 · ⌥4</text>
+
+  <rect x="716" y="340" width="406" height="44" fill="#151511"/>
+  <rect x="728" y="350" width="32" height="24" fill="#FEE715"/>
+  <text class="mono" x="744" y="367" fill="#000000" font-size="10.5" font-weight="800" text-anchor="middle">⌥1</text>
+  <text class="sans" x="774" y="367" fill="#F3EFE4" font-size="14" font-weight="650">Implement logout</text>
+  <text class="mono" x="1106" y="367" fill="#FEE715" font-size="9" font-weight="700" letter-spacing="1.1" text-anchor="end">FROM CODEX</text>
+
+  <line x1="716" y1="384" x2="1122" y2="384" stroke="#F3EFE4" stroke-opacity="0.16"/>
+  <rect x="728" y="394" width="32" height="24" fill="#232429" stroke="#F3EFE4" stroke-opacity="0.25"/>
+  <text class="mono" x="744" y="411" fill="#F3EFE4" font-size="10.5" font-weight="800" text-anchor="middle">⌥2</text>
+  <text class="sans" x="774" y="411" fill="#F3EFE4" font-size="14" font-weight="560">Review auth architecture</text>
+
+  <line x1="716" y1="428" x2="1122" y2="428" stroke="#F3EFE4" stroke-opacity="0.16"/>
+  <rect x="728" y="438" width="32" height="24" fill="#232429" stroke="#F3EFE4" stroke-opacity="0.25"/>
+  <text class="mono" x="744" y="455" fill="#F3EFE4" font-size="10.5" font-weight="800" text-anchor="middle">⌥3</text>
+  <text class="sans" x="774" y="455" fill="#C6C2B8" font-size="14" font-weight="560">Add session rotation tests</text>
+
+  <line x1="716" y1="472" x2="1122" y2="472" stroke="#F3EFE4" stroke-opacity="0.16"/>
+  <rect x="728" y="482" width="32" height="24" fill="#232429" stroke="#F3EFE4" stroke-opacity="0.25"/>
+  <text class="mono" x="744" y="499" fill="#F3EFE4" font-size="10.5" font-weight="800" text-anchor="middle">⌥4</text>
+  <text class="sans" x="774" y="499" fill="#C6C2B8" font-size="14" font-weight="560">Inspect auth edge cases</text>
+
+  <text class="mono" x="1148" y="574" fill="#9F9C94" font-size="12" font-weight="700" letter-spacing="1.7" text-anchor="end">BLABEE.COM</text>
+</svg>

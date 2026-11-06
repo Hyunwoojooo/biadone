@@ -93,7 +93,7 @@ test.describe.serial("Phase 2A.1 browser data pipeline", () => {
     await expect(
       labPage
         .locator('section[aria-labelledby="active-decision-title"]')
-        .getByText("근거 부족", { exact: true })
+        .getByText("Active Attention 근거 부족", { exact: true })
     ).toBeVisible();
 
     await sourcesPage.close();

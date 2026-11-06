@@ -1,0 +1,2067 @@
+#!/usr/bin/env node
+
+import { createHash, randomUUID } from "node:crypto";
+import { execFile as execFileCallback } from "node:child_process";
+import { constants as fileSystemConstants } from "node:fs";
+import {
+  chmod,
+  lstat,
+  mkdir,
+  mkdtemp,
+  open,
+  readFile,
+  readdir,
+  realpath,
+  rename,
+  rmdir,
+  rm,
+  writeFile,
+} from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { isIP } from "node:net";
+import {
+  basename,
+  dirname,
+  isAbsolute,
+  join,
+  relative,
+  resolve,
+  sep,
+} from "node:path";
+import { TextDecoder, promisify } from "node:util";
+import { fileURLToPath, pathToFileURL } from "node:url";
+
+import { BLABEE_PROFILE, verifyCompiledDistributionProfile } from "./distribution-profiles.mjs";
+import { requireInternalBuildNumber } from "./internal-build-number.mjs";
+import { requirePublicClaudeRuntime, verifyClaudeRuntimeDirectory } from "./prepare-claude-runtime.mjs";
+import { signClaudeRuntimeAdhoc, signClaudeRuntimeInternal, signClaudeRuntimeRelease } from "./sign-claude-runtime.mjs";
+import {
+  appSigningEntitlementsFileName,
+  normalizeReleaseSigning,
+  signReleaseApp,
+  signInternalClaudeApp,
+  validateInternalClaudeAppCodeLayout,
+  validatePublicClaudeAppCodeLayout,
+  validateAppSigningEntitlements,
+} from "./release-signing.mjs";
+
+const execFile = promisify(execFileCallback);
+const scriptPath = fileURLToPath(import.meta.url);
+const defaultSourceRoot = resolve(dirname(scriptPath), "..");
+const bundleName = "Blabee.app";
+const appIconFileName = "Blabee.icns";
+const menuBarIconFileName = "BlabeeMenuBar.svg";
+const requiredFontFiles = Object.freeze([
+  join("Pretendard", "PretendardVariable.ttf"),
+  join("Pretendard", "LICENSE.txt"),
+]);
+const codexMarketplaceFileName = "CodexMarketplace.json";
+const launchAgentFileName = "com.biadone.blabee.coordinator.plist";
+const unifiedAppleEventsUsageDescription = "Codex 또는 Claude Code 세션을 시작하거나 지원되는 세션을 복원할 때, Terminal 등 지원되는 터미널 앱의 새 창을 엽니다.";
+const launcherRelativePath = join(
+  "Contents",
+  "Resources",
+  "Plugin",
+  "blabee",
+  "scripts",
+  "blabee-launcher",
+);
+const codexMarketplaceRelativePath = join(
+  "Contents",
+  "Resources",
+  ".agents",
+  "plugins",
+  "marketplace.json",
+);
+const runtimeUseLeaseProtocol = "blabee.runtime-use-lease.v1";
+const runtimeInspectionEnvironment = Object.freeze({
+  PATH: "/usr/bin:/bin:/usr/sbin:/sbin",
+  LANG: "C",
+  LC_ALL: "C",
+});
+const previousRuntimeProbeSandbox = [
+  "(version 1)",
+  "(deny default)",
+  "(allow file-read*)",
+  "(allow sysctl-read)",
+  '(allow process-exec (literal (param "BLABEE_PROBE_EXECUTABLE")))',
+].join("\n");
+const requiredInfoPlistValues = Object.freeze({
+  BlabeeUpdateRepository: "Hyunwoojooo/biadone",
+  BlabeeRuntimeUseLeaseProtocol: runtimeUseLeaseProtocol,
+  CFBundleDisplayName: "Blabee",
+  CFBundleExecutable: "blabee-coordinator",
+  CFBundleIconFile: appIconFileName,
+  CFBundleIdentifier: "com.biadone.blabee",
+  CFBundleName: "Blabee",
+  CFBundlePackageType: "APPL",
+  CFBundleShortVersionString: "0.1.0",
+  CFBundleVersion: "1",
+  LSMinimumSystemVersion: "13.0",
+  LSUIElement: true,
+  NSHighResolutionCapable: true,
+  NSAppleEventsUsageDescription: unifiedAppleEventsUsageDescription,
+  NSPrincipalClass: "NSApplication",
+});
+const requiredLaunchAgentValues = Object.freeze({
+  Label: "com.biadone.blabee.coordinator",
+  BundleProgram: "Contents/MacOS/blabee-coordinator",
+  ProgramArguments: ["Contents/MacOS/blabee-coordinator", "service"],
+  RunAtLoad: true,
+});
+const runtimeIdentityInspectionSchemaVersion =
+  "blabee.runtime-identity-inspection.v2";
+const runtimeIdentityPattern = /^sha256:[0-9a-f]{64}$/u;
+const maximumCompatiblePreviousApps = 2;
+const compatiblePreviousRequestTypes = Object.freeze([
+  "emit_decision",
+  "session_start",
+  "stop",
+  "user_prompt_submit",
+]);
+const maximumCodexMarketplaceBytes = 64 * 1024;
+const maximumPackagedFileBytes = 512 * 1024 * 1024;
+const maximumPackagedPayloadBytes = 512 * 1024 * 1024;
+const maximumPackagedPayloadEntries = 1024;
+const copyBufferBytes = 64 * 1024;
+const strictUTF8Decoder = new TextDecoder("utf-8", {
+  fatal: true,
+  ignoreBOM: true,
+});
+
+function isCanonicalSHA256(value) {
+  return typeof value === "string"
+    && value.length === 71
+    && Buffer.byteLength(value, "utf8") === 71
+    && runtimeIdentityPattern.test(value);
+}
+
+function fail(message) {
+  throw new Error(message);
+}
+
+function requireAbsolutePath(value, label) {
+  if (typeof value !== "string" || value.length === 0 || !isAbsolute(value)) {
+    fail(`${label} must be an explicit absolute path`);
+  }
+  if (value.includes("\0")) {
+    fail(`${label} contains an invalid null byte`);
+  }
+  return resolve(value);
+}
+
+function isWithin(root, candidate) {
+  const child = relative(root, candidate);
+  return child === "" || (child !== ".." && !child.startsWith(`..${sep}`) && !isAbsolute(child));
+}
+
+function assertWithin(root, candidate, label) {
+  if (!isWithin(root, candidate)) {
+    fail(`${label} escapes the source root`);
+  }
+}
+
+async function requireNoSymlinkComponents(root, candidate, label) {
+  assertWithin(root, candidate, label);
+  const pathFromRoot = relative(root, candidate);
+  if (pathFromRoot === "") return;
+  let current = root;
+  for (const component of pathFromRoot.split(sep)) {
+    current = join(current, component);
+    const metadata = await lstat(current, { bigint: true });
+    if (metadata.isSymbolicLink()) {
+      fail(`${label} must not contain symlink path components: ${current}`);
+    }
+  }
+}
+
+function compareNames(left, right) {
+  if (left < right) return -1;
+  if (left > right) return 1;
+  return 0;
+}
+
+async function pathExistsWithoutFollowing(path) {
+  try {
+    await lstat(path);
+    return true;
+  } catch (error) {
+    if (error?.code === "ENOENT") return false;
+    throw error;
+  }
+}
+
+async function requireDirectory(path, label) {
+  const metadata = await lstat(path);
+  if (metadata.isSymbolicLink() || !metadata.isDirectory()) {
+    fail(`${label} must be a real directory, not a symlink or special file`);
+  }
+}
+
+async function requireRegularFile(path, label) {
+  const metadata = await lstat(path);
+  if (metadata.isSymbolicLink() || !metadata.isFile()) {
+    fail(`${label} must be a regular file, not a symlink or special file`);
+  }
+}
+
+async function requireExecutableFile(path, label) {
+  await requireRegularFile(path, label);
+  const metadata = await lstat(path);
+  if ((metadata.mode & 0o111) === 0) {
+    fail(`${label} must already be executable`);
+  }
+}
+
+function sameFileNode(left, right) {
+  return left.dev === right.dev && left.ino === right.ino;
+}
+
+function sameStableFileSnapshot(left, right) {
+  return sameFileNode(left, right)
+    && left.size === right.size
+    && left.mtimeNs === right.mtimeNs
+    && left.ctimeNs === right.ctimeNs;
+}
+
+function directoryOwnership(metadata) {
+  return Object.freeze({ dev: metadata.dev, ino: metadata.ino });
+}
+
+function matchesDirectoryOwnership(metadata, expected) {
+  return metadata.dev === expected.dev && metadata.ino === expected.ino;
+}
+
+async function closeFileHandles(handles) {
+  const results = await Promise.allSettled(
+    handles.filter((handle) => handle !== undefined).map((handle) => handle.close()),
+  );
+  const failures = results
+    .filter((result) => result.status === "rejected")
+    .map((result) => result.reason);
+  if (failures.length === 1) throw failures[0];
+  if (failures.length > 1) {
+    throw new AggregateError(failures, "multiple file handles failed to close");
+  }
+}
+
+async function closeFileHandlesPreservingPrimary(handles, primaryError) {
+  try {
+    await closeFileHandles(handles);
+  } catch (closeError) {
+    if (primaryError === undefined) throw closeError;
+    const closeErrors = closeError instanceof AggregateError
+      ? [...closeError.errors]
+      : [closeError];
+    const primaryMessage = primaryError instanceof Error
+      ? primaryError.message
+      : String(primaryError);
+    const combined = new AggregateError(
+      [primaryError, ...closeErrors],
+      `${primaryMessage}; file handle cleanup also failed`,
+      { cause: primaryError },
+    );
+    combined.closeErrors = closeErrors;
+    throw combined;
+  }
+}
+
+async function openStableRegularFile(
+  path,
+  label,
+  maximumBytes,
+  afterPathInspection,
+) {
+  if (
+    !Number.isInteger(fileSystemConstants.O_NOFOLLOW)
+    || !Number.isInteger(fileSystemConstants.O_NONBLOCK)
+  ) {
+    fail("secure nonblocking no-follow file opens are unavailable on this platform");
+  }
+  const pathMetadata = await lstat(path, { bigint: true });
+  if (pathMetadata.isSymbolicLink() || !pathMetadata.isFile()) {
+    fail(`${label} must be a regular file, not a symlink or special file`);
+  }
+  if (afterPathInspection !== undefined) await afterPathInspection();
+
+  let handle;
+  try {
+    handle = await open(
+      path,
+      fileSystemConstants.O_RDONLY
+        | fileSystemConstants.O_NONBLOCK
+        | fileSystemConstants.O_NOFOLLOW,
+    );
+  } catch (error) {
+    if (error?.code === "ELOOP") {
+      fail(`${label} must be a regular file, not a symlink or special file`);
+    }
+    throw error;
+  }
+
+  try {
+    const openedMetadata = await handle.stat({ bigint: true });
+    if (!openedMetadata.isFile() || !sameFileNode(pathMetadata, openedMetadata)) {
+      fail(`${label} changed while it was being opened`);
+    }
+    if (openedMetadata.size > BigInt(maximumBytes)) {
+      fail(`${label} exceeds the ${maximumBytes}-byte limit`);
+    }
+    return { handle, metadata: openedMetadata };
+  } catch (error) {
+    await closeFileHandlesPreservingPrimary([handle], error);
+    throw error;
+  }
+}
+
+export const macOSAppAssemblyTestSupport = Object.freeze({
+  closeFileHandlesPreservingPrimary,
+  openStableRegularFile,
+  parseCLIArguments,
+});
+
+async function verifyStableOpenFile(path, label, handle, expectedMetadata) {
+  const openedMetadata = await handle.stat({ bigint: true });
+  if (!openedMetadata.isFile() || !sameStableFileSnapshot(expectedMetadata, openedMetadata)) {
+    fail(`${label} changed while it was being read`);
+  }
+  let currentPathMetadata;
+  try {
+    currentPathMetadata = await lstat(path, { bigint: true });
+  } catch (error) {
+    if (error?.code === "ENOENT") {
+      fail(`${label} changed while it was being read`);
+    }
+    throw error;
+  }
+  if (
+    currentPathMetadata.isSymbolicLink()
+    || !currentPathMetadata.isFile()
+    || !sameFileNode(expectedMetadata, currentPathMetadata)
+  ) {
+    fail(`${label} changed while it was being read`);
+  }
+}
+
+async function readBoundedRegularFile(path, label, maximumBytes) {
+  const { handle, metadata } = await openStableRegularFile(
+    path,
+    label,
+    maximumBytes,
+  );
+  let primaryError;
+  try {
+    const expectedBytes = Number(metadata.size);
+    const bytes = Buffer.alloc(expectedBytes);
+    let offset = 0;
+    while (offset < expectedBytes) {
+      const { bytesRead } = await handle.read(
+        bytes,
+        offset,
+        expectedBytes - offset,
+        offset,
+      );
+      if (bytesRead === 0) fail(`${label} changed while it was being read`);
+      offset += bytesRead;
+    }
+    const trailing = Buffer.alloc(1);
+    const { bytesRead: trailingBytesRead } = await handle.read(
+      trailing,
+      0,
+      1,
+      expectedBytes,
+    );
+    if (trailingBytesRead !== 0) fail(`${label} changed while it was being read`);
+    await verifyStableOpenFile(path, label, handle, metadata);
+    return bytes;
+  } catch (error) {
+    primaryError = error;
+    throw error;
+  } finally {
+    await closeFileHandlesPreservingPrimary([handle], primaryError);
+  }
+}
+
+async function copyFileWithMode(
+  source,
+  destination,
+  mode,
+  maximumBytes = maximumPackagedFileBytes,
+  payloadBudget,
+  requireSourceExecutable = false,
+  requiredSourceRoot,
+) {
+  if (requiredSourceRoot !== undefined) {
+    await requireNoSymlinkComponents(requiredSourceRoot, source, source);
+  }
+  const { handle: sourceHandle, metadata } = await openStableRegularFile(
+    source,
+    source,
+    maximumBytes,
+  );
+  let destinationHandle;
+  let primaryError;
+  try {
+    if (payloadBudget !== undefined) {
+      consumePayloadBudget(payloadBudget, metadata.size, source);
+    }
+    if (requireSourceExecutable && (Number(metadata.mode) & 0o111) === 0) {
+      fail(`${source} must already be executable`);
+    }
+    destinationHandle = await open(
+      destination,
+      fileSystemConstants.O_WRONLY
+        | fileSystemConstants.O_CREAT
+        | fileSystemConstants.O_EXCL
+        | fileSystemConstants.O_NONBLOCK
+        | fileSystemConstants.O_NOFOLLOW,
+      mode,
+    );
+    const buffer = Buffer.alloc(copyBufferBytes);
+    const expectedBytes = Number(metadata.size);
+    let offset = 0;
+    while (offset < expectedBytes) {
+      const requestedBytes = Math.min(buffer.length, expectedBytes - offset);
+      const { bytesRead } = await sourceHandle.read(
+        buffer,
+        0,
+        requestedBytes,
+        offset,
+      );
+      if (bytesRead === 0) fail(`${source} changed while it was being read`);
+      let written = 0;
+      while (written < bytesRead) {
+        const { bytesWritten } = await destinationHandle.write(
+          buffer,
+          written,
+          bytesRead - written,
+          offset + written,
+        );
+        if (bytesWritten === 0) fail(`could not finish copying ${source}`);
+        written += bytesWritten;
+      }
+      offset += bytesRead;
+    }
+    const trailing = Buffer.alloc(1);
+    const { bytesRead: trailingBytesRead } = await sourceHandle.read(
+      trailing,
+      0,
+      1,
+      expectedBytes,
+    );
+    if (trailingBytesRead !== 0) fail(`${source} changed while it was being read`);
+    await verifyStableOpenFile(source, source, sourceHandle, metadata);
+    if (requiredSourceRoot !== undefined) {
+      await requireNoSymlinkComponents(requiredSourceRoot, source, source);
+    }
+    await destinationHandle.chmod(mode);
+  } catch (error) {
+    primaryError = error;
+    throw error;
+  } finally {
+    await closeFileHandlesPreservingPrimary(
+      [destinationHandle, sourceHandle],
+      primaryError,
+    );
+  }
+}
+
+const legalDocumentKeys = Object.freeze([
+  "BlabeeTermsURL", "BlabeePrivacyURL", "BlabeeLegalDocumentVersion",
+]);
+const placeholderLegalToken = /(?:^|[./_-])(?:draft|dummy|placeholder|example|sample|test|testing|preview|todo|tbd|dev|development|internal|temporary|temp)(?:$|[./_-])/iu;
+
+// Validates the onboarding mode and metadata shape only, not legal readiness.
+// Deferred documents require an explicit bundle setting and cannot be mixed
+// with document metadata. This mode never represents acceptance of terms.
+export function validateReleaseLegalMetadata(values) {
+  const deferredKey = "BlabeeLegalDocumentsDeferred";
+  if (Object.hasOwn(values ?? {}, deferredKey) && typeof values[deferredKey] !== "boolean") {
+    fail(`public release ${deferredKey} must be a boolean`);
+  }
+  if (values?.[deferredKey] === true) {
+    if (legalDocumentKeys.some(key => Object.hasOwn(values, key))) {
+      fail(`public release ${deferredKey} cannot be combined with legal document metadata`);
+    }
+    return Object.freeze({ [deferredKey]: true });
+  }
+  for (const key of legalDocumentKeys) {
+    const value = values?.[key];
+    const maximumLength = key === "BlabeeLegalDocumentVersion" ? 128 : 2_048;
+    if (typeof value !== "string" || value.length === 0 || value.length > maximumLength
+        || value !== value.trim() || /[\u0000-\u0020\u007f]/u.test(value)) {
+      fail(`public release requires a nonempty, bounded ${key} in Packaging/macos/Info.plist`);
+    }
+  }
+  for (const key of legalDocumentKeys.slice(0, 2)) {
+    const value = values[key];
+    let url;
+    let decodedPath;
+    try {
+      url = new URL(value);
+      decodedPath = decodeURIComponent(url.pathname);
+    } catch {
+      fail(`public release ${key} must be a published HTTPS URL`);
+    }
+    const hostname = url.hostname.toLowerCase().replace(/\.$/u, "");
+    const hostWithoutBrackets = hostname.replace(/^\[|\]$/gu, "");
+    const validDNSHost = hostname.length <= 253 && hostname.includes(".")
+      && hostname.split(".").every(label => /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/u.test(label));
+    const reservedHost = !validDNSHost || isIP(hostWithoutBrackets) !== 0
+      || ["localhost", "local", "internal", "test", "invalid", "example"].some(
+        (suffix) => hostname === suffix || hostname.endsWith(`.${suffix}`),
+      )
+      || ["example.com", "example.net", "example.org"].some(
+        (suffix) => hostname === suffix || hostname.endsWith(`.${suffix}`),
+      );
+    if (!/^https:\/\//iu.test(value) || value.includes("\\")
+        || url.protocol !== "https:" || url.username !== "" || url.password !== ""
+        || reservedHost || placeholderLegalToken.test(decodedPath)) {
+      fail(`public release ${key} must be a published HTTPS URL without credentials, local hosts, or placeholder paths`);
+    }
+  }
+  const version = values.BlabeeLegalDocumentVersion;
+  if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u.test(version)
+      || placeholderLegalToken.test(version) || /^(?:latest|current|none|unknown)$/iu.test(version)) {
+    fail("public release BlabeeLegalDocumentVersion must be an explicit non-placeholder document revision");
+  }
+  return Object.freeze(Object.fromEntries(legalDocumentKeys.map((key) => [key, values[key]])));
+}
+
+async function readInfoPlistValues(path) {
+  await execFile("/usr/bin/plutil", ["-lint", path], { maxBuffer: 1024 * 1024 });
+  const { stdout } = await execFile(
+    "/usr/bin/plutil",
+    ["-convert", "json", "-o", "-", path],
+    { maxBuffer: 1024 * 1024 },
+  );
+  let values;
+  try {
+    values = JSON.parse(stdout);
+  } catch {
+    fail("Info.plist could not be decoded as a property list dictionary");
+  }
+  if (values === null || Array.isArray(values) || typeof values !== "object") {
+    fail("Info.plist must contain a property list dictionary");
+  }
+  return values;
+}
+
+export async function validateReleaseLegalDocumentsAtSourceRoot(sourceRoot = defaultSourceRoot) {
+  const root = requireAbsolutePath(sourceRoot, "source root");
+  await requireDirectory(root, "source root");
+  const canonicalRoot = await realpath(root);
+  const path = join(canonicalRoot, "Packaging", "macos", "Info.plist");
+  await requireNoSymlinkComponents(canonicalRoot, path, "Info.plist");
+  await requireRegularFile(path, "Info.plist");
+  return validateReleaseLegalMetadata(await readInfoPlistValues(path));
+}
+
+async function validateInfoPlist(
+  path,
+  bundleVersion = requiredInfoPlistValues.CFBundleVersion,
+  runtimeUseLeasePreviousIdentities = [],
+  requiresPublishedLegalDocuments = false,
+) {
+  const values = await readInfoPlistValues(path);
+  if (requiresPublishedLegalDocuments) validateReleaseLegalMetadata(values);
+  const expectedValues = { ...requiredInfoPlistValues };
+  if (values.BlabeeDistributionProfile !== undefined && values.BlabeeDistributionProfile !== BLABEE_PROFILE.id) {
+    fail("Info.plist distribution profile mismatch");
+  }
+  for (const [key, defaultExpected] of Object.entries(expectedValues)) {
+    const expected = key === "CFBundleVersion" ? bundleVersion : defaultExpected;
+    if (typeof values[key] !== typeof expected || values[key] !== expected) {
+      fail(`Info.plist ${key} must be ${JSON.stringify(expected)} (${typeof expected})`);
+    }
+  }
+  const previousIdentities = values.BlabeeRuntimeUseLeasePreviousIdentities;
+  if (
+    !Array.isArray(previousIdentities)
+    || previousIdentities.length > maximumCompatiblePreviousApps
+    || previousIdentities.some((identity) => !isCanonicalSHA256(identity))
+    || JSON.stringify(previousIdentities) !== JSON.stringify(runtimeUseLeasePreviousIdentities)
+  ) {
+    fail("Info.plist BlabeeRuntimeUseLeasePreviousIdentities must contain only the verified lease-compatible identities");
+  }
+}
+
+async function validateLaunchAgentPlist(path) {
+  await execFile("/usr/bin/plutil", ["-lint", path], { maxBuffer: 1024 * 1024 });
+  const { stdout } = await execFile(
+    "/usr/bin/plutil",
+    ["-convert", "json", "-o", "-", path],
+    { maxBuffer: 1024 * 1024 },
+  );
+  let values;
+  try {
+    values = JSON.parse(stdout);
+  } catch {
+    fail("LaunchAgent plist could not be decoded as a property list dictionary");
+  }
+  if (values === null || Array.isArray(values) || typeof values !== "object") {
+    fail("LaunchAgent plist must contain a property list dictionary");
+  }
+  const actualKeys = Object.keys(values).sort(compareNames);
+  const expectedKeys = Object.keys(requiredLaunchAgentValues).sort(compareNames);
+  if (JSON.stringify(actualKeys) !== JSON.stringify(expectedKeys)) {
+    fail("LaunchAgent plist must contain exactly Label, BundleProgram, ProgramArguments, and RunAtLoad");
+  }
+  for (const key of ["Label", "BundleProgram"]) {
+    const expected = requiredLaunchAgentValues[key];
+    if (typeof values[key] !== "string" || values[key] !== expected) {
+      fail(`LaunchAgent plist ${key} must be ${JSON.stringify(requiredLaunchAgentValues[key])}`);
+    }
+  }
+  if (
+    !Array.isArray(values.ProgramArguments)
+    || values.ProgramArguments.length !== requiredLaunchAgentValues.ProgramArguments.length
+    || values.ProgramArguments.some((value, index) => (
+      typeof value !== "string" || value !== requiredLaunchAgentValues.ProgramArguments[index]
+    ))
+  ) {
+    fail(`LaunchAgent plist ProgramArguments must be ${JSON.stringify(requiredLaunchAgentValues.ProgramArguments)}`);
+  }
+  if (typeof values.RunAtLoad !== "boolean" || values.RunAtLoad !== true) {
+    fail("LaunchAgent plist RunAtLoad must be true (boolean)");
+  }
+}
+
+function scanStrictJSON(text, label, maximumDepth = 64) {
+  let index = 0;
+
+  function invalid(detail) {
+    fail(`${label} must be valid JSON${detail === undefined ? "" : `: ${detail}`}`);
+  }
+
+  function skipWhitespace() {
+    while (
+      index < text.length
+      && (text[index] === " "
+        || text[index] === "\t"
+        || text[index] === "\n"
+        || text[index] === "\r")
+    ) {
+      index += 1;
+    }
+  }
+
+  function parseUnicodeEscape() {
+    const digits = text.slice(index, index + 4);
+    if (!/^[0-9a-fA-F]{4}$/u.test(digits)) invalid("invalid Unicode escape");
+    index += 4;
+    return Number.parseInt(digits, 16);
+  }
+
+  function parseString(decode) {
+    if (text[index] !== '"') invalid("object key must be a string");
+    const start = index;
+    index += 1;
+    while (index < text.length) {
+      const character = text[index];
+      if (character === '"') {
+        index += 1;
+        if (!decode) return undefined;
+        try {
+          return JSON.parse(text.slice(start, index));
+        } catch {
+          invalid("invalid string");
+        }
+      }
+      if (text.charCodeAt(index) < 0x20) invalid("unescaped control character");
+      if (character !== "\\") {
+        index += 1;
+        continue;
+      }
+
+      index += 1;
+      if (index >= text.length) invalid("unterminated escape");
+      const escaped = text[index];
+      if ('"\\/bfnrt'.includes(escaped)) {
+        index += 1;
+        continue;
+      }
+      if (escaped !== "u") invalid("invalid escape");
+      index += 1;
+      const first = parseUnicodeEscape();
+      if (first >= 0xD800 && first <= 0xDBFF) {
+        if (text[index] !== "\\" || text[index + 1] !== "u") {
+          invalid("unpaired Unicode surrogate");
+        }
+        index += 2;
+        const second = parseUnicodeEscape();
+        if (second < 0xDC00 || second > 0xDFFF) {
+          invalid("unpaired Unicode surrogate");
+        }
+      } else if (first >= 0xDC00 && first <= 0xDFFF) {
+        invalid("unpaired Unicode surrogate");
+      }
+    }
+    invalid("unterminated string");
+  }
+
+  function parseNumber() {
+    const remainder = text.slice(index);
+    const match = /^-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?/u.exec(remainder);
+    if (match === null) invalid("invalid number");
+    index += match[0].length;
+  }
+
+  function consumeLiteral(literal) {
+    if (!text.startsWith(literal, index)) invalid("invalid token");
+    index += literal.length;
+  }
+
+  function parseArray(depth) {
+    if (depth > maximumDepth) invalid("nesting is too deep");
+    index += 1;
+    skipWhitespace();
+    if (text[index] === "]") {
+      index += 1;
+      return;
+    }
+    while (true) {
+      parseValue(depth);
+      skipWhitespace();
+      if (text[index] === "]") {
+        index += 1;
+        return;
+      }
+      if (text[index] !== ",") invalid("missing comma in array");
+      index += 1;
+      skipWhitespace();
+    }
+  }
+
+  function parseObject(depth) {
+    if (depth > maximumDepth) invalid("nesting is too deep");
+    index += 1;
+    skipWhitespace();
+    if (text[index] === "}") {
+      index += 1;
+      return;
+    }
+    const keys = new Set();
+    while (true) {
+      const key = parseString(true).normalize("NFC");
+      if (keys.has(key)) fail(`${label} contains duplicate JSON object keys`);
+      keys.add(key);
+      skipWhitespace();
+      if (text[index] !== ":") invalid("missing colon after object key");
+      index += 1;
+      skipWhitespace();
+      parseValue(depth);
+      skipWhitespace();
+      if (text[index] === "}") {
+        index += 1;
+        return;
+      }
+      if (text[index] !== ",") invalid("missing comma in object");
+      index += 1;
+      skipWhitespace();
+    }
+  }
+
+  function parseValue(depth) {
+    if (index >= text.length) invalid("unexpected end of input");
+    switch (text[index]) {
+      case "{": parseObject(depth + 1); break;
+      case "[": parseArray(depth + 1); break;
+      case '"': parseString(false); break;
+      case "t": consumeLiteral("true"); break;
+      case "f": consumeLiteral("false"); break;
+      case "n": consumeLiteral("null"); break;
+      default: parseNumber(); break;
+    }
+  }
+
+  skipWhitespace();
+  parseValue(0);
+  skipWhitespace();
+  if (index !== text.length) invalid("trailing content");
+}
+
+async function validateCodexMarketplace(path) {
+  const label = "Codex marketplace manifest";
+  const bytes = await readBoundedRegularFile(
+    path,
+    label,
+    maximumCodexMarketplaceBytes,
+  );
+  if (bytes.length === 0) {
+    fail(`${label} must be between 1 byte and 64 KiB`);
+  }
+  let text;
+  try {
+    text = strictUTF8Decoder.decode(bytes);
+  } catch {
+    fail(`${label} must be valid UTF-8`);
+  }
+  scanStrictJSON(text, label);
+  let value;
+  try {
+    value = JSON.parse(text);
+  } catch {
+    fail(`${label} must be valid JSON`);
+  }
+  if (value === null || Array.isArray(value) || typeof value !== "object") {
+    fail("Codex marketplace manifest must be an object");
+  }
+  if (
+    value.name !== "blabee-app"
+    || value.interface?.displayName !== "Blabee"
+    || !Array.isArray(value.plugins)
+    || value.plugins.length !== 1
+  ) {
+    fail("Codex marketplace manifest identity is invalid");
+  }
+  const plugin = value.plugins[0];
+  if (
+    plugin?.name !== "blabee"
+    || plugin?.source?.source !== "local"
+    || plugin?.source?.path !== "./Plugin/blabee"
+    || plugin?.policy?.installation !== "AVAILABLE"
+    || plugin?.policy?.authentication !== "ON_INSTALL"
+    || plugin?.category !== "Productivity"
+  ) {
+    fail("Codex marketplace manifest plugin contract is invalid");
+  }
+}
+
+async function copyTreeStrict(
+  sourceRoot,
+  source,
+  destination,
+  destinationRelativeRoot,
+  payloadBudget,
+  executablePaths,
+) {
+  assertWithin(sourceRoot, source, source);
+  await requireNoSymlinkComponents(sourceRoot, source, source);
+  const directoryBefore = await lstat(source, { bigint: true });
+  if (directoryBefore.isSymbolicLink() || !directoryBefore.isDirectory()) {
+    fail(`${source} must be a real directory, not a symlink or special file`);
+  }
+  if (payloadBudget !== undefined) {
+    consumePayloadEntry(payloadBudget, source);
+  }
+  await mkdir(destination, { recursive: true, mode: 0o755 });
+  await chmod(destination, 0o755);
+
+  const entries = await readdir(source, { withFileTypes: true });
+  entries.sort((left, right) => compareNames(left.name, right.name));
+  for (const entry of entries) {
+    const sourceEntry = join(source, entry.name);
+    const destinationEntry = join(destination, entry.name);
+    const destinationRelative = join(destinationRelativeRoot, entry.name);
+    assertWithin(sourceRoot, sourceEntry, sourceEntry);
+    await requireNoSymlinkComponents(sourceRoot, sourceEntry, sourceEntry);
+
+    const metadata = await lstat(sourceEntry);
+    if (metadata.isSymbolicLink()) {
+      fail(`resource input must not be a symlink: ${sourceEntry}`);
+    }
+    if (metadata.isDirectory()) {
+      await copyTreeStrict(
+        sourceRoot,
+        sourceEntry,
+        destinationEntry,
+        destinationRelative,
+        payloadBudget,
+        executablePaths,
+      );
+      continue;
+    }
+    if (!metadata.isFile()) {
+      fail(`resource input must be a regular file or directory: ${sourceEntry}`);
+    }
+    const mode = destinationRelative === launcherRelativePath
+      || executablePaths?.has(destinationRelative) ? 0o755 : 0o644;
+    await copyFileWithMode(
+      sourceEntry,
+      destinationEntry,
+      mode,
+      maximumPackagedFileBytes,
+      payloadBudget,
+      false,
+      sourceRoot,
+    );
+  }
+
+  const directoryAfter = await lstat(source, { bigint: true });
+  await requireNoSymlinkComponents(sourceRoot, source, source);
+  if (
+    directoryAfter.isSymbolicLink()
+    || !directoryAfter.isDirectory()
+    || !sameFileNode(directoryBefore, directoryAfter)
+    || directoryBefore.mtimeNs !== directoryAfter.mtimeNs
+    || directoryBefore.ctimeNs !== directoryAfter.ctimeNs
+  ) {
+    fail(`resource directory changed while it was being copied: ${source}`);
+  }
+}
+
+async function inspectSourcePayload(path, budget) {
+  const metadataBefore = await lstat(path, { bigint: true });
+  if (metadataBefore.isSymbolicLink()) {
+    fail(`resource input must not be a symlink: ${path}`);
+  }
+  if (metadataBefore.isFile()) {
+    if (metadataBefore.size > BigInt(maximumPackagedFileBytes)) {
+      fail(`${path} exceeds the ${maximumPackagedFileBytes}-byte limit`);
+    }
+    consumePayloadBudget(budget, metadataBefore.size, path);
+    return;
+  }
+  if (!metadataBefore.isDirectory()) {
+    fail(`resource input must be a regular file or directory: ${path}`);
+  }
+  consumePayloadEntry(budget, path);
+
+  const entries = await readdir(path, { withFileTypes: true });
+  entries.sort((left, right) => compareNames(left.name, right.name));
+  for (const entry of entries) {
+    await inspectSourcePayload(join(path, entry.name), budget);
+  }
+  const metadataAfter = await lstat(path, { bigint: true });
+  if (
+    metadataAfter.isSymbolicLink()
+    || !metadataAfter.isDirectory()
+    || !sameFileNode(metadataBefore, metadataAfter)
+    || metadataBefore.mtimeNs !== metadataAfter.mtimeNs
+    || metadataBefore.ctimeNs !== metadataAfter.ctimeNs
+  ) {
+    fail(`resource directory changed while it was being inspected: ${path}`);
+  }
+}
+
+async function validateSourcePayloadBudget(paths) {
+  const budget = makePayloadBudget();
+  for (const path of paths) {
+    await inspectSourcePayload(path, budget);
+  }
+}
+
+async function inspectManifestFile(path) {
+  const { handle, metadata } = await openStableRegularFile(
+    path,
+    path,
+    maximumPackagedFileBytes,
+  );
+  let primaryError;
+  try {
+    const hash = createHash("sha256");
+    const buffer = Buffer.alloc(copyBufferBytes);
+    const expectedBytes = Number(metadata.size);
+    let offset = 0;
+    while (offset < expectedBytes) {
+      const requestedBytes = Math.min(buffer.length, expectedBytes - offset);
+      const { bytesRead } = await handle.read(buffer, 0, requestedBytes, offset);
+      if (bytesRead === 0) fail(`${path} changed while it was being hashed`);
+      hash.update(buffer.subarray(0, bytesRead));
+      offset += bytesRead;
+    }
+    const trailing = Buffer.alloc(1);
+    const { bytesRead: trailingBytesRead } = await handle.read(
+      trailing,
+      0,
+      1,
+      expectedBytes,
+    );
+    if (trailingBytesRead !== 0) fail(`${path} changed while it was being hashed`);
+    await verifyStableOpenFile(path, path, handle, metadata);
+    return {
+      sha256: hash.digest("hex"),
+      size: Number(metadata.size),
+      mode: (Number(metadata.mode) & 0o777).toString(8).padStart(4, "0"),
+    };
+  } catch (error) {
+    primaryError = error;
+    throw error;
+  } finally {
+    await closeFileHandlesPreservingPrimary([handle], primaryError);
+  }
+}
+
+function makePayloadBudget() {
+  return { bytes: 0n, entries: 0 };
+}
+
+function consumePayloadEntry(budget, label) {
+  budget.entries += 1;
+  if (budget.entries > maximumPackagedPayloadEntries) {
+    fail(
+      `packaged payload exceeds the ${maximumPackagedPayloadEntries}-entry limit at ${label}`,
+    );
+  }
+}
+
+function consumePayloadBudget(budget, size, label) {
+  consumePayloadEntry(budget, label);
+  budget.bytes += size;
+  if (budget.bytes > BigInt(maximumPackagedPayloadBytes)) {
+    fail(`packaged payload exceeds the ${maximumPackagedPayloadBytes}-byte cumulative limit at ${label}`);
+  }
+}
+
+async function collectManifestFiles(
+  bundleRoot,
+  current = bundleRoot,
+  budget = makePayloadBudget(),
+) {
+  consumePayloadEntry(budget, current);
+  const entries = await readdir(current, { withFileTypes: true });
+  entries.sort((left, right) => compareNames(left.name, right.name));
+  const files = [];
+  for (const entry of entries) {
+    const path = join(current, entry.name);
+    const metadata = await lstat(path);
+    if (metadata.isSymbolicLink()) {
+      fail(`assembled bundle unexpectedly contains a symlink: ${path}`);
+    }
+    if (metadata.isDirectory()) {
+      files.push(...await collectManifestFiles(bundleRoot, path, budget));
+      continue;
+    }
+    if (!metadata.isFile()) {
+      fail(`assembled bundle unexpectedly contains a special file: ${path}`);
+    }
+    const pathFromBundle = relative(bundleRoot, path).split(sep).join("/");
+    if (pathFromBundle === "Contents/Resources/assembly-manifest.json") {
+      consumePayloadEntry(budget, pathFromBundle);
+      continue;
+    }
+    const snapshot = await inspectManifestFile(path);
+    consumePayloadBudget(budget, BigInt(snapshot.size), pathFromBundle);
+    files.push({
+      path: pathFromBundle,
+      ...snapshot,
+    });
+  }
+  return files.sort((left, right) => compareNames(left.path, right.path));
+}
+
+async function validateFinalBundleTree(
+  bundleRoot,
+  current = bundleRoot,
+  budget = makePayloadBudget(),
+  allowedExecutablePaths,
+) {
+  assertWithin(bundleRoot, current, current);
+  const directoryBefore = await lstat(current, { bigint: true });
+  if (directoryBefore.isSymbolicLink() || !directoryBefore.isDirectory()) {
+    fail(`final app tree contains a non-directory component: ${current}`);
+  }
+  consumePayloadEntry(
+    budget,
+    relative(bundleRoot, current).split(sep).join("/") || bundleName,
+  );
+  const entries = await readdir(current, { withFileTypes: true });
+  entries.sort((left, right) => compareNames(left.name, right.name));
+  for (const entry of entries) {
+    const path = join(current, entry.name);
+    const metadata = await lstat(path, { bigint: true });
+    if (metadata.isSymbolicLink()) {
+      fail(`final app tree unexpectedly contains a symlink: ${path}`);
+    }
+    if (metadata.isDirectory()) {
+      await validateFinalBundleTree(bundleRoot, path, budget, allowedExecutablePaths);
+      continue;
+    }
+    if (!metadata.isFile()) {
+      fail(`final app tree unexpectedly contains a special file: ${path}`);
+    }
+    if (
+      allowedExecutablePaths !== undefined
+      && (Number(metadata.mode) & 0o111) !== 0
+      && !allowedExecutablePaths.has(relative(bundleRoot, path))
+    ) {
+      fail(`previous app contains an unsupported executable: ${path}`);
+    }
+    const snapshot = await inspectManifestFile(path);
+    consumePayloadBudget(
+      budget,
+      BigInt(snapshot.size),
+      relative(bundleRoot, path).split(sep).join("/"),
+    );
+  }
+  const directoryAfter = await lstat(current, { bigint: true });
+  if (
+    directoryAfter.isSymbolicLink()
+    || !directoryAfter.isDirectory()
+    || !sameFileNode(directoryBefore, directoryAfter)
+    || directoryBefore.mtimeNs !== directoryAfter.mtimeNs
+    || directoryBefore.ctimeNs !== directoryAfter.ctimeNs
+  ) {
+    fail(`final app directory changed while it was being verified: ${current}`);
+  }
+}
+
+async function writeAssemblyManifest(bundleRoot, compatiblePreviousRuntimes) {
+  const manifestPath = join(bundleRoot, "Contents", "Resources", "assembly-manifest.json");
+  const payloadBudget = makePayloadBudget();
+  consumePayloadEntry(
+    payloadBudget,
+    "Contents/Resources/assembly-manifest.json",
+  );
+  const manifest = {
+    schema_version: "blabee.macos-app-assembly.v2",
+    bundle_identifier: BLABEE_PROFILE.bundleIdentifier,
+    hash_phase: "assembled_payload_before_optional_code_signing",
+    compatible_previous_runtimes: compatiblePreviousRuntimes,
+    files: await collectManifestFiles(bundleRoot, bundleRoot, payloadBudget),
+  };
+  await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, { mode: 0o644 });
+  await chmod(manifestPath, 0o644);
+  return manifest;
+}
+
+function snapshotCompatiblePreviousApps(values) {
+  if (!Array.isArray(values)) {
+    fail("compatible previous apps must be an array");
+  }
+  const snapshot = Array.from(values);
+  if (snapshot.length > maximumCompatiblePreviousApps) {
+    fail(`at most ${maximumCompatiblePreviousApps} compatible previous apps are supported`);
+  }
+  return Object.freeze(snapshot);
+}
+
+export async function inspectSignedRuntimeIdentity({
+  coordinatorBinaryPath,
+  appPath,
+} = {}) {
+  const coordinator = requireAbsolutePath(
+    coordinatorBinaryPath,
+    "runtime identity inspector binary",
+  );
+  const requestedApp = requireAbsolutePath(appPath, "compatible previous app");
+  if (basename(requestedApp) !== bundleName) {
+    fail(`compatible previous app must end with ${bundleName}`);
+  }
+  await requireExecutableFile(coordinator, "runtime identity inspector binary");
+  await requireDirectory(requestedApp, "compatible previous app");
+  const canonicalApp = await realpath(requestedApp);
+  if (basename(canonicalApp) !== bundleName) {
+    fail(`compatible previous app must resolve to ${bundleName}`);
+  }
+
+  let result;
+  try {
+    result = await execFile(
+      coordinator,
+      ["runtime-identity", "--app", canonicalApp],
+      {
+        encoding: "utf8",
+        env: runtimeInspectionEnvironment,
+        maxBuffer: 1024 * 1024,
+        timeout: 15_000,
+      },
+    );
+  } catch (error) {
+    fail(`compatible previous app identity inspection failed: ${error.message}`);
+  }
+  if (result.stderr !== "") {
+    fail("compatible previous app identity inspection wrote unexpected stderr");
+  }
+  if (
+    typeof result.stdout !== "string"
+    || !result.stdout.endsWith("\n")
+    || result.stdout.slice(0, -1).includes("\n")
+  ) {
+    fail("compatible previous app identity inspection returned invalid framing");
+  }
+
+  let payload;
+  try {
+    payload = JSON.parse(result.stdout.slice(0, -1));
+  } catch {
+    fail("compatible previous app identity inspection returned invalid JSON");
+  }
+  if (payload === null || Array.isArray(payload) || typeof payload !== "object") {
+    fail("compatible previous app identity inspection must return a JSON object");
+  }
+  const keys = Object.keys(payload).sort(compareNames);
+  if (
+    JSON.stringify(keys)
+    !== JSON.stringify([
+      "assembly_manifest_sha256",
+      "runtime_identity",
+      "schema_version",
+    ])
+  ) {
+    fail("compatible previous app identity inspection returned unexpected keys");
+  }
+  if (payload.schema_version !== runtimeIdentityInspectionSchemaVersion) {
+    fail("compatible previous app identity inspection returned an unsupported schema");
+  }
+  if (!isCanonicalSHA256(payload.runtime_identity)) {
+    fail("compatible previous app identity inspection returned an invalid identity");
+  }
+  if (!isCanonicalSHA256(payload.assembly_manifest_sha256)) {
+    fail("compatible previous app identity inspection returned an invalid manifest digest");
+  }
+  return {
+    app: canonicalApp,
+    runtimeIdentity: payload.runtime_identity,
+    assemblyManifestSHA256: payload.assembly_manifest_sha256,
+  };
+}
+
+async function resolveCompatiblePreviousRuntimes(coordinator, values) {
+  const inspected = [];
+  const seenApps = new Set();
+  const seenIdentities = new Set();
+  for (const value of values) {
+    const result = await inspectSignedRuntimeIdentity({
+      coordinatorBinaryPath: coordinator,
+      appPath: value,
+    });
+    if (seenApps.has(result.app)) {
+      fail(`compatible previous app was provided more than once: ${result.app}`);
+    }
+    seenApps.add(result.app);
+    if (seenIdentities.has(result.runtimeIdentity)) {
+      fail(`compatible previous apps resolved to a duplicate runtime identity: ${result.runtimeIdentity}`);
+    }
+    seenIdentities.add(result.runtimeIdentity);
+    inspected.push(result);
+  }
+  inspected.sort((left, right) => compareNames(left.runtimeIdentity, right.runtimeIdentity));
+  return {
+    inspected,
+    apps: inspected.map((entry) => entry.app),
+    policies: inspected.map((entry) => ({
+      runtime_identity: entry.runtimeIdentity,
+      allowed_request_types: [...compatiblePreviousRequestTypes],
+    })),
+  };
+}
+
+async function requireRuntimeUseLeaseProtocol(coordinator, { confined = false } = {}) {
+  const before = await inspectManifestFile(coordinator);
+  const executable = confined ? await realpath(coordinator) : coordinator;
+  const command = confined ? "/usr/bin/sandbox-exec" : executable;
+  const arguments_ = confined ? [
+    "-D", `BLABEE_PROBE_EXECUTABLE=${executable}`,
+    "-p", previousRuntimeProbeSandbox,
+    executable, "runtime-use-lease-protocol",
+  ] : ["runtime-use-lease-protocol"];
+  let result;
+  try {
+    result = await execFile(command, arguments_, {
+      cwd: dirname(executable),
+      env: runtimeInspectionEnvironment,
+      encoding: "buffer",
+      maxBuffer: 4 * 1024,
+      timeout: 5_000,
+      killSignal: "SIGKILL",
+    });
+  } catch {
+    fail("runtime use lease protocol probe failed");
+  }
+  if (
+    !result.stdout.equals(Buffer.from(`${runtimeUseLeaseProtocol}\n`))
+    || result.stderr.length !== 0
+  ) {
+    fail("runtime use lease protocol probe returned an unsupported response");
+  }
+  if (JSON.stringify(await inspectManifestFile(coordinator)) !== JSON.stringify(before)) {
+    fail("runtime use lease protocol executable changed while it was being probed");
+  }
+  return before;
+}
+
+async function previousRuntimeSupportsUseLease(previousApp, sourceLauncher) {
+  const scratch = await mkdtemp(join(tmpdir(), "blabee-runtime-use-lease-"));
+  const ownership = await captureOwnedDirectory(scratch, "lease probe");
+  try {
+    try {
+      const infoCopy = join(scratch, "previous-info.plist");
+      await copyFileWithMode(
+        join(previousApp, "Contents", "Info.plist"),
+        infoCopy,
+        0o600,
+        1024 * 1024,
+        undefined,
+        false,
+        previousApp,
+      );
+      const { stdout } = await execFile(
+        "/usr/bin/plutil",
+        ["-convert", "json", "-o", "-", infoCopy],
+        { env: runtimeInspectionEnvironment, maxBuffer: 1024 * 1024, timeout: 5_000 },
+      );
+      if (JSON.parse(stdout)?.BlabeeRuntimeUseLeaseProtocol !== runtimeUseLeaseProtocol) {
+        return false;
+      }
+
+      const executableRelativePath = join("Contents", "MacOS", "blabee-coordinator");
+      const allowedExecutables = new Set([executableRelativePath, launcherRelativePath]);
+      await validateFinalBundleTree(previousApp, previousApp, makePayloadBudget(), allowedExecutables);
+      await requireExecutableFile(join(previousApp, executableRelativePath), "previous app coordinator");
+      const previousLauncher = join(previousApp, launcherRelativePath);
+      await requireExecutableFile(previousLauncher, "previous app launcher");
+      const launcherSnapshot = await inspectManifestFile(previousLauncher);
+      const sourceLauncherSnapshot = await inspectManifestFile(sourceLauncher);
+      if (
+        launcherSnapshot.sha256 !== sourceLauncherSnapshot.sha256
+        || launcherSnapshot.size !== sourceLauncherSnapshot.size
+      ) {
+        return false;
+      }
+
+      // A signed Mach-O needs its sealed Info.plist and resource tree. Keep the
+      // verified bundle intact in a private copy, never re-sign it or run the
+      // original. An older dispatcher must not mutate user state or start other
+      // processes: the query runs with writes, IPC, network and fork denied.
+      const bundleCopy = join(scratch, bundleName);
+      await copyTreeStrict(
+        previousApp, previousApp, bundleCopy, "", makePayloadBudget(), allowedExecutables,
+      );
+      await validateFinalBundleTree(bundleCopy, bundleCopy, makePayloadBudget(), allowedExecutables);
+      await execFile("/usr/bin/codesign", ["--verify", "--deep", "--strict", bundleCopy], {
+        env: runtimeInspectionEnvironment,
+        maxBuffer: 4 * 1024,
+        timeout: 5_000,
+        killSignal: "SIGKILL",
+      });
+      const coordinatorCopy = join(bundleCopy, executableRelativePath);
+      const copySnapshot = await requireRuntimeUseLeaseProtocol(coordinatorCopy, { confined: true });
+      const originalSnapshot = await inspectManifestFile(join(previousApp, executableRelativePath));
+      if (
+        copySnapshot.sha256 !== originalSnapshot.sha256
+        || copySnapshot.size !== originalSnapshot.size
+      ) {
+        return false;
+      }
+      await validateFinalBundleTree(previousApp, previousApp, makePayloadBudget(), allowedExecutables);
+      return true;
+    } catch {
+      // Transport compatibility does not imply the executable-use lease protocol.
+      return false;
+    }
+  } finally {
+    await removeOwnedDirectory(scratch, ownership, "lease probe");
+  }
+}
+
+async function resolveRuntimeUseLeasePreviousIdentities(coordinator, previousApps, sourceLauncher) {
+  const identities = [];
+  for (const previous of previousApps) {
+    const supportsLease = await previousRuntimeSupportsUseLease(previous.app, sourceLauncher);
+    const current = await inspectSignedRuntimeIdentity({
+      coordinatorBinaryPath: coordinator,
+      appPath: previous.app,
+    });
+    if (
+      current.app !== previous.app
+      || current.runtimeIdentity !== previous.runtimeIdentity
+      || current.assemblyManifestSHA256 !== previous.assemblyManifestSHA256
+    ) {
+      fail(`compatible previous app changed during lease inspection: ${previous.app}`);
+    }
+    if (supportsLease) identities.push(previous.runtimeIdentity);
+  }
+  return identities;
+}
+
+async function adhocSignAndVerify(bundlePath) {
+  if (process.platform !== "darwin") {
+    fail("--adhoc-sign is supported only on macOS");
+  }
+  const entitlements = await validateAppSigningEntitlements(
+    join(bundlePath, "Contents", "Resources", appSigningEntitlementsFileName),
+  );
+  await execFile(
+    "/usr/bin/codesign",
+    [
+      "--force",
+      "--sign",
+      "-",
+      "--timestamp=none",
+      "--options",
+      "runtime",
+      "--entitlements",
+      entitlements,
+      bundlePath,
+    ],
+    { maxBuffer: 1024 * 1024 },
+  );
+  await execFile(
+    "/usr/bin/codesign",
+    ["--verify", "--deep", "--strict", "--verbose=2", bundlePath],
+    { maxBuffer: 1024 * 1024 },
+  );
+}
+
+async function captureOwnedDirectory(path, label) {
+  const metadata = await lstat(path, { bigint: true });
+  if (metadata.isSymbolicLink() || !metadata.isDirectory()) {
+    fail(`${label} reservation is not a real directory`);
+  }
+  return directoryOwnership(metadata);
+}
+
+async function verifyOwnedDirectory(path, expectedOwnership, label) {
+  const metadata = await lstat(path, { bigint: true });
+  if (
+    metadata.isSymbolicLink()
+    || !metadata.isDirectory()
+    || !matchesDirectoryOwnership(metadata, expectedOwnership)
+  ) {
+    fail(`${label} reservation identity changed: ${path}`);
+  }
+  return metadata;
+}
+
+async function verifyOwnedDirectoryEntries(
+  path,
+  expectedOwnership,
+  expectedNames,
+  label,
+) {
+  const before = await verifyOwnedDirectory(path, expectedOwnership, label);
+  const names = (await readdir(path)).sort(compareNames);
+  const expected = [...expectedNames].sort(compareNames);
+  if (JSON.stringify(names) !== JSON.stringify(expected)) {
+    fail(`${label} contains unexpected entries: ${path}`);
+  }
+  const after = await verifyOwnedDirectory(path, expectedOwnership, label);
+  if (before.mtimeNs !== after.mtimeNs || before.ctimeNs !== after.ctimeNs) {
+    fail(`${label} changed while its entries were being verified: ${path}`);
+  }
+}
+
+async function verifyPathAbsent(path, label) {
+  try {
+    await lstat(path);
+  } catch (error) {
+    if (error?.code === "ENOENT") return;
+    throw error;
+  }
+  fail(`${label} unexpectedly still exists: ${path}`);
+}
+
+async function verifyPublishedOutput(
+  output,
+  outputOwnership,
+  contentsOwnership,
+  expectedOutputMode,
+) {
+  const before = await verifyOwnedDirectory(output, outputOwnership, "output");
+  if (
+    expectedOutputMode !== undefined
+    && (Number(before.mode) & 0o777) !== expectedOutputMode
+  ) {
+    fail(`output mode is not ${expectedOutputMode.toString(8)}: ${output}`);
+  }
+  const names = (await readdir(output)).sort(compareNames);
+  if (JSON.stringify(names) !== JSON.stringify(["Contents"])) {
+    fail(`output contains unexpected entries: ${output}`);
+  }
+  const contentsMetadata = await verifyOwnedDirectory(
+    join(output, "Contents"),
+    contentsOwnership,
+    "published Contents",
+  );
+  if ((Number(contentsMetadata.mode) & 0o777) !== 0o755) {
+    fail(`published Contents mode is not 755: ${join(output, "Contents")}`);
+  }
+  const after = await verifyOwnedDirectory(output, outputOwnership, "output");
+  if (before.mtimeNs !== after.mtimeNs || before.ctimeNs !== after.ctimeNs) {
+    fail(`output changed while its published contents were being verified: ${output}`);
+  }
+}
+
+async function removeOwnedDirectory(path, expectedOwnership, label) {
+  let metadata;
+  try {
+    metadata = await lstat(path, { bigint: true });
+  } catch (error) {
+    if (error?.code === "ENOENT") return;
+    throw error;
+  }
+  if (
+    metadata.isSymbolicLink()
+    || !metadata.isDirectory()
+    || !matchesDirectoryOwnership(metadata, expectedOwnership)
+  ) {
+    fail(`cleanup refused because the ${label} reservation identity changed: ${path}`);
+  }
+  const quarantine = join(
+    dirname(path),
+    `.${basename(path)}.cleanup-${process.pid}-${randomUUID()}`,
+  );
+  await rename(path, quarantine);
+  const quarantineMetadata = await lstat(quarantine, { bigint: true });
+  if (
+    quarantineMetadata.isSymbolicLink()
+    || !quarantineMetadata.isDirectory()
+    || !matchesDirectoryOwnership(quarantineMetadata, expectedOwnership)
+  ) {
+    fail(`cleanup refused because the quarantined ${label} identity changed: ${quarantine}`);
+  }
+  await rm(quarantine, { recursive: true, force: true });
+}
+
+export async function assembleMacOSApp({
+  binaryPath,
+  outputPath,
+  sourceRoot = defaultSourceRoot,
+  adhocSign = false,
+  releaseSigning = null,
+  internalClaudeSigning = null,
+  cleanupOnFailure = true,
+  compatiblePreviousApps = [],
+  bundleVersion,
+  claudeRuntimeDirectory,
+} = {}, { internalClaudeSigningRunner, releaseSigningRunner } = {}) {
+  const normalizedReleaseSigning = normalizeReleaseSigning(releaseSigning);
+  const normalizedInternalSigning = normalizeReleaseSigning(internalClaudeSigning);
+  const selectedLaunchAgentRelativePath = join("Contents", "Library", "LaunchAgents", launchAgentFileName);
+  if ([Boolean(adhocSign), normalizedReleaseSigning !== null, normalizedInternalSigning !== null].filter(Boolean).length > 1) {
+    fail("ad-hoc, Developer ID release, and internal Claude signing cannot be combined");
+  }
+  if (normalizedInternalSigning !== null && (claudeRuntimeDirectory === undefined || bundleVersion === undefined)) {
+    fail("internal Claude signing requires an explicit Claude runtime directory and bundle version");
+  }
+  const normalizedBundleVersion = requireInternalBuildNumber(
+    bundleVersion === undefined ? requiredInfoPlistValues.CFBundleVersion : bundleVersion,
+    "bundle version",
+  );
+  const compatiblePreviousAppsSnapshot = snapshotCompatiblePreviousApps(
+    compatiblePreviousApps,
+  );
+  const binary = requireAbsolutePath(binaryPath, "--binary");
+  const requestedOutput = requireAbsolutePath(outputPath, "--output");
+  const requestedSourceRoot = requireAbsolutePath(sourceRoot, "source root");
+  let claudeRuntime;
+  let claudeManifest;
+  if (claudeRuntimeDirectory !== undefined) {
+    const requestedRuntime = requireAbsolutePath(claudeRuntimeDirectory, "--claude-runtime-directory");
+    claudeManifest = await verifyClaudeRuntimeDirectory(requestedRuntime);
+    claudeRuntime = await realpath(requestedRuntime);
+    if (normalizedReleaseSigning !== null) requirePublicClaudeRuntime(claudeManifest);
+    if (normalizedInternalSigning !== null && claudeManifest.channel_mode !== "development-preview") {
+      fail("internal Claude signing requires a development preview runtime");
+    }
+  }
+
+  if (basename(requestedOutput) !== bundleName) {
+    fail(`--output must end with ${bundleName}`);
+  }
+  const lowerOutput = requestedOutput.toLocaleLowerCase("en-US");
+  if (lowerOutput === "/applications/blabee.app" || lowerOutput.startsWith("/applications/")) {
+    fail("direct writes to /Applications are not supported by this assembler");
+  }
+
+  await requireExecutableFile(binary, "--binary");
+  await requireDirectory(requestedSourceRoot, "source root");
+  const canonicalSourceRoot = await realpath(requestedSourceRoot);
+  const sourceInfoPlist = join(canonicalSourceRoot, "Packaging", "macos", "Info.plist");
+  const sourceEntitlements = join(canonicalSourceRoot, "Packaging", "macos", appSigningEntitlementsFileName);
+  const sourceLaunchAgentDirectory = join(
+    canonicalSourceRoot,
+    "Packaging",
+    "macos",
+    "LaunchAgents",
+  );
+  const sourceLaunchAgent = join(sourceLaunchAgentDirectory, launchAgentFileName);
+  const sourceAppIcon = join(
+    canonicalSourceRoot,
+    "Packaging",
+    "macos",
+    "Resources",
+    appIconFileName,
+  );
+  const sourceMenuBarIcon = join(
+    canonicalSourceRoot,
+    "Packaging",
+    "macos",
+    "Resources",
+    menuBarIconFileName,
+  );
+  const sourceCodexMarketplace = join(
+    canonicalSourceRoot,
+    "Packaging",
+    "macos",
+    "Resources",
+    codexMarketplaceFileName,
+  );
+  const sourceFonts = join(canonicalSourceRoot, "Packaging", "macos", "Resources", "Fonts");
+  const sourceContracts = join(canonicalSourceRoot, "Contracts", "v1");
+  const sourcePlugin = join(canonicalSourceRoot, "bridges", "codex", "plugin");
+  assertWithin(canonicalSourceRoot, sourceInfoPlist, "Info.plist");
+  assertWithin(canonicalSourceRoot, sourceEntitlements, "app signing entitlements");
+  assertWithin(canonicalSourceRoot, sourceLaunchAgent, "LaunchAgent plist");
+  assertWithin(canonicalSourceRoot, sourceAppIcon, "app icon");
+  assertWithin(canonicalSourceRoot, sourceMenuBarIcon, "menu-bar icon");
+  assertWithin(canonicalSourceRoot, sourceFonts, "Fonts");
+  assertWithin(
+    canonicalSourceRoot,
+    sourceCodexMarketplace,
+    "Codex marketplace manifest",
+  );
+  assertWithin(canonicalSourceRoot, sourceContracts, "Contracts/v1");
+  assertWithin(canonicalSourceRoot, sourcePlugin, "Plugin/blabee");
+  for (const [path, label] of [
+    [sourceInfoPlist, "Info.plist"],
+    [sourceEntitlements, "app signing entitlements"],
+    [sourceLaunchAgent, "LaunchAgent plist"],
+    [sourceAppIcon, "app icon"],
+    [sourceMenuBarIcon, "menu-bar icon"],
+    [sourceFonts, "Fonts"],
+    [sourceCodexMarketplace, "Codex marketplace manifest"],
+    [sourceContracts, "Contracts/v1"],
+    [sourcePlugin, "Plugin/blabee"],
+  ]) {
+    await requireNoSymlinkComponents(canonicalSourceRoot, path, label);
+  }
+  await requireRegularFile(sourceInfoPlist, "Info.plist");
+  await validateAppSigningEntitlements(sourceEntitlements);
+  await requireDirectory(sourceLaunchAgentDirectory, "LaunchAgents");
+  await requireRegularFile(sourceLaunchAgent, "LaunchAgent plist");
+  await requireRegularFile(sourceAppIcon, "app icon");
+  await requireRegularFile(sourceMenuBarIcon, "menu-bar icon");
+  await requireDirectory(sourceFonts, "Fonts");
+  for (const fontFile of requiredFontFiles) {
+    const source = join(sourceFonts, fontFile);
+    await requireNoSymlinkComponents(canonicalSourceRoot, source, `Fonts/${fontFile}`);
+    await requireRegularFile(source, `Fonts/${fontFile}`);
+  }
+  await validateCodexMarketplace(sourceCodexMarketplace);
+  await validateLaunchAgentPlist(sourceLaunchAgent);
+  await requireDirectory(sourceContracts, "Contracts/v1");
+  await requireDirectory(sourcePlugin, "Plugin/blabee");
+  const requestedParent = dirname(requestedOutput);
+  const canonicalParent = await realpath(requestedParent);
+  await requireDirectory(canonicalParent, "--output parent");
+  const output = join(canonicalParent, bundleName);
+  const canonicalRepositoryRoot = await realpath(defaultSourceRoot);
+  const canonicalSystemTempRoot = await realpath(tmpdir());
+  const canonicalSlashTmpRoot = await realpath("/tmp");
+  if (![canonicalRepositoryRoot, canonicalSystemTempRoot, canonicalSlashTmpRoot]
+    .some((root) => isWithin(root, output))) {
+    fail("--output must be inside the Blabee repository or a system temporary directory");
+  }
+  const lowerCanonicalOutput = output.toLocaleLowerCase("en-US");
+  if (
+    lowerCanonicalOutput === "/applications/blabee.app"
+    || lowerCanonicalOutput.startsWith("/applications/")
+  ) {
+    fail("direct writes to /Applications are not supported by this assembler");
+  }
+  if (await pathExistsWithoutFollowing(output)) {
+    fail(`output already exists: ${output}`);
+  }
+  await validateSourcePayloadBudget([
+    binary,
+    sourceInfoPlist,
+    sourceEntitlements,
+    sourceLaunchAgent,
+    sourceAppIcon,
+    sourceMenuBarIcon,
+    sourceFonts,
+    sourceCodexMarketplace,
+    sourceContracts,
+    sourcePlugin,
+    ...(claudeRuntime ? [claudeRuntime] : []),
+  ]);
+
+  const staging = join(
+    canonicalParent,
+    `.${bundleName}.staging-${process.pid}-${randomUUID()}`,
+  );
+  let stagingCreated = false;
+  let stagingOwnership;
+  let outputReserved = false;
+  let outputOwnership;
+  try {
+    await mkdir(staging, { mode: 0o700 });
+    stagingOwnership = await captureOwnedDirectory(staging, "staging");
+    stagingCreated = true;
+    const contents = join(staging, "Contents");
+    const macOS = join(contents, "MacOS");
+    const resources = join(contents, "Resources");
+    const launchAgents = join(contents, "Library", "LaunchAgents");
+    await mkdir(macOS, { recursive: true, mode: 0o755 });
+    await mkdir(resources, { recursive: true, mode: 0o755 });
+    await mkdir(launchAgents, { recursive: true, mode: 0o755 });
+    await chmod(staging, 0o755);
+    await chmod(contents, 0o755);
+    await chmod(macOS, 0o755);
+    await chmod(resources, 0o755);
+    await chmod(join(contents, "Library"), 0o755);
+    await chmod(launchAgents, 0o755);
+
+    const copiedPayloadBudget = makePayloadBudget();
+    const stagedCoordinator = join(macOS, "blabee-coordinator");
+    await copyFileWithMode(
+      binary,
+      stagedCoordinator,
+      0o755,
+      maximumPackagedFileBytes,
+      copiedPayloadBudget,
+      true,
+    );
+    const stagedCoordinatorSnapshot = await requireRuntimeUseLeaseProtocol(stagedCoordinator);
+    await verifyCompiledDistributionProfile(stagedCoordinator, { requireExplicit: normalizedInternalSigning !== null });
+    const compatiblePrevious = await resolveCompatiblePreviousRuntimes(
+      stagedCoordinator,
+      compatiblePreviousAppsSnapshot,
+    );
+
+    const stagedInfoPlist = join(contents, "Info.plist");
+    await copyFileWithMode(
+      sourceInfoPlist,
+      stagedInfoPlist,
+      0o644,
+      maximumPackagedFileBytes,
+      copiedPayloadBudget,
+      false,
+      canonicalSourceRoot,
+    );
+    await validateInfoPlist(stagedInfoPlist, undefined, [], normalizedReleaseSigning !== null);
+    if (normalizedBundleVersion !== requiredInfoPlistValues.CFBundleVersion) {
+      await execFile(
+        "/usr/bin/plutil",
+        [
+          "-replace",
+          "CFBundleVersion",
+          "-string",
+          normalizedBundleVersion,
+          stagedInfoPlist,
+        ],
+        { maxBuffer: 1024 * 1024 },
+      );
+      await chmod(stagedInfoPlist, 0o644);
+    }
+    if (claudeRuntime) {
+      await execFile("/usr/bin/plutil", ["-replace", "BlabeeDistributionProfile", "-string", BLABEE_PROFILE.id, stagedInfoPlist], { maxBuffer: 1024 * 1024 });
+      await chmod(stagedInfoPlist, 0o644);
+    }
+    await validateInfoPlist(stagedInfoPlist, normalizedBundleVersion, [], normalizedReleaseSigning !== null);
+    const stagedEntitlements = join(resources, appSigningEntitlementsFileName);
+    await copyFileWithMode(
+      sourceEntitlements,
+      stagedEntitlements,
+      0o644,
+      maximumPackagedFileBytes,
+      copiedPayloadBudget,
+      false,
+      canonicalSourceRoot,
+    );
+    await validateAppSigningEntitlements(stagedEntitlements);
+    await copyFileWithMode(
+      sourceLaunchAgent,
+      join(staging, selectedLaunchAgentRelativePath),
+      0o644,
+      maximumPackagedFileBytes,
+      copiedPayloadBudget,
+      false,
+      canonicalSourceRoot,
+    );
+    await validateLaunchAgentPlist(join(staging, selectedLaunchAgentRelativePath));
+    await copyFileWithMode(
+      sourceAppIcon,
+      join(resources, appIconFileName),
+      0o644,
+      maximumPackagedFileBytes,
+      copiedPayloadBudget,
+      false,
+      canonicalSourceRoot,
+    );
+    await copyFileWithMode(
+      sourceMenuBarIcon,
+      join(resources, menuBarIconFileName),
+      0o644,
+      maximumPackagedFileBytes,
+      copiedPayloadBudget,
+      false,
+      canonicalSourceRoot,
+    );
+    const codexMarketplaceDirectory = join(resources, ".agents", "plugins");
+    await mkdir(codexMarketplaceDirectory, { recursive: true, mode: 0o755 });
+    await chmod(join(resources, ".agents"), 0o755);
+    await chmod(codexMarketplaceDirectory, 0o755);
+    await copyFileWithMode(
+      sourceCodexMarketplace,
+      join(staging, codexMarketplaceRelativePath),
+      0o644,
+      maximumCodexMarketplaceBytes,
+      copiedPayloadBudget,
+      false,
+      canonicalSourceRoot,
+    );
+    await validateCodexMarketplace(join(staging, codexMarketplaceRelativePath));
+    await copyTreeStrict(
+      canonicalSourceRoot,
+      sourceFonts,
+      join(resources, "Fonts"),
+      join("Contents", "Resources", "Fonts"),
+      copiedPayloadBudget,
+    );
+    await copyTreeStrict(
+      canonicalSourceRoot,
+      sourceContracts,
+      join(resources, "Contracts", "v1"),
+      join("Contents", "Resources", "Contracts", "v1"),
+      copiedPayloadBudget,
+    );
+    await copyTreeStrict(
+      canonicalSourceRoot,
+      sourcePlugin,
+      join(resources, "Plugin", "blabee"),
+      join("Contents", "Resources", "Plugin", "blabee"),
+      copiedPayloadBudget,
+    );
+    if (claudeRuntime) {
+      const stagedClaude = join(resources, "claude");
+      await copyTreeStrict(claudeRuntime, claudeRuntime, stagedClaude,
+        join("Contents", "Resources", "claude"), copiedPayloadBudget,
+        new Set([join("Contents", "Resources", "claude", "node", "bin", "node")]));
+      const copiedClaude = await verifyClaudeRuntimeDirectory(stagedClaude);
+      const currentSourceClaude = await verifyClaudeRuntimeDirectory(claudeRuntime);
+      if (copiedClaude.payload_digest !== claudeManifest.payload_digest
+          || currentSourceClaude.payload_digest !== claudeManifest.payload_digest) {
+        fail("Claude runtime changed during assembly");
+      }
+      // Sign nested executable first. Its final signed bytes must be indexed by
+      // both the Claude descriptor and the unchanged assembly-manifest.v2.
+      if (normalizedReleaseSigning !== null) {
+        await validatePublicClaudeAppCodeLayout(staging);
+        await signClaudeRuntimeRelease(stagedClaude, normalizedReleaseSigning, { runner: releaseSigningRunner });
+      } else if (normalizedInternalSigning !== null) {
+        await validateInternalClaudeAppCodeLayout(staging);
+        await signClaudeRuntimeInternal(stagedClaude, normalizedInternalSigning, { runner: internalClaudeSigningRunner });
+      } else if (adhocSign) {
+        await signClaudeRuntimeAdhoc(stagedClaude);
+      }
+    }
+    const runtimeUseLeasePreviousIdentities = await resolveRuntimeUseLeasePreviousIdentities(
+      stagedCoordinator,
+      compatiblePrevious.inspected,
+      join(staging, launcherRelativePath),
+    );
+    if (runtimeUseLeasePreviousIdentities.length > 0) {
+      await execFile(
+        "/usr/bin/plutil",
+        [
+          "-replace",
+          "BlabeeRuntimeUseLeasePreviousIdentities",
+          "-json",
+          JSON.stringify(runtimeUseLeasePreviousIdentities),
+          stagedInfoPlist,
+        ],
+        { maxBuffer: 1024 * 1024 },
+      );
+      await chmod(stagedInfoPlist, 0o644);
+    }
+    await validateInfoPlist(stagedInfoPlist, normalizedBundleVersion, runtimeUseLeasePreviousIdentities, normalizedReleaseSigning !== null);
+    if (JSON.stringify(await inspectManifestFile(stagedCoordinator)) !== JSON.stringify(stagedCoordinatorSnapshot)) {
+      fail("staged coordinator changed after its runtime use lease protocol probe");
+    }
+    const manifest = await writeAssemblyManifest(
+      staging,
+      compatiblePrevious.policies,
+    );
+    if (normalizedReleaseSigning !== null) {
+      await signReleaseApp(staging, normalizedReleaseSigning, { runner: releaseSigningRunner });
+    } else if (normalizedInternalSigning !== null) {
+      await signInternalClaudeApp(staging, normalizedInternalSigning, { runner: internalClaudeSigningRunner });
+    } else if (adhocSign) {
+      await adhocSignAndVerify(staging);
+    }
+    await validateFinalBundleTree(staging);
+    const contentsOwnership = await captureOwnedDirectory(contents, "staged Contents");
+    await verifyOwnedDirectoryEntries(
+      staging,
+      stagingOwnership,
+      ["Contents"],
+      "staging",
+    );
+
+    try {
+      await mkdir(output, { mode: 0o700 });
+      outputOwnership = await captureOwnedDirectory(output, "output");
+      outputReserved = true;
+    } catch (error) {
+      if (error?.code === "EEXIST") {
+        fail(`output appeared during assembly: ${output}`);
+      }
+      throw error;
+    }
+    await verifyOwnedDirectoryEntries(
+      staging,
+      stagingOwnership,
+      ["Contents"],
+      "staging",
+    );
+    await verifyOwnedDirectory(contents, contentsOwnership, "staged Contents");
+    await verifyOwnedDirectoryEntries(output, outputOwnership, [], "output");
+    await rename(contents, join(output, "Contents"));
+    await verifyOwnedDirectoryEntries(staging, stagingOwnership, [], "staging");
+    await verifyPublishedOutput(output, outputOwnership, contentsOwnership);
+    await chmod(output, 0o755);
+    await verifyOwnedDirectoryEntries(staging, stagingOwnership, [], "staging");
+    await verifyPublishedOutput(output, outputOwnership, contentsOwnership, 0o755);
+    await rmdir(staging);
+    stagingCreated = false;
+    await verifyPathAbsent(staging, "staging");
+    await verifyPublishedOutput(output, outputOwnership, contentsOwnership, 0o755);
+    outputReserved = false;
+    return {
+      output,
+      signed: adhocSign || normalizedReleaseSigning !== null || normalizedInternalSigning !== null,
+      bundleVersion: normalizedBundleVersion,
+      manifest,
+      compatiblePreviousApps: compatiblePrevious.apps,
+    };
+  } catch (error) {
+    if (cleanupOnFailure) {
+      const cleanupFailures = [];
+      if (outputReserved) {
+        try {
+          await removeOwnedDirectory(output, outputOwnership, "output");
+        } catch (cleanupError) {
+          cleanupFailures.push(cleanupError);
+        }
+      }
+      if (stagingCreated) {
+        try {
+          await removeOwnedDirectory(staging, stagingOwnership, "staging");
+        } catch (cleanupError) {
+          cleanupFailures.push(cleanupError);
+        }
+      }
+      if (cleanupFailures.length > 0) {
+        const failureDetails = cleanupFailures.map(
+          (cleanupError) => cleanupError instanceof Error
+            ? cleanupError.message
+            : String(cleanupError),
+        ).join("; ");
+        const originalMessage = error instanceof Error ? error.message : String(error);
+        const combined = new Error(
+          `${originalMessage}; cleanup failed safely: ${failureDetails}`,
+          { cause: error },
+        );
+        combined.cleanupErrors = cleanupFailures;
+        throw combined;
+      }
+    }
+    throw error;
+  }
+}
+
+function parseCLIArguments(values) {
+  let binaryPath;
+  let outputPath;
+  let claudeRuntimeDirectory;
+  let internalIdentity;
+  let internalTeamID;
+  let bundleVersion = requiredInfoPlistValues.CFBundleVersion;
+  let bundleVersionProvided = false;
+  const compatiblePreviousApps = [];
+  let adhocSign = false;
+  let help = false;
+  for (let index = 0; index < values.length; index += 1) {
+    const value = values[index];
+    if (value === "--adhoc-sign") {
+      if (adhocSign) fail("--adhoc-sign may be provided only once");
+      adhocSign = true;
+      continue;
+    }
+    if (value === "--help" || value === "-h") {
+      help = true;
+      continue;
+    }
+    if (
+      value !== "--binary"
+      && value !== "--output"
+      && value !== "--bundle-version"
+      && value !== "--compatible-previous-app"
+      && value !== "--claude-runtime-directory"
+      && value !== "--internal-signing-identity"
+      && value !== "--internal-signing-team-id"
+    ) {
+      fail(`unsupported argument: ${value}`);
+    }
+    if (index + 1 >= values.length || values[index + 1].startsWith("--")) {
+      fail(`${value} requires a value`);
+    }
+    const argument = values[index + 1];
+    index += 1;
+    if (value === "--binary") {
+      if (binaryPath !== undefined) fail("--binary may be provided only once");
+      binaryPath = argument;
+    } else if (value === "--output") {
+      if (outputPath !== undefined) fail("--output may be provided only once");
+      outputPath = argument;
+    } else if (value === "--bundle-version") {
+      if (bundleVersionProvided) fail("--bundle-version may be provided only once");
+      bundleVersion = requireInternalBuildNumber(argument, "--bundle-version");
+      bundleVersionProvided = true;
+    } else if (value === "--claude-runtime-directory") {
+      if (claudeRuntimeDirectory !== undefined) fail("--claude-runtime-directory may be provided only once");
+      claudeRuntimeDirectory = argument;
+    } else if (value === "--internal-signing-identity") {
+      if (internalIdentity !== undefined) fail("--internal-signing-identity may be provided only once");
+      internalIdentity = argument;
+    } else if (value === "--internal-signing-team-id") {
+      if (internalTeamID !== undefined) fail("--internal-signing-team-id may be provided only once");
+      internalTeamID = argument;
+    } else {
+      compatiblePreviousApps.push(argument);
+      if (compatiblePreviousApps.length > maximumCompatiblePreviousApps) {
+        fail(`--compatible-previous-app may be provided at most ${maximumCompatiblePreviousApps} times`);
+      }
+    }
+  }
+  const hasInternalSigning = internalIdentity !== undefined || internalTeamID !== undefined;
+  if (hasInternalSigning && (claudeRuntimeDirectory === undefined || !bundleVersionProvided || adhocSign)) {
+    fail("internal Claude signing requires runtime, identity, team and explicit --bundle-version without ad-hoc signing");
+  }
+  const internalClaudeSigning = hasInternalSigning ? normalizeReleaseSigning({ identity: internalIdentity, teamID: internalTeamID }) : null;
+  return {
+    binaryPath,
+    outputPath,
+    adhocSign,
+    bundleVersion,
+    help,
+    compatiblePreviousApps,
+    claudeRuntimeDirectory,
+    ...(internalClaudeSigning === null ? {} : { internalClaudeSigning }),
+  };
+}
+
+function usage() {
+  return [
+    "Usage:",
+    "  node scripts/build-macos-app.mjs --binary /absolute/path/to/blabee-coordinator --output /absolute/path/to/Blabee.app [--bundle-version 1] [--compatible-previous-app /absolute/path/to/Blabee.app] [--claude-runtime-directory /absolute/prepared-runtime] [--adhoc-sign]",
+    "",
+    "--bundle-version must be a canonical integer from 1 through 9999 and defaults to 1.",
+    "--compatible-previous-app may be repeated at most twice; raw runtime identity values are not accepted.",
+    "--claude-runtime-directory includes a verified runtime; public release packaging requires mcp-hook-v1 with Developer ID signing.",
+    "To sign that same Blabee.app for internal Claude testing, also pass --internal-signing-identity, --internal-signing-team-id and an explicit --bundle-version.",
+    "The output parent must already exist. The script never writes to /Applications.",
+  ].join("\n");
+}
+
+async function main() {
+  const options = parseCLIArguments(process.argv.slice(2));
+  if (options.help) {
+    process.stdout.write(`${usage()}\n`);
+    return;
+  }
+  const result = await assembleMacOSApp(options);
+  process.stdout.write(`${JSON.stringify({ output: result.output, signed: result.signed })}\n`);
+}
+
+const invokedPath = process.argv[1] ? pathToFileURL(resolve(process.argv[1])).href : null;
+if (invokedPath === import.meta.url) {
+  main().catch((error) => {
+    process.stderr.write(`blabee app assembly failed: ${error.message}\n`);
+    process.exitCode = 1;
+  });
+}

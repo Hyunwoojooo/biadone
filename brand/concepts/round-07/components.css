@@ -1,0 +1,54 @@
+/* Candidate expressions within the approved structured screen language. */
+.graphic { width: 100%; min-width: 0; font-size: var(--specimen-body-size); line-height: 1.65; }
+.statement-title { font-size: var(--specimen-statement-size); font-weight: 650; line-height: 1.35; letter-spacing: -.04em; }
+.statement-copy { font-size: var(--specimen-body-size); margin-top: var(--specimen-small-gap); }
+.compare-table { border-collapse: collapse; table-layout: fixed; width: 100%; font-size: var(--specimen-body-size); }
+.compare-table th,.compare-table td { text-align: left; vertical-align: top; padding: var(--specimen-small-gap); font-weight: 400; }
+.compare-table thead th { font-weight: 600; }
+.compare-table thead th:first-child,.compare-table tbody th { width: 3.5em; padding-left: 0; font-size: var(--specimen-label-size); font-weight: 500; }
+.compare-table thead th:last-child { color: var(--color-brand); }
+.compare-caption { font-size: var(--specimen-label-size); margin-top: var(--specimen-small-gap); }
+.process-list { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: var(--flow-column-gap); list-style: none; padding: 0; margin: 0; }
+.process-step { min-width: 0; position: relative; }
+.step-head { display: flex; align-items: center; gap: var(--specimen-small-gap); margin-bottom: var(--specimen-small-gap); }
+.step-marker { display: inline-block; width: var(--flow-marker-size); height: var(--flow-marker-size); flex: none; background: var(--color-brand); }
+.step-number { font-size: var(--specimen-label-size); font-weight: 600; color: var(--color-brand); }
+.process-step h3 { font-size: var(--specimen-heading-size); font-weight: 600; line-height: 1.4; letter-spacing: -.025em; }
+.process-step p { margin-top: var(--specimen-small-gap); font-size: var(--specimen-body-size); line-height: 1.65; }
+/* A: open typography, rules and a linear path. */
+.graphic-a.graphic-statement { border-left: var(--specimen-accent-width) solid var(--color-brand); padding-left: var(--specimen-padding); }
+.graphic-a .compare-table thead { border-bottom: var(--flow-line-width) solid var(--color-brand); }
+.graphic-a .compare-table tbody tr + tr { border-top: var(--flow-line-width) solid var(--color-background-tint); }
+.graphic-a .process-step::before { content: ""; position: absolute; top: calc(var(--flow-marker-size) / 2); left: var(--flow-marker-size); right: calc(var(--flow-column-gap) * -1); border-top: var(--flow-line-width) solid var(--color-background-tint); }
+.graphic-a .process-step:last-child::before { display: none; }
+/* B: a purposeful plane holds the most important information. */
+.graphic-b.graphic-statement { padding: var(--specimen-padding); border-radius: var(--button-radius); background: var(--color-brand); color: var(--color-on-brand); }
+.graphic-b .compare-table th:last-child,.graphic-b .compare-table td:last-child { background: var(--color-background-tint); }
+.graphic-b .compare-table thead th:last-child { border-top: var(--specimen-accent-width) solid var(--color-brand); }
+.graphic-b .compare-table tbody tr + tr { border-top: var(--flow-line-width) solid var(--color-background); }
+.graphic-b .process-list { background: var(--color-background-tint); padding: var(--specimen-padding); border-radius: var(--button-radius); }
+.graphic-b .process-step { border-top: var(--specimen-accent-width) solid var(--color-brand); padding-top: var(--specimen-small-gap); }
+/* C: corner marks and annotation guides focus attention on a region. */
+.graphic-c.graphic-statement { position: relative; padding: var(--specimen-padding); }
+.graphic-c.graphic-statement::before,.graphic-c.graphic-statement::after { content: ""; position: absolute; width: var(--specimen-bracket-edge); height: var(--specimen-bracket-edge); border-color: var(--color-brand); border-style: solid; }
+.graphic-c.graphic-statement::before { left: 0; top: 0; border-width: var(--flow-line-width) 0 0 var(--flow-line-width); }
+.graphic-c.graphic-statement::after { right: 0; bottom: 0; border-width: 0 var(--flow-line-width) var(--flow-line-width) 0; }
+.graphic-c .statement-copy { padding-left: var(--specimen-small-gap); border-left: var(--flow-line-width) solid var(--color-brand); }
+.graphic-c .compare-table { border-top: var(--flow-line-width) solid var(--color-background-tint); }
+.graphic-c .compare-table th:last-child,.graphic-c .compare-table td:last-child { border-left: var(--flow-line-width) solid var(--color-brand); }
+.graphic-c .compare-table thead th:last-child { border-top: var(--flow-line-width) solid var(--color-brand); border-right: var(--flow-line-width) solid var(--color-brand); }
+.graphic-c .compare-table tbody tr:last-child td:last-child { border-bottom: var(--flow-line-width) solid var(--color-brand); }
+.graphic-c .compare-caption { padding-left: var(--specimen-small-gap); border-left: var(--flow-line-width) solid var(--color-brand); }
+.graphic-c .process-step { padding: var(--specimen-small-gap) 0 0 var(--specimen-small-gap); border-left: var(--flow-line-width) solid var(--color-brand); }
+.graphic-c .process-step::before { content: ""; position: absolute; top: 0; left: 0; width: var(--specimen-bracket-edge); border-top: var(--flow-line-width) solid var(--color-brand); }
+@container (max-width: 36em) {
+ .process-list { grid-template-columns: 1fr; gap: var(--specimen-gap); }
+ .process-step { padding-left: var(--specimen-padding); }
+ .process-step h3,.process-step p { margin-left: var(--specimen-small-gap); }
+ .step-head { position: relative; margin-left: calc(var(--specimen-padding) * -1); }
+ .graphic-a .process-step::before { top: var(--flow-marker-size); left: calc(var(--flow-marker-size) / 2); right: auto; bottom: calc(var(--specimen-gap) * -1); border-top: 0; border-left: var(--flow-line-width) solid var(--color-background-tint); }
+ .graphic-b .process-step { border-top: 0; border-left: var(--specimen-accent-width) solid var(--color-brand); padding-top: 0; }
+ .graphic-b .step-head { margin-left: 0; }
+ .graphic-c .process-step { padding-left: var(--specimen-small-gap); }
+ .graphic-c .step-head { margin-left: 0; }
+}

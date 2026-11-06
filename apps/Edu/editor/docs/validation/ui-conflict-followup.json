@@ -1,0 +1,79 @@
+{
+  "origin": "http://127.0.0.1:62356",
+  "directory": "/var/folders/zb/hqjrlyvx79n59vrfnbsn0rm80000gn/T/biadone-studio-qa-LieLrE",
+  "browser": "Playwright Chromium (Browser plugin not available)",
+  "results": [
+    {
+      "name": "page identity, content, console and desktop layout",
+      "passed": true,
+      "detail": "1383 ms"
+    },
+    {
+      "name": "Codex connection uses the actual app path and dialog keyboard focus",
+      "passed": true,
+      "detail": "119 ms"
+    },
+    {
+      "name": "edit, autosave, reload, undo and redo",
+      "passed": true,
+      "detail": "1349 ms"
+    },
+    {
+      "name": "lock, scene split and merge",
+      "passed": true,
+      "detail": "482 ms"
+    },
+    {
+      "name": "long caption/heading blocks export and can be corrected",
+      "passed": true,
+      "detail": "479 ms"
+    },
+    {
+      "name": "preview plays, seeks and selects corresponding scene",
+      "passed": true,
+      "detail": "1144 ms"
+    },
+    {
+      "name": "delayed external poll cannot overwrite a newer user edit",
+      "passed": true,
+      "detail": "1417 ms"
+    },
+    {
+      "name": "failed conflict rebase preserves the draft until explicit discard",
+      "passed": true,
+      "detail": "302 ms"
+    },
+    {
+      "name": "responsive laptop and mobile retain editor controls",
+      "passed": true,
+      "detail": "431 ms"
+    },
+    {
+      "name": "new project and file input import retain files across async save",
+      "passed": true,
+      "detail": "353 ms"
+    },
+    {
+      "name": "local Korean transcription job and deterministic scene grouping",
+      "passed": true,
+      "detail": "3955 ms"
+    },
+    {
+      "name": "timed subtitle file import and manual caption correction",
+      "passed": true,
+      "detail": "620 ms"
+    },
+    {
+      "name": "image asset selection and actual preview",
+      "passed": true,
+      "detail": "581 ms"
+    },
+    {
+      "name": "30-minute timeline loads and seeks to the end",
+      "passed": true,
+      "detail": "1080 ms"
+    }
+  ],
+  "errors": [],
+  "status": "passed"
+}

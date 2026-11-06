@@ -1,0 +1,18 @@
+{
+  "statement": {"title":"AI를 내 일에 연결하세요.","description":"반복 업무 하나부터 시작합니다."},
+  "comparison": {
+    "leftTitle":"필요할 때만 사용",
+    "rightTitle":"반복 업무에 연결",
+    "rows":[
+      {"label":"시작","left":"질문부터 시작","right":"업무 단계부터 정리"},
+      {"label":"실행","left":"결과를 따로 옮김","right":"다음 도구로 연결"},
+      {"label":"개선","left":"매번 다시 설명","right":"기준을 남기고 개선"}
+    ],
+    "caption":"AI 활용 방식을 설명하기 위한 예시입니다."
+  },
+  "process": [
+    {"title":"업무 나누기","description":"반복되는 일을 작은 단계로 나눕니다."},
+    {"title":"AI 연결하기","description":"각 단계에 맞는 도구와 흐름을 연결합니다."},
+    {"title":"반복 개선하기","description":"결과를 확인하고 나의 방식으로 다듬습니다."}
+  ]
+}

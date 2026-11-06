@@ -1,0 +1,4 @@
+interface:
+  display_name: "Landing Page Director"
+  short_description: "Direct polished, source-backed landing page work"
+  default_prompt: "Use $landing-page-director to design, build, and visually verify the Blabee landing page."

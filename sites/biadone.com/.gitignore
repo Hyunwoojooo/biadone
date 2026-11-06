@@ -3,3 +3,6 @@
 node_modules/
 .env
 .env.*
+
+# Extracted reference source is kept beside this downloaded archive.
+/demos/edu-reference-20261023.zip

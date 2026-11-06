@@ -1,0 +1,65 @@
+{
+  "status": "verified",
+  "host": "brand.biadone.com",
+  "url": "https://brand.biadone.com",
+  "pagesProject": "biadone-brand",
+  "pagesSubdomain": "biadone-brand.pages.dev",
+  "productionBranch": "main",
+  "accountId": "94217884f3a123f7d12341dbc556751c",
+  "zoneId": "ea37fec2cfe3490e5ff1622f3d260567",
+  "dnsRecordId": "bff83ee6cf2c166940ae4296ee65ee70",
+  "dns": {"type": "CNAME", "content": "biadone-brand.pages.dev", "proxied": true},
+  "uploadDirectory": "site/public",
+  "wranglerVersion": "4.151.1",
+  "deployment": {
+    "id": "92adc52b-6994-46fc-af2e-21e00c1b686a",
+    "url": "https://92adc52b.biadone-brand.pages.dev",
+    "environment": "production",
+    "createdAt": "2026-10-27T13:33:53.9863Z",
+    "status": "success"
+  },
+  "verifiedAt": "2026-10-27T13:40:21Z",
+  "domainStatus": "active",
+  "manifestSha256": "10e1c89b967dfbeabebdb8f72c714e00352396a416554700f52aca56d74d6d82",
+  "download": {
+    "path": "downloads/biadone-brand-kit-v0.1.zip",
+    "sha256": "fe05decaf689b48e019382ebd1f50051c77cc4f2466ae4231f48d0d830534dc5",
+    "entries": 35
+  },
+  "verification": {
+    "url": "https://brand.biadone.com",
+    "httpsStatus": 200,
+    "authoritativeDns": "passed",
+    "publicDns": {
+      "method": "Cloudflare DNS over HTTPS",
+      "status": 0,
+      "addresses": ["104.21.94.237", "172.67.141.156"],
+      "note": "Direct UDP query to 1.1.1.1 timed out in this environment; HTTPS DNS lookup succeeded."
+    },
+    "browser": "Chromium via existing Playwright installation",
+    "pageCases": 33,
+    "widths": [320, 390, 768, 1024, 1440],
+    "servedAssetHashesMatched": 37,
+    "manifestHashesMatched": 38,
+    "publicLinksChecked": 27,
+    "privateAndMissingPathsReturned404": 9,
+    "headersPassed": true,
+    "actualFonts": {"heading": "SUITE 700", "body": "Pretendard 400", "wordmark": "Pretendard 600"},
+    "downloadClickedAndHashMatched": true,
+    "edu": {"pages": 7, "sourcePreserved": true, "overflow": [], "keyboardAndShowAllPassed": true},
+    "consoleAndCspErrors": [],
+    "visualReview": ["desktop guide", "390px mobile guide", "Edu cover"],
+    "temporaryReport": "/tmp/biadone-brand-pages/live-qa.json",
+    "passed": true
+  },
+  "independentProjectBaselines": {
+    "biadone": "25405023-f01a-4113-9456-33e9df373109",
+    "biadone-edu": "3f17de5d-4ea5-481c-816e-04282e637c7c"
+  },
+  "independentProjectObservations": {
+    "biadone": "25405023-f01a-4113-9456-33e9df373109",
+    "biadone-edu": "adabef9c-e7aa-4529-bbb0-9d47d2c50e92",
+    "note": "The Edu latest deployment changed during the release window. This release created and deployed only biadone-brand; no mutation was sent to either existing Pages project."
+  },
+  "approval": "User explicitly requested deployment to Cloudflare Pages at brand.biadone.com."
+}

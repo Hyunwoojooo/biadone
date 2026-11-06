@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Biadone 그래픽 표현 비교</title><link rel="icon" href="data:,">
+<link rel="preload" href="../../design-system/assets/fonts/PretendardVariable.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="../../design-system/fonts.css"><link rel="stylesheet" href="../../design-system/tokens.css"><link rel="stylesheet" href="../../design-system/screen-style.tokens.css"><link rel="stylesheet" href="../../design-system/logo.css"><link rel="stylesheet" href="tokens.css"><link rel="stylesheet" href="review.tokens.css"><link rel="stylesheet" href="review.css"><link rel="stylesheet" href="components.css">
+<script src="review.js" defer></script>
+</head>
+<body>
+<a class="skip-link" href="#comparison">그래픽 비교로 건너뛰기</a>
+<header class="review-header"><a class="biadone-logo" href="#all" aria-label="Biadone 그래픽 비교"><span class="biadone-logo__symbol"><img src="../../design-system/assets/logo/biadone-symbol.svg" width="64" height="64" alt=""></span><span class="biadone-logo__name" aria-hidden="true">Biadone</span></a><span>그래픽 표현 비교</span><a href="../../design-system/SCREEN_STYLE.md">확정한 A 스타일</a></header>
+<main class="review-page">
+<section class="intro"><h1>중요한 내용을,<br>어떻게 보여줄까요.</h1><p>A의 정돈된 화면 안에서 선·면·주석의 표현을 비교합니다.<br>각 세트에 같은 핵심 문장, 비교 내용, 과정을 넣었습니다.</p></section>
+<section class="set-controls" aria-label="크게 볼 그래픽 세트">
+<button type="button" data-set="a" aria-pressed="false"><strong>A 라인형</strong><span>선과 정렬로 담백하게.</span></button>
+<button type="button" data-set="b" aria-pressed="false"><strong>B 면 강조형</strong><span>블루 면으로 중요도를 또렷하게.</span></button>
+<button type="button" data-set="c" aria-pressed="false"><strong>C 주석형</strong><span>괄호와 연결선으로 시선을 안내.</span></button>
+</section>
+<div class="review-toolbar"><div class="kind-controls" role="group" aria-label="비교할 그래픽 용도"><button type="button" data-kind="all" aria-pressed="true">전체</button><button type="button" data-kind="statement" aria-pressed="false">핵심 문장</button><button type="button" data-kind="comparison" aria-pressed="false">비교</button><button type="button" data-kind="process" aria-pressed="false">과정</button></div><button class="all-sets" type="button" data-set="all" aria-pressed="true">세 세트 나란히</button></div>
+<section id="comparison" class="specimen-grid" aria-label="그래픽 세트 세 가지" aria-busy="true"></section>
+<p id="review-status" class="sr-only" role="status" aria-live="polite">세 그래픽 세트를 나란히 비교합니다.</p>
+<noscript><p>JavaScript를 켜면 그래픽 예시를 볼 수 있습니다.</p></noscript>
+<footer><p>세 그래픽 세트 모두 선택되지 않았습니다. 이 화면은 비교 기록입니다.</p><a href="DESIGN_NOTES.md">피드백과 비교 기준</a></footer>
+</main>
+</body>
+</html>

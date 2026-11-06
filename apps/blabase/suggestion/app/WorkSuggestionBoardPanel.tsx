@@ -13,6 +13,10 @@ import {
   isContinuationSetupOpenedResponse,
   requestContinuationSetupAction
 } from "./continuationSetupActionClient";
+import {
+  submitWorkBoardMonitoringMutation,
+  type BrowserWorkBoardMonitoringReceipt
+} from "./workBoardMonitoringClient";
 
 const LANE_ORDER = ["attention", "continuation", "setup"] as const;
 export const WORK_BOARD_EXPIRY_TIMER_CHUNK_MS = 60_000;
@@ -65,14 +69,23 @@ export function WorkSuggestionBoardPanel({
   loadError = null,
   loading = false,
   now,
-  setupActionEnabled = false
+  setupActionEnabled = false,
+  monitoringReceipt = null,
+  monitoringConsent = false,
+  onMonitoringChanged
 }: {
   response: SemanticContinuationWorkBoardResponse | null;
   loadError?: string | null;
   loading?: boolean;
   now?: Date;
   setupActionEnabled?: boolean;
+  monitoringReceipt?: BrowserWorkBoardMonitoringReceipt | null;
+  monitoringConsent?: boolean;
+  onMonitoringChanged?: () => void;
 }) {
+  const [acknowledgedPresentationKey, setAcknowledgedPresentationKey] = useState<
+    string | null
+  >(null);
   const [clockMs, setClockMs] = useState<number | null>(() =>
     now === undefined ? null : now.getTime()
   );
@@ -80,9 +93,23 @@ export function WorkSuggestionBoardPanel({
     () => (response === null ? null : parseDisplayOnlyWorkBoard(response)),
     [response]
   );
+  const monitoringReceiptCurrent =
+    monitoringConsent &&
+    monitoringReceipt !== null &&
+    parsed !== null &&
+    clockMs !== null &&
+    clockMs >= Date.parse(monitoringReceipt.payload.issuedAt) &&
+    clockMs < Date.parse(monitoringReceipt.payload.expiresAt);
   const expiryMs = useMemo(
-    () => (clockMs === null ? null : nextExpiry(parsed, clockMs)),
-    [parsed, clockMs]
+    () =>
+      clockMs === null
+        ? null
+        : nextExpiry(
+            parsed,
+            clockMs,
+            monitoringConsent ? monitoringReceipt?.payload.expiresAt : undefined
+          ),
+    [parsed, clockMs, monitoringConsent, monitoringReceipt]
   );
 
   useEffect(() => {
@@ -97,6 +124,37 @@ export function WorkSuggestionBoardPanel({
     if (now !== undefined || expiryMs === null) return;
     return scheduleWorkBoardExpiryTicks(expiryMs, setClockMs);
   }, [expiryMs, now]);
+
+  useEffect(() => {
+    if (!monitoringReceiptCurrent || monitoringReceipt === null) {
+      setAcknowledgedPresentationKey(null);
+      return;
+    }
+    const presentationKey = monitoringPresentationKey(monitoringReceipt);
+    if (acknowledgedPresentationKey === presentationKey) return;
+    let current = true;
+    void submitWorkBoardMonitoringMutation({
+      operation: "render_confirmed",
+      receipt: monitoringReceipt.receipt
+    }).then(
+      () => {
+        if (!current) return;
+        setAcknowledgedPresentationKey(presentationKey);
+        onMonitoringChanged?.();
+      },
+      () => undefined
+    );
+    return () => {
+      current = false;
+    };
+  }, [
+    clockMs,
+    acknowledgedPresentationKey,
+    monitoringReceiptCurrent,
+    monitoringReceipt,
+    onMonitoringChanged,
+    parsed
+  ]);
 
   const feed =
     parsed === null || clockMs === null
@@ -141,12 +199,31 @@ export function WorkSuggestionBoardPanel({
               lane={lane}
               items={feed.lanes[lane]}
               setupActionEnabled={setupActionEnabled}
+              monitoringReceipt={monitoringReceipt}
+              monitoringReady={
+                monitoringReceiptCurrent &&
+                monitoringReceipt !== null &&
+                acknowledgedPresentationKey ===
+                  monitoringPresentationKey(monitoringReceipt)
+              }
+              onMonitoringChanged={onMonitoringChanged}
             />
           ))}
         </div>
       )}
     </section>
   );
+}
+
+export function monitoringPresentationKey(
+  receipt: BrowserWorkBoardMonitoringReceipt
+): string {
+  return JSON.stringify({
+    mode: receipt.payload.mode,
+    fallbackReasonCode: receipt.payload.fallbackReasonCode,
+    continuationStatus: receipt.payload.continuationStatus,
+    items: receipt.payload.items.map((item) => item.presentationTargetHmac)
+  });
 }
 
 export function scheduleWorkBoardExpiryTicks(
@@ -188,11 +265,17 @@ export function scheduleWorkBoardExpiryTicks(
 function LaneColumn({
   lane,
   items,
-  setupActionEnabled
+  setupActionEnabled,
+  monitoringReceipt,
+  monitoringReady,
+  onMonitoringChanged
 }: {
   lane: Lane;
   items: DisplayItem[];
   setupActionEnabled: boolean;
+  monitoringReceipt: BrowserWorkBoardMonitoringReceipt | null;
+  monitoringReady: boolean;
+  onMonitoringChanged?: () => void;
 }) {
   const copy = LANE_COPY[lane];
   return (
@@ -217,6 +300,15 @@ function LaneColumn({
               {lane === "setup" && setupActionEnabled ? (
                 <SetupSurfaceAction key={item.itemRef} itemRef={item.itemRef} />
               ) : null}
+              {(lane === "continuation" || lane === "setup") &&
+              monitoringReady &&
+              monitoringReceipt !== null ? (
+                <MonitoringFeedbackActions
+                  receipt={monitoringReceipt.receipt}
+                  ordinal={item.ordinal}
+                  onChanged={onMonitoringChanged}
+                />
+              ) : null}
             </li>
           ))}
         </ol>
@@ -228,6 +320,7 @@ function LaneColumn({
 type EvidenceBand = keyof typeof EVIDENCE_COPY;
 type CaveatCode = keyof typeof CAVEAT_COPY;
 type DisplayItem = {
+  ordinal: number;
   itemRef: string;
   title: string;
   evidenceBand: EvidenceBand;
@@ -246,13 +339,14 @@ function createDisplayFeed(
     continuation: [],
     setup: []
   };
-  for (const entry of entries) {
+  for (const [ordinal, entry] of entries.entries()) {
     if (isExpired(entry, nowMs)) continue;
     const title =
       entry.lane === "continuation"
         ? (overlayByItemRef.get(entry.item.itemRef) ?? entry.item.title)
         : entry.item.title;
     lanes[entry.lane].push({
+      ordinal,
       itemRef: entry.item.itemRef,
       title,
       evidenceBand: entry.item.evidenceBand as EvidenceBand,
@@ -260,6 +354,68 @@ function createDisplayFeed(
     });
   }
   return { generatedAt: response.base.board.generatedAt, lanes };
+}
+
+function MonitoringFeedbackActions({
+  receipt,
+  ordinal,
+  onChanged
+}: {
+  receipt: string;
+  ordinal: number;
+  onChanged?: () => void;
+}) {
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState(false);
+  const submit = async (
+    operation: "useful" | "not_useful" | "reset"
+  ) => {
+    if (pending) return;
+    setPending(true);
+    setError(false);
+    try {
+      await submitWorkBoardMonitoringMutation(
+        operation === "reset"
+          ? {
+              operation: "reset",
+              receipt,
+              ordinal,
+              explicitUserAction: true
+            }
+          : {
+              operation: "feedback",
+              receipt,
+              ordinal,
+              feedback: operation,
+              reason: null,
+              explicitUserAction: true
+            }
+      );
+      onChanged?.();
+    } catch {
+      setError(true);
+    } finally {
+      setPending(false);
+    }
+  };
+  return (
+    <div className="workBoardMonitoringFeedback" aria-busy={pending}>
+      <button type="button" disabled={pending} onClick={() => void submit("useful")}>
+        유용함
+      </button>
+      <button
+        type="button"
+        disabled={pending}
+        onClick={() => void submit("not_useful")}
+      >
+        유용하지 않음
+      </button>
+      <button type="button" disabled={pending} onClick={() => void submit("reset")}>
+        피드백 초기화
+      </button>
+      {error ? <p role="alert">피드백을 기록하지 못했습니다.</p> : null}
+    </div>
+  );
 }
 
 type SetupActionState = "idle" | "pending" | "opened" | "error";
@@ -356,7 +512,8 @@ function isExpired(entry: BoardEntry, nowMs: number): boolean {
 
 function nextExpiry(
   response: SemanticContinuationWorkBoardResponse | null,
-  nowMs: number
+  nowMs: number,
+  monitoringExpiresAt?: string
 ): number | null {
   if (response?.base.status !== "ready") return null;
   const future = orderedEntries(response.base)
@@ -364,6 +521,10 @@ function nextExpiry(
     .filter((value): value is string => value !== null)
     .map(Date.parse)
     .filter((value) => value > nowMs);
+  if (monitoringExpiresAt !== undefined) {
+    const monitoringExpiry = Date.parse(monitoringExpiresAt);
+    if (monitoringExpiry > nowMs) future.push(monitoringExpiry);
+  }
   return future.length === 0 ? null : Math.min(...future);
 }
 

@@ -1,0 +1,40 @@
+{
+  "schema_version": 1,
+  "diagram_type": "lifecycle",
+  "meta": {
+    "title": "Blabee Decision Boundary 생명주기 (a352baa)",
+    "output": "docs/architecture/runtime/decision-boundary.html",
+    "animation": "none",
+    "quality_profile": "showcase",
+    "viewBox": [1180, 660],
+    "views": [
+      { "id": "main-boundary", "label": "주 결정 경계", "focus": ["activating", "sealed", "waiting_choice", "dispatched", "delivery_pending", "closed"], "note": "봉인·정확 선택·durable commit 뒤 exact queue receipt 또는 exact queued-prompt 재진입으로 경계가 닫힌다." },
+      { "id": "waiting-time", "label": "대기와 연속 시간", "focus": ["staged", "waiting_choice", "reminder", "expired"], "note": "Pet 노출과 reminder는 authoritative waiting을 대신하지 않는다." },
+      { "id": "delivery", "label": "후속 전달", "focus": ["dispatched", "delivery_pending", "closed", "unknown"], "note": "exact queue receipt와 exact queued-prompt 재진입 중 어느 증거도 없으면 Closed로 전이하지 않으며 자동 재전송하지 않는다." }
+    ]
+  },
+  "lanes": [
+    { "id": "main", "label": "Decision boundary" },
+    { "id": "events", "label": "Waiting + delivery events" },
+    { "id": "terminal", "label": "Safe terminal outcomes" }
+  ],
+  "states": [
+    { "id": "activating", "type": "start", "label": "Activating", "sublabel": "prompt + proposal", "lane": "main", "col": 0, "step": "01", "tag": "open" },
+    { "id": "sealed", "type": "active", "label": "Sealed", "sublabel": "immutable packet", "lane": "main", "col": 1, "step": "02", "tag": "sealed" },
+    { "id": "waiting_choice", "type": "waiting", "label": "Waiting", "sublabel": "exact Pet choice", "lane": "main", "col": 2, "step": "03", "tag": "foreground" },
+    { "id": "dispatched", "type": "decision", "label": "Dispatched", "sublabel": "durable route", "lane": "main", "col": 3, "step": "04", "tag": "committed" },
+    { "id": "delivery_pending", "type": "active", "label": "Delivery Pending", "sublabel": "notStarted / inFlight", "lane": "main", "col": 4, "step": "05", "tag": "transport" },
+    { "id": "staged", "type": "waiting", "label": "Staged", "sublabel": "FIFO successor", "lane": "events", "col": 0, "tag": "queued" },
+    { "id": "reminder", "type": "waiting", "label": "Reminder", "sublabel": "continuous-time tick", "lane": "events", "col": 1, "tag": "same state" },
+    { "id": "expired", "type": "failure", "label": "Expired", "sublabel": "time budget", "lane": "terminal", "col": 0, "tag": "no action" },
+    { "id": "unknown", "type": "failure", "label": "Failed / Unknown", "sublabel": "완료 증거 없음", "lane": "terminal", "col": 1, "tag": "no auto retry" },
+    { "id": "closed", "type": "success", "label": "Closed", "sublabel": "exact receipt / prompt 재진입", "lane": "terminal", "col": 2, "tag": "전달 증거 검증" }
+  ],
+  "transitions": [
+    { "from": "staged", "to": "sealed", "label": "foreground 승격", "variant": "dashed" },
+    { "from": "waiting_choice", "to": "reminder", "label": "time tick", "variant": "dashed" },
+    { "from": "reminder", "to": "expired", "label": "budget elapsed", "variant": "security", "route": "drop", "fromSide": "bottom", "toSide": "top", "labelAt": [479, 350] },
+    { "from": "delivery_pending", "to": "closed", "label": "exact receipt / prompt 재진입", "variant": "emphasis", "route": "straight", "fromSide": "bottom", "toSide": "top", "labelAt": [716, 202] },
+    { "from": "delivery_pending", "to": "unknown", "label": "완료 증거 없음", "variant": "security", "fromSide": "left", "toSide": "left", "via": [[630, 157], [630, 430], [477, 430], [477, 479]], "labelAt": [630, 350] }
+  ]
+}

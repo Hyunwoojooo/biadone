@@ -1,5 +1,7 @@
 import { createHash } from "node:crypto";
 
+const intrinsicNumberIsFinite = Number.isFinite;
+
 function normalizeCanonicalValue(value: unknown): unknown {
   if (
     value === null ||
@@ -9,7 +11,7 @@ function normalizeCanonicalValue(value: unknown): unknown {
     return value;
   }
   if (typeof value === "number") {
-    if (!Number.isFinite(value)) {
+    if (!intrinsicNumberIsFinite(value)) {
       throw new TypeError(
         "canonical JSON does not support non-finite numbers"
       );

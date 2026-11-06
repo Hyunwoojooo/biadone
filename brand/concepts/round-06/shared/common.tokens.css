@@ -1,0 +1,2 @@
+/* Shared review dimensions; the approved brand foundation remains separate. */
+:root { --common-logo-size: 24px; --common-focus-width: 3px; --common-focus-offset: 5px; }

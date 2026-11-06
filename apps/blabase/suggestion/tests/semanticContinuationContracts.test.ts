@@ -95,6 +95,8 @@ describe("Semantic Continuation contracts", () => {
       target: {
         itemRef: ITEM_REF,
         workContextRef: CONTEXT_REF,
+        candidateKind: "recent_github_push",
+        evidenceBand: "single_source",
         observedAt: OBSERVED_AT,
         candidateExpiresAt: "2026-08-14T06:00:00.000Z"
       },
@@ -104,6 +106,13 @@ describe("Semantic Continuation contracts", () => {
     });
 
     expect(decision.expiresAt).toBe("2026-08-14T06:00:00.000Z");
+    expect(decision).toMatchObject({
+      contract: "semantic-continuation-intent-v0.2",
+      schemaVersion: "semantic-continuation-schema-v0.2",
+      targetCandidateKind: "recent_github_push",
+      targetEvidenceBand: "single_source",
+      overlayPolicyVersion: "semantic-continuation-title-overlay-v0.2"
+    });
     expect(semanticContinuationIntentDecisionSchema.parse(decision)).toEqual(
       decision
     );
@@ -125,6 +134,8 @@ describe("Semantic Continuation contracts", () => {
       target: {
         itemRef: ITEM_REF,
         workContextRef: CONTEXT_REF,
+        candidateKind: "recent_github_push",
+        evidenceBand: "single_source",
         observedAt: OBSERVED_AT,
         candidateExpiresAt: "2026-08-15T12:00:00.000Z"
       },

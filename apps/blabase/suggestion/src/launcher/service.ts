@@ -37,6 +37,7 @@ import {
   type WorkResumptionStatus
 } from "../resumption";
 import { syncRuntimeSources } from "../sync/runtime";
+import { evaluateLiveSemanticWorkSuggestionBoard } from "../suggestionBoard/liveShadow";
 import {
   LAUNCHER_EXECUTION_CONTRACT,
   LAUNCHER_STATUS_CONTRACT,
@@ -45,12 +46,14 @@ import {
   type LauncherAttentionProjection,
   type LauncherExecutionProjection,
   type LauncherIpcRequest,
+  type LauncherWorkBoardProjection,
   type LauncherStatusProjection
 } from "./contracts";
 import {
   buildLauncherAttentionView,
   type LauncherExecutionGuard
 } from "./projection";
+import { buildLauncherWorkBoardProjection } from "./workBoardProjection";
 
 export type LauncherAttentionEvaluation = {
   result: ActiveAttentionResult;
@@ -79,6 +82,7 @@ export type LauncherServiceDependencies = {
   evaluateAttention: (
     input: Parameters<typeof evaluateCurrentAttention>[0]
   ) => Promise<LauncherAttentionEvaluation>;
+  evaluateWorkBoard: typeof evaluateLiveSemanticWorkSuggestionBoard;
   readResumptionStatus: typeof readWorkResumptionStatus;
   openSession: typeof openWorkSession;
   readCommandStatus: typeof readWorkResumptionCommandStatus;
@@ -98,6 +102,7 @@ export type LauncherServiceDependencies = {
 const defaultDependencies: LauncherServiceDependencies = {
   syncSources: syncRuntimeSources,
   evaluateAttention: evaluateCurrentAttention,
+  evaluateWorkBoard: evaluateLiveSemanticWorkSuggestionBoard,
   readResumptionStatus: readWorkResumptionStatus,
   openSession: openWorkSession,
   readCommandStatus: readWorkResumptionCommandStatus,
@@ -144,18 +149,54 @@ export class LauncherService {
     request: LauncherIpcRequest
   ): Promise<
     | LauncherAttentionProjection
+    | LauncherWorkBoardProjection
     | LauncherExecutionProjection
     | LauncherStatusProjection
   > {
     switch (request.method) {
       case "attention.get":
         return this.getAttention(request.params.refresh);
+      case "work-board.get":
+        return this.getWorkBoard(request.params.refresh);
       case "attention.execute":
         return this.executeAttention(request.params);
       case "command.get":
         return this.getCommand(request.params.commandId);
       case "status.get":
         return this.getStatus();
+    }
+  }
+
+  private async getWorkBoard(
+    refresh: boolean
+  ): Promise<LauncherWorkBoardProjection> {
+    if (this.env.BLABASE_LAUNCHER_WORK_BOARD_ENABLED !== "true") {
+      throw new LauncherServiceError(
+        "INVALID_REQUEST",
+        "Launcher Work Board 기능이 활성화되지 않았습니다."
+      );
+    }
+    try {
+      if (
+        refresh &&
+        resolveLauncherSourceMode(this.env) === "managed"
+      ) {
+        await this.dependencies.syncSources({
+          cwd: this.dataRoot,
+          env: this.env
+        });
+      }
+      const response = await this.dependencies.evaluateWorkBoard({
+        cwd: this.dataRoot,
+        env: this.env,
+        now: this.dependencies.now()
+      });
+      return buildLauncherWorkBoardProjection(response);
+    } catch {
+      throw new LauncherServiceError(
+        "WORK_BOARD_RUN_FAILED",
+        "Work Board 제안을 만들지 못했습니다."
+      );
     }
   }
 

@@ -351,6 +351,8 @@ struct LauncherSettingsView: View {
                 diagnostic
             )
             return "\(display.stateLabel) · 신호 \(diagnostic.signalCount)"
+        case .workBoard:
+            return "Work Board 표시"
         }
     }
 
@@ -425,6 +427,8 @@ struct LauncherSettingsView: View {
             case .neutral:
                 return LauncherVisualTokens.textTertiary(colorScheme)
             }
+        case .workBoard:
+            return LauncherVisualTokens.textTertiary(colorScheme)
         }
     }
 
@@ -441,6 +445,8 @@ struct LauncherSettingsView: View {
             return LauncherPresentation.decisionReasonSummary(
                 projection.decisionReasonCodes
             )
+        case .workBoard:
+            return "표시 전용 Work Board를 확인하고 있습니다."
         }
     }
 

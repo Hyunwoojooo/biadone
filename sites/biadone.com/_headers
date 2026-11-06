@@ -1,0 +1,21 @@
+# Keep Blabee's policies scoped to its route; the main site uses external CDNs.
+/blabee/*
+  Content-Security-Policy: default-src 'self'; base-uri 'self'; connect-src 'self' https://vulnkqyqqbucvbhwjswr.supabase.co/rest/v1/rpc/request_blabee_beta https://vulnkqyqqbucvbhwjswr.supabase.co/rest/v1/rpc/request_blabee_beta_tracked https://vulnkqyqqbucvbhwjswr.supabase.co/rest/v1/rpc/record_blabee_landing_view; form-action 'self'; frame-ancestors 'none'; img-src 'self' data:; object-src 'none'; script-src 'self'; style-src 'self'
+  Permissions-Policy: camera=(), geolocation=(), microphone=()
+  Referrer-Policy: strict-origin-when-cross-origin
+  X-Content-Type-Options: nosniff
+  X-Frame-Options: DENY
+  X-Robots-Tag: noindex
+
+/blabee/assets/*
+  Cache-Control: public, max-age=3600, must-revalidate
+
+/blabee/css/*
+  Cache-Control: public, max-age=3600
+
+/blabee/js/*
+  Cache-Control: public, max-age=3600
+
+/blabee/policies/*.md
+  Content-Type: text/markdown; charset=utf-8
+  Content-Disposition: attachment

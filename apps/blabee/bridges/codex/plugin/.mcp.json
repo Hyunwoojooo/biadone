@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "blabee": {
+      "command": "./scripts/blabee-launcher",
+      "args": [
+        "mcp"
+      ],
+      "cwd": ".",
+      "env_vars": [
+        "BLABEE_SOCKET"
+      ]
+    }
+  }
+}

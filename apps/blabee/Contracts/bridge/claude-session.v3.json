@@ -1,0 +1,1803 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.blabee.local/contracts/bridge/claude-session.v3.json",
+  "title": "Blabee claude-session.v3 product envelope",
+  "description": "Closed transport syntax only. No authentication, dispatch, enrollment, FD ownership, liveness, lease renewal or inner DTO approval occurs here. Requests require separately authenticated private transport context. Ordinary responses contain no role capability or process-local handle. Response correlation and known-secret values also require ClaudeProductWireCodec.",
+  "oneOf": [
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "kind",
+        "request_id",
+        "provider",
+        "role",
+        "operation",
+        "authority",
+        "payload"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": "blabee.claude-session.v3"
+        },
+        "kind": {
+          "const": "request"
+        },
+        "request_id": {
+          "$ref": "https://schemas.blabee.local/contracts/bridge/common.v1.json#/$defs/uuid"
+        },
+        "provider": {
+          "const": "claude"
+        },
+        "role": {
+          "const": "hook"
+        },
+        "operation": {
+          "const": "hook"
+        },
+        "authority": {
+          "$ref": "https://schemas.blabee.local/contracts/bridge/common.v1.json#/$defs/authority"
+        },
+        "payload": {
+          "$ref": "https://schemas.blabee.local/contracts/bridge/common.v1.json#/$defs/hook"
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "kind",
+        "request_id",
+        "provider",
+        "role",
+        "operation",
+        "authority",
+        "ok",
+        "result"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": "blabee.claude-session.v3"
+        },
+        "kind": {
+          "const": "response"
+        },
+        "request_id": {
+          "$ref": "https://schemas.blabee.local/contracts/bridge/common.v1.json#/$defs/uuid"
+        },
+        "provider": {
+          "const": "claude"
+        },
+        "role": {
+          "const": "hook"
+        },
+        "operation": {
+          "const": "hook"
+        },
+        "authority": {
+          "$ref": "https://schemas.blabee.local/contracts/bridge/common.v1.json#/$defs/authority"
+        },
+        "ok": {
+          "const": true
+        },
+        "result": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "observed",
+            "boundary_id",
+            "observation_status",
+            "waiter"
+          ],
+          "properties": {
+            "observed": {
+              "const": true
+            },
+            "boundary_id": {
+              "oneOf": [
+                {
+                  "$ref": "https://schemas.blabee.local/contracts/bridge/common.v1.json#/$defs/uuid"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "observation_status": {
+              "enum": [
+                "accepted",
+                "new_prompt_required",
+                "invalidated"
+              ]
+            },
+            "waiter": {
+              "oneOf": [
+                {
+                  "type": "null"
+                },
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "generation",
+                    "prompt_id",
+                    "boundary_id",
+                    "expires_at_nanoseconds"
+                  ],
+                  "properties": {
+                    "generation": {
+                      "$ref": "https://schemas.blabee.local/contracts/bridge/common.v1.json#/$defs/uuid"
+                    },
+                    "prompt_id": {
+                      "$ref": "https://schemas.blabee.local/contracts/bridge/common.v1.json#/$defs/uuid"
+                    },
+                    "boundary_id": {
+                      "$ref": "https://schemas.blabee.local/contracts/bridge/common.v1.json#/$defs/uuid"
+                    },
+                    "expires_at_nanoseconds": {
+                      "$ref": "https://schemas.blabee.local/contracts/bridge/common.v1.json#/$defs/uint64"
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "kind",
+        "request_id",
+        "provider",
+        "role",
+        "operation",
+        "authority",
+        "ok",
+        "error"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": "blabee.claude-session.v3"
+        },
+        "kind": {
+          "const": "response"
+        },
+        "request_id": {
+          "$ref": "https://schemas.blabee.local/contracts/bridge/common.v1.json#/$defs/uuid"
+        },
+        "provider": {
+          "const": "claude"
+        },
+        "role": {
+          "const": "hook"
+        },
+        "operation": {
+          "const": "hook"
+        },
+        "authority": {
+          "$ref": "https://schemas.blabee.local/contracts/bridge/common.v1.json#/$defs/authority"
+        },
+        "ok": {
+          "const": false
+        },
+        "error": {
+          "$ref": "https://schemas.blabee.local/contracts/bridge/common.v1.json#/$defs/error"
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "kind",
+        "request_id",
+        "provider",
+        "role",
+        "operation",
+        "authority",
+        "payload"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": "blabee.claude-session.v3"
+        },
+        "kind": {
+          "const": "request"
+        },
+        "request_id": {
+          "$ref": "https://schemas.blabee.local/contracts/bridge/common.v1.json#/$defs/uuid"
+        },
+        "provider": {
+          "const": "claude"
+        },
+        "role": {
+          "const": "bridge"
+        },
+        "operation": {
+          "const": "bridge.open"
+        },
+        "authority": {
+          "$ref": "https://schemas.blabee.local/contracts/bridge/common.v1.json#/$defs/authority"
+        },
+        "payload": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [],
+          "properties": {}
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "kind",
+        "request_id",
+        "provider",
+        "role",
+        "operation",
+        "authority",
+        "ok",
+        "result"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": "blabee.claude-session.v3"
+        },
+        "kind": {
+          "const": "response"
+        },
+        "request_id": {
+          "$ref": "https://schemas.blabee.local/contracts/bridge/common.v1.json#/$defs/uuid"
+        },
+        "provider": {
+          "const": "claude"
+        },
+        "role": {
+          "const": "bridge"
+        },
+        "operation": {
+          "const": "bridge.open"
+        },
+        "authority": {
+          "$ref": "https://schemas.blabee.local/contracts/bridge/common.v1.json#/$defs/authority"
+        },
+        "ok": {
+          "const": true
+        },
+        "result": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "bridge_id"
+          ],
+          "properties": {
+            "bridge_id": {
+              "$ref": "https://schemas.blabee.local/contracts/bridge/common.v1.json#/$defs/uuid"
+            }
+          }
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "kind",
+        "request_id",
+        "provider",
+        "role",
+        "operation",
+        "authority",
+        "ok",
+        "error"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": "blabee.claude-session.v3"
+        },
+        "kind": {
+          "const": "response"
+        },
+        "request_id": {
+          "$ref": "https://schemas.blabee.local/contracts/bridge/common.v1.json#/$defs/uuid"
+        },
+        "provider": {
+          "const": "claude"
+        },
+        "role": {
+          "const": "bridge"
+        },
+        "operation": {
+          "const": "bridge.open"
+        },
+        "authority": {
+          "$ref": "https://schemas.blabee.local/contracts/bridge/common.v1.json#/$defs/authority"
+        },
+        "ok": {
+          "const": false
+        },
+        "error": {
+          "$ref": "https://schemas.blabee.local/contracts/bridge/common.v1.json#/$defs/error"
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "kind",
+        "request_id",
+        "provider",
+        "role",
+        "operation",
+        "authority",
+        "payload"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": "blabee.claude-session.v3"
+        },
+        "kind": {
+          "const": "request"
+        },
+        "request_id": {
+          "$ref": "https://schemas.blabee.local/contracts/bridge/common.v1.json#/$defs/uuid"
+        },
+        "provider": {
+          "const": "claude"
+        },
+        "role": {
+          "const": "bridge"
+        },
+        "operation": {
+          "const": "bridge.poll"
+        },
+        "authority": {
+          "$ref": "https://schemas.blabee.local/contracts/bridge/common.v1.json#/$defs/authority"
+        },
+        "payload": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "bridge_id"
+          ],
+          "properties": {
+            "bridge_id": {
+              "$ref": "https://schemas.blabee.local/contracts/bridge/common.v1.json#/$defs/uuid"
+            }
+          }
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "kind",
+        "request_id",
+        "provider",
+        "role",
+        "operation",
+        "authority",
+        "ok",
+        "result"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": "blabee.claude-session.v3"
+        },
+        "kind": {
+          "const": "response"
+        },
+        "request_id": {
+          "$ref": "https://schemas.blabee.local/contracts/bridge/common.v1.json#/$defs/uuid"
+        },
+        "provider": {
+          "const": "claude"
+        },
+        "role": {
+          "const": "bridge"
+        },
+        "operation": {
+          "const": "bridge.poll"
+        },
+        "authority": {
+          "$ref": "https://schemas.blabee.local/contracts/bridge/common.v1.json#/$defs/authority"
+        },
+        "ok": {
+          "const": true
+        },
+        "result": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "event"
+          ],
+          "properties": {
+            "event": {
+              "type": "null"
+            }
+          }
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "kind",
+        "request_id",
+        "provider",
+        "role",
+        "operation",
+        "authority",
+        "ok",
+        "error"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": "blabee.claude-session.v3"
+        },
+        "kind": {
+          "const": "response"
+        },
+        "request_id": {
+          "$ref": "https://schemas.blabee.local/contracts/bridge/common.v1.json#/$defs/uuid"
+        },
+        "provider": {
+          "const": "claude"
+        },
+        "role": {
+          "const": "bridge"
+        },
+        "operation": {
+          "const": "bridge.poll"
+        },
+        "authority": {
+          "$ref": "https://schemas.blabee.local/contracts/bridge/common.v1.json#/$defs/authority"
+        },
+        "ok": {
+          "const": false
+        },
+        "error": {
+          "$ref": "https://schemas.blabee.local/contracts/bridge/common.v1.json#/$defs/error"
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "kind",
+        "request_id",
+        "provider",
+        "role",
+        "operation",
+        "authority",
+        "payload"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": "blabee.claude-session.v3"
+        },
+        "kind": {
+          "const": "request"
+        },
+        "request_id": {
+          "$ref": "https://schemas.blabee.local/contracts/bridge/common.v1.json#/$defs/uuid"
+        },
+        "provider": {
+          "const": "claude"
+        },
+        "role": {
+          "const": "bridge"
+        },
+        "operation": {
+          "const": "bridge.close"
+        },
+        "authority": {
+          "$ref": "https://schemas.blabee.local/contracts/bridge/common.v1.json#/$defs/authority"
+        },
+        "payload": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "bridge_id"
+          ],
+          "properties": {
+            "bridge_id": {
+              "$ref": "https://schemas.blabee.local/contracts/bridge/common.v1.json#/$defs/uuid"
+            }
+          }
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "kind",
+        "request_id",
+        "provider",
+        "role",
+        "operation",
+        "authority",
+        "ok",
+        "result"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": "blabee.claude-session.v3"
+        },
+        "kind": {
+          "const": "response"
+        },
+        "request_id": {
+          "$ref": "https://schemas.blabee.local/contracts/bridge/common.v1.json#/$defs/uuid"
+        },
+        "provider": {
+          "const": "claude"
+        },
+        "role": {
+          "const": "bridge"
+        },
+        "operation": {
+          "const": "bridge.close"
+        },
+        "authority": {
+          "$ref": "https://schemas.blabee.local/contracts/bridge/common.v1.json#/$defs/authority"
+        },
+        "ok": {
+          "const": true
+        },
+        "result": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "closed"
+          ],
+          "properties": {
+            "closed": {
+              "const": true
+            }
+          }
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "kind",
+        "request_id",
+        "provider",
+        "role",
+        "operation",
+        "authority",
+        "ok",
+        "error"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": "blabee.claude-session.v3"
+        },
+        "kind": {
+          "const": "response"
+        },
+        "request_id": {
+          "$ref": "https://schemas.blabee.local/contracts/bridge/common.v1.json#/$defs/uuid"
+        },
+        "provider": {
+          "const": "claude"
+        },
+        "role": {
+          "const": "bridge"
+        },
+        "operation": {
+          "const": "bridge.close"
+        },
+        "authority": {
+          "$ref": "https://schemas.blabee.local/contracts/bridge/common.v1.json#/$defs/authority"
+        },
+        "ok": {
+          "const": false
+        },
+        "error": {
+          "$ref": "https://schemas.blabee.local/contracts/bridge/common.v1.json#/$defs/error"
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "kind",
+        "request_id",
+        "provider",
+        "role",
+        "operation",
+        "authority",
+        "payload"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": "blabee.claude-session.v3"
+        },
+        "kind": {
+          "const": "request"
+        },
+        "request_id": {
+          "$ref": "https://schemas.blabee.local/contracts/bridge/common.v1.json#/$defs/uuid"
+        },
+        "provider": {
+          "const": "claude"
+        },
+        "role": {
+          "const": "bridge"
+        },
+        "operation": {
+          "const": "readiness.begin"
+        },
+        "authority": {
+          "$ref": "https://schemas.blabee.local/contracts/bridge/common.v1.json#/$defs/authority"
+        },
+        "payload": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "bridge_id"
+          ],
+          "properties": {
+            "bridge_id": {
+              "$ref": "https://schemas.blabee.local/contracts/bridge/common.v1.json#/$defs/uuid"
+            }
+          }
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "kind",
+        "request_id",
+        "provider",
+        "role",
+        "operation",
+        "authority",
+        "ok",
+        "result"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": "blabee.claude-session.v3"
+        },
+        "kind": {
+          "const": "response"
+        },
+        "request_id": {
+          "$ref": "https://schemas.blabee.local/contracts/bridge/common.v1.json#/$defs/uuid"
+        },
+        "provider": {
+          "const": "claude"
+        },
+        "role": {
+          "const": "bridge"
+        },
+        "operation": {
+          "const": "readiness.begin"
+        },
+        "authority": {
+          "$ref": "https://schemas.blabee.local/contracts/bridge/common.v1.json#/$defs/authority"
+        },
+        "ok": {
+          "const": true
+        },
+        "result": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "probe_id",
+            "nonce",
+            "expires_at_nanoseconds",
+            "status"
+          ],
+          "properties": {
+            "probe_id": {
+              "$ref": "https://schemas.blabee.local/contracts/bridge/common.v1.json#/$defs/uuid"
+            },
+            "nonce": {
+              "$ref": "https://schemas.blabee.local/contracts/bridge/common.v1.json#/$defs/nonce"
+            },
+            "expires_at_nanoseconds": {
+              "$ref": "https://schemas.blabee.local/contracts/bridge/common.v1.json#/$defs/uint64"
+            },
+            "status": {
+              "const": "pending"
+            }
+          }
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "kind",
+        "request_id",
+        "provider",
+        "role",
+        "operation",
+        "authority",
+        "ok",
+        "error"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": "blabee.claude-session.v3"
+        },
+        "kind": {
+          "const": "response"
+        },
+        "request_id": {
+          "$ref": "https://schemas.blabee.local/contracts/bridge/common.v1.json#/$defs/uuid"
+        },
+        "provider": {
+          "const": "claude"
+        },
+        "role": {
+          "const": "bridge"
+        },
+        "operation": {
+          "const": "readiness.begin"
+        },
+        "authority": {
+          "$ref": "https://schemas.blabee.local/contracts/bridge/common.v1.json#/$defs/authority"
+        },
+        "ok": {
+          "const": false
+        },
+        "error": {
+          "$ref": "https://schemas.blabee.local/contracts/bridge/common.v1.json#/$defs/error"
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "kind",
+        "request_id",
+        "provider",
+        "role",
+        "operation",
+        "authority",
+        "payload"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": "blabee.claude-session.v3"
+        },
+        "kind": {
+          "const": "request"
+        },
+        "request_id": {
+          "$ref": "https://schemas.blabee.local/contracts/bridge/common.v1.json#/$defs/uuid"
+        },
+        "provider": {
+          "const": "claude"
+        },
+        "role": {
+          "const": "bridge"
+        },
+        "operation": {
+          "const": "readiness.ack"
+        },
+        "authority": {
+          "$ref": "https://schemas.blabee.local/contracts/bridge/common.v1.json#/$defs/authority"
+        },
+        "payload": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "bridge_id",
+            "probe_id",
+            "nonce"
+          ],
+          "properties": {
+            "bridge_id": {
+              "$ref": "https://schemas.blabee.local/contracts/bridge/common.v1.json#/$defs/uuid"
+            },
+            "probe_id": {
+              "$ref": "https://schemas.blabee.local/contracts/bridge/common.v1.json#/$defs/uuid"
+            },
+            "nonce": {
+              "$ref": "https://schemas.blabee.local/contracts/bridge/common.v1.json#/$defs/nonce"
+            }
+          }
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "kind",
+        "request_id",
+        "provider",
+        "role",
+        "operation",
+        "authority",
+        "ok",
+        "result"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": "blabee.claude-session.v3"
+        },
+        "kind": {
+          "const": "response"
+        },
+        "request_id": {
+          "$ref": "https://schemas.blabee.local/contracts/bridge/common.v1.json#/$defs/uuid"
+        },
+        "provider": {
+          "const": "claude"
+        },
+        "role": {
+          "const": "bridge"
+        },
+        "operation": {
+          "const": "readiness.ack"
+        },
+        "authority": {
+          "$ref": "https://schemas.blabee.local/contracts/bridge/common.v1.json#/$defs/authority"
+        },
+        "ok": {
+          "const": true
+        },
+        "result": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "acknowledged"
+          ],
+          "properties": {
+            "acknowledged": {
+              "const": true
+            }
+          }
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "kind",
+        "request_id",
+        "provider",
+        "role",
+        "operation",
+        "authority",
+        "ok",
+        "error"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": "blabee.claude-session.v3"
+        },
+        "kind": {
+          "const": "response"
+        },
+        "request_id": {
+          "$ref": "https://schemas.blabee.local/contracts/bridge/common.v1.json#/$defs/uuid"
+        },
+        "provider": {
+          "const": "claude"
+        },
+        "role": {
+          "const": "bridge"
+        },
+        "operation": {
+          "const": "readiness.ack"
+        },
+        "authority": {
+          "$ref": "https://schemas.blabee.local/contracts/bridge/common.v1.json#/$defs/authority"
+        },
+        "ok": {
+          "const": false
+        },
+        "error": {
+          "$ref": "https://schemas.blabee.local/contracts/bridge/common.v1.json#/$defs/error"
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "kind",
+        "request_id",
+        "provider",
+        "role",
+        "operation",
+        "authority",
+        "payload"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": "blabee.claude-session.v3"
+        },
+        "kind": {
+          "const": "request"
+        },
+        "request_id": {
+          "$ref": "https://schemas.blabee.local/contracts/bridge/common.v1.json#/$defs/uuid"
+        },
+        "provider": {
+          "const": "claude"
+        },
+        "role": {
+          "const": "bridge"
+        },
+        "operation": {
+          "const": "proposal.emit"
+        },
+        "authority": {
+          "$ref": "https://schemas.blabee.local/contracts/bridge/common.v1.json#/$defs/authority"
+        },
+        "payload": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "bridge_id",
+            "boundary_id",
+            "proposal"
+          ],
+          "properties": {
+            "bridge_id": {
+              "$ref": "https://schemas.blabee.local/contracts/bridge/common.v1.json#/$defs/uuid"
+            },
+            "boundary_id": {
+              "$ref": "https://schemas.blabee.local/contracts/bridge/common.v1.json#/$defs/uuid"
+            },
+            "proposal": {
+              "$ref": "https://schemas.blabee.local/contracts/bridge/common.v1.json#/$defs/proposal"
+            }
+          }
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "kind",
+        "request_id",
+        "provider",
+        "role",
+        "operation",
+        "authority",
+        "ok",
+        "result"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": "blabee.claude-session.v3"
+        },
+        "kind": {
+          "const": "response"
+        },
+        "request_id": {
+          "$ref": "https://schemas.blabee.local/contracts/bridge/common.v1.json#/$defs/uuid"
+        },
+        "provider": {
+          "const": "claude"
+        },
+        "role": {
+          "const": "bridge"
+        },
+        "operation": {
+          "const": "proposal.emit"
+        },
+        "authority": {
+          "$ref": "https://schemas.blabee.local/contracts/bridge/common.v1.json#/$defs/authority"
+        },
+        "ok": {
+          "const": true
+        },
+        "result": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "packet_id",
+            "revision"
+          ],
+          "properties": {
+            "packet_id": {
+              "$ref": "https://schemas.blabee.local/contracts/bridge/common.v1.json#/$defs/identifier"
+            },
+            "revision": {
+              "$ref": "https://schemas.blabee.local/contracts/bridge/common.v1.json#/$defs/revision"
+            }
+          }
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "kind",
+        "request_id",
+        "provider",
+        "role",
+        "operation",
+        "authority",
+        "ok",
+        "error"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": "blabee.claude-session.v3"
+        },
+        "kind": {
+          "const": "response"
+        },
+        "request_id": {
+          "$ref": "https://schemas.blabee.local/contracts/bridge/common.v1.json#/$defs/uuid"
+        },
+        "provider": {
+          "const": "claude"
+        },
+        "role": {
+          "const": "bridge"
+        },
+        "operation": {
+          "const": "proposal.emit"
+        },
+        "authority": {
+          "$ref": "https://schemas.blabee.local/contracts/bridge/common.v1.json#/$defs/authority"
+        },
+        "ok": {
+          "const": false
+        },
+        "error": {
+          "$ref": "https://schemas.blabee.local/contracts/bridge/common.v1.json#/$defs/error"
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "kind",
+        "request_id",
+        "provider",
+        "role",
+        "operation",
+        "authority",
+        "payload"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": "blabee.claude-session.v3"
+        },
+        "kind": {
+          "const": "request"
+        },
+        "request_id": {
+          "$ref": "https://schemas.blabee.local/contracts/bridge/common.v1.json#/$defs/uuid"
+        },
+        "provider": {
+          "const": "claude"
+        },
+        "role": {
+          "const": "bridge"
+        },
+        "operation": {
+          "const": "selection.claim"
+        },
+        "authority": {
+          "$ref": "https://schemas.blabee.local/contracts/bridge/common.v1.json#/$defs/authority"
+        },
+        "payload": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "bridge_id",
+            "selection_id",
+            "delivery_token"
+          ],
+          "properties": {
+            "bridge_id": {
+              "$ref": "https://schemas.blabee.local/contracts/bridge/common.v1.json#/$defs/uuid"
+            },
+            "selection_id": {
+              "$ref": "https://schemas.blabee.local/contracts/bridge/common.v1.json#/$defs/uuid"
+            },
+            "delivery_token": {
+              "$ref": "https://schemas.blabee.local/contracts/bridge/common.v1.json#/$defs/nonce"
+            }
+          }
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "kind",
+        "request_id",
+        "provider",
+        "role",
+        "operation",
+        "authority",
+        "ok",
+        "result"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": "blabee.claude-session.v3"
+        },
+        "kind": {
+          "const": "response"
+        },
+        "request_id": {
+          "$ref": "https://schemas.blabee.local/contracts/bridge/common.v1.json#/$defs/uuid"
+        },
+        "provider": {
+          "const": "claude"
+        },
+        "role": {
+          "const": "bridge"
+        },
+        "operation": {
+          "const": "selection.claim"
+        },
+        "authority": {
+          "$ref": "https://schemas.blabee.local/contracts/bridge/common.v1.json#/$defs/authority"
+        },
+        "ok": {
+          "const": true
+        },
+        "result": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "selection_id",
+            "boundary_id",
+            "prompt_id",
+            "action"
+          ],
+          "properties": {
+            "selection_id": {
+              "$ref": "https://schemas.blabee.local/contracts/bridge/common.v1.json#/$defs/uuid"
+            },
+            "boundary_id": {
+              "$ref": "https://schemas.blabee.local/contracts/bridge/common.v1.json#/$defs/uuid"
+            },
+            "prompt_id": {
+              "$ref": "https://schemas.blabee.local/contracts/bridge/common.v1.json#/$defs/uuid"
+            },
+            "action": {
+              "$ref": "https://schemas.blabee.local/contracts/bridge/common.v1.json#/$defs/action"
+            }
+          }
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "kind",
+        "request_id",
+        "provider",
+        "role",
+        "operation",
+        "authority",
+        "ok",
+        "error"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": "blabee.claude-session.v3"
+        },
+        "kind": {
+          "const": "response"
+        },
+        "request_id": {
+          "$ref": "https://schemas.blabee.local/contracts/bridge/common.v1.json#/$defs/uuid"
+        },
+        "provider": {
+          "const": "claude"
+        },
+        "role": {
+          "const": "bridge"
+        },
+        "operation": {
+          "const": "selection.claim"
+        },
+        "authority": {
+          "$ref": "https://schemas.blabee.local/contracts/bridge/common.v1.json#/$defs/authority"
+        },
+        "ok": {
+          "const": false
+        },
+        "error": {
+          "$ref": "https://schemas.blabee.local/contracts/bridge/common.v1.json#/$defs/error"
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "kind",
+        "request_id",
+        "provider",
+        "role",
+        "operation",
+        "authority",
+        "payload"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": "blabee.claude-session.v3"
+        },
+        "kind": {
+          "const": "request"
+        },
+        "request_id": {
+          "$ref": "https://schemas.blabee.local/contracts/bridge/common.v1.json#/$defs/uuid"
+        },
+        "provider": {
+          "const": "claude"
+        },
+        "role": {
+          "const": "bridge"
+        },
+        "operation": {
+          "const": "selection.complete"
+        },
+        "authority": {
+          "$ref": "https://schemas.blabee.local/contracts/bridge/common.v1.json#/$defs/authority"
+        },
+        "payload": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "bridge_id",
+            "selection_id",
+            "outcome",
+            "note"
+          ],
+          "properties": {
+            "bridge_id": {
+              "$ref": "https://schemas.blabee.local/contracts/bridge/common.v1.json#/$defs/uuid"
+            },
+            "selection_id": {
+              "$ref": "https://schemas.blabee.local/contracts/bridge/common.v1.json#/$defs/uuid"
+            },
+            "outcome": {
+              "enum": [
+                "completed",
+                "failed"
+              ]
+            },
+            "note": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 4096
+            }
+          }
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "kind",
+        "request_id",
+        "provider",
+        "role",
+        "operation",
+        "authority",
+        "ok",
+        "result"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": "blabee.claude-session.v3"
+        },
+        "kind": {
+          "const": "response"
+        },
+        "request_id": {
+          "$ref": "https://schemas.blabee.local/contracts/bridge/common.v1.json#/$defs/uuid"
+        },
+        "provider": {
+          "const": "claude"
+        },
+        "role": {
+          "const": "bridge"
+        },
+        "operation": {
+          "const": "selection.complete"
+        },
+        "authority": {
+          "$ref": "https://schemas.blabee.local/contracts/bridge/common.v1.json#/$defs/authority"
+        },
+        "ok": {
+          "const": true
+        },
+        "result": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "selection_id",
+            "recorded",
+            "reported_by"
+          ],
+          "properties": {
+            "selection_id": {
+              "$ref": "https://schemas.blabee.local/contracts/bridge/common.v1.json#/$defs/uuid"
+            },
+            "recorded": {
+              "const": true
+            },
+            "reported_by": {
+              "const": "claude"
+            }
+          }
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "kind",
+        "request_id",
+        "provider",
+        "role",
+        "operation",
+        "authority",
+        "ok",
+        "error"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": "blabee.claude-session.v3"
+        },
+        "kind": {
+          "const": "response"
+        },
+        "request_id": {
+          "$ref": "https://schemas.blabee.local/contracts/bridge/common.v1.json#/$defs/uuid"
+        },
+        "provider": {
+          "const": "claude"
+        },
+        "role": {
+          "const": "bridge"
+        },
+        "operation": {
+          "const": "selection.complete"
+        },
+        "authority": {
+          "$ref": "https://schemas.blabee.local/contracts/bridge/common.v1.json#/$defs/authority"
+        },
+        "ok": {
+          "const": false
+        },
+        "error": {
+          "$ref": "https://schemas.blabee.local/contracts/bridge/common.v1.json#/$defs/error"
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "kind",
+        "request_id",
+        "provider",
+        "role",
+        "operation",
+        "authority",
+        "payload"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": "blabee.claude-session.v3"
+        },
+        "kind": {
+          "const": "request"
+        },
+        "request_id": {
+          "$ref": "https://schemas.blabee.local/contracts/bridge/common.v1.json#/$defs/uuid"
+        },
+        "provider": {
+          "const": "claude"
+        },
+        "role": {
+          "const": "hook"
+        },
+        "operation": {
+          "const": "hook.poll"
+        },
+        "authority": {
+          "$ref": "https://schemas.blabee.local/contracts/bridge/common.v1.json#/$defs/authority"
+        },
+        "payload": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "native_session_id",
+            "cwd",
+            "prompt_id",
+            "waiter_generation"
+          ],
+          "properties": {
+            "native_session_id": {
+              "$ref": "https://schemas.blabee.local/contracts/bridge/common.v1.json#/$defs/uuid"
+            },
+            "cwd": {
+              "$ref": "https://schemas.blabee.local/contracts/bridge/common.v1.json#/$defs/cwd"
+            },
+            "prompt_id": {
+              "$ref": "https://schemas.blabee.local/contracts/bridge/common.v1.json#/$defs/uuid"
+            },
+            "waiter_generation": {
+              "$ref": "https://schemas.blabee.local/contracts/bridge/common.v1.json#/$defs/uuid"
+            }
+          }
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "kind",
+        "request_id",
+        "provider",
+        "role",
+        "operation",
+        "authority",
+        "ok",
+        "result"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": "blabee.claude-session.v3"
+        },
+        "kind": {
+          "const": "response"
+        },
+        "request_id": {
+          "$ref": "https://schemas.blabee.local/contracts/bridge/common.v1.json#/$defs/uuid"
+        },
+        "provider": {
+          "const": "claude"
+        },
+        "role": {
+          "const": "hook"
+        },
+        "operation": {
+          "const": "hook.poll"
+        },
+        "authority": {
+          "$ref": "https://schemas.blabee.local/contracts/bridge/common.v1.json#/$defs/authority"
+        },
+        "ok": {
+          "const": true
+        },
+        "result": {
+          "oneOf": [
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "status",
+                "event"
+              ],
+              "properties": {
+                "status": {
+                  "enum": [
+                    "waiting",
+                    "closed"
+                  ]
+                },
+                "event": {
+                  "type": "null"
+                }
+              }
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "status",
+                "event"
+              ],
+              "properties": {
+                "status": {
+                  "const": "delivered"
+                },
+                "event": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "kind",
+                    "selection_id",
+                    "delivery_token",
+                    "delivery_sequence",
+                    "expires_at_nanoseconds"
+                  ],
+                  "properties": {
+                    "kind": {
+                      "const": "selection"
+                    },
+                    "selection_id": {
+                      "$ref": "https://schemas.blabee.local/contracts/bridge/common.v1.json#/$defs/uuid"
+                    },
+                    "delivery_token": {
+                      "$ref": "https://schemas.blabee.local/contracts/bridge/common.v1.json#/$defs/nonce"
+                    },
+                    "delivery_sequence": {
+                      "$ref": "https://schemas.blabee.local/contracts/bridge/common.v1.json#/$defs/positive_uint64"
+                    },
+                    "expires_at_nanoseconds": {
+                      "$ref": "https://schemas.blabee.local/contracts/bridge/common.v1.json#/$defs/uint64"
+                    }
+                  }
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "kind",
+        "request_id",
+        "provider",
+        "role",
+        "operation",
+        "authority",
+        "ok",
+        "error"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": "blabee.claude-session.v3"
+        },
+        "kind": {
+          "const": "response"
+        },
+        "request_id": {
+          "$ref": "https://schemas.blabee.local/contracts/bridge/common.v1.json#/$defs/uuid"
+        },
+        "provider": {
+          "const": "claude"
+        },
+        "role": {
+          "const": "hook"
+        },
+        "operation": {
+          "const": "hook.poll"
+        },
+        "authority": {
+          "$ref": "https://schemas.blabee.local/contracts/bridge/common.v1.json#/$defs/authority"
+        },
+        "ok": {
+          "const": false
+        },
+        "error": {
+          "$ref": "https://schemas.blabee.local/contracts/bridge/common.v1.json#/$defs/error"
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "kind",
+        "request_id",
+        "provider",
+        "role",
+        "operation",
+        "authority",
+        "payload"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": "blabee.claude-session.v3"
+        },
+        "kind": {
+          "const": "request"
+        },
+        "request_id": {
+          "$ref": "https://schemas.blabee.local/contracts/bridge/common.v1.json#/$defs/uuid"
+        },
+        "provider": {
+          "const": "claude"
+        },
+        "role": {
+          "const": "hook"
+        },
+        "operation": {
+          "const": "hook.cancel"
+        },
+        "authority": {
+          "$ref": "https://schemas.blabee.local/contracts/bridge/common.v1.json#/$defs/authority"
+        },
+        "payload": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "native_session_id",
+            "cwd",
+            "prompt_id",
+            "waiter_generation"
+          ],
+          "properties": {
+            "native_session_id": {
+              "$ref": "https://schemas.blabee.local/contracts/bridge/common.v1.json#/$defs/uuid"
+            },
+            "cwd": {
+              "$ref": "https://schemas.blabee.local/contracts/bridge/common.v1.json#/$defs/cwd"
+            },
+            "prompt_id": {
+              "$ref": "https://schemas.blabee.local/contracts/bridge/common.v1.json#/$defs/uuid"
+            },
+            "waiter_generation": {
+              "$ref": "https://schemas.blabee.local/contracts/bridge/common.v1.json#/$defs/uuid"
+            }
+          }
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "kind",
+        "request_id",
+        "provider",
+        "role",
+        "operation",
+        "authority",
+        "ok",
+        "result"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": "blabee.claude-session.v3"
+        },
+        "kind": {
+          "const": "response"
+        },
+        "request_id": {
+          "$ref": "https://schemas.blabee.local/contracts/bridge/common.v1.json#/$defs/uuid"
+        },
+        "provider": {
+          "const": "claude"
+        },
+        "role": {
+          "const": "hook"
+        },
+        "operation": {
+          "const": "hook.cancel"
+        },
+        "authority": {
+          "$ref": "https://schemas.blabee.local/contracts/bridge/common.v1.json#/$defs/authority"
+        },
+        "ok": {
+          "const": true
+        },
+        "result": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "cancelled"
+          ],
+          "properties": {
+            "cancelled": {
+              "type": "boolean"
+            }
+          }
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "kind",
+        "request_id",
+        "provider",
+        "role",
+        "operation",
+        "authority",
+        "ok",
+        "error"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": "blabee.claude-session.v3"
+        },
+        "kind": {
+          "const": "response"
+        },
+        "request_id": {
+          "$ref": "https://schemas.blabee.local/contracts/bridge/common.v1.json#/$defs/uuid"
+        },
+        "provider": {
+          "const": "claude"
+        },
+        "role": {
+          "const": "hook"
+        },
+        "operation": {
+          "const": "hook.cancel"
+        },
+        "authority": {
+          "$ref": "https://schemas.blabee.local/contracts/bridge/common.v1.json#/$defs/authority"
+        },
+        "ok": {
+          "const": false
+        },
+        "error": {
+          "$ref": "https://schemas.blabee.local/contracts/bridge/common.v1.json#/$defs/error"
+        }
+      }
+    }
+  ]
+}

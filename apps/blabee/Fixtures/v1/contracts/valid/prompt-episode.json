@@ -1,0 +1,17 @@
+{
+  "schema_version": "1.0",
+  "kind": "blabee_prompt_episode",
+  "project_id": "project_fixture_alpha",
+  "session_id": "session_fixture_alpha",
+  "episode_id": "episode_fixture_alpha",
+  "episode_root_turn_id": "turn_fixture_001",
+  "episode_root_prompt_id": "prompt_fixture_001",
+  "episode_baseline_checkpoint_id": "checkpoint_fixture_before_prompt_001",
+  "prompt_origin": "human",
+  "state": "active",
+  "opened_at": "2026-01-15T09:00:00Z",
+  "rollback_policy": {
+    "enabled": false,
+    "disabled_reason": "rollback_not_enabled_in_build"
+  }
+}

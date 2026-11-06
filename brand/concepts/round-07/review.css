@@ -1,0 +1,41 @@
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; scroll-behavior: smooth; }
+body { margin: 0; font: var(--review-body-size)/1.65 var(--font-primary); color: var(--color-text-primary); background: var(--color-background); word-break: keep-all; overflow-wrap: break-word; }
+h1,h2,h3,h4,p,figure { margin: 0; }
+a { color: inherit; text-decoration: none; touch-action: manipulation; }
+a:hover { text-decoration: underline; text-underline-offset: .3em; }
+button { font: inherit; cursor: pointer; touch-action: manipulation; }
+[hidden] { display: none !important; }
+:focus-visible { outline: var(--review-focus-width) solid var(--color-brand); outline-offset: var(--review-focus-offset); }
+.skip-link { position: absolute; z-index: 10; left: var(--review-gap); top: var(--review-gap); padding: var(--specimen-small-gap) var(--review-gap); background: var(--color-background); transform: translateY(-200%); }
+.skip-link:focus { transform: none; }
+.review-header,.review-page { width: min(calc(100% - var(--review-section-gap)),var(--review-page-max)); margin-inline: auto; }
+.review-header { display: flex; align-items: center; gap: var(--review-major-gap); min-height: var(--review-header-height); border-bottom: var(--flow-line-width) solid var(--color-background-tint); font-size: var(--review-small-size); }
+.review-header .biadone-logo { --biadone-logo-size: var(--review-logo-size); }
+.review-header > a:last-child { display: inline-flex; align-items: center; min-height: var(--review-control-height); margin-left: auto; }
+.intro { padding-block: var(--review-section-gap) var(--review-major-gap); }
+h1 { font-size: var(--review-title-size); font-weight: 650; line-height: 1.19; letter-spacing: -.052em; margin-bottom: var(--review-gap); }
+.set-controls { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: var(--review-gap); }
+.set-controls button { display: flex; flex-direction: column; gap: var(--specimen-small-gap); align-items: start; text-align: left; padding: var(--review-gap) 0; border: 0; border-top: var(--specimen-accent-width) solid var(--color-brand); border-bottom: var(--flow-line-width) solid var(--color-background-tint); background: var(--color-background); color: var(--color-text-primary); }
+.set-controls button strong { font-size: var(--review-choice-size); font-weight: 600; }
+.set-controls button span { font-size: var(--review-small-size); }
+.set-controls button:hover,.set-controls button[aria-pressed="true"] { color: var(--color-brand); }
+.review-toolbar { display: flex; justify-content: space-between; align-items: center; gap: var(--review-gap); padding-block: var(--review-major-gap); }
+.kind-controls { display: flex; flex-wrap: wrap; gap: var(--specimen-small-gap); }
+.kind-controls button,.all-sets { display: inline-flex; align-items: center; justify-content: center; min-height: var(--review-control-height); padding: var(--specimen-small-gap) var(--review-gap); border: var(--flow-line-width) solid var(--color-background-tint); border-radius: var(--review-radius); background: var(--color-background); color: var(--color-text-primary); font-size: var(--review-small-size); }
+.kind-controls button:hover,.all-sets:hover { border-color: var(--color-brand); }
+.kind-controls button[aria-pressed="true"],.all-sets[aria-pressed="true"] { background: var(--color-brand); color: var(--color-on-brand); border-color: var(--color-brand); }
+.specimen-grid { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); column-gap: var(--review-gap); row-gap: var(--review-major-gap); scroll-margin-top: var(--review-gap); }
+.specimen-grid.single-set { grid-template-columns: minmax(0,1fr); max-width: var(--review-preview-max); margin-inline: auto; }
+.specimen { min-width: 0; container-type: inline-size; }
+.specimen > h2 { font-size: var(--review-choice-size); font-weight: 550; margin-bottom: var(--specimen-small-gap); }
+.kind-name { font-size: var(--review-small-size); margin-bottom: var(--specimen-small-gap); }
+.sample-field { display: flex; align-items: center; min-width: 0; min-height: var(--specimen-statement-height); border-top: var(--flow-line-width) solid var(--color-background-tint); padding-block: var(--review-gap); }
+.sample-field[data-surface="comparison"] { min-height: var(--specimen-comparison-height); }
+.sample-field[data-surface="process"] { min-height: var(--specimen-process-height); }
+footer { display: flex; align-items: center; justify-content: space-between; gap: var(--review-gap); font-size: var(--review-small-size); padding-block: var(--review-section-gap) var(--review-major-gap); }
+footer a { display: inline-flex; align-items: center; min-height: var(--review-control-height); color: var(--color-brand); }
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); border: 0; }
+@media (max-width: 60em) { .specimen-grid { grid-template-columns: 1fr; }.review-toolbar { align-items: start; flex-direction: column; gap: var(--specimen-small-gap); } }
+@media (max-width: 40em) { .review-header { flex-wrap: wrap; gap: var(--specimen-small-gap); padding-block: var(--specimen-small-gap); }.review-header > a:last-child { margin-left: 0; }.intro { padding-block: var(--review-major-gap); }.intro p br { display: none; }.set-controls { gap: var(--specimen-small-gap); }.set-controls button { padding-block: var(--specimen-small-gap); }.set-controls button strong { font-size: var(--review-body-size); }.set-controls button span { display: none; }.kind-controls { gap: var(--specimen-small-gap); }.kind-controls button { padding-inline: var(--specimen-small-gap); }footer { align-items: start; flex-direction: column; gap: var(--specimen-small-gap); } }
+@media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }

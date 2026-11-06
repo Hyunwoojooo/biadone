@@ -1,0 +1,215 @@
+{
+  "configSchemaVersion": "dayflow-evidence-ablation-config-v0.2",
+  "configId": "synthetic.dayflow.dfa002.config.v0.2",
+  "dataOrigin": "synthetic",
+  "studyPhase": "contract_conformance",
+  "studyProtocolHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "syntheticSentinel": "SYNTHETIC_DAYFLOW_FIXTURE_DO_NOT_USE_AS_HUMAN_DATA",
+  "generationTuple": {
+    "generationMode": "deterministic_fixture_only",
+    "provider": "none",
+    "model": "none",
+    "promptVersion": "none",
+    "promptSha256": "none",
+    "templateVersion": "none",
+    "generationParameters": {},
+    "fixtureGeneratorVersion": "dayflow-dfa002-fixture-generator-v0.2",
+    "fixtureGeneratorSeed": "dfa002-seed-20260817",
+    "fixtureGeneratorConfigSha256": "17477ed54c32296f27bf9f3324b0c6ce673c09b6c964589a1fd2cb608f6f3f3e",
+    "syntheticOnly": true
+  },
+  "claimEligibility": {
+    "contractConformance": false,
+    "quality": false,
+    "baseline": false,
+    "release": false,
+    "hPilotGo": false,
+    "hE2": false
+  },
+  "rawHumanContentIncluded": false,
+  "liveCaptureAllowed": false,
+  "networkProviderCallsAllowed": false,
+  "registry": [
+    {
+      "artifactClass": "dayflow-export-manifest",
+      "schemaVersion": "dayflow-screen-evidence-export-v0.1",
+      "hashDomain": "blabase.dayflow-screen-evidence-export.v0.1",
+      "storageMode": "standalone"
+    },
+    {
+      "artifactClass": "normalized-screen-evidence",
+      "schemaVersion": "dayflow-normalized-evidence-v0.1",
+      "hashDomain": "blabase.dayflow-normalized-evidence.v0.1",
+      "storageMode": "standalone"
+    },
+    {
+      "artifactClass": "artifact-layout-config",
+      "schemaVersion": "dayflow-ablation-artifact-layout-config-v0.2",
+      "hashDomain": "blabase.dayflow-ablation.artifact-layout-config.v0.2",
+      "storageMode": "standalone"
+    },
+    {
+      "artifactClass": "experiment-manifest",
+      "schemaVersion": "dayflow-ablation-experiment-manifest-v0.2",
+      "hashDomain": "blabase.dayflow-ablation.experiment-manifest.v0.2",
+      "storageMode": "standalone"
+    },
+    {
+      "artifactClass": "evaluation-execution-freeze",
+      "schemaVersion": "dayflow-ablation-evaluation-execution-freeze-v0.3",
+      "hashDomain": "blabase.dayflow-ablation.evaluation-execution-freeze.v0.3",
+      "storageMode": "standalone"
+    },
+    {
+      "artifactClass": "live-collection-freeze",
+      "schemaVersion": "dayflow-ablation-live-collection-freeze-v0.3",
+      "hashDomain": "blabase.dayflow-ablation.live-collection-freeze.v0.3",
+      "storageMode": "standalone"
+    },
+    {
+      "artifactClass": "human-approval-record",
+      "schemaVersion": "dayflow-ablation-human-approval-v0.1",
+      "hashDomain": "blabase.dayflow-ablation.human-approval.v0.1",
+      "storageMode": "standalone"
+    },
+    {
+      "artifactClass": "study-protocol",
+      "schemaVersion": "dayflow-ablation-study-protocol-v0.3",
+      "hashDomain": "blabase.dayflow-ablation.study-protocol.v0.3",
+      "storageMode": "standalone"
+    },
+    {
+      "artifactClass": "request-order-manifest",
+      "schemaVersion": "dayflow-ablation-request-order-manifest-v0.1",
+      "hashDomain": "blabase.dayflow-ablation.request-order-manifest.v0.1",
+      "storageMode": "standalone"
+    },
+    {
+      "artifactClass": "request-issuance-receipt",
+      "schemaVersion": "dayflow-ablation-request-issuance-receipt-v0.1",
+      "hashDomain": "blabase.dayflow-ablation.request-issuance-receipt.v0.1",
+      "storageMode": "standalone"
+    },
+    {
+      "artifactClass": "blind-permutation",
+      "schemaVersion": "dayflow-ablation-blind-permutation-v0.1",
+      "hashDomain": "blabase.dayflow-ablation.blind-permutation.v0.1",
+      "storageMode": "standalone"
+    },
+    {
+      "artifactClass": "candidate-dataset-generation",
+      "schemaVersion": "dayflow-ablation-candidate-dataset-generation-v0.1",
+      "hashDomain": "blabase.dayflow-ablation.candidate-dataset-generation.v0.1",
+      "storageMode": "standalone"
+    },
+    {
+      "artifactClass": "exclusion-decision",
+      "schemaVersion": "dayflow-ablation-exclusion-decision-v0.1",
+      "hashDomain": "blabase.dayflow-ablation.exclusion-decision.v0.1",
+      "storageMode": "standalone"
+    },
+    {
+      "artifactClass": "exclusion-closure",
+      "schemaVersion": "dayflow-ablation-exclusion-closure-v0.1",
+      "hashDomain": "blabase.dayflow-ablation.exclusion-closure.v0.1",
+      "storageMode": "standalone"
+    },
+    {
+      "artifactClass": "final-dataset-manifest",
+      "schemaVersion": "dayflow-ablation-final-dataset-manifest-v0.1",
+      "hashDomain": "blabase.dayflow-ablation.final-dataset-manifest.v0.1",
+      "storageMode": "standalone"
+    },
+    {
+      "artifactClass": "final-dataset-binding",
+      "schemaVersion": "dayflow-ablation-final-dataset-binding-v0.1",
+      "hashDomain": "blabase.dayflow-ablation.final-dataset-binding.v0.1",
+      "storageMode": "standalone"
+    },
+    {
+      "artifactClass": "pilot-verification-attestation",
+      "schemaVersion": "dayflow-ablation-pilot-verification-attestation-v0.1",
+      "hashDomain": "blabase.dayflow-ablation.pilot-verification-attestation.v0.1",
+      "storageMode": "standalone"
+    },
+    {
+      "artifactClass": "evaluation-checkpoint",
+      "schemaVersion": "dayflow-ablation-checkpoint-v0.2",
+      "hashDomain": "blabase.dayflow-ablation.checkpoint.v0.2",
+      "storageMode": "standalone"
+    },
+    {
+      "artifactClass": "checkpoint-completion",
+      "schemaVersion": "dayflow-ablation-checkpoint-completion-v0.1",
+      "hashDomain": "blabase.dayflow-ablation.checkpoint-completion.v0.1",
+      "storageMode": "standalone"
+    },
+    {
+      "artifactClass": "a0-arm-input",
+      "schemaVersion": "dayflow-ablation-arm-input-v0.4",
+      "hashDomain": "blabase.dayflow-ablation.arm-input.a0.v0.4",
+      "storageMode": "standalone"
+    },
+    {
+      "artifactClass": "a1-arm-input",
+      "schemaVersion": "dayflow-ablation-arm-input-v0.4",
+      "hashDomain": "blabase.dayflow-ablation.arm-input.a1.v0.4",
+      "storageMode": "standalone"
+    },
+    {
+      "artifactClass": "b-arm-input",
+      "schemaVersion": "dayflow-ablation-arm-input-v0.4",
+      "hashDomain": "blabase.dayflow-ablation.arm-input.b.v0.4",
+      "storageMode": "standalone"
+    },
+    {
+      "artifactClass": "c-arm-input",
+      "schemaVersion": "dayflow-ablation-arm-input-v0.4",
+      "hashDomain": "blabase.dayflow-ablation.arm-input.c.v0.4",
+      "storageMode": "standalone"
+    },
+    {
+      "artifactClass": "semantic-output",
+      "schemaVersion": "dayflow-ablation-semantic-output-v0.1",
+      "hashDomain": "blabase.dayflow-ablation.semantic-output.v0.1",
+      "storageMode": "standalone"
+    },
+    {
+      "artifactClass": "arm-run",
+      "schemaVersion": "dayflow-ablation-run-v0.4",
+      "hashDomain": "blabase.dayflow-ablation.run.v0.4",
+      "storageMode": "standalone"
+    },
+    {
+      "artifactClass": "run-results",
+      "schemaVersion": "dayflow-ablation-run-results-v0.1",
+      "hashDomain": "blabase.dayflow-ablation.run-results.v0.1",
+      "storageMode": "standalone"
+    },
+    {
+      "artifactClass": "output-review",
+      "schemaVersion": "dayflow-ablation-output-review-v0.2",
+      "hashDomain": "blabase.dayflow-ablation.output-review.v0.2",
+      "storageMode": "standalone"
+    },
+    {
+      "artifactClass": "pair-preference-review",
+      "schemaVersion": "dayflow-ablation-pair-preference-review-v0.2",
+      "hashDomain": "blabase.dayflow-ablation.pair-preference-review.v0.2",
+      "storageMode": "standalone"
+    },
+    {
+      "artifactClass": "deletion-receipt",
+      "schemaVersion": "dayflow-ablation-deletion-receipt-v0.1",
+      "hashDomain": "blabase.dayflow-ablation.deletion-receipt.v0.1",
+      "storageMode": "standalone"
+    },
+    {
+      "artifactClass": "aggregate",
+      "schemaVersion": "dayflow-ablation-aggregate-v0.1",
+      "hashDomain": "blabase.dayflow-ablation.aggregate.v0.1",
+      "storageMode": "standalone"
+    }
+  ],
+  "fixtureGeneratorConfigSha256": "17477ed54c32296f27bf9f3324b0c6ce673c09b6c964589a1fd2cb608f6f3f3e"
+}

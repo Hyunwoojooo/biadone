@@ -1,0 +1,33 @@
+/* Generated from each candidate tokens.json. Run node shared/generate-specimens.mjs after token changes. */
+:root {
+  --primitive-sample-a-bg: #FFFFFF;
+  --primitive-sample-a-text: #172D39;
+  --primitive-sample-a-brand: #D7435B;
+  --primitive-sample-a-soft: #F1D7DC;
+  --primitive-sample-b-bg: #FFFFFF;
+  --primitive-sample-b-text: #1D303B;
+  --primitive-sample-b-brand: #385A78;
+  --primitive-sample-b-soft: #E4EEF5;
+  --primitive-sample-c-bg: #FFFFFF;
+  --primitive-sample-c-text: #263752;
+  --primitive-sample-c-brand: #FBE275;
+  --primitive-sample-c-soft: #FFFFFF;
+}
+[data-concept="a"] {
+  --sample-bg: var(--primitive-sample-a-bg);
+  --sample-text: var(--primitive-sample-a-text);
+  --sample-brand: var(--primitive-sample-a-brand);
+  --sample-soft: var(--primitive-sample-a-soft);
+}
+[data-concept="b"] {
+  --sample-bg: var(--primitive-sample-b-bg);
+  --sample-text: var(--primitive-sample-b-text);
+  --sample-brand: var(--primitive-sample-b-brand);
+  --sample-soft: var(--primitive-sample-b-soft);
+}
+[data-concept="c"] {
+  --sample-bg: var(--primitive-sample-c-bg);
+  --sample-text: var(--primitive-sample-c-text);
+  --sample-brand: var(--primitive-sample-c-brand);
+  --sample-soft: var(--primitive-sample-c-soft);
+}

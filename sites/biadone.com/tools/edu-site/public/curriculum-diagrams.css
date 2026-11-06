@@ -1,0 +1,71 @@
+/* Native curriculum overview. Text is HTML; SVG supplies geometry only. */
+.curriculum-diagrams{display:grid;gap:var(--ui-space-xl);margin-bottom:var(--ui-space-xl)}
+/* Native curriculum wheel: actual HTML labels over decorative inline SVG. */
+.edu-cycle-panel{display:grid;grid-template-columns:minmax(260px,.82fr) minmax(0,1.3fr);align-items:center;gap:var(--ui-space-lg,32px);padding:var(--ui-space-xl,48px);border-radius:var(--screen-radius,4px);background:var(--color-text-primary,#23314D);color:var(--color-background,#FFF)}
+.edu-cycle-panel :is(h3,h4,p,ul){margin:0}
+.edu-cycle-intro{min-width:0}
+.edu-cycle-brand{font-family:var(--font-primary);font-size:14px;line-height:1.7;font-weight:600;margin-bottom:var(--ui-space-md,24px)!important}
+.edu-cycle-intro h3{font-family:var(--heading-font-family);font-weight:var(--ui-heading-weight,700);font-size:clamp(32px,3.1vw,42px);line-height:1.28;letter-spacing:-.045em;color:var(--color-background,#FFF)}
+.edu-cycle-intro h3>span{display:block;max-width:100%}
+.edu-cycle-title-accent{width:fit-content;padding:0 .1em;background:var(--color-brand,#2858F0);color:var(--color-background,#FFF)}
+.edu-cycle-description{font-family:var(--font-primary);font-size:18px;line-height:1.8;max-width:28em;margin-top:var(--ui-space-lg,32px)!important}
+.edu-cycle-choice-note{font-family:var(--font-primary);font-size:16px;line-height:1.8;max-width:27em;padding-top:var(--ui-space-md,24px);margin-top:var(--ui-space-lg,32px)!important;border-top:1px solid color-mix(in srgb,var(--color-background,#FFF) 28%,transparent)}
+.edu-cycle-wheel{position:relative;aspect-ratio:1;width:100%;max-width:640px;min-width:0;justify-self:center}
+.edu-cycle-art{position:absolute;inset:0;display:block;width:100%;height:100%;overflow:visible}
+.edu-cycle-sector{fill:var(--color-background,#FFF)}
+.edu-cycle-flow{fill:none;stroke:var(--color-brand,#2858F0);stroke-width:9;stroke-linecap:round}
+.edu-cycle-arrow-tip{fill:var(--color-brand,#2858F0)}
+.edu-cycle-hub{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:35%;max-width:224px;text-align:center;color:var(--color-background,#FFF)}
+.edu-cycle-hub-brand{font-family:var(--font-primary);font-size:13px;line-height:1.5;font-weight:600;margin-bottom:8px!important}
+.edu-cycle-hub h4{font-family:var(--heading-font-family);font-weight:var(--ui-heading-weight,700);font-size:clamp(20px,2vw,24px);line-height:1.32;letter-spacing:-.035em;color:var(--color-background,#FFF)}
+.edu-cycle-modules{position:absolute;inset:0;padding:0;list-style:none}
+.edu-cycle-module{position:absolute;transform:translate(-50%,-50%);width:21%;max-width:134px;text-align:center;color:var(--color-text-primary,#23314D);word-break:keep-all;overflow-wrap:anywhere}
+.edu-cycle-module--01{left:50%;top:13.4375%}
+.edu-cycle-module--02{left:75.8536%;top:24.1464%}
+.edu-cycle-module--03{left:86.5625%;top:50%}
+.edu-cycle-module--04{left:75.8536%;top:75.8536%}
+.edu-cycle-module--05{left:50%;top:86.5625%}
+.edu-cycle-module--06{left:24.1464%;top:75.8536%}
+.edu-cycle-module--07{left:13.4375%;top:50%}
+.edu-cycle-module--08{left:24.1464%;top:24.1464%}
+.edu-cycle-module-mark{display:flex;align-items:center;justify-content:center;gap:6px;min-height:22px;margin-bottom:5px;font-family:var(--font-primary);font-size:14px;line-height:1;font-weight:600;color:var(--color-text-primary,#23314D)}
+.edu-cycle-module-mark svg{display:block;width:22px;height:22px;flex:none}
+.edu-cycle-module h4{font-family:var(--heading-font-family);font-weight:var(--ui-heading-weight,700);font-size:16px;line-height:1.2;letter-spacing:-.035em;color:var(--color-text-primary,#23314D)}
+.edu-cycle-module-group{font-family:var(--font-primary);font-size:14px;line-height:1.25;margin-top:5px!important;color:var(--color-text-primary,#23314D)}
+@media(max-width:68.75em){
+ .edu-cycle-panel{grid-template-columns:minmax(0,1fr);padding:var(--ui-space-lg,32px);gap:var(--ui-space-lg,32px)}
+ .edu-cycle-intro{max-width:42em}
+ .edu-cycle-intro h3>span{display:inline}
+ .edu-cycle-intro h3>span+span:before{content:' '}
+ .edu-cycle-title-accent{padding-inline:.12em}
+ .edu-cycle-description br{display:none}
+ .edu-cycle-choice-note{max-width:40em;padding-top:var(--ui-space-sm,16px);margin-top:var(--ui-space-md,24px)!important}
+}
+@media(max-width:45em){
+ .edu-cycle-panel{padding:var(--ui-space-md,24px)}
+ .edu-cycle-brand{margin-bottom:var(--ui-space-sm,16px)!important}
+ .edu-cycle-intro h3{font-size:clamp(28px,7vw,36px);line-height:1.3}
+ .edu-cycle-intro h3>span{display:block}
+ .edu-cycle-intro h3>span+span:before{content:none}
+ .edu-cycle-description{font-size:16px;line-height:1.8;margin-top:var(--ui-space-md,24px)!important}
+ .edu-cycle-choice-note{font-size:14px;line-height:1.8}
+ .edu-cycle-wheel{aspect-ratio:auto;max-width:none}
+ .edu-cycle-art{display:none}
+ .edu-cycle-hub{position:static;transform:none;width:100%;max-width:none;background:var(--color-brand,#2858F0);border-radius:var(--screen-radius,4px);padding:var(--ui-space-md,24px);margin-bottom:var(--ui-space-sm,16px)}
+ .edu-cycle-hub h4{font-size:24px;line-height:1.3}
+ .edu-cycle-hub-brand{font-size:14px}
+ .edu-cycle-modules{position:static;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+ .edu-cycle-module{position:static;transform:none;width:auto;max-width:none;background:var(--color-background,#FFF);border-radius:var(--screen-radius,4px);padding:16px 12px}
+ .edu-cycle-module h4{font-size:16px;line-height:1.3}
+ .edu-cycle-module-mark{margin-bottom:8px}
+ .edu-cycle-module-group{font-size:14px;line-height:1.4;margin-top:8px!important}
+}
+@media(max-width:23.75em){
+ .edu-cycle-panel{padding:var(--ui-space-sm,16px)}
+ .edu-cycle-modules{grid-template-columns:minmax(0,1fr)}
+ .edu-cycle-module{display:grid;grid-template-columns:36px minmax(0,1fr);column-gap:12px;row-gap:4px;text-align:left;padding:14px}
+ .edu-cycle-module-mark{grid-column:1;grid-row:1/3;flex-direction:column;gap:5px;align-self:center;margin:0}
+ .edu-cycle-module h4{grid-column:2}
+ .edu-cycle-module h4 br{display:none}
+ .edu-cycle-module-group{grid-column:2;margin:0!important}
+}

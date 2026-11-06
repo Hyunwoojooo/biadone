@@ -1,0 +1,7 @@
+/* Shared entrypoint. Template files own composition, not brand foundations. */
+@import "./fonts.css";
+@import "./tokens.css";
+@import "./screen-style.tokens.css";
+@import "./components.tokens.css";
+@import "./logo.css";
+@import "./components.css";

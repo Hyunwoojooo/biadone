@@ -1,0 +1,23 @@
+{
+  "schema_version": "1.0",
+  "kind": "blabee_resume_capsule",
+  "capsule_id": "capsule_fixture_001",
+  "project_id": "project_fixture_alpha",
+  "session_id": "session_fixture_alpha",
+  "source_turn_id": "turn_fixture_001",
+  "source_prompt_id": "prompt_fixture_001",
+  "episode_id": "episode_fixture_alpha",
+  "episode_root_prompt_id": "prompt_fixture_001",
+  "episode_baseline_checkpoint_id": "checkpoint_fixture_before_prompt_001",
+  "decision_boundary_id": "boundary_fixture_002",
+  "boundary_sequence": 2,
+  "reason": "selection_paused",
+  "summary": "The fictional review result is ready to be recorded.",
+  "resume_first": "Re-open the fictional review result before continuing.",
+  "saved_at": "2026-01-15T09:02:30Z",
+  "last_event_sequence": 24,
+  "rollback_policy": {
+    "enabled": false,
+    "disabled_reason": "rollback_not_enabled_in_build"
+  }
+}

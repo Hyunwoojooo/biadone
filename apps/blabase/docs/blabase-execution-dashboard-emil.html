@@ -1,0 +1,1875 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta
+      name="description"
+      content="blabase 실행 계획과 현재 진행 상황을 근거 기반으로 정리한 오프라인 대시보드"
+    />
+    <title>blabase · Execution Map · Emil Variant</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #0b0c0f;
+        --surface: #111318;
+        --surface-2: #161920;
+        --surface-3: #1b1f27;
+        --line: #292e38;
+        --line-strong: #3a414f;
+        --text: #f0eee9;
+        --muted: #9ba2ae;
+        --faint: #929aa7;
+        --green: #68d391;
+        --green-soft: rgba(104, 211, 145, 0.12);
+        --blue: #65a9ff;
+        --blue-soft: rgba(101, 169, 255, 0.12);
+        --violet: #ae8cff;
+        --violet-soft: rgba(174, 140, 255, 0.12);
+        --amber: #f3b95f;
+        --amber-soft: rgba(243, 185, 95, 0.12);
+        --rose: #ef7f91;
+        --rose-soft: rgba(239, 127, 145, 0.12);
+        --radius: 18px;
+        --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+        --ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);
+        --mono: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+        --sans: Inter, Pretendard, "Noto Sans KR", -apple-system, BlinkMacSystemFont,
+          "Segoe UI", sans-serif;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      html {
+        scroll-behavior: smooth;
+      }
+
+      body {
+        margin: 0;
+        min-width: 320px;
+        background:
+          linear-gradient(rgba(255, 255, 255, 0.018) 1px, transparent 1px),
+          linear-gradient(90deg, rgba(255, 255, 255, 0.018) 1px, transparent 1px),
+          var(--bg);
+        background-size: 44px 44px;
+        color: var(--text);
+        font-family: var(--sans);
+        font-size: 15px;
+        line-height: 1.6;
+      }
+
+      body::before {
+        position: fixed;
+        inset: 0 0 auto;
+        height: 360px;
+        background:
+          radial-gradient(circle at 16% 0%, rgba(101, 169, 255, 0.1), transparent 48%),
+          radial-gradient(circle at 84% 0%, rgba(174, 140, 255, 0.08), transparent 43%);
+        content: "";
+        pointer-events: none;
+        z-index: -1;
+      }
+
+      a {
+        color: var(--blue);
+        text-decoration: none;
+      }
+
+      a:hover {
+        text-decoration: underline;
+        text-underline-offset: 3px;
+      }
+
+      button,
+      summary,
+      a {
+        -webkit-tap-highlight-color: transparent;
+      }
+
+      button:focus-visible,
+      summary:focus-visible,
+      a:focus-visible {
+        outline: 2px solid var(--blue);
+        outline-offset: 3px;
+      }
+
+      .shell {
+        width: min(1420px, calc(100% - 40px));
+        margin: 0 auto;
+      }
+
+      .topbar {
+        position: sticky;
+        top: 0;
+        z-index: 20;
+        border-bottom: 1px solid rgba(58, 65, 79, 0.75);
+        background: rgba(11, 12, 15, 0.86);
+        backdrop-filter: blur(18px);
+      }
+
+      .topbar-inner {
+        display: flex;
+        min-height: 64px;
+        align-items: center;
+        justify-content: space-between;
+        gap: 20px;
+      }
+
+      .topbar::after {
+        position: absolute;
+        right: 0;
+        bottom: -1px;
+        left: 0;
+        height: 1px;
+        background: linear-gradient(90deg, transparent, rgba(104, 211, 145, 0.3), transparent);
+        content: "";
+        pointer-events: none;
+      }
+
+      .brand {
+        display: flex;
+        align-items: center;
+        gap: 11px;
+        font-size: 14px;
+        font-weight: 700;
+        letter-spacing: -0.01em;
+      }
+
+      .brand-mark {
+        display: grid;
+        width: 27px;
+        height: 27px;
+        place-items: center;
+        border: 1px solid #4a5261;
+        border-radius: 8px;
+        background: #171a20;
+        box-shadow: inset 0 0 0 4px #0f1115;
+      }
+
+      .brand-mark::after {
+        width: 7px;
+        height: 7px;
+        border-radius: 50%;
+        background: var(--green);
+        box-shadow: 0 0 16px rgba(104, 211, 145, 0.7);
+        content: "";
+      }
+
+      .snapshot {
+        color: var(--muted);
+        font-family: var(--mono);
+        font-size: 11px;
+        font-weight: 500;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+
+      .top-actions,
+      .filters {
+        display: flex;
+        align-items: center;
+        gap: 3px;
+        padding: 3px;
+        border: 1px solid var(--line-strong);
+        border-radius: 999px;
+        background: rgba(17, 19, 24, 0.88);
+      }
+
+      .button,
+      .filter-button {
+        min-height: 36px;
+        border: 1px solid var(--line-strong);
+        border-radius: 999px;
+        background: #14171d;
+        color: var(--muted);
+        cursor: pointer;
+        font: 600 12px/1 var(--sans);
+        transform: scale(1);
+        transition:
+          transform 140ms var(--ease-out),
+          border-color 160ms ease,
+          background-color 160ms ease,
+          color 160ms ease;
+        will-change: transform;
+      }
+
+      .button {
+        padding: 0 14px;
+      }
+
+      .filter-button {
+        min-height: 30px;
+        border-color: transparent;
+        padding: 0 13px;
+        background: transparent;
+      }
+
+      .filter-button[aria-pressed="true"] {
+        border-color: rgba(240, 238, 233, 0.9);
+        background: var(--text);
+        color: #111318;
+        box-shadow: 0 1px 0 rgba(255, 255, 255, 0.18) inset, 0 4px 14px rgba(0, 0, 0, 0.24);
+      }
+
+      .button[data-pressing="true"],
+      .filter-button[data-pressing="true"],
+      summary[data-pressing="true"],
+      .source-list a[data-pressing="true"] {
+        transform: scale(0.97);
+      }
+
+      main {
+        padding: 72px 0 96px;
+      }
+
+      .hero {
+        display: grid;
+        grid-template-columns: minmax(0, 1.35fr) minmax(320px, 0.65fr);
+        gap: 34px;
+        align-items: end;
+        padding-bottom: 54px;
+      }
+
+      .eyebrow,
+      .section-kicker,
+      .card-kicker {
+        color: var(--green);
+        font-family: var(--mono);
+        font-size: 11px;
+        font-weight: 700;
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+      }
+
+      h1,
+      h2,
+      h3,
+      p {
+        margin-top: 0;
+      }
+
+      h1 {
+        max-width: 940px;
+        margin: 16px 0 24px;
+        font-size: clamp(48px, 7vw, 94px);
+        font-weight: 690;
+        letter-spacing: -0.065em;
+        line-height: 0.94;
+      }
+
+      .hero-lede {
+        max-width: 770px;
+        margin-bottom: 0;
+        color: #c3c7cf;
+        font-size: clamp(17px, 2vw, 21px);
+        letter-spacing: -0.02em;
+        line-height: 1.55;
+      }
+
+      .hero > div:first-child,
+      .hero-note,
+      .summary-card {
+        animation: emil-enter 360ms var(--ease-out) both;
+      }
+
+      .hero-note {
+        animation-delay: 40ms;
+      }
+
+      .summary-card:nth-child(1) {
+        animation-delay: 80ms;
+      }
+
+      .summary-card:nth-child(2) {
+        animation-delay: 120ms;
+      }
+
+      .summary-card:nth-child(3) {
+        animation-delay: 160ms;
+      }
+
+      @keyframes emil-enter {
+        from {
+          opacity: 0;
+          transform: translateY(8px);
+        }
+        to {
+          opacity: 1;
+          transform: translateY(0);
+        }
+      }
+
+      .hero-note {
+        padding: 22px;
+        border: 1px solid var(--line-strong);
+        border-radius: var(--radius);
+        background: rgba(20, 23, 29, 0.82);
+      }
+
+      .hero-note strong {
+        display: block;
+        margin-bottom: 8px;
+        font-size: 14px;
+      }
+
+      .hero-note p {
+        margin-bottom: 0;
+        color: var(--muted);
+        font-size: 13px;
+      }
+
+      .snapshot-meta {
+        margin-top: 14px;
+        padding-top: 12px;
+        border-top: 1px solid var(--line);
+        color: var(--faint);
+        font-family: var(--mono);
+        font-size: 9px;
+        letter-spacing: 0.05em;
+        text-transform: uppercase;
+      }
+
+      .legend {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin-top: 18px;
+      }
+
+      .status {
+        display: inline-flex;
+        min-height: 25px;
+        align-items: center;
+        gap: 7px;
+        padding: 0 9px;
+        border: 1px solid transparent;
+        border-radius: 999px;
+        font-family: var(--mono);
+        font-size: 10px;
+        font-weight: 700;
+        letter-spacing: 0.05em;
+        line-height: 1;
+        text-transform: uppercase;
+        white-space: nowrap;
+      }
+
+      .status::before {
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
+        background: currentColor;
+        content: "";
+      }
+
+      .verified {
+        border-color: rgba(104, 211, 145, 0.25);
+        background: var(--green-soft);
+        color: var(--green);
+      }
+
+      .local-beta {
+        border-color: rgba(101, 169, 255, 0.25);
+        background: var(--blue-soft);
+        color: var(--blue);
+      }
+
+      .shadow {
+        border-color: rgba(174, 140, 255, 0.25);
+        background: var(--violet-soft);
+        color: var(--violet);
+      }
+
+      .partial {
+        border-color: rgba(243, 185, 95, 0.25);
+        background: var(--amber-soft);
+        color: var(--amber);
+      }
+
+      .planned {
+        border-color: #39404c;
+        background: rgba(109, 117, 130, 0.1);
+        color: #a9b0ba;
+      }
+
+      .human-gate {
+        border-color: rgba(239, 127, 145, 0.25);
+        background: var(--rose-soft);
+        color: var(--rose);
+      }
+
+      .summary-grid {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 14px;
+        margin-bottom: 72px;
+      }
+
+      .summary-card {
+        position: relative;
+        min-height: 240px;
+        overflow: hidden;
+        padding: 24px;
+        border: 1px solid var(--line);
+        border-radius: var(--radius);
+        background: linear-gradient(145deg, rgba(26, 30, 38, 0.97), rgba(17, 19, 24, 0.97));
+        transition: border-color 180ms ease, background-color 180ms ease;
+      }
+
+      .summary-card::after {
+        position: absolute;
+        right: -45px;
+        bottom: -55px;
+        width: 170px;
+        height: 170px;
+        border: 1px solid rgba(255, 255, 255, 0.045);
+        border-radius: 50%;
+        content: "";
+      }
+
+      .summary-index {
+        float: right;
+        color: #8a93a0;
+        font-family: var(--mono);
+        font-size: 12px;
+      }
+
+      .summary-card h2 {
+        margin: 28px 0 12px;
+        font-size: 26px;
+        letter-spacing: -0.04em;
+        line-height: 1.12;
+      }
+
+      .summary-card p {
+        max-width: 90%;
+        margin-bottom: 18px;
+        color: var(--muted);
+        font-size: 13px;
+      }
+
+      .summary-next {
+        position: absolute;
+        right: 24px;
+        bottom: 22px;
+        left: 24px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        color: #c8ccd3;
+        font-family: var(--mono);
+        font-size: 10px;
+      }
+
+      .summary-next span:first-child {
+        color: var(--faint);
+        text-transform: uppercase;
+      }
+
+      .section {
+        margin-top: 84px;
+        scroll-margin-top: 90px;
+      }
+
+      .section-head {
+        display: grid;
+        grid-template-columns: minmax(0, 0.8fr) minmax(320px, 1.2fr);
+        gap: 40px;
+        align-items: end;
+        margin-bottom: 28px;
+        padding-bottom: 18px;
+        border-bottom: 1px solid var(--line-strong);
+      }
+
+      .section-head h2 {
+        margin: 9px 0 0;
+        font-size: clamp(30px, 4vw, 52px);
+        letter-spacing: -0.055em;
+        line-height: 1;
+      }
+
+      .section-head p {
+        max-width: 680px;
+        justify-self: end;
+        margin-bottom: 0;
+        color: var(--muted);
+        font-size: 14px;
+      }
+
+      .pipeline {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+        overflow: hidden;
+        border: 1px solid var(--line-strong);
+        border-radius: var(--radius);
+        background: var(--surface);
+      }
+
+      .pipeline-step {
+        position: relative;
+        min-height: 132px;
+        padding: 20px 14px 18px;
+        border-right: 1px solid var(--line);
+      }
+
+      .pipeline-step:last-child {
+        border-right: 0;
+      }
+
+      .pipeline-step::after {
+        position: absolute;
+        right: -5px;
+        top: 50%;
+        z-index: 1;
+        width: 8px;
+        height: 8px;
+        border-top: 1px solid var(--faint);
+        border-right: 1px solid var(--faint);
+        background: var(--surface);
+        content: "";
+        transform: rotate(45deg);
+      }
+
+      .pipeline-step:last-child::after {
+        display: none;
+      }
+
+      .step-no {
+        color: var(--faint);
+        font-family: var(--mono);
+        font-size: 9px;
+      }
+
+      .pipeline-step strong {
+        display: block;
+        margin: 18px 0 7px;
+        font-size: 13px;
+      }
+
+      .pipeline-step small {
+        display: block;
+        color: var(--muted);
+        font-size: 10px;
+        line-height: 1.45;
+      }
+
+      .pipeline-step.is-verified {
+        box-shadow: inset 0 3px var(--green);
+      }
+
+      .pipeline-step.is-partial {
+        box-shadow: inset 0 3px var(--amber);
+      }
+
+      .pipeline-step.is-local {
+        box-shadow: inset 0 3px var(--blue);
+      }
+
+      .pipeline-step.is-gated {
+        box-shadow: inset 0 3px var(--rose);
+      }
+
+      .track {
+        margin-top: 22px;
+        overflow: hidden;
+        border: 1px solid var(--line-strong);
+        border-radius: var(--radius);
+        background: rgba(17, 19, 24, 0.94);
+      }
+
+      .track-header {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        gap: 20px;
+        padding: 25px;
+        border-bottom: 1px solid var(--line);
+        background: #14171c;
+      }
+
+      .track-header h3 {
+        margin: 6px 0 5px;
+        font-size: 24px;
+        letter-spacing: -0.035em;
+      }
+
+      .track-header p {
+        margin-bottom: 0;
+        color: var(--muted);
+        font-size: 12px;
+      }
+
+      .track-frontier {
+        align-self: center;
+        text-align: right;
+      }
+
+      .track-frontier span {
+        display: block;
+        color: var(--faint);
+        font-family: var(--mono);
+        font-size: 9px;
+        letter-spacing: 0.1em;
+        text-transform: uppercase;
+      }
+
+      .track-frontier strong {
+        color: var(--amber);
+        font-family: var(--mono);
+        font-size: 13px;
+      }
+
+      .milestones {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+      }
+
+      .milestone {
+        min-height: 196px;
+        padding: 21px;
+        border-right: 1px solid var(--line);
+        border-bottom: 1px solid var(--line);
+      }
+
+      .milestone:nth-child(4n) {
+        border-right: 0;
+      }
+
+      .milestone:nth-last-child(-n + 4) {
+        border-bottom: 0;
+      }
+
+      .milestone-top {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+      }
+
+      .milestone-id,
+      .task-id,
+      code {
+        font-family: var(--mono);
+      }
+
+      .milestone-id {
+        color: var(--faint);
+        font-size: 10px;
+        letter-spacing: 0.08em;
+      }
+
+      .milestone h4 {
+        margin: 19px 0 9px;
+        font-size: 15px;
+        letter-spacing: -0.02em;
+      }
+
+      .milestone p {
+        margin-bottom: 11px;
+        color: var(--muted);
+        font-size: 11px;
+        line-height: 1.55;
+      }
+
+      .milestone .next-line {
+        padding-top: 10px;
+        border-top: 1px dashed #303641;
+        color: #b5bac3;
+        font-size: 10px;
+      }
+
+      .semantic-callout {
+        display: grid;
+        grid-template-columns: 0.75fr 1.25fr;
+        gap: 0;
+        margin-top: 22px;
+        overflow: hidden;
+        border: 1px solid rgba(174, 140, 255, 0.3);
+        border-radius: var(--radius);
+        background: var(--violet-soft);
+      }
+
+      .semantic-callout > div {
+        padding: 25px;
+      }
+
+      .semantic-callout > div + div {
+        border-left: 1px solid rgba(174, 140, 255, 0.2);
+      }
+
+      .semantic-callout h3 {
+        margin: 8px 0 12px;
+        font-size: 25px;
+        letter-spacing: -0.04em;
+      }
+
+      .semantic-callout p {
+        margin-bottom: 0;
+        color: #c7bedc;
+        font-size: 12px;
+      }
+
+      .semantic-path {
+        display: grid;
+        grid-template-columns: repeat(5, 1fr);
+        gap: 8px;
+        align-items: stretch;
+      }
+
+      .semantic-path span {
+        display: flex;
+        min-height: 82px;
+        align-items: center;
+        justify-content: center;
+        padding: 10px;
+        border: 1px solid rgba(174, 140, 255, 0.22);
+        border-radius: 10px;
+        background: rgba(11, 12, 15, 0.38);
+        color: #d9d2e9;
+        font-family: var(--mono);
+        font-size: 9px;
+        line-height: 1.45;
+        text-align: center;
+      }
+
+      .board {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 15px;
+      }
+
+      .board-column {
+        overflow: hidden;
+        border: 1px solid var(--line-strong);
+        border-radius: var(--radius);
+        background: rgba(17, 19, 24, 0.94);
+      }
+
+      .board-column-header {
+        display: flex;
+        min-height: 71px;
+        align-items: center;
+        justify-content: space-between;
+        gap: 16px;
+        padding: 18px 20px;
+        border-bottom: 1px solid var(--line);
+      }
+
+      .board-column-header h3 {
+        margin: 0;
+        font-size: 20px;
+        letter-spacing: -0.035em;
+      }
+
+      .board-column-header span {
+        color: var(--faint);
+        font-family: var(--mono);
+        font-size: 9px;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+
+      .task {
+        padding: 20px;
+        border-bottom: 1px solid var(--line);
+        transition: background-color 160ms ease;
+      }
+
+      .task:last-child {
+        border-bottom: 0;
+      }
+
+      .task-id {
+        color: var(--blue);
+        font-size: 9px;
+        font-weight: 700;
+        letter-spacing: 0.06em;
+      }
+
+      .task h4 {
+        margin: 9px 0 8px;
+        font-size: 14px;
+        line-height: 1.35;
+      }
+
+      .task p {
+        margin-bottom: 12px;
+        color: var(--muted);
+        font-size: 11px;
+        line-height: 1.55;
+      }
+
+      .task-meta {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+      }
+
+      .tag {
+        padding: 4px 7px;
+        border: 1px solid #343b47;
+        border-radius: 6px;
+        color: #929aa6;
+        font-family: var(--mono);
+        font-size: 8px;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+      }
+
+      .capability-grid {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        overflow: hidden;
+        border: 1px solid var(--line-strong);
+        border-radius: var(--radius);
+        background: var(--surface);
+      }
+
+      .capability {
+        min-height: 236px;
+        padding: 23px;
+        border-right: 1px solid var(--line);
+      }
+
+      .capability:last-child {
+        border-right: 0;
+      }
+
+      .source-icon {
+        display: grid;
+        width: 38px;
+        height: 38px;
+        place-items: center;
+        border: 1px solid var(--line-strong);
+        border-radius: 11px;
+        background: var(--surface-3);
+        color: var(--text);
+        font-family: var(--mono);
+        font-size: 12px;
+      }
+
+      .capability h3 {
+        margin: 20px 0 4px;
+        font-size: 19px;
+      }
+
+      .capability .scope {
+        color: var(--blue);
+        font-family: var(--mono);
+        font-size: 9px;
+        letter-spacing: 0.05em;
+        text-transform: uppercase;
+      }
+
+      .capability p {
+        margin: 15px 0 0;
+        color: var(--muted);
+        font-size: 11px;
+      }
+
+      .evidence-grid {
+        display: grid;
+        grid-template-columns: 0.9fr 1.1fr;
+        gap: 15px;
+      }
+
+      .panel {
+        padding: 24px;
+        border: 1px solid var(--line-strong);
+        border-radius: var(--radius);
+        background: rgba(17, 19, 24, 0.94);
+      }
+
+      .panel h3 {
+        margin: 7px 0 18px;
+        font-size: 22px;
+        letter-spacing: -0.035em;
+      }
+
+      .check-row {
+        display: grid;
+        grid-template-columns: auto 1fr auto;
+        gap: 12px;
+        align-items: center;
+        padding: 13px 0;
+        border-bottom: 1px solid var(--line);
+      }
+
+      .check-row:last-child {
+        border-bottom: 0;
+      }
+
+      .check-symbol {
+        display: grid;
+        width: 24px;
+        height: 24px;
+        place-items: center;
+        border-radius: 50%;
+        background: var(--green-soft);
+        color: var(--green);
+        font-size: 12px;
+      }
+
+      .check-symbol.pending-symbol {
+        background: var(--amber-soft);
+        color: var(--amber);
+      }
+
+      .check-row strong {
+        display: block;
+        font-size: 12px;
+      }
+
+      .check-row small {
+        display: block;
+        color: var(--faint);
+        font-size: 9px;
+      }
+
+      .check-value {
+        color: #d8dbe0;
+        font-family: var(--mono);
+        font-size: 10px;
+        text-align: right;
+      }
+
+      .risk-list,
+      .source-list {
+        display: grid;
+        gap: 9px;
+        margin: 0;
+        padding: 0;
+        list-style: none;
+      }
+
+      .risk-list li,
+      .source-list a {
+        display: grid;
+        grid-template-columns: auto 1fr;
+        gap: 11px;
+        align-items: start;
+        padding: 11px 12px;
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        background: var(--surface-2);
+        color: #b9bec7;
+        font-size: 11px;
+        transform: scale(1);
+        transition:
+          transform 140ms var(--ease-out),
+          border-color 160ms ease,
+          background-color 160ms ease,
+          color 160ms ease;
+      }
+
+      .risk-list li::before {
+        color: var(--amber);
+        content: "△";
+        font-family: var(--mono);
+      }
+
+      .source-list a::before {
+        color: var(--blue);
+        content: "↗";
+        font-family: var(--mono);
+      }
+
+      @media (hover: hover) and (pointer: fine) {
+        .button:hover,
+        .filter-button:hover:not([aria-pressed="true"]) {
+          border-color: #626c7d;
+          background-color: #20242c;
+          color: var(--text);
+        }
+
+        .summary-card:hover {
+          border-color: #414956;
+        }
+
+        .task:hover {
+          background-color: rgba(255, 255, 255, 0.018);
+        }
+
+        .source-list a:hover {
+          border-color: #596373;
+          background-color: #1b1f26;
+          color: var(--text);
+          text-decoration: none;
+        }
+      }
+
+      details {
+        margin-top: 15px;
+        border: 1px solid var(--line-strong);
+        border-radius: var(--radius);
+        background: rgba(17, 19, 24, 0.94);
+      }
+
+      summary {
+        display: flex;
+        min-height: 62px;
+        align-items: center;
+        justify-content: space-between;
+        padding: 0 20px;
+        color: #cdd1d7;
+        cursor: pointer;
+        font-size: 12px;
+        font-weight: 650;
+        list-style: none;
+        transform: scale(1);
+        transition: transform 140ms var(--ease-out), color 160ms ease;
+      }
+
+      summary::-webkit-details-marker {
+        display: none;
+      }
+
+      summary::after {
+        color: var(--faint);
+        content: "+";
+        font-family: var(--mono);
+        font-size: 18px;
+      }
+
+      details[open] summary::after {
+        content: "−";
+      }
+
+      .details-content {
+        padding: 0 20px 20px;
+        color: var(--muted);
+        font-size: 11px;
+      }
+
+      .details-content p:last-child {
+        margin-bottom: 0;
+      }
+
+      .footer {
+        display: grid;
+        grid-template-columns: 1fr auto;
+        gap: 24px;
+        align-items: end;
+        margin-top: 86px;
+        padding: 28px 0 12px;
+        border-top: 1px solid var(--line-strong);
+      }
+
+      .footer h2 {
+        margin: 8px 0 9px;
+        font-size: 28px;
+        letter-spacing: -0.045em;
+      }
+
+      .footer p {
+        max-width: 780px;
+        margin-bottom: 0;
+        color: var(--muted);
+        font-size: 11px;
+      }
+
+      .footer-stamp {
+        color: var(--faint);
+        font-family: var(--mono);
+        font-size: 9px;
+        letter-spacing: 0.08em;
+        text-align: right;
+        text-transform: uppercase;
+      }
+
+      [hidden] {
+        display: none !important;
+      }
+
+      body[data-active-filter]:not([data-active-filter="all"]) .summary-grid {
+        grid-template-columns: minmax(0, 1fr);
+      }
+
+      body[data-active-filter]:not([data-active-filter="all"]) .summary-card {
+        max-width: 760px;
+      }
+
+      @media (max-width: 1100px) {
+        .hero {
+          grid-template-columns: 1fr;
+        }
+
+        .hero-note {
+          max-width: 720px;
+        }
+
+        .pipeline {
+          grid-template-columns: repeat(4, 1fr);
+        }
+
+        .pipeline-step:nth-child(4) {
+          border-right: 0;
+        }
+
+        .pipeline-step:nth-child(-n + 4) {
+          border-bottom: 1px solid var(--line);
+        }
+
+        .pipeline-step:nth-child(4)::after {
+          display: none;
+        }
+
+        .milestones {
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+
+        .milestone:nth-child(2n) {
+          border-right: 0;
+        }
+
+        .milestone:nth-child(4n + 1),
+        .milestone:nth-child(4n + 2) {
+          border-bottom: 1px solid var(--line);
+        }
+
+        .semantic-callout,
+        .evidence-grid {
+          grid-template-columns: 1fr;
+        }
+
+        .semantic-callout > div + div {
+          border-top: 1px solid rgba(174, 140, 255, 0.2);
+          border-left: 0;
+        }
+      }
+
+      @media (max-width: 820px) {
+        .shell {
+          width: min(100% - 24px, 720px);
+        }
+
+        .topbar-inner {
+          min-height: 58px;
+        }
+
+        .snapshot,
+        .print-button {
+          display: none;
+        }
+
+        main {
+          padding-top: 48px;
+        }
+
+        .hero {
+          padding-bottom: 38px;
+        }
+
+        h1 {
+          font-size: clamp(46px, 15vw, 72px);
+        }
+
+        .summary-grid,
+        .board,
+        .capability-grid {
+          grid-template-columns: 1fr;
+        }
+
+        .summary-card {
+          min-height: 214px;
+        }
+
+        .section {
+          margin-top: 64px;
+        }
+
+        .section-head {
+          grid-template-columns: 1fr;
+          gap: 17px;
+        }
+
+        .section-head p {
+          justify-self: start;
+        }
+
+        .capability {
+          min-height: 0;
+          border-right: 0;
+          border-bottom: 1px solid var(--line);
+        }
+
+        .capability:last-child {
+          border-bottom: 0;
+        }
+
+        .semantic-path {
+          grid-template-columns: 1fr;
+        }
+
+        .semantic-path span {
+          min-height: 48px;
+        }
+
+        .footer {
+          grid-template-columns: 1fr;
+        }
+
+        .footer-stamp {
+          text-align: left;
+        }
+      }
+
+      @media (max-width: 560px) {
+        .brand .snapshot {
+          display: none;
+        }
+
+        .filters {
+          max-width: 58vw;
+          overflow-x: auto;
+          scrollbar-width: none;
+        }
+
+        .filters::-webkit-scrollbar {
+          display: none;
+        }
+
+        .filter-button {
+          flex: 0 0 auto;
+        }
+
+        .pipeline,
+        .milestones {
+          grid-template-columns: 1fr;
+        }
+
+        .pipeline-step,
+        .milestone {
+          min-height: 0;
+          border-right: 0;
+          border-bottom: 1px solid var(--line) !important;
+        }
+
+        .pipeline-step:last-child,
+        .milestone:last-child {
+          border-bottom: 0 !important;
+        }
+
+        .pipeline-step::after {
+          display: none;
+        }
+
+        .track-header {
+          grid-template-columns: 1fr;
+        }
+
+        .track-frontier {
+          text-align: left;
+        }
+
+        .check-row {
+          grid-template-columns: auto 1fr;
+        }
+
+        .check-value {
+          grid-column: 2;
+          text-align: left;
+        }
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        *,
+        *::before,
+        *::after {
+          scroll-behavior: auto !important;
+          transition-duration: 0.01ms !important;
+        }
+
+        .hero > div:first-child,
+        .hero-note,
+        .summary-card {
+          animation: none !important;
+          transform: none !important;
+        }
+      }
+
+      @media print {
+        :root {
+          color-scheme: light;
+          --bg: #ffffff;
+          --surface: #ffffff;
+          --surface-2: #f7f7f7;
+          --surface-3: #f1f1f1;
+          --line: #dedede;
+          --line-strong: #b9b9b9;
+          --text: #111111;
+          --muted: #4b4b4b;
+          --faint: #717171;
+        }
+
+        body {
+          background: #fff;
+          font-size: 11px;
+        }
+
+        body::before,
+        .topbar,
+        .print-button {
+          display: none;
+        }
+
+        main {
+          padding: 24px 0;
+        }
+
+        .shell {
+          width: 100%;
+        }
+
+        .hero,
+        .summary-grid,
+        .section,
+        .track,
+        .board-column,
+        .panel,
+        .capability-grid,
+        details {
+          break-inside: avoid;
+        }
+
+        .summary-card,
+        .track,
+        .board-column,
+        .panel,
+        .capability-grid,
+        details,
+        .hero-note {
+          background: #fff;
+          box-shadow: none;
+        }
+
+        .section {
+          margin-top: 48px;
+        }
+
+        a {
+          color: #245ea8;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="shell topbar-inner">
+        <div class="brand">
+          <span class="brand-mark" aria-hidden="true"></span>
+          <span>blabase</span>
+          <span class="snapshot">execution map / B · Emil / 2026.08.12</span>
+        </div>
+        <div class="top-actions">
+          <nav class="filters" aria-label="트랙 필터">
+            <button class="filter-button" type="button" data-filter="all" aria-pressed="true">전체</button>
+            <button class="filter-button" type="button" data-filter="conversation" aria-pressed="false">Core</button>
+            <button class="filter-button" type="button" data-filter="attention" aria-pressed="false">Attention</button>
+            <button class="filter-button" type="button" data-filter="release" aria-pressed="false">Release</button>
+          </nav>
+          <button class="button print-button" type="button" data-print>인쇄</button>
+        </div>
+      </div>
+    </header>
+
+    <main class="shell">
+      <section class="hero" aria-labelledby="page-title">
+        <div>
+          <div class="eyebrow">Evidence-backed execution dashboard</div>
+          <h1 id="page-title">Build what<br />the evidence can hold.</h1>
+          <p class="hero-lede">
+            blabase의 대화 구조화 엔진, 작업 인텔리전스, 출시 준비도를 하나의 지도에 담았습니다.
+            구현량과 출시 준비도를 분리하고, 지금 실제로 검증된 범위와 다음 게이트를 함께 봅니다.
+          </p>
+        </div>
+        <aside class="hero-note" aria-label="스냅샷 해석 안내">
+          <strong>이 문서는 실시간 텔레메트리가 아닙니다.</strong>
+          <p>
+            2026-08-11 저장소의 코드·테스트·계획 문서를 대조한 정적 스냅샷입니다. “완료”는 범위를
+            붙여 표시하며, 합성 테스트 통과를 제품 품질이나 외부 출시 승인으로 해석하지 않습니다.
+          </p>
+          <div class="snapshot-meta">B variant · emil-design-eng · same content baseline · base c999dc4e</div>
+          <div class="legend" aria-label="상태 범례">
+            <span class="status verified">verified</span>
+            <span class="status local-beta">local beta</span>
+            <span class="status shadow">shadow</span>
+            <span class="status partial">partial</span>
+            <span class="status planned">planned</span>
+            <span class="status human-gate">human gate</span>
+          </div>
+        </aside>
+      </section>
+
+      <section class="summary-grid" aria-label="현재 최전선 요약">
+        <article class="summary-card" data-track="conversation">
+          <span class="summary-index" aria-hidden="true">01 / CORE</span>
+          <div class="card-kicker">Conversation foundation</div>
+          <h2>Evidence까지 도달.<br />통합 결과는 아직.</h2>
+          <p>
+            공유 대화 복원, Rule 구조화, LLM Shadow 분할, LLM Evidence 검증이 동작합니다. Rule과
+            LLM을 하나의 신뢰 가능한 결과로 승격하는 Sprint 5C가 현재 경계입니다.
+          </p>
+          <div class="summary-next"><span>frontier</span><strong>Sprint 5C · Conflict Resolver</strong></div>
+        </article>
+        <article class="summary-card" data-track="attention">
+          <span class="summary-index" aria-hidden="true">02 / ATTN</span>
+          <div class="card-kicker">Work intelligence</div>
+          <h2>Phase 4C<br />로컬 베타.</h2>
+          <p>
+            네 소스의 관찰·권위·eligibility·Active Attention과 macOS 런처가 로컬 베타까지
+            구현됐습니다. Current Focus는 선택에 영향이 없는 Shadow 상태입니다.
+          </p>
+          <div class="summary-next"><span>frontier</span><strong>Current Focus · Shadow only</strong></div>
+        </article>
+        <article class="summary-card" data-track="release">
+          <span class="summary-index" aria-hidden="true">03 / GATE</span>
+          <div class="card-kicker">Release readiness</div>
+          <h2>코드는 앞서 있고,<br />승인은 남아 있다.</h2>
+          <p>
+            Semantic Core v1·cross-source release용 사람 검토 Golden/locked holdout, 운영 scheduler/lease, Swift/XCUITest, Developer ID와
+            notarization이 외부 베타 전 필수 게이트입니다.
+          </p>
+          <div class="summary-next"><span>frontier</span><strong>Human review · Release decision</strong></div>
+        </article>
+      </section>
+
+      <section class="section" id="system-map">
+        <header class="section-head">
+          <div>
+            <div class="section-kicker">01 · System map</div>
+            <h2>하나의 제품,<br />서로 다른 성숙도.</h2>
+          </div>
+          <p>
+            현재 Conversation MVP의 12-Type 의미 모델, 목표 계약인 Semantic Core v1의 7-Type,
+            그리고 별도 Observation + Action Layer인 Attention을 같은 완료율로 묶지 않습니다.
+          </p>
+        </header>
+
+        <div class="pipeline" aria-label="blabase 전체 가치 흐름">
+          <div class="pipeline-step is-verified" data-track="conversation">
+            <span class="step-no">01</span><strong>Capture</strong><small>ChatGPT 공유 URL 입력·검증</small>
+          </div>
+          <div class="pipeline-step is-verified" data-track="conversation">
+            <span class="step-no">02</span><strong>Restore</strong><small>React Flight 복원·정규화</small>
+          </div>
+          <div class="pipeline-step is-verified" data-track="conversation">
+            <span class="step-no">03</span><strong>Extract</strong><small>Rule + LLM Shadow</small>
+          </div>
+          <div class="pipeline-step is-verified" data-track="conversation">
+            <span class="step-no">04</span><strong>Verify</strong><small>LLM Evidence span·역할 검증</small>
+          </div>
+          <div class="pipeline-step is-partial" data-track="conversation">
+            <span class="step-no">05</span><strong>Resolve</strong><small>Rule ↔ LLM 통합 미완</small>
+          </div>
+          <div class="pipeline-step is-partial" data-track="conversation">
+            <span class="step-no">06</span><strong>Project</strong><small>Canonical Summary·Export 미완</small>
+          </div>
+          <div class="pipeline-step is-local" data-track="attention">
+            <span class="step-no">07</span><strong>Suggest</strong><small>Active Attention 로컬 베타</small>
+          </div>
+          <div class="pipeline-step is-gated" data-track="release">
+            <span class="step-no">08</span><strong>Release</strong><small>Golden·운영·배포 승인</small>
+          </div>
+        </div>
+      </section>
+
+      <section class="section" id="roadmap">
+        <header class="section-head">
+          <div>
+            <div class="section-kicker">02 · Roadmap lanes</div>
+            <h2>진행 상황을<br />트랙으로 읽기.</h2>
+          </div>
+          <p>
+            각 단계는 코드 존재 여부뿐 아니라 현재 런타임 연결, 검증 수준, 운영 경계를 함께 반영합니다.
+            Draft 계획과 현재 구현이 다른 경우에는 구현 현실을 우선했습니다.
+          </p>
+        </header>
+
+        <article class="track" data-track="conversation">
+          <header class="track-header">
+            <div>
+              <div class="card-kicker">Track A · Conversation Core</div>
+              <h3>공유 대화 → 근거 기반 구조</h3>
+              <p>현재 12-Type 런타임과 Sprint 0–9 초안 계획을 코드 기준으로 대조했습니다.</p>
+            </div>
+            <div class="track-frontier"><span>Current frontier</span><strong>S5C → S6</strong></div>
+          </header>
+          <div class="milestones">
+            <article class="milestone">
+              <div class="milestone-top"><span class="milestone-id">S0</span><span class="status verified">verified</span></div>
+              <h4>프로젝트 부트스트랩</h4><p>Next.js·TypeScript·Vitest와 URL 입력 화면이 실제 앱에 연결돼 있습니다.</p>
+              <div class="next-line">기본 개발 계약 충족</div>
+            </article>
+            <article class="milestone">
+              <div class="milestone-top"><span class="milestone-id">S1</span><span class="status partial">limited</span></div>
+              <h4>Share Adapter</h4><p>검증→fetch→decode→dereference→restore→normalize 경로가 구현됐습니다.</p>
+              <div class="next-line">fixture 1개 → 목표 5종 보강</div>
+            </article>
+            <article class="milestone">
+              <div class="milestone-top"><span class="milestone-id">S2</span><span class="status verified">session</span></div>
+              <h4>Viewer &amp; API</h4><p>메시지·결과 API와 Extraction Monitor가 동작하지만 세션 경계를 넘는 저장은 없습니다.</p>
+              <div class="next-line">영속·공유 URL은 후속</div>
+            </article>
+            <article class="milestone">
+              <div class="milestone-top"><span class="milestone-id">S3–4</span><span class="status partial">partial</span></div>
+              <h4>Job &amp; Canonical Segment</h4><p>POST는 동기 완료/실패 방식이며, 계획된 staged job과 canonical segmenter는 없습니다.</p>
+              <div class="next-line">LLM batching segment와 구분</div>
+            </article>
+            <article class="milestone">
+              <div class="milestone-top"><span class="milestone-id">S4.5</span><span class="status verified">substantial</span></div>
+              <h4>Rule Guardrails</h4><p>clean/context/internal 분리와 deterministic 구조·review diagnostics가 구현됐습니다.</p>
+              <div class="next-line">실데이터 품질은 별도 검증</div>
+            </article>
+            <article class="milestone">
+              <div class="milestone-top"><span class="milestone-id">S5A–5B</span><span class="status shadow">shadow</span></div>
+              <h4>LLM + Evidence</h4><p>세 provider, segment coverage, token/latency, verified/review/rejected 분리가 동작합니다.</p>
+              <div class="next-line">검증 대상은 LLM 후보</div>
+            </article>
+            <article class="milestone">
+              <div class="milestone-top"><span class="milestone-id">S5C–6</span><span class="status planned">next</span></div>
+              <h4>Conflict &amp; Hybrid Result</h4><p>비교 UI는 있지만 선택 결과와 이유를 기록하는 resolver·canonical hybrid builder는 없습니다.</p>
+              <div class="next-line">가장 중요한 semantic gap</div>
+            </article>
+            <article class="milestone">
+              <div class="milestone-top"><span class="milestone-id">S7–9</span><span class="status partial">alternative</span></div>
+              <h4>Structure · UI · Export</h4><p>Atlas/그래프/감사 Markdown은 있으나 계획된 canonical builders와 전체 Markdown/JSON export는 없습니다.</p>
+              <div class="next-line">UI 존재 ≠ 엔진 통합 완료</div>
+            </article>
+          </div>
+        </article>
+
+        <aside class="semantic-callout" data-track="conversation">
+          <div>
+            <div class="card-kicker">Target contract · 7-Type</div>
+            <h3>Semantic Core v1</h3>
+            <p>
+              현재 12-Type 모델을 즉시 교체하는 기능이 아니라 별도 7-Type 후보·검증·Public Summary를
+              병렬로 구축하는 Draft 목표 계약입니다. 기존 conversation Gold Core v0.1과 별도이며,
+              스키마 파일은 존재하지만 다섯 milestone은 완료로 간주하지 않습니다.
+            </p>
+          </div>
+          <div class="semantic-path" aria-label="Semantic Core v1 구현 우선순위">
+            <span>01<br />Contract approval</span><span>02<br />Human Golden</span><span>03<br />Extract + Verify</span><span>04<br />Public Summary</span><span>05<br />Feedback + Persistence</span>
+          </div>
+        </aside>
+
+        <article class="track" data-track="attention">
+          <header class="track-header">
+            <div>
+              <div class="card-kicker">Track B · Attention &amp; Work</div>
+              <h3>관찰된 작업 → 안전한 다음 행동</h3>
+              <p>연결된 최신 범위에서만 best-observed suggestion을 만들며 “가장 중요한 일”을 주장하지 않습니다.</p>
+            </div>
+            <div class="track-frontier"><span>Current frontier</span><strong>P4C local beta</strong></div>
+          </header>
+          <div class="milestones">
+            <article class="milestone">
+              <div class="milestone-top"><span class="milestone-id">P0–1</span><span class="status verified">verified</span></div>
+              <h4>Contract &amp; WorkSignal</h4><p>평가 계약, strict snapshot envelope, 네 source normalizer와 재현 가능한 signal이 있습니다.</p>
+              <div class="next-line">로컬 계약 범위 완료</div>
+            </article>
+            <article class="milestone">
+              <div class="milestone-top"><span class="milestone-id">P2</span><span class="status local-beta">local beta</span></div>
+              <h4>Sync &amp; Observability</h4><p>coordinator, retry, replay, managed Codex direct-fact timeline과 Work Cockpit 연결이 구현됐습니다.</p>
+              <div class="next-line">운영 scheduler/lease는 미완</div>
+            </article>
+            <article class="milestone">
+              <div class="milestone-top"><span class="milestone-id">P3</span><span class="status local-beta">local beta</span></div>
+              <h4>Identity &amp; Authority</h4><p>explicit binding, artifact lineage, field authority/conflict가 exact identity를 사용합니다.</p>
+              <div class="next-line">user-confirmed related_to 후속</div>
+            </article>
+            <article class="milestone">
+              <div class="milestone-top"><span class="milestone-id">P4–4C</span><span class="status local-beta">local beta</span></div>
+              <h4>Attention &amp; Launcher</h4><p>eligibility·lane·ranking·selection, Work Cockpit, AppKit launcher가 내부 dogfood 경계에 있습니다.</p>
+              <div class="next-line">외부 배포 게이트 별도</div>
+            </article>
+            <article class="milestone">
+              <div class="milestone-top"><span class="milestone-id">FOCUS</span><span class="status shadow">shadow</span></div>
+              <h4>Current Focus</h4><p>최근 의미 이벤트와 WorkStream을 재구성하지만 실제 Attention 선택 효과는 항상 none입니다.</p>
+              <div class="next-line">Phase 2는 사람 승인 필요</div>
+            </article>
+            <article class="milestone">
+              <div class="milestone-top"><span class="milestone-id">P5</span><span class="status partial">context only</span></div>
+              <h4>Calendar &amp; Notion</h4><p>컨텍스트 adapter는 구현됐고 free-block fit과 명시적 Notion task mapping은 남았습니다.</p>
+              <div class="next-line">직접 후보 소스 아님</div>
+            </article>
+            <article class="milestone">
+              <div class="milestone-top"><span class="milestone-id">P6–7</span><span class="status human-gate">human gate</span></div>
+              <h4>Evaluation &amp; Release</h4><p>합성 Dev Candidate는 있으나 human-reviewed Golden·locked holdout·release decision은 없습니다.</p>
+              <div class="next-line">구현보다 증거 등급 상승이 핵심</div>
+            </article>
+            <article class="milestone">
+              <div class="milestone-top"><span class="milestone-id">P8</span><span class="status planned">post release</span></div>
+              <h4>Personalization &amp; Action</h4><p>명시적 선호와 승인 기반의 제한적 개인화·action preparation은 첫 release 이후 범위입니다.</p>
+              <div class="next-line">별도 승인 전 비활성</div>
+            </article>
+          </div>
+        </article>
+      </section>
+
+      <section class="section" id="execution-board">
+        <header class="section-head">
+          <div>
+            <div class="section-kicker">03 · Execution board</div>
+            <h2>NOW → NEXT → GATE</h2>
+          </div>
+          <p>
+            기간 약속이 아니라 의존성 순서입니다. NOW에서 semantic trust와 평가 설계를 고정하고,
+            NEXT에서 완제품 흐름과 운영 기반을 닫은 뒤, GATE에서 사람과 배포 시스템이 승인합니다.
+          </p>
+        </header>
+
+        <div class="board">
+          <section class="board-column">
+            <header class="board-column-header"><h3>NOW</h3><span>Trust first</span></header>
+            <article class="task" data-track="conversation">
+              <div class="task-id">NOW-CONV-01</div><h4>Sprint 5C Conflict Resolver</h4>
+              <p>Rule/LLM 충돌의 입력·선택·이유를 기록하고 자동 해소 불가 항목은 Review Queue로 보냅니다.</p>
+              <div class="task-meta"><span class="tag">semantic</span><span class="tag">engine record</span></div>
+            </article>
+            <article class="task" data-track="conversation">
+              <div class="task-id">NOW-CONV-02</div><h4>대화 fixture 계약 보강</h4>
+              <p>영문·장문 planning·code·table/list의 개인정보 없는 fixture와 source drift 오류 계약을 추가합니다.</p>
+              <div class="task-meta"><span class="tag">source drift</span><span class="tag">privacy</span></div>
+            </article>
+            <article class="task" data-track="release">
+              <div class="task-id">NOW-REL-01</div><h4>Release evidence package</h4>
+              <p>reviewer·adjudication·lawful sourcing·holdout·non-Gold feedback 정책을 먼저 승인합니다.</p>
+              <div class="task-meta"><span class="tag">gold gap</span><span class="tag">human decision</span></div>
+            </article>
+            <article class="task" data-track="release">
+              <div class="task-id">NOW-OPS-01</div><h4>Launcher beta 경계 재검증</h4>
+              <p>Swift suite, packaging, 수동 focus/resume와 실패 복구를 기록하고 지원하지 않는 주장을 제거합니다.</p>
+              <div class="task-meta"><span class="tag">macOS</span><span class="tag">manual gate</span></div>
+            </article>
+          </section>
+
+          <section class="board-column">
+            <header class="board-column-header"><h3>NEXT</h3><span>Close the loop</span></header>
+            <article class="task" data-track="conversation">
+              <div class="task-id">NEXT-CONV-01</div><h4>Hybrid result · UI · Export</h4>
+              <p>검증된 항목만으로 canonical 구조를 만들고 UI·Markdown·JSON 결과를 동일하게 맞춥니다.</p>
+              <div class="task-meta"><span class="tag">depends: 5C</span><span class="tag">full flow</span></div>
+            </article>
+            <article class="task" data-track="conversation">
+              <div class="task-id">NEXT-CONV-02</div><h4>Durable analysis lifecycle</h4>
+              <p>process/isolate/browser 경계를 넘는 staged status, 보존·삭제 정책, 공유 가능한 결과 URL을 만듭니다.</p>
+              <div class="task-meta"><span class="tag">storage</span><span class="tag">retention</span></div>
+            </article>
+            <article class="task" data-track="attention">
+              <div class="task-id">NEXT-ATTN-01/02</div><h4>Calendar fit + Notion mapping</h4>
+              <p>Calendar는 중요도가 아닌 first-step 크기에만, Notion은 명시적으로 매핑한 task DB에만 사용합니다.</p>
+              <div class="task-meta"><span class="tag">authority</span><span class="tag">explicit mapping</span></div>
+            </article>
+            <article class="task" data-track="release">
+              <div class="task-id">NEXT-OPS-01</div><h4>Durable coordinator ownership</h4>
+              <p>재시작 가능한 단일 scheduler/lease와 takeover, 중복 collector 방지, multi-process 검증을 닫습니다.</p>
+              <div class="task-meta"><span class="tag">concurrency</span><span class="tag">operations</span></div>
+            </article>
+          </section>
+
+          <section class="board-column">
+            <header class="board-column-header"><h3>GATE</h3><span>Decision, not code</span></header>
+            <article class="task" data-track="release">
+              <div class="task-id">GATE-REL-01</div><h4>Semantic v1 / cross-source Golden + holdout</h4>
+              <p>독립 reviewer·adjudication, immutable version/hash, baseline·regression·holdout, privacy review를 완료합니다.</p>
+              <div class="task-meta"><span class="tag">40–60 cases</span><span class="tag">immutable</span></div>
+            </article>
+            <article class="task" data-track="attention">
+              <div class="task-id">GATE-ATTN-01</div><h4>Current Focus 활성화 결정</h4>
+              <p>같은 frozen input에서 candidate universe·eligibility 불변을 확인하고 feature flag와 rollback으로 승인합니다.</p>
+              <div class="task-meta"><span class="tag">human approval</span><span class="tag">rollback</span></div>
+            </article>
+            <article class="task" data-track="release">
+              <div class="task-id">GATE-REL-02</div><h4>External beta / rollback</h4>
+              <p>품질·운영·macOS 배포 게이트를 통과하거나 예외를 명시한 뒤 release/rollback을 결정합니다.</p>
+              <div class="task-meta"><span class="tag">release decision</span><span class="tag">notarization</span></div>
+            </article>
+            <article class="task" data-track="conversation">
+              <div class="task-id">GATE-CONV-01</div><h4>Conversation Full MVP 선언</h4>
+              <p>통합 결과·영속성·export·semantic baseline·Engine Change Record와 전체 검증을 묶어 통과합니다.</p>
+              <div class="task-meta"><span class="tag">end to end</span><span class="tag">build</span></div>
+            </article>
+          </section>
+        </div>
+      </section>
+
+      <section class="section" id="source-capabilities" data-track="attention">
+        <header class="section-head">
+          <div>
+            <div class="section-kicker">04 · Source capability</div>
+            <h2>연결됨과<br />판단 가능함은 다르다.</h2>
+          </div>
+          <p>
+            source마다 현재 허용된 의미가 다릅니다. 관찰 가능한 데이터를 바로 추천 후보로 승격하지 않는 것이
+            blabase의 중요한 안전 계약입니다.
+          </p>
+        </header>
+        <div class="capability-grid">
+          <article class="capability">
+            <div class="source-icon">GH</div><h3>GitHub</h3><div class="scope">Direct candidate capable</div>
+            <p>assigned work와 좁게 검증된 authored-PR actionability는 후보가 될 수 있습니다. native identity와 freshness가 필수입니다.</p>
+          </article>
+          <article class="capability">
+            <div class="source-icon">CX</div><h3>Managed Codex</h3><div class="scope">Bounded direct facts</div>
+            <p>직접 관찰된 failure와 설정된 completion follow-through만 후보가 됩니다. 일반 inventory·정상 실행은 overview입니다.</p>
+          </article>
+          <article class="capability">
+            <div class="source-icon">CA</div><h3>Calendar</h3><div class="scope">Schedule context only</div>
+            <p>event 자체는 중요한 task가 아닙니다. 후속 free-block 계산도 importance가 아닌 first-step sizing에만 사용합니다.</p>
+          </article>
+          <article class="capability">
+            <div class="source-icon">NO</div><h3>Notion</h3><div class="scope">Project context only</div>
+            <p>일반 page 수정은 task가 아닙니다. 명시적으로 선택한 DB/property mapping이 생기기 전까지 직접 후보가 아닙니다.</p>
+          </article>
+        </div>
+      </section>
+
+      <section class="section" id="evidence">
+        <header class="section-head">
+          <div>
+            <div class="section-kicker">05 · Evidence &amp; risk</div>
+            <h2>통과한 것과<br />아직 증명하지 않은 것.</h2>
+          </div>
+          <p>
+            현재 점검은 정적 HTML 변경과 저장소 상태 맵핑을 위한 것입니다. 제품 외부 의존성, 실제 provider,
+            브라우저 E2E, 네이티브 패키징, production 배포 상태를 새로 주장하지 않습니다.
+          </p>
+        </header>
+
+        <div class="evidence-grid">
+          <section class="panel">
+            <div class="card-kicker">Fresh checks · 2026-08-11 · test / typecheck / lint</div>
+            <h3>회귀 계약은 녹색</h3>
+            <div class="check-row">
+              <span class="check-symbol">✓</span><div><strong>Main app tests</strong><small>Conversation extraction application</small></div><span class="check-value">28 files · 159/159</span>
+            </div>
+            <div class="check-row">
+              <span class="check-symbol">✓</span><div><strong>Suggestion tests</strong><small>Work Cockpit / Attention application</small></div><span class="check-value">105 files · 915/915</span>
+            </div>
+            <div class="check-row">
+              <span class="check-symbol">✓</span><div><strong>Static checks</strong><small>Both TypeScript applications</small></div><span class="check-value">typecheck + lint</span>
+            </div>
+            <div class="check-row">
+              <span class="check-symbol pending-symbol">!</span><div><strong>Not rerun now</strong><small>Release/environment-dependent verification</small></div><span class="check-value">build · E2E · Swift · deploy</span>
+            </div>
+            <details>
+              <summary>이 숫자를 어떻게 해석해야 하나요?</summary>
+              <div class="details-content">
+                <p>현재 코드가 기존 deterministic 계약을 깨지 않았다는 근거입니다. 실제 사용자 유용성, source adapter 정확도, production 분포, 외부 베타 준비를 증명하지 않습니다. Golden/holdout의 evidence class가 올라가야 release claim도 올라갑니다.</p>
+              </div>
+            </details>
+          </section>
+
+          <section class="panel">
+            <div class="card-kicker">Known risks</div>
+            <h3>지금 숨기면 안 되는 경계</h3>
+            <ul class="risk-list">
+              <li><span><strong>Synthetic ≠ product quality.</strong> 현재 cross-source 평가는 mutable Dev Candidate이며 사람 검토 Golden과 locked holdout이 없습니다.</span></li>
+              <li><span><strong>Memory/session persistence.</strong> 대화 분석 결과는 새 브라우저·기기·장기 보관·공유 URL을 지원하지 않습니다.</span></li>
+              <li><span><strong>Source drift.</strong> ChatGPT 공유 payload는 바뀔 수 있고 현재 커밋된 HTML fixture는 한 개뿐입니다.</span></li>
+              <li><span><strong>Local runtime boundary.</strong> scheduler/lease와 multi-process ownership은 production 수준으로 닫히지 않았습니다.</span></li>
+              <li><span><strong>macOS distribution.</strong> full XCTest/XCUITest, Developer ID, hardened runtime, notarization이 남았습니다.</span></li>
+              <li><span><strong>Privacy &amp; retention.</strong> cross-source 집계와 평가에는 최소 수집·삭제·동의·lawful review 결정이 필요합니다.</span></li>
+              <li><span><strong>Dirty launcher worktree.</strong> 현재 미커밋 Swift 변경은 완료 상태나 clean-provenance release 근거에 포함하지 않았습니다.</span></li>
+            </ul>
+          </section>
+        </div>
+      </section>
+
+      <section class="section" id="sources">
+        <header class="section-head">
+          <div>
+            <div class="section-kicker">06 · Source ledger</div>
+            <h2>상태의 근거.</h2>
+          </div>
+          <p>
+            이 대시보드는 아래 문서의 계획 주장과 현재 코드·테스트를 대조해 만들었습니다. 다음 업데이트에서도
+            상태 문구보다 evidence class와 해당 경계를 먼저 바꾸는 것을 권장합니다.
+          </p>
+        </header>
+        <div class="evidence-grid">
+          <section class="panel" data-track="conversation release">
+            <div class="card-kicker">Conversation &amp; semantic</div>
+            <h3>Core sources</h3>
+            <nav class="source-list" aria-label="Conversation Core 근거 문서">
+              <a href="../README.md">README · 현재 MVP와 세션 저장 경계</a>
+              <a href="SYSTEM_FLOW.md">SYSTEM_FLOW · 현재 런타임 AS-IS</a>
+              <a href="CODEX_IMPLEMENTATION_PLAN.md">CODEX_IMPLEMENTATION_PLAN · Sprint 0–9 초안</a>
+              <a href="BLABASE_SEMANTIC_CORE_V1.md">SEMANTIC_CORE_V1 · 7-Type 목표 계약</a>
+              <a href="ENGINE_DEVELOPMENT_RECORDS.md">ENGINE_DEVELOPMENT_RECORDS · 평가·개인정보·버전 규칙</a>
+            </nav>
+          </section>
+          <section class="panel" data-track="attention release">
+            <div class="card-kicker">Attention &amp; release</div>
+            <h3>Work intelligence sources</h3>
+            <nav class="source-list" aria-label="Attention 근거 문서">
+              <a href="../suggestion/docs/CROSS_SOURCE_SUGGESTION_IMPLEMENTATION_PLAN.md">Cross-source 구현 계획 · Phase 0–8</a>
+              <a href="../suggestion/docs/CROSS_SOURCE_EVALUATION_GUIDE.md">Evaluation Guide · dataset lifecycle와 해석 제한</a>
+              <a href="../suggestion/docs/CURRENT_FOCUS_IMPLEMENTATION_PLAN.md">Current Focus · Phase 1 Shadow</a>
+              <a href="../suggestion/docs/CURRENT_FOCUS_PHASE2_REVIEW.md">Current Focus Phase 2 · 사람 승인 체크리스트</a>
+              <a href="../suggestion/docs/RECENT_WORK_CONTINUATION_IMPLEMENTATION_PLAN.md">Recent Work · display-only checkpoint와 후속 계획</a>
+              <a href="../suggestion/docs/LOCAL_LAUNCHER_CONTRACT.md">Local Launcher · beta와 배포 게이트</a>
+            </nav>
+          </section>
+        </div>
+      </section>
+
+      <footer class="footer">
+        <div>
+          <div class="section-kicker">Decision principle</div>
+          <h2>구현 진척보다 증거 등급을 올린다.</h2>
+          <p>
+            다음 상태 업데이트는 verified → human-reviewed, shadow → active, local beta → external beta처럼
+            검증 클래스가 바뀔 때 수행합니다. 이 HTML은 엔진 입력·출력·정렬·해석을 바꾸지 않는 문서/UI 산출물이므로
+            Golden baseline 재실행 대상이 아닙니다.
+          </p>
+        </div>
+        <div class="footer-stamp">blabase / static status snapshot<br />2026-08-11 · Asia/Seoul</div>
+      </footer>
+    </main>
+
+    <script>
+      (() => {
+        const buttons = Array.from(document.querySelectorAll("[data-filter]"));
+        const tracked = Array.from(document.querySelectorAll("[data-track]"));
+
+        function applyFilter(filter) {
+          document.body.dataset.activeFilter = filter;
+          buttons.forEach((button) => {
+            button.setAttribute("aria-pressed", String(button.dataset.filter === filter));
+          });
+          tracked.forEach((element) => {
+            const tracks = (element.dataset.track || "").split(/\s+/);
+            element.hidden = filter !== "all" && !tracks.includes(filter);
+          });
+        }
+
+        buttons.forEach((button) => {
+          button.addEventListener("click", () => applyFilter(button.dataset.filter || "all"));
+        });
+
+        const printButton = document.querySelector("[data-print]");
+        printButton?.addEventListener("click", () => window.print());
+
+        const pressables = Array.from(
+          document.querySelectorAll("button, summary, .source-list a"),
+        );
+        pressables.forEach((element) => {
+          element.addEventListener("pointerdown", () => {
+            element.dataset.pressing = "true";
+          });
+          ["pointerup", "pointercancel", "pointerleave"].forEach((eventName) => {
+            element.addEventListener(eventName, () => {
+              delete element.dataset.pressing;
+            });
+          });
+        });
+
+        applyFilter("all");
+      })();
+    </script>
+  </body>
+</html>

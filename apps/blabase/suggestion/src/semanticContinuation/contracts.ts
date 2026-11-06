@@ -1,6 +1,9 @@
+import { createHmac, timingSafeEqual } from "node:crypto";
+
 import { z } from "zod";
 
 import {
+  runtimeCanonicalJson,
   runtimeSha256,
   runtimeStableId
 } from "../crossSource/canonicalHash";
@@ -11,14 +14,26 @@ import {
 } from "../suggestionBoard/monitoringSchema";
 import { SEMANTIC_VALIDATION_TITLES } from "./validation/versions";
 
-export const SEMANTIC_CONTINUATION_INTENT_CONTRACT =
+export const SEMANTIC_CONTINUATION_LEGACY_INTENT_CONTRACT =
   "semantic-continuation-intent-v0.1" as const;
+export const SEMANTIC_CONTINUATION_INTENT_CONTRACT =
+  "semantic-continuation-intent-v0.2" as const;
+export const SEMANTIC_CONTINUATION_LEGACY_INTENT_STORE_CONTRACT =
+  "semantic-continuation-intent-store-v0.2" as const;
 export const SEMANTIC_CONTINUATION_INTENT_STORE_CONTRACT =
-  "semantic-continuation-intent-store-v0.1" as const;
-export const SEMANTIC_CONTINUATION_SCHEMA_VERSION =
+  "semantic-continuation-intent-store-v0.3" as const;
+export const SEMANTIC_CONTINUATION_LEGACY_SCHEMA_VERSION =
   "semantic-continuation-schema-v0.1" as const;
-export const SEMANTIC_CONTINUATION_TITLE_OVERLAY_POLICY_VERSION =
+export const SEMANTIC_CONTINUATION_SCHEMA_VERSION =
+  "semantic-continuation-schema-v0.2" as const;
+export const SEMANTIC_CONTINUATION_LEGACY_INTENT_STORE_SCHEMA_VERSION =
+  "semantic-continuation-intent-store-schema-v0.2" as const;
+export const SEMANTIC_CONTINUATION_INTENT_STORE_SCHEMA_VERSION =
+  "semantic-continuation-intent-store-schema-v0.3" as const;
+export const SEMANTIC_CONTINUATION_LEGACY_TITLE_OVERLAY_POLICY_VERSION =
   "semantic-continuation-title-overlay-v0.1" as const;
+export const SEMANTIC_CONTINUATION_TITLE_OVERLAY_POLICY_VERSION =
+  "semantic-continuation-title-overlay-v0.2" as const;
 export const SEMANTIC_CONTINUATION_PRESENTATION_CONTRACT =
   "semantic-continuation-presentation-v0.2" as const;
 export const SEMANTIC_CONTINUATION_WORK_BOARD_RESPONSE_CONTRACT =
@@ -32,12 +47,28 @@ export const SEMANTIC_CONTINUATION_INTENT_TTL_MS =
   24 * 60 * 60 * 1_000;
 
 const sha256Schema = z.string().regex(/^[a-f0-9]{64}$/u);
+const installationSecretSchema = sha256Schema;
+export const semanticContinuationIntentAuthKeyIdSchema = z
+  .string()
+  .regex(/^semantic_continuation_intent_key_[a-f0-9]{32}$/u);
 const itemRefSchema = z
   .string()
   .regex(/^item_ref_[A-Za-z0-9_-]{22,128}$/u);
 const workContextRefSchema = z
   .string()
   .regex(/^context_ref_[A-Za-z0-9_-]{22,128}$/u);
+const continuationCandidateKindSchema = z.enum([
+  "recent_github_push",
+  "recent_codex_session",
+  "local_worktree",
+  "linked_workstream",
+  "workspace_mapping"
+]);
+const continuationEvidenceBandSchema = z.enum([
+  "exact",
+  "corroborated",
+  "single_source"
+]);
 const timestampSchema = z.string().datetime().refine(isCanonicalTimestamp, {
   message: "Timestamp must use canonical UTC ISO form"
 });
@@ -130,6 +161,8 @@ export const semanticContinuationConfirmationTargetSchema = z
   .object({
     itemRef: itemRefSchema,
     workContextRef: workContextRefSchema,
+    candidateKind: continuationCandidateKindSchema,
+    evidenceBand: continuationEvidenceBandSchema,
     observedAt: timestampSchema,
     candidateExpiresAt: timestampSchema
   })
@@ -144,44 +177,61 @@ export const semanticContinuationConfirmationTargetSchema = z
     }
   });
 
-const semanticIntentDecisionContentObjectSchema = z
+const semanticIntentDecisionCommonShape = {
+  decisionId: z
+    .string()
+    .regex(/^semantic_intent_[a-f0-9]{32}$/u),
+  intent: z.literal("QA_RUN"),
+  subjectLabel: semanticContinuationSubjectLabelSchema,
+  labelSource: z.literal("explicit_user"),
+  explicitUserConfirmation: z.literal(true),
+  itemRef: itemRefSchema,
+  workContextRef: workContextRefSchema,
+  registrySha256: sha256Schema,
+  targetObservedAt: timestampSchema,
+  targetCandidateExpiresAt: timestampSchema,
+  confirmedAt: timestampSchema,
+  expiresAt: timestampSchema,
+  supersedesDecisionId: z
+    .string()
+    .regex(/^semantic_intent_[a-f0-9]{32}$/u)
+    .nullable(),
+  ttlPolicyVersion: z.literal(
+    SEMANTIC_CONTINUATION_TTL_POLICY_VERSION
+  )
+} as const;
+
+const legacySemanticIntentDecisionContentObjectSchema = z
   .object({
-    contract: z.literal(SEMANTIC_CONTINUATION_INTENT_CONTRACT),
-    schemaVersion: z.literal(SEMANTIC_CONTINUATION_SCHEMA_VERSION),
-    decisionId: z
-      .string()
-      .regex(/^semantic_intent_[a-f0-9]{32}$/u),
-    intent: z.literal("QA_RUN"),
-    subjectLabel: semanticContinuationSubjectLabelSchema,
-    labelSource: z.literal("explicit_user"),
-    explicitUserConfirmation: z.literal(true),
-    itemRef: itemRefSchema,
-    workContextRef: workContextRefSchema,
-    registrySha256: sha256Schema,
-    targetObservedAt: timestampSchema,
-    targetCandidateExpiresAt: timestampSchema,
-    confirmedAt: timestampSchema,
-    expiresAt: timestampSchema,
-    supersedesDecisionId: z
-      .string()
-      .regex(/^semantic_intent_[a-f0-9]{32}$/u)
-      .nullable(),
+    contract: z.literal(SEMANTIC_CONTINUATION_LEGACY_INTENT_CONTRACT),
+    schemaVersion: z.literal(SEMANTIC_CONTINUATION_LEGACY_SCHEMA_VERSION),
+    ...semanticIntentDecisionCommonShape,
     overlayPolicyVersion: z.literal(
-      SEMANTIC_CONTINUATION_TITLE_OVERLAY_POLICY_VERSION
-    ),
-    ttlPolicyVersion: z.literal(
-      SEMANTIC_CONTINUATION_TTL_POLICY_VERSION
+      SEMANTIC_CONTINUATION_LEGACY_TITLE_OVERLAY_POLICY_VERSION
     )
   })
   .strict();
 
-const semanticIntentDecisionContentSchema =
-  semanticIntentDecisionContentObjectSchema.superRefine(
+const currentSemanticIntentDecisionContentObjectSchema = z
+  .object({
+    contract: z.literal(SEMANTIC_CONTINUATION_INTENT_CONTRACT),
+    schemaVersion: z.literal(SEMANTIC_CONTINUATION_SCHEMA_VERSION),
+    ...semanticIntentDecisionCommonShape,
+    targetCandidateKind: continuationCandidateKindSchema,
+    targetEvidenceBand: continuationEvidenceBandSchema,
+    overlayPolicyVersion: z.literal(
+      SEMANTIC_CONTINUATION_TITLE_OVERLAY_POLICY_VERSION
+    )
+  })
+  .strict();
+
+const currentSemanticIntentDecisionContentSchema =
+  currentSemanticIntentDecisionContentObjectSchema.superRefine(
     refineSemanticIntentDecision
   );
 
-export const semanticContinuationIntentDecisionSchema =
-  semanticIntentDecisionContentObjectSchema
+export const semanticContinuationLegacyIntentDecisionSchema =
+  legacySemanticIntentDecisionContentObjectSchema
     .extend({ decisionSha256: sha256Schema })
     .strict()
     .superRefine((value, context) => {
@@ -196,30 +246,73 @@ export const semanticContinuationIntentDecisionSchema =
       }
     });
 
-const semanticIntentStoreContentObjectSchema = z
+export const semanticContinuationCurrentIntentDecisionSchema =
+  currentSemanticIntentDecisionContentObjectSchema
+    .extend({ decisionSha256: sha256Schema })
+    .strict()
+    .superRefine((value, context) => {
+      refineSemanticIntentDecision(value, context);
+      const { decisionSha256: _decisionSha256, ...content } = value;
+      if (value.decisionSha256 !== semanticIntentDecisionSha256(content)) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["decisionSha256"],
+          message: "Semantic intent decision hash mismatch"
+        });
+      }
+    });
+
+export const semanticContinuationIntentDecisionSchema = z.union([
+  semanticContinuationLegacyIntentDecisionSchema,
+  semanticContinuationCurrentIntentDecisionSchema
+]);
+
+const legacySemanticIntentStoreContentObjectSchema = z
   .object({
-    contract: z.literal(SEMANTIC_CONTINUATION_INTENT_STORE_CONTRACT),
-    schemaVersion: z.literal(SEMANTIC_CONTINUATION_SCHEMA_VERSION),
+    contract: z.literal(
+      SEMANTIC_CONTINUATION_LEGACY_INTENT_STORE_CONTRACT
+    ),
+    schemaVersion: z.literal(
+      SEMANTIC_CONTINUATION_LEGACY_INTENT_STORE_SCHEMA_VERSION
+    ),
+    authKeyId: semanticContinuationIntentAuthKeyIdSchema,
     revision: z.number().int().nonnegative(),
     updatedAt: timestampSchema,
     decisions: z
-      .array(semanticContinuationIntentDecisionSchema)
+      .array(semanticContinuationLegacyIntentDecisionSchema)
       .max(1_000)
   })
   .strict();
 
-const semanticIntentStoreContentSchema =
-  semanticIntentStoreContentObjectSchema.superRefine(
+const currentSemanticIntentStoreContentObjectSchema = z
+  .object({
+    contract: z.literal(SEMANTIC_CONTINUATION_INTENT_STORE_CONTRACT),
+    schemaVersion: z.literal(
+      SEMANTIC_CONTINUATION_INTENT_STORE_SCHEMA_VERSION
+    ),
+    authKeyId: semanticContinuationIntentAuthKeyIdSchema,
+    revision: z.number().int().nonnegative(),
+    updatedAt: timestampSchema,
+    decisions: z.array(semanticContinuationIntentDecisionSchema).max(1_000)
+  })
+  .strict();
+
+const currentSemanticIntentStoreContentSchema =
+  currentSemanticIntentStoreContentObjectSchema.superRefine(
     refineSemanticIntentStore
   );
 
-export const semanticContinuationIntentStoreSchema =
-  semanticIntentStoreContentObjectSchema
-    .extend({ storeSha256: sha256Schema })
+export const semanticContinuationLegacyIntentStoreSchema =
+  legacySemanticIntentStoreContentObjectSchema
+    .extend({ storeSha256: sha256Schema, storeHmac: sha256Schema })
     .strict()
     .superRefine((value, context) => {
       refineSemanticIntentStore(value, context);
-      const { storeSha256: _storeSha256, ...content } = value;
+      const {
+        storeSha256: _storeSha256,
+        storeHmac: _storeHmac,
+        ...content
+      } = value;
       if (value.storeSha256 !== semanticIntentStoreSha256(content)) {
         context.addIssue({
           code: z.ZodIssueCode.custom,
@@ -228,6 +321,31 @@ export const semanticContinuationIntentStoreSchema =
         });
       }
     });
+
+export const semanticContinuationCurrentIntentStoreSchema =
+  currentSemanticIntentStoreContentObjectSchema
+    .extend({ storeSha256: sha256Schema, storeHmac: sha256Schema })
+    .strict()
+    .superRefine((value, context) => {
+      refineSemanticIntentStore(value, context);
+      const {
+        storeSha256: _storeSha256,
+        storeHmac: _storeHmac,
+        ...content
+      } = value;
+      if (value.storeSha256 !== semanticIntentStoreSha256(content)) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["storeSha256"],
+          message: "Semantic intent store hash mismatch"
+        });
+      }
+    });
+
+export const semanticContinuationIntentStoreSchema = z.union([
+  semanticContinuationLegacyIntentStoreSchema,
+  semanticContinuationCurrentIntentStoreSchema
+]);
 
 export const semanticContinuationTitlePresentationSchema = z
   .object({
@@ -341,6 +459,9 @@ export type SemanticContinuationIntentDecision = z.infer<
 export type SemanticContinuationIntentStore = z.infer<
   typeof semanticContinuationIntentStoreSchema
 >;
+export type SemanticContinuationCurrentIntentStore = z.infer<
+  typeof semanticContinuationCurrentIntentStoreSchema
+>;
 export type SemanticContinuationTitlePresentation = z.infer<
   typeof semanticContinuationTitlePresentationSchema
 >;
@@ -420,6 +541,8 @@ export function createSemanticContinuationIntentDecision(input: {
     registrySha256,
     targetObservedAt: target.observedAt,
     targetCandidateExpiresAt: target.candidateExpiresAt,
+    targetCandidateKind: target.candidateKind,
+    targetEvidenceBand: target.evidenceBand,
     confirmedAt,
     expiresAt,
     supersedesDecisionId: input.supersedesDecisionId,
@@ -427,7 +550,7 @@ export function createSemanticContinuationIntentDecision(input: {
       SEMANTIC_CONTINUATION_TITLE_OVERLAY_POLICY_VERSION,
     ttlPolicyVersion: SEMANTIC_CONTINUATION_TTL_POLICY_VERSION
   };
-  const content = semanticIntentDecisionContentSchema.parse({
+  const content = currentSemanticIntentDecisionContentSchema.parse({
     contract: SEMANTIC_CONTINUATION_INTENT_CONTRACT,
     schemaVersion: SEMANTIC_CONTINUATION_SCHEMA_VERSION,
     decisionId: runtimeStableId(
@@ -444,48 +567,136 @@ export function createSemanticContinuationIntentDecision(input: {
 }
 
 export function createEmptySemanticContinuationIntentStore(
-  updatedAt: string
-): SemanticContinuationIntentStore {
-  return sealSemanticContinuationIntentStore({
-    contract: SEMANTIC_CONTINUATION_INTENT_STORE_CONTRACT,
-    schemaVersion: SEMANTIC_CONTINUATION_SCHEMA_VERSION,
-    revision: 0,
-    updatedAt: timestampSchema.parse(updatedAt),
-    decisions: []
-  });
+  updatedAt: string,
+  installationSecret: string
+): SemanticContinuationCurrentIntentStore {
+  return sealSemanticContinuationIntentStore(
+    {
+      contract: SEMANTIC_CONTINUATION_INTENT_STORE_CONTRACT,
+      schemaVersion: SEMANTIC_CONTINUATION_INTENT_STORE_SCHEMA_VERSION,
+      authKeyId: semanticContinuationIntentAuthKeyId(installationSecret),
+      revision: 0,
+      updatedAt: timestampSchema.parse(updatedAt),
+      decisions: []
+    },
+    installationSecret
+  );
 }
 
 export function sealSemanticContinuationIntentStore(
-  contentInput: z.input<typeof semanticIntentStoreContentSchema>
-): SemanticContinuationIntentStore {
-  const content = semanticIntentStoreContentSchema.parse(contentInput);
-  return semanticContinuationIntentStoreSchema.parse({
+  contentInput: z.input<typeof currentSemanticIntentStoreContentSchema>,
+  installationSecret: string
+): SemanticContinuationCurrentIntentStore {
+  const content = currentSemanticIntentStoreContentSchema.parse(contentInput);
+  if (
+    content.authKeyId !==
+    semanticContinuationIntentAuthKeyId(installationSecret)
+  ) {
+    throw new TypeError("Semantic intent store key namespace mismatch");
+  }
+  const withHash = {
     ...content,
     storeSha256: semanticIntentStoreSha256(content)
+  };
+  return semanticContinuationCurrentIntentStoreSchema.parse({
+    ...withHash,
+    storeHmac: semanticIntentStoreHmac(installationSecret, withHash)
   });
 }
 
-function semanticIntentDecisionSha256(value: unknown): string {
+export function verifySemanticContinuationIntentStore(
+  value: unknown,
+  installationSecret: string
+): SemanticContinuationIntentStore | null {
+  const parsed = semanticContinuationIntentStoreSchema.safeParse(value);
+  if (!parsed.success) return null;
+  if (
+    parsed.data.authKeyId !==
+    semanticContinuationIntentAuthKeyId(installationSecret)
+  ) {
+    return null;
+  }
+  const { storeHmac, ...authenticatedContent } = parsed.data;
+  const expected = semanticIntentStoreHmac(
+    installationSecret,
+    authenticatedContent
+  );
+  const claimedBytes = Buffer.from(storeHmac, "hex");
+  const expectedBytes = Buffer.from(expected, "hex");
+  return claimedBytes.length === expectedBytes.length &&
+    timingSafeEqual(claimedBytes, expectedBytes)
+    ? parsed.data
+    : null;
+}
+
+export function semanticContinuationIntentAuthKeyId(
+  installationSecretInput: string
+): string {
+  const installationSecret = installationSecretSchema.parse(
+    installationSecretInput
+  );
+  return `semantic_continuation_intent_key_${createHmac(
+    "sha256",
+    Buffer.from(installationSecret, "hex")
+  )
+    .update("semantic-continuation-intent-key-id-v0.2", "utf8")
+    .digest("hex")
+    .slice(0, 32)}`;
+}
+
+function semanticIntentDecisionSha256(
+  value: { contract: string } & Record<string, unknown>
+): string {
   return runtimeSha256({
-    domain: "semantic-continuation-intent-decision-hash-v0.1",
+    domain:
+      value.contract === SEMANTIC_CONTINUATION_LEGACY_INTENT_CONTRACT
+        ? "semantic-continuation-intent-decision-hash-v0.1"
+        : "semantic-continuation-intent-decision-hash-v0.2",
     decision: value
   });
 }
 
-function semanticIntentStoreSha256(value: unknown): string {
+function semanticIntentStoreSha256(
+  value: { contract: string } & Record<string, unknown>
+): string {
   return runtimeSha256({
-    domain: "semantic-continuation-intent-store-hash-v0.1",
+    domain:
+      value.contract === SEMANTIC_CONTINUATION_LEGACY_INTENT_STORE_CONTRACT
+        ? "semantic-continuation-intent-store-hash-v0.2"
+        : "semantic-continuation-intent-store-hash-v0.3",
     store: value
   });
 }
 
+function semanticIntentStoreHmac(
+  installationSecret: string,
+  value: { contract: string } & Record<string, unknown>
+): string {
+  if (!/^[a-f0-9]{64}$/u.test(installationSecret)) {
+    throw new TypeError("Semantic intent store requires an installation secret");
+  }
+  const key = createHmac("sha256", Buffer.from(installationSecret, "hex"))
+    .update(
+      value.contract === SEMANTIC_CONTINUATION_LEGACY_INTENT_STORE_CONTRACT
+        ? "semantic-continuation-intent-store-hmac-v0.2"
+        : "semantic-continuation-intent-store-hmac-v0.3",
+      "utf8"
+    )
+    .digest();
+  return createHmac("sha256", key)
+    .update(runtimeCanonicalJson(value), "utf8")
+    .digest("hex");
+}
+
 function refineSemanticIntentDecision(
-  value: z.infer<typeof semanticIntentDecisionContentObjectSchema>,
+  value:
+    | z.infer<typeof legacySemanticIntentDecisionContentObjectSchema>
+    | z.infer<typeof currentSemanticIntentDecisionContentObjectSchema>,
   context: z.RefinementCtx
 ): void {
   const expectedDecisionId = runtimeStableId(
     "semantic_intent",
-    SEMANTIC_CONTINUATION_INTENT_CONTRACT,
+    value.contract,
     semanticIntentDecisionStableContent(value)
   );
   if (value.decisionId !== expectedDecisionId) {
@@ -520,7 +731,10 @@ function refineSemanticIntentDecision(
 }
 
 function refineSemanticIntentStore(
-  value: z.infer<typeof semanticIntentStoreContentObjectSchema>,
+  value: {
+    revision: number;
+    decisions: SemanticContinuationIntentDecision[];
+  },
   context: z.RefinementCtx
 ): void {
   if (value.revision !== value.decisions.length) {
@@ -612,6 +826,9 @@ function hasSupersessionCycle(
 }
 
 function semanticIntentDecisionStableContent(value: {
+  contract:
+    | typeof SEMANTIC_CONTINUATION_LEGACY_INTENT_CONTRACT
+    | typeof SEMANTIC_CONTINUATION_INTENT_CONTRACT;
   intent: "QA_RUN";
   subjectLabel: string;
   labelSource: "explicit_user";
@@ -624,10 +841,14 @@ function semanticIntentDecisionStableContent(value: {
   confirmedAt: string;
   expiresAt: string;
   supersedesDecisionId: string | null;
-  overlayPolicyVersion: typeof SEMANTIC_CONTINUATION_TITLE_OVERLAY_POLICY_VERSION;
+  targetCandidateKind?: z.infer<typeof continuationCandidateKindSchema>;
+  targetEvidenceBand?: z.infer<typeof continuationEvidenceBandSchema>;
+  overlayPolicyVersion:
+    | typeof SEMANTIC_CONTINUATION_LEGACY_TITLE_OVERLAY_POLICY_VERSION
+    | typeof SEMANTIC_CONTINUATION_TITLE_OVERLAY_POLICY_VERSION;
   ttlPolicyVersion: typeof SEMANTIC_CONTINUATION_TTL_POLICY_VERSION;
 }) {
-  return {
+  const common = {
     intent: value.intent,
     subjectLabel: value.subjectLabel,
     labelSource: value.labelSource,
@@ -643,6 +864,13 @@ function semanticIntentDecisionStableContent(value: {
     overlayPolicyVersion: value.overlayPolicyVersion,
     ttlPolicyVersion: value.ttlPolicyVersion
   };
+  return value.contract === SEMANTIC_CONTINUATION_INTENT_CONTRACT
+    ? {
+        ...common,
+        targetCandidateKind: value.targetCandidateKind,
+        targetEvidenceBand: value.targetEvidenceBand
+      }
+    : common;
 }
 
 export function compareSemanticIntentDecisions(

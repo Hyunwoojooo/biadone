@@ -1,0 +1,241 @@
+
+/* Daylight palette. Yellow remains the action color; small text uses dark gold. */
+html:has(body.liquid-glass) { color-scheme: light; }
+.liquid-glass {
+  --jet: #f5f6f8;
+  --jet-deep: #ffffff;
+  --jet-panel: #f0f2f5;
+  --jet-raised: #e9edf1;
+  --bone: #202328;
+  --warm-gray: #505761;
+  --muted: #616873;
+  --line: rgba(39, 49, 64, .10);
+  --line-strong: rgba(39, 49, 64, .20);
+  --ink: #202328;
+  --accent-text: #726000;
+  --glass-panel-fill: rgba(255, 255, 255, .82);
+  --glass-inset: rgba(239, 242, 246, .68);
+  --glass-inset-emphasized: #fffce4;
+  --glass-inset-rim: rgba(39, 49, 64, .12);
+  --glass-accent-rim: #dfd492;
+  --glass-rim-top: #fff;
+  --glass-rim-middle: rgba(39, 49, 64, .10);
+  --glass-rim-bottom: rgba(39, 49, 64, .14);
+  --glass-radius-panel: 28px;
+  --glass-radius-section: 18px;
+  --glass-radius-row: 12px;
+  --glass-section-shadow: 0 18px 48px -26px rgba(42, 53, 73, .20);
+  background: var(--jet);
+  color: var(--bone);
+}
+.liquid-glass :focus-visible { outline-color: #807000; }
+.liquid-glass .hero,
+.liquid-glass .section,
+.liquid-glass .site-footer { background: transparent; }
+.liquid-glass .glass-header,
+.liquid-glass .glass-header.is-scrolled {
+  background: rgba(250, 251, 252, .84);
+  border-bottom-color: var(--line);
+}
+.liquid-glass .brand-mark,
+.liquid-glass .button { border-radius: 10px; }
+.liquid-glass .button-yellow,
+.liquid-glass .form-submit {
+  background: var(--yellow);
+  color: var(--ink);
+  box-shadow: inset 0 0 0 1px rgba(114, 96, 0, .10), 0 4px 10px rgba(80, 72, 0, .06);
+}
+.liquid-glass .button-yellow:hover,
+.liquid-glass .form-submit:hover { background: #f3dc00; color: var(--ink); }
+.liquid-glass .hero {
+  background: radial-gradient(ellipse at 88% 30%, rgba(254, 231, 21, .12), transparent 46%), linear-gradient(180deg, #fafbfd, #f5f6f8);
+}
+.liquid-glass .hero-grid {
+  min-height: 0;
+  grid-template-columns: minmax(0, 1.05fr) minmax(0, 1.25fr);
+  align-items: center;
+  gap: clamp(40px, 5vw, 72px);
+  padding-block: 64px 72px;
+}
+.liquid-glass .hero-copy { max-width: 570px; padding-block: 20px; align-self: center; }
+.liquid-glass .hero-copy::before { display: none; }
+.liquid-glass h1 { font-size: clamp(48px, 4.2vw, 62px); line-height: 1.04; }
+.liquid-glass h1 span + span { margin-top: 8px; }
+.liquid-glass .hero-description { font-size: 18px; line-height: 1.65; margin-top: 28px; }
+.liquid-glass .hero-actions { flex-wrap: wrap; gap: 16px; margin-top: 30px; }
+.liquid-glass .eyebrow,
+.liquid-glass .row-number,
+.liquid-glass .step-number,
+.liquid-glass .scope-table dt,
+.liquid-glass .terminal-context-agent,
+.liquid-glass .terminal-prompt > span:first-child,
+.liquid-glass .log-warning,
+.liquid-glass .terminal-detail-button,
+.liquid-glass .decision-option small { color: var(--accent-text); }
+.liquid-glass .signal-dot { width: 8px; height: 8px; border-radius: 2px; box-shadow: 0 0 0 1px rgba(114, 96, 0, .16); }
+
+/* Material hierarchy: white outer sheets, cool gray insets, fine visible rims. */
+.liquid-glass .glass-panel,
+.liquid-glass .section-benefits .section-grid,
+.liquid-glass .section-how > .container,
+.liquid-glass .section-beta-scope .section-grid,
+.liquid-glass .section-faq .section-grid,
+.liquid-glass .signup-grid {
+  border: 1px solid var(--glass-inset-rim);
+  background: linear-gradient(145deg, rgba(255, 255, 255, .96), var(--glass-panel-fill));
+  box-shadow: var(--glass-section-shadow), inset 0 1px 0 #fff;
+}
+.liquid-glass .demo-window.glass-panel {
+  min-height: 600px;
+  height: auto;
+  box-shadow: 0 24px 60px -25px rgba(42, 53, 73, .25), inset 0 1px 0 #fff;
+}
+.liquid-glass .demo-window .window-chrome {
+  height: 40px;
+  margin: 0;
+  padding-inline: 20px;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  border-radius: 0;
+  background: rgba(242, 244, 247, .75);
+}
+.liquid-glass .traffic-lights span { width: 10px; height: 10px; border: 0; background: #ff6058; }
+.liquid-glass .traffic-lights span:nth-child(2) { background: #febc2e; }
+.liquid-glass .traffic-lights span:nth-child(3) { background: #28c840; }
+.liquid-glass .terminal { min-height: 0; padding: 20px 26px 22px; }
+.liquid-glass .terminal-context { padding-bottom: 12px; }
+.liquid-glass .terminal-prompt { max-width: 100%; margin-top: 18px; }
+.liquid-glass .terminal-log { margin-top: 16px; }
+.liquid-glass .terminal-status { margin-top: 16px; font-size: 11px; }
+.liquid-glass .log-ok { color: #237151; }
+.liquid-glass .status-pulse { background: #237151; border-radius: 50%; }
+.liquid-glass .terminal-detail-button { min-height: 28px; margin-top: 10px; }
+.liquid-glass .terminal-detail { max-width: 100%; }
+.liquid-glass .decision-panel.glass-panel {
+  position: relative;
+  top: auto;
+  right: auto;
+  width: min(390px, calc(100% - 48px));
+  margin: 0 24px 24px auto;
+  border-radius: 20px;
+  background: rgba(255, 255, 255, .94);
+  box-shadow: 0 12px 30px -10px rgba(42, 53, 73, .22), inset 0 1px 0 #fff;
+}
+.liquid-glass .decision-options { gap: 7px; grid-template-rows: repeat(4, minmax(48px, auto)); padding: 8px; }
+.liquid-glass .decision-option { min-height: 48px; padding: 9px 10px; }
+.liquid-glass .glass-inset { background: var(--glass-inset); }
+.liquid-glass .glass-inset-emphasized { background: var(--glass-inset-emphasized); }
+.liquid-glass .decision-option kbd {
+  border: 1px solid rgba(39, 49, 64, .18);
+  border-radius: 7px;
+  background: rgba(255, 255, 255, .70);
+  color: var(--bone);
+  box-shadow: 0 1px 2px rgba(39, 49, 64, .08);
+}
+.liquid-glass .product-demo figcaption { position: static; margin-top: 18px; font-size: 10px; }
+.liquid-glass .caption-rule { background: #b7a300; }
+
+/* More compact reading rhythm; preserve the original sections and content. */
+.liquid-glass .section { padding-block: 54px; border-bottom: 0; }
+.liquid-glass .section-benefits { padding-top: 64px; }
+.liquid-glass .section-grid { gap: clamp(40px, 5vw, 80px); }
+.liquid-glass .section-heading h2,
+.liquid-glass .signup-copy h2 { font-size: clamp(38px, 3.4vw, 52px); line-height: 1.06; }
+.liquid-glass .section-intro { margin-top: 24px; }
+.liquid-glass .editorial-list,
+.liquid-glass .steps-list,
+.liquid-glass .scope-table,
+.liquid-glass .faq-list { background: rgba(246, 248, 250, .70); }
+.liquid-glass .editorial-row { grid-template-columns: 28px minmax(0, 1fr); gap: 18px; padding: 24px; }
+.liquid-glass .editorial-row h3,
+.liquid-glass .steps-list h3 { font-size: 23px; }
+.liquid-glass .editorial-row p { font-size: 15px; }
+.liquid-glass .steps-list { margin-top: 44px; }
+.liquid-glass .steps-list > li,
+.liquid-glass .steps-list > li + li,
+.liquid-glass .steps-list > li:last-child { min-height: 270px; padding: 26px; }
+.liquid-glass .step-signal { height: 64px; }
+.liquid-glass .section-heading-wide { column-gap: 64px; }
+.liquid-glass .scope-table > div { min-height: 92px; padding: 18px 22px; grid-template-columns: 120px 1fr; gap: 20px; }
+.liquid-glass .faq-list details[open] { background: #fffef0; }
+.liquid-glass .faq-icon::before,
+.liquid-glass .faq-icon::after { background: var(--accent-text); }
+.liquid-glass .signup-section { padding-block: 64px; border-top: 0; background: #f0f2ee; }
+.liquid-glass .signup-grid { gap: clamp(40px, 6vw, 96px); align-items: center; }
+.liquid-glass .signup-form.glass-soft { padding: 28px; background: #f6f7f9; }
+.liquid-glass .signup-form input[type="email"] { background: #fff; border-radius: 10px; caret-color: var(--ink); }
+.liquid-glass .signup-form input[type="email"]:focus-visible { outline-color: #807000; }
+.liquid-glass .form-error { border-color: #dcc9a5; background: #fff9ef; border-radius: 10px; color: #70450c; }
+.liquid-glass .form-success { border-radius: 10px; background: #f0f8f2; border-color: #94bda0; }
+.liquid-glass .form-success strong { color: #237151; }
+.liquid-glass .site-footer { padding-block: 30px; }
+.liquid-glass .footer-inner { padding: 0; border: 0; background: transparent; box-shadow: none; }
+
+@media (max-width: 1100px) {
+  .liquid-glass .hero-grid { grid-template-columns: 1fr 1fr; gap: 32px; padding-block: 52px 64px; }
+  .liquid-glass h1 { font-size: clamp(42px, 5.1vw, 56px); }
+  .liquid-glass .hero-description { font-size: 16px; }
+  .liquid-glass .terminal { padding-inline: 20px; }
+  .liquid-glass .decision-panel.glass-panel { width: calc(100% - 28px); margin-right: 14px; }
+  .liquid-glass .section-heading-wide { column-gap: 40px; }
+}
+@media (max-width: 900px) {
+  .liquid-glass .hero-grid { grid-template-columns: 1fr; gap: 36px; }
+  .liquid-glass .hero-copy { max-width: 670px; }
+  .liquid-glass h1 { max-width: 630px; font-size: clamp(46px, 7vw, 60px); }
+  .liquid-glass .hero-description { max-width: 590px; }
+  .liquid-glass .product-demo { max-width: 680px; margin-inline: auto; }
+  .liquid-glass .section-grid,
+  .liquid-glass .signup-grid { gap: 36px; }
+  .liquid-glass .steps-list > li,
+  .liquid-glass .steps-list > li + li,
+  .liquid-glass .steps-list > li:last-child { min-height: 0; }
+  .liquid-glass .step-signal { height: 40px; }
+}
+@media (max-width: 760px) {
+  .liquid-glass .hero-grid { padding-block: 28px 44px; gap: 34px; }
+  .liquid-glass .hero-copy { padding-block: 12px 0; }
+  .liquid-glass h1 { font-size: clamp(40px, 10.3vw, 58px); line-height: 1.06; }
+  .liquid-glass .hero-actions { margin-top: 24px; }
+  .liquid-glass .eyebrow { margin-bottom: 22px; font-size: 10px; }
+  .liquid-glass .hero-description { margin-top: 24px; }
+  .liquid-glass .terminal { padding: 18px; overflow-wrap: anywhere; }
+  .liquid-glass .terminal-status { font-size: 10px; }
+  .liquid-glass .decision-panel.glass-panel { margin-bottom: 18px; border-radius: 16px; }
+  .liquid-glass .decision-option { gap: 7px; grid-template-columns: 28px minmax(0, 1fr) auto; }
+  .liquid-glass .decision-option > span { font-size: 11px; }
+  .liquid-glass .decision-option small { font-size: 7px; max-width: 42px; }
+  .liquid-glass .product-demo figcaption { font-size: 9px; }
+  .liquid-glass .section { padding-block: 28px; }
+  .liquid-glass .section-benefits { padding-top: 44px; }
+  .liquid-glass .section-heading h2,
+  .liquid-glass .signup-copy h2 { font-size: clamp(32px, 8.5vw, 44px); }
+  .liquid-glass .editorial-row { grid-template-columns: 22px minmax(0, 1fr); gap: 12px; padding: 20px 16px; }
+  .liquid-glass .editorial-row h3,
+  .liquid-glass .steps-list h3 { font-size: 20px; }
+  .liquid-glass .editorial-row p { font-size: 14px; }
+  .liquid-glass .steps-list { margin-top: 30px; }
+  .liquid-glass .steps-list > li,
+  .liquid-glass .steps-list > li + li,
+  .liquid-glass .steps-list > li:last-child { padding: 22px 18px 24px 48px; }
+  .liquid-glass .step-signal { top: 50px; left: 15px; height: 28px; }
+  .liquid-glass .scope-table > div { grid-template-columns: 1fr; gap: 8px; min-height: 0; padding: 18px; }
+  .liquid-glass .faq-list summary { padding: 18px 16px; gap: 14px; }
+  .liquid-glass .faq-list details > p { padding: 0 20px 22px 16px; }
+  .liquid-glass .signup-section { padding-block: 44px; }
+  .liquid-glass .signup-form.glass-soft { padding: 20px; }
+  .liquid-glass .site-footer { padding-block: 24px; }
+}
+@media (prefers-reduced-transparency: reduce) {
+  .liquid-glass .glass-panel,
+  .liquid-glass .glass-header,
+  .liquid-glass .glass-header.is-scrolled,
+  .liquid-glass .section .section-grid,
+  .liquid-glass .section-how > .container,
+  .liquid-glass .signup-grid { background: #fff; }
+  .liquid-glass .editorial-row,
+  .liquid-glass .steps-list > li,
+  .liquid-glass .scope-table > div,
+  .liquid-glass .faq-list details { background: #f6f7f9; }
+  .liquid-glass .faq-list details[open] { background: #fffef0; }
+}

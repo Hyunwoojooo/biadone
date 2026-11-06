@@ -1,0 +1,31 @@
+{
+  "schema_version": "1.0",
+  "kind": "blabee_runtime_event",
+  "event_id": "event_fixture_format_repair_claimed_001",
+  "event_sequence": 41,
+  "event_type": "internal_format_repair_claimed",
+  "event_category": "transport",
+  "occurred_at": "2026-01-15T09:00:30.500Z",
+  "project_id": "project_fixture_repair_journal",
+  "session_id": "session_fixture_repair_journal",
+  "source_turn_id": "turn_fixture_repair_journal_001",
+  "source_prompt_id": "prompt_fixture_repair_journal_001",
+  "episode_id": "episode_fixture_repair_journal",
+  "episode_root_prompt_id": "prompt_fixture_repair_journal_001",
+  "episode_baseline_checkpoint_id": "checkpoint_fixture_repair_journal_001",
+  "decision_boundary_id": "boundary_fixture_repair_journal_001",
+  "boundary_sequence": 1,
+  "payload": {
+    "continuation_origin": "internal_format_repair",
+    "continuation_id": "continuation_fixture_repair_journal_001",
+    "repair_request_id": "repair_request_fixture_journal_001",
+    "parent_prompt_id": "prompt_fixture_repair_journal_001",
+    "repair_kind": "decision_proposal_schema",
+    "repair_attempt": 1,
+    "max_repair_attempts": 1,
+    "dispatch_mode": "submitted_envelope",
+    "issued_at": "2026-01-15T09:00:30Z",
+    "expires_at": "2026-01-15T09:02:30Z",
+    "correlation_token_fingerprint": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  }
+}

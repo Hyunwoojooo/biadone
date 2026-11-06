@@ -1,0 +1,5 @@
+:root {
+ --review-header-height: 80px; --review-logo-size: 24px;
+ --review-body-size: 16px; --review-small-size: 14px; --review-title-size: clamp(32px,3.5vw,48px);
+ --review-choice-size: 18px; --review-radius: 4px; --review-focus-width: 3px; --review-focus-offset: 4px;
+}

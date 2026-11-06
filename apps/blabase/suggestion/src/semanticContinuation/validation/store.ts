@@ -1,16 +1,19 @@
 import { randomBytes } from "node:crypto";
+import { constants as fsConstants, type Stats } from "node:fs";
 import {
   chmod,
   lstat,
   mkdir,
   open,
   readFile,
+  readdir,
   rename,
   unlink,
   utimes,
-  writeFile
+  writeFile,
+  type FileHandle
 } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 
 import {
   inspectLocalPrivateDirectoryChain,
@@ -27,6 +30,8 @@ import {
 } from "./contracts";
 
 const STORE_FILENAME = "receipts.json";
+const RECEIPT_TEMP_PATTERN =
+  /^receipts\.json\.\d+\.[a-f0-9]{16}\.tmp$/u;
 const RUN_LOCK_FILENAME = "run.lock";
 const RUN_LOCK_STALE_MS = 30_000;
 const RUN_LOCK_RENEW_MS = 5_000;
@@ -100,11 +105,62 @@ export async function readSemanticValidationStore(
  * The Work Resumption state lease is reused as the local semantic authority
  * lease. SC-001 confirmation and SC-002 run-start both pass through it.
  */
-export function withSemanticContinuationAuthorityLease<T>(
+export async function withSemanticContinuationAuthorityLease<T>(
   cwd: string,
   operation: () => Promise<T>
 ): Promise<T> {
-  return withWorkResumptionStateLease(cwd, operation);
+  await ensureSafeSemanticAuthorityLockBoundary(cwd);
+  return withWorkResumptionStateLease(cwd, async () => {
+    await recoverOrphanedSemanticValidationWrites(cwd);
+    return operation();
+  });
+}
+
+async function ensureSafeSemanticAuthorityLockBoundary(
+  cwd: string
+): Promise<void> {
+  const root = resolve(cwd);
+  const uid = process.geteuid?.() ?? process.getuid?.();
+  const rootMetadata = await lstat(root).catch(() => null);
+  if (
+    rootMetadata === null ||
+    !rootMetadata.isDirectory() ||
+    rootMetadata.isSymbolicLink() ||
+    (uid !== undefined && rootMetadata.uid !== uid)
+  ) {
+    throw new SemanticValidationStoreError("STORE_WRITE_FAILED");
+  }
+  for (const path of [
+    join(root, ".local"),
+    join(root, ".local", "work-resumption"),
+    join(root, ".local", "work-resumption", "locks")
+  ]) {
+    const relativePath = relative(root, path);
+    if (
+      relativePath === ".." ||
+      relativePath.startsWith(`..${sep}`) ||
+      isAbsolute(relativePath)
+    ) {
+      throw new SemanticValidationStoreError("STORE_WRITE_FAILED");
+    }
+    try {
+      await mkdir(path, { mode: 0o700 });
+    } catch (error) {
+      if (!isNodeError(error, "EEXIST")) {
+        throw new SemanticValidationStoreError("STORE_WRITE_FAILED");
+      }
+    }
+    const metadata = await lstat(path).catch(() => null);
+    if (
+      metadata === null ||
+      !metadata.isDirectory() ||
+      metadata.isSymbolicLink() ||
+      (metadata.mode & 0o777) !== 0o700 ||
+      (uid !== undefined && metadata.uid !== uid)
+    ) {
+      throw new SemanticValidationStoreError("STORE_WRITE_FAILED");
+    }
+  }
 }
 
 export async function appendStoredSemanticValidationReceipt(input: {
@@ -399,6 +455,72 @@ async function writePrivateJson(target: string, value: unknown): Promise<void> {
     if (temporary !== null) await unlink(temporary).catch(() => undefined);
     throw new SemanticValidationStoreError("STORE_WRITE_FAILED");
   }
+}
+
+/** Authorized mutation-only recovery while the shared semantic lease is held. */
+async function recoverOrphanedSemanticValidationWrites(
+  cwd: string
+): Promise<void> {
+  const directory = semanticValidationLocalDirectory(cwd);
+  const status = await inspectLocalPrivateDirectoryChain(cwd, directory);
+  if (status === "missing") return;
+
+  for (const filename of (await readdir(directory)).sort()) {
+    if (!RECEIPT_TEMP_PATTERN.test(filename)) continue;
+    const path = join(directory, filename);
+    const handle = await inspectPrivateValidationTemporaryFile(path);
+    try {
+      const pathMetadata = await lstat(path);
+      const handleMetadata = await handle.stat();
+      if (
+        pathMetadata.isSymbolicLink() ||
+        pathMetadata.dev !== handleMetadata.dev ||
+        pathMetadata.ino !== handleMetadata.ino ||
+        !privateValidationFileMetadata(pathMetadata)
+      ) {
+        throw new SemanticValidationStoreError("STORE_INVALID");
+      }
+      await unlink(path);
+    } finally {
+      await handle.close();
+    }
+  }
+}
+
+async function inspectPrivateValidationTemporaryFile(
+  path: string
+): Promise<FileHandle> {
+  try {
+    const handle = await open(
+      path,
+      fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW
+    );
+    const handleMetadata = await handle.stat();
+    const pathMetadata = await lstat(path);
+    if (
+      !privateValidationFileMetadata(handleMetadata) ||
+      !privateValidationFileMetadata(pathMetadata) ||
+      pathMetadata.isSymbolicLink() ||
+      handleMetadata.dev !== pathMetadata.dev ||
+      handleMetadata.ino !== pathMetadata.ino
+    ) {
+      await handle.close();
+      throw new SemanticValidationStoreError("STORE_INVALID");
+    }
+    return handle;
+  } catch (error) {
+    if (error instanceof SemanticValidationStoreError) throw error;
+    throw new SemanticValidationStoreError("STORE_INVALID");
+  }
+}
+
+function privateValidationFileMetadata(metadata: Stats): boolean {
+  const uid = process.geteuid?.() ?? process.getuid?.();
+  return (
+    metadata.isFile() &&
+    (metadata.mode & 0o777) === 0o600 &&
+    (uid === undefined || metadata.uid === uid)
+  );
 }
 
 async function ensurePrivateStorePath(directory: string): Promise<void> {

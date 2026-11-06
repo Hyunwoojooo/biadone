@@ -1,0 +1,26 @@
+{
+  "schema_version": "1.0",
+  "kind": "blabee_runtime_event",
+  "event_id": "event_fixture_invalid_queued_action_context_claim_001",
+  "event_sequence": 18,
+  "event_type": "queued_action_context_claimed",
+  "event_category": "transport",
+  "occurred_at": "2026-01-15T09:01:22Z",
+  "project_id": "project_fixture_alpha",
+  "session_id": "session_fixture_alpha",
+  "source_turn_id": "turn_fixture_001",
+  "source_prompt_id": "prompt_fixture_001",
+  "episode_id": "episode_fixture_alpha",
+  "episode_root_prompt_id": "prompt_fixture_001",
+  "episode_baseline_checkpoint_id": "checkpoint_fixture_before_prompt_001",
+  "decision_boundary_id": "boundary_fixture_001",
+  "boundary_sequence": 1,
+  "payload": {
+    "continuation_id": "continuation_fixture_pet_001",
+    "delivery_turn_id": "turn_fixture_delivery_001",
+    "queued_prompt_sha256": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "cwd_sha256": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "action_sha256": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+    "correlation_token": "must-not-be-durable"
+  }
+}
