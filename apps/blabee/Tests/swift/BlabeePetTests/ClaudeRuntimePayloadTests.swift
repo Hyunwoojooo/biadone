@@ -35,8 +35,11 @@ struct ClaudeRuntimePayloadTests {
         let fixture = try ClaudeRuntimePayloadFixture(architecture: "arm64")
         defer { fixture.cleanup() }
         // Generated independently with Python json.dumps(sort_keys=True,
-        // separators=(',', ':'), ensure_ascii=False) and hashlib.sha256.
-        let expected = "sha256:d20312b664349aa6c7d7fc1d8ad8d5ee83c09fbf83d12f9fc4121b0fa843e531"
+        // separators=(',', ':'), ensure_ascii=False) and hashlib.sha256 over the
+        // same synthetic fixture. The value changes whenever packageVersions
+        // changes (zod 4.6.6 / fast-uri 3.1.9 since 2026-11-06); regenerate it
+        // with Python, never by pasting the Swift result.
+        let expected = "sha256:26c7b410a87720e744e19f500bff19c05a79eb78f15569cf038ab96f52b82f97"
         let manifest = try ClaudeRuntimePayload.qualify(rootURL: fixture.runtimeRoot, expectedArchitecture: "arm64")
         #expect(manifest.payloadDigest == expected)
         #expect(manifest.files.count == 53)

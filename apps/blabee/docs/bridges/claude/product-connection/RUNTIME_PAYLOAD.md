@@ -19,7 +19,8 @@ Blabee.app/Contents/Resources/
 ```
 
 CLI·로그인·사용자 자격은 번들하지 않는다. 기존 MCP SDK 1.30.0의 ESM 실행 부분과 필요한 zod/Ajv 파일만 복사하며 테스트·타입·map·`.bin`·symlink는 제외한다. 현재 구성은 해시로 색인한 529개 파일이다. 새 npm 의존성을 추가하지 않는다.
-2026-11-06부터 `zod` 4.6.6과 `fast-uri` 3.1.9를 `bridges/claude/package.json`의 `overrides`로 고정한다(GHSA-mrhx-c7xc-m3w5, fast-uri 3.1.9 이전 권고들). SDK는 1.30.0을 유지한다. 파일 수는 다음 payload 준비 때 다시 확인한다.
+2026-11-06부터 `zod` 4.6.6과 `fast-uri` 3.1.9를 `bridges/claude/package.json`의 `overrides`로 고정한다(GHSA-mrhx-c7xc-m3w5, fast-uri 3.1.9 이전 권고들). SDK는 1.30.0을 유지한다. 2026-11-06 r90 준비에서 파일 수는 533개였다.
+설치 앱의 Swift qualifier(`ClaudeRuntimePayload.packageVersions`)도 같은 버전을 고정하므로 세 곳을 함께 올린다. r90 빌드는 Swift 쪽이 4.6.2·3.1.7에 남아 있어 실제 번들 payload 검사(`BLABEE_CLAUDE_PACKAGED_RUNTIME`)에서 `claude_runtime_payload_invalid`로 거부됐고 게시하지 않았다. 이후 `Tests/AppPackaging/claude-runtime-package-pins.test.mjs`가 Swift 고정 목록·`CLAUDE_RUNTIME_PACKAGES`·lock 파일의 일치를 패키징 검사에서 확인한다.
 
 descriptor는 bridge/Node/SDK 버전, Node architecture, owner/session/Pet 계약 버전, `legacy` MCP 협상, Channels mode/source/selector, 파일별 path·SHA256·size·실행 여부를 고정한다. canonical JSON은 키 정렬·공백 없음·slash 비이스케이프이며, `payload_digest`를 제외한 전체 내용의 SHA256을 `sha256:` 접두사로 기록한다. 파일별 SHA256은 접두사 없는 64자리 소문자다. manifest 자체를 제외한 전체 파일과 directory 구조가 일치해야 한다.
 

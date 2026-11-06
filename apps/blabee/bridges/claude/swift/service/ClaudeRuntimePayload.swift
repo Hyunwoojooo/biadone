@@ -47,8 +47,8 @@ enum ClaudeRuntimePayload {
         "@modelcontextprotocol/sdk", "zod", "zod-to-json-schema", "ajv", "ajv-formats",
         "fast-deep-equal", "fast-uri", "json-schema-traverse", "require-from-string",
     ]
-    static let packageVersions = ["@modelcontextprotocol/sdk": "1.30.0", "zod": "4.6.2", "zod-to-json-schema": "3.25.2",
-        "ajv": "8.20.0", "ajv-formats": "3.0.1", "fast-deep-equal": "3.1.3", "fast-uri": "3.1.7",
+    static let packageVersions = ["@modelcontextprotocol/sdk": "1.30.0", "zod": "4.6.6", "zod-to-json-schema": "3.25.2",
+        "ajv": "8.20.0", "ajv-formats": "3.0.1", "fast-deep-equal": "3.1.3", "fast-uri": "3.1.9",
         "json-schema-traverse": "1.0.0", "require-from-string": "2.0.2"]
     static let packageEntries = ["@modelcontextprotocol/sdk": ["dist/esm/server/index.js", "dist/esm/server/stdio.js", "dist/esm/types.js"],
         "zod": ["index.js", "v3/index.js", "v4/index.js", "v4-mini/index.js"],

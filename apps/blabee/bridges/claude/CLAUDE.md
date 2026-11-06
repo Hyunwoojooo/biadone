@@ -47,7 +47,9 @@ shim은 `blabee-coordinator claude-auto-launch --claude-bin <원본> -- "$@"`를
 ## 바꾸면 안 되는 것
 
 - `@modelcontextprotocol/sdk` 1.30.0 고정(lockfile), `MCP_PROTOCOL_NEGOTIATION=legacy`.
-  `zod`·`fast-uri`는 보안 권고 때문에 `package.json`의 `overrides`로 정확한 버전을 고정한다. 올릴 때는 `scripts/prepare-claude-runtime.mjs`의 `CLAUDE_RUNTIME_PACKAGES`도 같이 바꾼다.
+  `zod`·`fast-uri`는 보안 권고 때문에 `package.json`의 `overrides`로 정확한 버전을 고정한다. 올릴 때는 `scripts/prepare-claude-runtime.mjs`의 `CLAUDE_RUNTIME_PACKAGES`와
+  `swift/service/ClaudeRuntimePayload.swift`의 `packageVersions`를 같이 바꾼다. 세 곳이 다르면 설치 앱이 자기 번들 런타임을
+  `claude_runtime_payload_invalid`로 거부한다. `Tests/AppPackaging/claude-runtime-package-pins.test.mjs`가 세 곳의 일치를 검사한다.
 - 서버명 `blabee-claude`, `_v1` 도구 이름 다섯 개, 스키마 문자열 `blabee.claude-session.v3`, `blabee.claude-proposal.v1`, `blabee.claude-action.v1`, `blabee.claude-owner.v1`, `blabee.claude-runtime.v2`, `mcp-hook-v1`.
 - 식별자 `com.biadone.blabee.claude-owner-renewal`, `com.biadone.blabee.claude-installed-owner`, Keychain account `claude-native-v1-<digest>`, 경로 `shell/claude-v1`,
   env 접두사 `BLABEE_CLAUDE_SESSION_V2_`, `BLABEE_CLAUDE_BOOTSTRAP_`.
