@@ -1767,6 +1767,325 @@ struct CodexRuntimeTrustTests {
             == ManagedCodexRuntimeBundleInspector.expectedTarget)
     }
 
+    @Test("legacy v1 fingerprint and omitted exec-server custody metadata stay compatible")
+    func legacyFingerprintAndCustodyMetadataRemainCompatible() throws {
+        let fixture = try RuntimeTrustFixture(groupWritableAncestors: false)
+        defer { fixture.remove() }
+        #if arch(arm64)
+            let cpuTypeLowByte: UInt8 = 0x0c
+            let expectedFingerprint = "2a4e89c5a5bef9c41a8e647c4158046a380c69cde7de37782f43b32dbf62cc5a"
+        #else
+            let cpuTypeLowByte: UInt8 = 0x07
+            let expectedFingerprint = "349577bfaa81d56389ea0075029f492734e5c143aadce412da0d11c1434c2407"
+        #endif
+        // Fixed Mach-O header fixtures are inspected in trusted fixture mode;
+        // they are never launched and do not depend on macOS executable bytes.
+        let native = Data([0xcf, 0xfa, 0xed, 0xfe, cpuTypeLowByte, 0, 0, 1]
+            + [UInt8](repeating: 0, count: 24))
+        for executable in [fixture.target, fixture.host, fixture.ripgrep] {
+            try native.write(to: executable)
+        }
+        try fixture.writeRawManifest(
+            #"{"entrypoint":"bin/codex","layoutVersion":1,"pathDir":"codex-path","target":"\#(ManagedCodexRuntimeBundleInspector.expectedTarget)","variant":"codex","version":"0.150.1"}"#
+        )
+        let inspection = try ManagedCodexRuntimeBundleInspector.inspect(
+            executableURL: fixture.target,
+            executableVerification: .trustedTestFixture
+        )
+        #expect(inspection.manifest.execServer == nil)
+        // Frozen from the pre-execServer v1 serialization, including nil
+        // resourcesDir and all six entries. Do not derive this at test time.
+        #expect(ManagedCodexRuntimeBundleQualificationCatalog
+            .fingerprintForTesting(inspection) == expectedFingerprint)
+
+        var pin: ManagedCodexPinnedRuntimeBundle? =
+            try ManagedCodexPinnedRuntimeBundle.create(
+                from: inspection, parentURL: fixture.root
+            )
+        let privateRoot = try #require(pin?.directoryURL)
+        let seal = try #require(try JSONSerialization.jsonObject(
+            with: Data(contentsOf: privateRoot.appendingPathComponent(
+                ".blabee-runtime-manifest.json"
+            ))
+        ) as? [String: Any])
+        let sealedManifest = try #require(seal["manifest"] as? [String: Any])
+        #expect(!sealedManifest.keys.contains("execServer"))
+        _ = try pin?.revalidate(qualifiedVersion: "0.150.1")
+
+        // Leave a sealed tree for the next-process reader to decode, rather
+        // than validating only the current process's in-memory inspection.
+        let marker = privateRoot.appendingPathComponent("preserve-until-abandoned")
+        try Data("preserve".utf8).write(to: marker)
+        pin = nil
+        #expect(FileManager.default.fileExists(atPath: privateRoot.path))
+        try FileManager.default.removeItem(at: marker)
+        try FileManager.default.setAttributes(
+            [.modificationDate: Date(timeIntervalSinceNow: -120)],
+            ofItemAtPath: privateRoot.path
+        )
+        try ManagedCodexPinnedExecutableTesting.scavengeRuntimeBundles(in: fixture.root)
+        #expect(!FileManager.default.fileExists(atPath: privateRoot.path))
+
+        let staging = try makePreservedRuntimeStaging(in: fixture)
+        let plan = try #require(try JSONSerialization.jsonObject(
+            with: Data(contentsOf: staging.appendingPathComponent(
+                ".blabee-runtime-staging.json"
+            ))
+        ) as? [String: Any])
+        let plannedManifest = try #require(plan["manifest"] as? [String: Any])
+        #expect(!plannedManifest.keys.contains("execServer"))
+        try ManagedCodexPinnedExecutableTesting.scavengeRuntimeBundles(in: fixture.root)
+        #expect(!FileManager.default.fileExists(atPath: staging.path))
+    }
+
+    #if arch(arm64)
+        @Test("0.166 exec server is copied, sealed, and isolated from source drift")
+        func execServerIsIncludedInPrivateRuntimeCustody() throws {
+            let fixture = try RuntimeTrustFixture(groupWritableAncestors: false)
+            defer { fixture.remove() }
+            try fixture.installExecServerBundle()
+            let inspection = try ManagedCodexRuntimeBundleInspector.inspect(
+                executableURL: fixture.target,
+                executableVerification: .trustedTestFixture
+            )
+            #expect(inspection.manifest.execServer == "bin/codex-exec-server")
+            #expect(throws: ManagedCodexRuntimeBundleQualificationError
+                .fingerprintMismatch(version: "0.166.0", target: "aarch64-apple-darwin"))
+            {
+                try ManagedCodexRuntimeBundleQualificationCatalog
+                    .requireProductionQualificationForTesting(inspection)
+            }
+
+            var pin: ManagedCodexPinnedRuntimeBundle? =
+                try ManagedCodexPinnedRuntimeBundle.create(
+                    from: inspection,
+                    parentURL: fixture.root
+                )
+            let privateRoot = try #require(pin?.directoryURL)
+            let privateServer = privateRoot.appendingPathComponent(
+                "bin/codex-exec-server"
+            )
+            #expect(try Data(contentsOf: privateServer)
+                == Data(contentsOf: fixture.execServer))
+            #expect(try runtimeMode(privateServer) == 0o500)
+            let seal = try #require(try JSONSerialization.jsonObject(
+                with: Data(contentsOf: privateRoot.appendingPathComponent(
+                    ".blabee-runtime-manifest.json"
+                ))
+            ) as? [String: Any])
+            let manifest = try #require(seal["manifest"] as? [String: Any])
+            let entries = try #require(seal["entries"] as? [[String: Any]])
+            #expect(manifest["execServer"] as? String == "bin/codex-exec-server")
+            #expect(entries.contains {
+                $0["path"] as? String == "bin/codex-exec-server"
+                    && $0["executable"] as? Bool == true
+            })
+            _ = try pin?.revalidate(qualifiedVersion: "0.166.0")
+
+            try replaceNativeExecutable(
+                at: fixture.execServer,
+                from: URL(fileURLWithPath: "/usr/bin/false")
+            )
+            #expect(throws: ManagedCodexRuntimeBundleError.self) {
+                try ManagedCodexRuntimeBundleInspector.revalidate(inspection)
+            }
+            _ = try pin?.revalidate(qualifiedVersion: "0.166.0")
+            pin = nil
+            #expect(!FileManager.default.fileExists(atPath: privateRoot.path))
+        }
+
+        @Test("exec server declaration and exact version-specific bin layout fail closed",
+              arguments: [
+                  "missing-field", "missing-file", "null", "number", "boolean",
+                  "empty", "traversal", "absolute", "wrong-file", "legacy-version",
+                  "unreviewed-version", "target", "unknown-field", "extra-bin",
+                  "legacy-extra-bin", "duplicate-key",
+              ])
+        func execServerManifestAndLayoutRejectAmbiguity(scenario: String) throws {
+            let fixture = try RuntimeTrustFixture(groupWritableAncestors: false)
+            defer { fixture.remove() }
+            try fixture.installExecServerBundle()
+            if scenario == "duplicate-key" {
+                let original = try String(contentsOf: fixture.manifestURL,
+                                          encoding: .utf8)
+                try fixture.writeRawManifest(
+                    #"{"execServer":"bin/codex-exec-server","#
+                        + String(original.dropFirst())
+                )
+            } else {
+                try rewriteRuntimeBundleJSON(at: fixture.manifestURL) { manifest in
+                    switch scenario {
+                    case "missing-field": manifest.removeValue(forKey: "execServer")
+                    case "missing-file":
+                        try FileManager.default.removeItem(at: fixture.execServer)
+                    case "null": manifest["execServer"] = NSNull()
+                    case "number": manifest["execServer"] = 1
+                    case "boolean": manifest["execServer"] = true
+                    case "empty": manifest["execServer"] = ""
+                    case "traversal": manifest["execServer"] = "../bin/codex-exec-server"
+                    case "absolute": manifest["execServer"] = "/bin/codex-exec-server"
+                    case "wrong-file": manifest["execServer"] = "bin/codex-code-mode-host"
+                    case "legacy-version": manifest["version"] = "0.164.0"
+                    case "unreviewed-version": manifest["version"] = "0.167.0"
+                    case "target": manifest["target"] = "x86_64-apple-darwin"
+                    case "unknown-field": manifest["unexpected"] = true
+                    case "extra-bin":
+                        try Data("unexpected".utf8).write(to: fixture.runtimeRoot
+                            .appendingPathComponent("bin/unexpected"))
+                    case "legacy-extra-bin":
+                        manifest["version"] = "0.164.0"
+                        manifest.removeValue(forKey: "execServer")
+                    default: Issue.record("unknown exec-server scenario")
+                    }
+                }
+            }
+            #expect(throws: ManagedCodexRuntimeBundleError.self) {
+                _ = try ManagedCodexRuntimeBundleInspector.inspect(
+                    executableURL: fixture.target,
+                    executableVerification: .trustedTestFixture
+                )
+            }
+        }
+
+        @Test("exec server requires a safe native executable",
+              arguments: ["script", "writable", "symlink", "hardlink", "fifo"])
+        func execServerRequiresNativeTrust(scenario: String) throws {
+            let fixture = try RuntimeTrustFixture(groupWritableAncestors: false)
+            defer { fixture.remove() }
+            try fixture.installExecServerBundle()
+            switch scenario {
+            case "script":
+                try Data("#!/bin/sh\nexit 0\n".utf8).write(to: fixture.execServer)
+            case "writable":
+                try FileManager.default.setAttributes(
+                    [.posixPermissions: 0o775], ofItemAtPath: fixture.execServer.path
+                )
+            case "symlink":
+                try FileManager.default.removeItem(at: fixture.execServer)
+                try FileManager.default.createSymbolicLink(
+                    at: fixture.execServer, withDestinationURL: fixture.host
+                )
+            case "hardlink":
+                try FileManager.default.removeItem(at: fixture.execServer)
+                try FileManager.default.linkItem(at: fixture.host, to: fixture.execServer)
+            case "fifo":
+                try FileManager.default.removeItem(at: fixture.execServer)
+                try #require(mkfifo(fixture.execServer.path, mode_t(0o500)) == 0)
+            default: Issue.record("unknown exec-server trust scenario")
+            }
+            #expect(throws: ManagedCodexRuntimeBundleError.self) {
+                _ = try ManagedCodexRuntimeBundleInspector.inspect(
+                    executableURL: fixture.target,
+                    executableVerification: .trustedTestFixture
+                )
+            }
+        }
+
+        @Test("exec server mutation during copy or private reuse fails closed",
+              arguments: ["source-copy", "private-content", "private-permission", "private-missing"])
+        func execServerMutationFailsClosed(scenario: String) throws {
+            let fixture = try RuntimeTrustFixture(groupWritableAncestors: false)
+            defer { fixture.remove() }
+            try fixture.installExecServerBundle()
+            let inspection = try ManagedCodexRuntimeBundleInspector.inspect(
+                executableURL: fixture.target,
+                executableVerification: .trustedTestFixture
+            )
+            if scenario == "source-copy" {
+                ManagedCodexPinnedExecutableTesting.beforeRuntimeSourceRevalidation {
+                    try replaceNativeExecutable(
+                        at: fixture.execServer,
+                        from: URL(fileURLWithPath: "/usr/bin/false")
+                    )
+                }
+                defer {
+                    ManagedCodexPinnedExecutableTesting.beforeRuntimeSourceRevalidation(nil)
+                }
+                #expect(throws: ManagedCodexRuntimeBundleError.self) {
+                    _ = try ManagedCodexPinnedRuntimeBundle.create(
+                        from: inspection, parentURL: fixture.root
+                    )
+                }
+                #expect(try FileManager.default.contentsOfDirectory(atPath: fixture.root.path)
+                    .allSatisfy { !$0.hasPrefix("blabee-managed-codex.") })
+                return
+            }
+            let pin = try ManagedCodexPinnedRuntimeBundle.create(
+                from: inspection, parentURL: fixture.root
+            )
+            let privateServer = pin.directoryURL.appendingPathComponent(
+                "bin/codex-exec-server"
+            )
+            switch scenario {
+            case "private-content":
+                try replaceNativeExecutable(
+                    at: privateServer, from: URL(fileURLWithPath: "/usr/bin/false")
+                )
+            case "private-permission":
+                try FileManager.default.setAttributes(
+                    [.posixPermissions: 0o700], ofItemAtPath: privateServer.path
+                )
+            case "private-missing": try FileManager.default.removeItem(at: privateServer)
+            default: Issue.record("unknown exec-server mutation scenario")
+            }
+            #expect(throws: CodexRuntimeTrustError.approvalDrift) {
+                _ = try pin.revalidate(qualifiedVersion: "0.166.0")
+            }
+        }
+
+        @Test("exec server staging recovery requires the exact declaration and planned file",
+              arguments: [
+                  "valid", "missing-field", "null", "unknown-field", "legacy-version",
+                  "wrong-path", "missing-entry", "not-executable", "extra-bin",
+              ])
+        func execServerStagingRecoveryFailsClosed(scenario: String) throws {
+            let fixture = try RuntimeTrustFixture(groupWritableAncestors: false)
+            defer { fixture.remove() }
+            try fixture.installExecServerBundle()
+            let staging = try makePreservedRuntimeStaging(
+                in: fixture, version: "0.166.0", failurePoint: .afterDestinationCopy
+            )
+            let stagedServer = staging.appendingPathComponent("bin/codex-exec-server")
+            try Data(contentsOf: fixture.execServer).write(to: stagedServer)
+            try FileManager.default.setAttributes(
+                [.posixPermissions: 0o500], ofItemAtPath: stagedServer.path
+            )
+            if scenario == "extra-bin" {
+                let extra = staging.appendingPathComponent("bin/unexpected")
+                try Data("preserve".utf8).write(to: extra)
+                try FileManager.default.setAttributes(
+                    [.posixPermissions: 0o500], ofItemAtPath: extra.path
+                )
+            } else if scenario != "valid" {
+                try rewriteRuntimeBundleJSON(at: staging.appendingPathComponent(
+                    ".blabee-runtime-staging.json"
+                )) { plan in
+                    var manifest = try #require(plan["manifest"] as? [String: Any])
+                    var entries = try #require(plan["entries"] as? [[String: Any]])
+                    switch scenario {
+                    case "missing-field": manifest.removeValue(forKey: "execServer")
+                    case "null": manifest["execServer"] = NSNull()
+                    case "unknown-field": manifest["unexpected"] = true
+                    case "legacy-version": manifest["version"] = "0.164.0"
+                    case "wrong-path": manifest["execServer"] = "bin/codex-code-mode-host"
+                    case "missing-entry":
+                        entries.removeAll { $0["path"] as? String == "bin/codex-exec-server" }
+                    case "not-executable":
+                        let index = try #require(entries.firstIndex {
+                            $0["path"] as? String == "bin/codex-exec-server"
+                        })
+                        entries[index]["executable"] = false
+                    default: Issue.record("unknown exec-server staging scenario")
+                    }
+                    plan["manifest"] = manifest
+                    plan["entries"] = entries
+                }
+            }
+            try ManagedCodexPinnedExecutableTesting.scavengeRuntimeBundles(in: fixture.root)
+            #expect(FileManager.default.fileExists(atPath: staging.path) == (scenario != "valid"))
+        }
+    #endif
+
     @Test("the host and ripgrep companions are mandatory")
     func mandatoryCompanionsCannotBeMissing() throws {
         let missingHost = try RuntimeTrustFixture(groupWritableAncestors: false)
@@ -2092,6 +2411,7 @@ struct CodexRuntimeTrustTests {
             "0.162.1": "37d07b6af6cd84ff0953704fcd1b8c933b79c360a94d4ceeef5eb07ef77c6961",
             "0.163.0": "8455dbc0e6ca06359af0b7bf675767273c063ed92fa7a881380efc34771836b8",
             "0.164.0": "d517a3752fe11e23aae487b07d6a9699b55031bc118253159c8d23bd26c01fb3",
+            "0.166.0": "e34cede97a151936ae1e2ec7af1ae38cc145857d6571981ddbab0723d7f86214",
         ]
         #expect(ManagedCodexRuntimeBundleQualificationCatalog
             .fingerprintForTesting(inspection)
@@ -2104,12 +2424,16 @@ struct CodexRuntimeTrustTests {
     @Test("catalog-pinned voice JSON loses executable permission only in the private copy",
           arguments: [
               "0.155.1", "0.156.0", "0.156.1", "0.157.0", "0.157.1",
-              "0.158.0", "0.159.0", "0.159.1", "0.159.2", "0.159.3", "0.160.0", "0.160.1", "0.161.0", "0.162.0", "0.162.1", "0.163.0", "0.164.0",
+              "0.158.0", "0.159.0", "0.159.1", "0.159.2", "0.159.3", "0.160.0", "0.160.1", "0.161.0", "0.162.0", "0.162.1", "0.163.0", "0.164.0", "0.166.0",
           ])
     func pinnedVoiceJSONIsDataDuringPrivateCustody(version: String) throws {
+        guard version != "0.166.0"
+            || ManagedCodexRuntimeBundleInspector.expectedTarget == "aarch64-apple-darwin"
+        else { return }
         let fixture = try RuntimeTrustFixture(groupWritableAncestors: false)
         defer { fixture.remove() }
         try fixture.replaceTargetWithNativeExecutable()
+        if version == "0.166.0" { try fixture.installExecServerBundle() }
         let source = fixture.runtimeRoot.appendingPathComponent("codex-resources/voice/runtime.json")
         try FileManager.default.createDirectory(
             at: source.deletingLastPathComponent(), withIntermediateDirectories: true,
@@ -2122,7 +2446,11 @@ struct CodexRuntimeTrustTests {
         let data = try Data(contentsOf: artifact)
         try data.write(to: source)
         try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: source.path)
-        try fixture.writeManifest(version: version, resourcesDir: "codex-resources")
+        try fixture.writeManifest(
+            version: version,
+            execServer: version == "0.166.0" ? "bin/codex-exec-server" : nil,
+            resourcesDir: "codex-resources"
+        )
         let inspection = try ManagedCodexRuntimeBundleInspector.inspect(
             executableURL: fixture.target, executableVerification: .trustedTestFixture
         )
@@ -2145,9 +2473,12 @@ struct CodexRuntimeTrustTests {
     @Test("unreviewed executable JSON remains rejected even at the voice resource path",
           arguments: [
               "0.155.1", "0.156.0", "0.156.1", "0.157.0", "0.157.1",
-              "0.158.0", "0.159.0", "0.159.1", "0.159.2", "0.159.3", "0.160.0", "0.160.1", "0.161.0", "0.162.0", "0.162.1", "0.163.0", "0.164.0",
+              "0.158.0", "0.159.0", "0.159.1", "0.159.2", "0.159.3", "0.160.0", "0.160.1", "0.161.0", "0.162.0", "0.162.1", "0.163.0", "0.164.0", "0.166.0",
           ])
     func executableDataExceptionRequiresExactPathAndDigest(version: String) throws {
+        guard version != "0.166.0"
+            || ManagedCodexRuntimeBundleInspector.expectedTarget == "aarch64-apple-darwin"
+        else { return }
         let artifact = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent().deletingLastPathComponent()
             .deletingLastPathComponent().deletingLastPathComponent()
@@ -2161,6 +2492,7 @@ struct CodexRuntimeTrustTests {
             let fixture = try RuntimeTrustFixture(groupWritableAncestors: false)
             defer { fixture.remove() }
             try fixture.replaceTargetWithNativeExecutable()
+            if version == "0.166.0" { try fixture.installExecServerBundle() }
             let path = fixture.runtimeRoot.appendingPathComponent("codex-resources/voice/" + name)
             try FileManager.default.createDirectory(
                 at: path.deletingLastPathComponent(), withIntermediateDirectories: true,
@@ -2168,7 +2500,11 @@ struct CodexRuntimeTrustTests {
             )
             try data.write(to: path)
             try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: path.path)
-            try fixture.writeManifest(version: version, resourcesDir: "codex-resources")
+            try fixture.writeManifest(
+                version: version,
+                execServer: version == "0.166.0" ? "bin/codex-exec-server" : nil,
+                resourcesDir: "codex-resources"
+            )
             #expect(throws: ManagedCodexRuntimeBundleError.self) {
                 _ = try ManagedCodexRuntimeBundleInspector.inspect(
                     executableURL: fixture.target, executableVerification: .trustedTestFixture
@@ -2674,9 +3010,11 @@ struct CodexRuntimeTrustTests {
 }
 
 private func makePreservedRuntimeStaging(
-    in fixture: RuntimeTrustFixture
+    in fixture: RuntimeTrustFixture,
+    version: String = "0.150.1",
+    failurePoint: ManagedCodexPinnedExecutableCreateFailurePoint = .afterLease
 ) throws -> URL {
-    let versions = RuntimeTrustVersionProbe(["0.150.1"])
+    let versions = RuntimeTrustVersionProbe([version])
     let resolver = ManagedCodexTrustResolver(
         candidateURLs: [fixture.source],
         monitoredEntries: [],
@@ -2684,7 +3022,7 @@ private func makePreservedRuntimeStaging(
         versionReader: { versions.read($0) }
     )
     ManagedCodexPinnedExecutableTesting.preserveFailedRuntimeStaging(true)
-    ManagedCodexPinnedExecutableTesting.injectCreateFailure(.afterLease)
+    ManagedCodexPinnedExecutableTesting.injectCreateFailure(failurePoint)
     defer {
         ManagedCodexPinnedExecutableTesting.injectCreateFailure(nil)
         ManagedCodexPinnedExecutableTesting.preserveFailedRuntimeStaging(false)
@@ -2702,6 +3040,21 @@ private func makePreservedRuntimeStaging(
             })
     )
     return fixture.root.appendingPathComponent(name, isDirectory: true)
+}
+
+private func rewriteRuntimeBundleJSON(
+    at url: URL,
+    change: (inout [String: Any]) throws -> Void
+) throws {
+    var object = try #require(
+        try JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any]
+    )
+    try change(&object)
+    let data = try JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])
+    let mode = try runtimeMode(url)
+    try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
+    try data.write(to: url)
+    try FileManager.default.setAttributes([.posixPermissions: mode], ofItemAtPath: url.path)
 }
 
 private func rewriteStagingPlanTimestamp(
@@ -2772,6 +3125,10 @@ private final class RuntimeTrustFixture: @unchecked Sendable {
             "bin/codex-code-mode-host",
             isDirectory: false
         )
+    }
+
+    var execServer: URL {
+        runtimeRoot.appendingPathComponent("bin/codex-exec-server", isDirectory: false)
     }
 
     var ripgrep: URL {
@@ -2891,12 +3248,22 @@ private final class RuntimeTrustFixture: @unchecked Sendable {
         try writeManifest(to: manifest)
     }
 
+    func installExecServerBundle() throws {
+        try replaceTargetWithNativeExecutable()
+        try Data(contentsOf: URL(fileURLWithPath: "/usr/bin/true")).write(to: execServer)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o755], ofItemAtPath: execServer.path
+        )
+        try writeManifest(version: "0.166.0", execServer: "bin/codex-exec-server")
+    }
+
     func writeManifest(
         layoutVersion: Int = 1,
         version: String = "0.150.1",
         target: String = ManagedCodexRuntimeBundleInspector.expectedTarget,
         variant: String = "codex",
         entrypoint: String = "bin/codex",
+        execServer: String? = nil,
         pathDir: String = "codex-path",
         resourcesDir: String? = nil,
         to destination: URL? = nil
@@ -2909,6 +3276,7 @@ private final class RuntimeTrustFixture: @unchecked Sendable {
             "variant": variant,
             "version": version,
         ]
+        if let execServer { fields["execServer"] = execServer }
         if let resourcesDir { fields["resourcesDir"] = resourcesDir }
         let body = try JSONSerialization.data(
             withJSONObject: fields,

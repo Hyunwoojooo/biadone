@@ -6,7 +6,8 @@ import { join } from 'node:path';
 import { PassThrough, Readable } from 'node:stream';
 import test from 'node:test';
 import { SESSION_V2_AUTHORITY_KEYS } from '../../../bridges/claude/src/session-v2-client.mjs';
-import { sessionV2Context } from '../../../bridges/claude/src/session-v2-context.mjs';
+import { SESSION_V2_NO_BOUNDARY_LINE, SESSION_V2_WORKFLOW_INSTRUCTIONS, sessionV2BoundaryLine, sessionV2Context }
+  from '../../../bridges/claude/src/session-v2-context.mjs';
 import { handleSessionV2Hook, readSessionV2HookInput, runSessionV2Hook } from '../../../bridges/claude/src/session-v2-hook.mjs';
 import { createSessionV2BridgeSession, createSessionV2RequestQueue, runSessionV2MCP } from '../../../bridges/claude/src/session-v2-mcp.mjs';
 import { createSessionV2ToolHandler } from '../../../bridges/claude/src/session-v2-tools.mjs';
@@ -77,7 +78,7 @@ test('v2 Hook sends real mismatched identity for revocation, retains raw digest,
   const delivered = event();
   const prompt = `<channel source="blabee-claude" kind="readiness_probe" probe_id="${delivered.probe_id}">\n${JSON.stringify(delivered)}\n</channel>`;
   const result = await handleSessionV2Hook({ ...base, hook_event_name: 'UserPromptSubmit', prompt_id: promptID, prompt }, { env: f.env, createClient });
-  assert.match(result.hookSpecificOutput.additionalContext, new RegExp(`boundary_id=${boundary}`));
+  assert.equal(result.hookSpecificOutput.additionalContext, sessionV2BoundaryLine(boundary));
   assert.equal(calls[0].prompt_sha256, createHash('sha256').update(prompt).digest('hex'));
   assert.equal(JSON.stringify(calls).includes(delivered.nonce), false);
   const changed = { cwd: '/private/tmp/other-project', session_id: randomUUID() };
@@ -132,7 +133,7 @@ test('UserPromptSubmit context publishes only the server-validated boundary and 
       cwd: f.cwd, event: 'UserPromptSubmit', prompt_id: newPrompt,
       prompt_sha256: createHash('sha256').update(prompt, 'utf8').digest('hex') }]);
     const context = result.hookSpecificOutput.additionalContext;
-    assert.equal(context.includes(`boundary_id=${boundary}`), accepted);
+    assert.equal(context, accepted ? sessionV2BoundaryLine(boundary) : SESSION_V2_NO_BOUNDARY_LINE);
     assert.equal(context.includes(selection.delivery_token), false);
     assert.equal(context.includes(selection.selection_id), false);
   }
@@ -467,4 +468,20 @@ test('SDK initialize gates one bridge open, advertises v1 tools, serializes call
   await bridge.close();
   assert.equal(calls.filter(value => value === 'bridge.close').length, 1);
   assert.equal(process.listenerCount('SIGTERM'), before);
+});
+
+test('per-prompt Hook context is one short line; workflow rules stay in MCP instructions only', () => {
+  const line = sessionV2BoundaryLine(randomUUID());
+  for (const context of [line, SESSION_V2_NO_BOUNDARY_LINE]) {
+    assert.ok(context.length < 120, context);
+    assert.equal(context.includes('\n'), false);
+    assert.equal(context.includes(SESSION_V2_WORKFLOW_INSTRUCTIONS.split('\n')[0]), false);
+  }
+  assert.ok(SESSION_V2_WORKFLOW_INSTRUCTIONS.length <= 600);
+  for (const keyword of ['emit_decision_v1', 'claim_selection_v1', 'complete_selection_v1', 'check_connection_v1',
+    'ack_readiness_probe_v1', 'boundary_id', 'selection_id']) assert.match(SESSION_V2_WORKFLOW_INSTRUCTIONS, new RegExp(keyword));
+  // A claim opens a new boundary without a UserPromptSubmit Hook; the rule must survive the shortening.
+  assert.match(SESSION_V2_WORKFLOW_INSTRUCTIONS, /claim_selection_v1 응답의 boundary_id/);
+  // Model-initiated connection checks are on request only, not before every proposal.
+  assert.doesNotMatch(SESSION_V2_WORKFLOW_INSTRUCTIONS, /제안하기 전/);
 });

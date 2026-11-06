@@ -65,6 +65,12 @@ voice 포함 42파일 구성에서는 기존 실행 파일 4개와 추가 native
 
 0.163.0·0.164.0의 41파일 구성은 native 29개를 같은 조건으로 검사한다.
 
+`0.166.0`의 `aarch64-apple-darwin`은 위 41파일에 `bin/codex-exec-server`가 추가된
+42파일·native 30개 구성이다. 정확한 `execServer` 선언과 native 서명·identifier·
+공증도 요구한다. 0.166.0의 다른 target은 구형 5파일 구성으로 위장해도 실행 전에
+거부한다. manifest의 알 수 없는 필드·중복 키·null 선언도 거부한다.
+[0.166.0 검증 기록](CODEX_0166_QUALIFICATION.md).
+
 `spctl --assess --type execute`는 단독 CLI를 앱으로 평가하여 오판할 수 있어 사용하지 않는다. 코드 서명·공증 검사가 통과해도 실제 실행 성공을 뜻하지 않는다. `--version`이 실제 종료 신호(SIGKILL 등)로 끝나면 `execution_terminated`로 기록한다. 종료 신호 없이 exit 137만 반환하면 `command_failed`이며 강제 종료라고 판단하지 않는다. OS 차단 가능성은 기록하지만 공증 ticket 부재라고 단정하지 않는다.
 
 첫 실패에서 후보 실행을 중단한다. 자동 재시도는 없다. 자식 프로세스는 새 process group에서 실행하고 시간 제한 또는 출력 제한 시 TERM → KILL로 정리한다. 직접 자식이 성공해도 남은 같은 그룹 자식은 정리한다. 기본 검사당 15초·64 KiB, Hook fixture harness는 60초·256 KiB로 제한한다. 출력 원문은 보고서에 보관하지 않고 해시를 기록한다.

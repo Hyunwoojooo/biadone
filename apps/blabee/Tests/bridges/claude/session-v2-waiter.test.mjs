@@ -111,6 +111,31 @@ test('waiter polls serially every 500ms with its original binding and emits one 
   assert.equal(f.notices.length, 1);
 });
 
+test('a poll that failed locally before submission is retried on the next tick; a submitted failure is not', async () => {
+  const unsubmitted = () => Object.assign(new SessionV2ClientError('session_v2_unavailable'), { notSubmitted: true });
+  let polls = 0;
+  const f = fixture({ poll: ({ event }) => {
+    if (++polls <= 2) throw unsubmitted();
+    return { status: 'delivered', event };
+  } });
+  assert.equal(await f.runtime.run(), true); await f.runtime.dispose();
+  assert.deepEqual(f.delays, [500, 500, 500]);
+  assert.deepEqual(f.calls.map(value => value.operation), ['hook.poll', 'hook.poll', 'hook.poll']);
+  assert.equal(f.notices.length, 1);
+
+  // Same code without the local proof stays terminal: the service may have seen it.
+  const sent = fixture({ poll: () => { throw new SessionV2ClientError('session_v2_unavailable'); } });
+  await assert.rejects(sent.runtime.run(), { code: 'session_v2_unavailable' }); await sent.runtime.dispose();
+  assert.deepEqual(sent.calls.map(value => value.operation), ['hook.poll', 'hook.cancel']);
+  assert.deepEqual(sent.notices, []);
+
+  // Consecutive local failures are bounded even inside the wait budget.
+  const stuck = fixture({ poll: () => { throw unsubmitted(); } });
+  await assert.rejects(stuck.runtime.run(), { code: 'session_v2_unavailable' }); await stuck.runtime.dispose();
+  assert.equal(stuck.calls.filter(value => value.operation === 'hook.poll').length, 11);
+  assert.deepEqual(stuck.notices, []);
+});
+
 test('cancellation drains the active poll before cancelling exactly the same generation and drops its late event', async () => {
   const gate = deferred();
   const f = fixture({ poll: async ({ event }) => { await gate.promise; return { status: 'delivered', event }; } });

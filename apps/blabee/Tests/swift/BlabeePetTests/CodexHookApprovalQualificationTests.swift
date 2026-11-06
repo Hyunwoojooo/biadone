@@ -82,6 +82,7 @@ struct CodexHookApprovalQualificationTests {
             ("0.162.1", "9ddc61acceef79aa2aad437ba1fe94239f2e0423"),
             ("0.163.0", "5a4eec85679683d4b137579cb2555fe0b42a02dd"),
             ("0.164.0", "3a7d7f1461a52f92f4a4fdc2cc70fc06bee91285"),
+            ("0.166.0", "0b4f0c8e07400d2beb156987f9af592071ee78f4"),
         ]
         for (version, hash) in reviewed {
             let expected = "codex-\(version)-arm64-\(hash)"
@@ -94,7 +95,7 @@ struct CodexHookApprovalQualificationTests {
             )
             #expect(fixture.evaluate() == expected)
             #expect(HookPermissionPolicy.allowsOnce(qualification: expected))
-            for otherVersion in ["0.162.2", "0.163.1", "0.164.1", "0.165.0", "0.162.1-alpha.1", "0.163.0-alpha.1", "0.164.0-alpha.1"] {
+            for otherVersion in ["0.162.2", "0.163.1", "0.164.1", "0.165.0", "0.166.1", "0.162.1-alpha.1", "0.163.0-alpha.1", "0.164.0-alpha.1", "0.166.0-alpha.1"] {
                 #expect(!HookPermissionPolicy.allowsOnce(
                     qualification: "codex-\(otherVersion)-arm64-\(hash)"
                 ))
@@ -104,6 +105,23 @@ struct CodexHookApprovalQualificationTests {
                     qualification: "codex-\(otherVersion)-arm64-\(hash)"
                 ))
             }
+        }
+    }
+
+    @Test("the packaged executor is not a qualified Plugin Hook caller")
+    func execServerCannotClaimCodexHookIdentity() {
+        let executorHash = "a327b12738269e6e2b282f2526c689469a1984f9"
+        #expect(HookPermissionPolicy.qualification(forCDHash: executorHash) == nil)
+        #expect(!HookPermissionPolicy.allowsOnce(
+            qualification: "codex-0.166.0-arm64-\(executorHash)"
+        ))
+        for identifier in ["codex", "codex-exec-server"] {
+            let fixture = HookQualificationFixture(shells: ["/bin/sh"])
+            fixture.signatures[fixture.codexID] = .init(
+                identifier: identifier, teamIdentifier: Gate.codexTeamIdentifier,
+                cdHash: executorHash, requirementSatisfied: true
+            )
+            #expect(fixture.evaluate() == nil)
         }
     }
 

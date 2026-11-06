@@ -9,6 +9,7 @@ import { fileURLToPath } from "node:url";
 const projectRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const versionPattern = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
 const legacyFiles = ["bin/codex", "bin/codex-code-mode-host", "codex-package.json", "codex-path/rg", "codex-resources/zsh/bin/zsh"];
+const execServer = "bin/codex-exec-server";
 const voiceRoot = "codex-resources/voice";
 const voiceHost = `${voiceRoot}/bin/codex-voice-host`;
 // Exact layout reviewed for the arm64 versions listed by includesVoice below.
@@ -171,12 +172,15 @@ export async function qualifyCodexCompatibility(options, dependencies = {}) {
     if (!versionPattern.test(options.expectedVersion ?? "")) fail("invalid_input", "An exact stable --expected-version is required");
     if (!options.runtimeDir || !isAbsolute(options.runtimeDir)) fail("invalid_input", "An explicit absolute --runtime-dir is required");
     if (hostPlatform !== "darwin" || !["arm64", "x64"].includes(hostArch)) fail("unsupported_host", "Qualification requires a native macOS runner");
+    if (options.expectedVersion === "0.166.0" && expectedTarget !== "aarch64-apple-darwin") fail("package_layout_invalid", "Codex 0.166.0 is reviewed only for aarch64-apple-darwin");
     const runtimeRoot = resolve(options.runtimeDir);
     if (await realpath(runtimeRoot) !== runtimeRoot) fail("package_layout_invalid", "Runtime root or ancestor is a symlink; provide its canonical path");
-    const includesVoice = ["0.155.0", "0.155.1", "0.156.0", "0.156.1", "0.157.0", "0.157.1", "0.158.0", "0.159.0", "0.159.1", "0.159.2", "0.159.3", "0.160.0", "0.160.1", "0.161.0", "0.162.0", "0.162.1", "0.163.0", "0.164.0"].includes(options.expectedVersion) && expectedTarget === "aarch64-apple-darwin";
-    // Only the reviewed 0.163.0 and 0.164.0 arm64 packages retire the bundled shell.
-    const baseFiles = includesVoice && ["0.163.0", "0.164.0"].includes(options.expectedVersion)
+    const includesExecServer = options.expectedVersion === "0.166.0" && expectedTarget === "aarch64-apple-darwin";
+    const includesVoice = includesExecServer || (["0.155.0", "0.155.1", "0.156.0", "0.156.1", "0.157.0", "0.157.1", "0.158.0", "0.159.0", "0.159.1", "0.159.2", "0.159.3", "0.160.0", "0.160.1", "0.161.0", "0.162.0", "0.162.1", "0.163.0", "0.164.0"].includes(options.expectedVersion) && expectedTarget === "aarch64-apple-darwin");
+    // Only these exact reviewed arm64 packages retire the bundled shell.
+    const baseFiles = includesVoice && ["0.163.0", "0.164.0", "0.166.0"].includes(options.expectedVersion)
       ? legacyFiles.filter((name) => name !== "codex-resources/zsh/bin/zsh") : legacyFiles;
+    if (includesExecServer) baseFiles.push(execServer);
     const baseExecutables = baseFiles.filter((name) => name !== "codex-package.json");
     const requiredFiles = includesVoice ? [...baseFiles, ...voiceFiles] : baseFiles;
     const executableFiles = includesVoice ? [...baseExecutables, voiceHost] : baseExecutables;
@@ -186,11 +190,24 @@ export async function qualifyCodexCompatibility(options, dependencies = {}) {
     if (files.some((file) => executableFiles.includes(file.path) && (file.mode & 0o111) === 0)) fail("package_layout_invalid", "A required executable is not executable");
     const manifestFile = files.find((file) => file.path === "codex-package.json");
     if (manifestFile.bytes > 16_384) fail("package_layout_invalid", "Package manifest is oversized");
+    const manifestText = await readFile(join(runtimeRoot, "codex-package.json"), "utf8");
     let manifest;
-    try { manifest = JSON.parse(await readFile(join(runtimeRoot, "codex-package.json"), "utf8")); }
+    try { manifest = JSON.parse(manifestText); }
     catch { fail("package_layout_invalid", "Package manifest is not valid JSON"); }
     const expectedManifest = { layoutVersion: 1, version: options.expectedVersion, target: expectedTarget, variant: "codex", entrypoint: "bin/codex", resourcesDir: "codex-resources", pathDir: "codex-path" };
-    if (!manifest || Object.entries(expectedManifest).some(([key, value]) => manifest[key] !== value)) fail("package_manifest_mismatch", "Manifest version, target, or layout does not match the requested package");
+    if (includesExecServer) expectedManifest.execServer = execServer;
+    // The package manifest is flat. Count raw key tokens as well as parsed keys
+    // so JSON.parse cannot silently accept duplicate (including escaped) keys.
+    const manifestKeys = [...manifestText.matchAll(/"(?:\\.|[^"\\])*"/g)]
+      .filter((match) => /^\s*:/.test(manifestText.slice(match.index + match[0].length)))
+      .map((match) => JSON.parse(match[0]));
+    if (!manifest || typeof manifest !== "object" || Array.isArray(manifest)
+      || Object.keys(manifest).length !== Object.keys(expectedManifest).length
+      || manifestKeys.length !== Object.keys(manifest).length
+      || new Set(manifestKeys).size !== manifestKeys.length
+      || Object.entries(expectedManifest).some(([key, value]) => manifest[key] !== value)) {
+      fail("package_manifest_mismatch", "Manifest fields, version, target, or layout do not match the requested package");
+    }
     if (includesVoice) {
       const path = `${voiceRoot}/manifest.json`;
       if (files.find((file) => file.path === path).bytes > 16_384) fail("package_layout_invalid", "Voice manifest is oversized");
@@ -212,6 +229,7 @@ export async function qualifyCodexCompatibility(options, dependencies = {}) {
     const originalFingerprint = fingerprint(files);
     report.package = { manifest, files, fingerprint: originalFingerprint, releaseProvenance: options.releaseEvidence ? { suppliedByCaller: true, record: options.releaseEvidence } : null };
     report.testedCapabilities.push("complete-package-layout", "code-mode-host-present");
+    if (includesExecServer) report.testedCapabilities.push("exec-server-present");
     temporaryRoot = await realpath(await mkdtemp(join(tmpdir(), "blabee-codex-qualification-")));
     const env = isolatedEnvironment(temporaryRoot);
     for (const path of [env.CODEX_HOME, env.XDG_CONFIG_HOME, env.XDG_CACHE_HOME, env.TMPDIR]) await mkdir(path, { mode: 0o700 });

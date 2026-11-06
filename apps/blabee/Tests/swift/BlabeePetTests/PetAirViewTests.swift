@@ -154,7 +154,13 @@ struct PetAirViewTests {
                 }
                 #expect(hasKindLabel, "\(name): \(copy)")
                 #expect(normalized(copy).contains("상세보기"), "\(name): \(copy)")
-                #expect(!normalized(copy).contains("codex"))
+                // The header source badge names the provider on the brand row only;
+                // a restored provider banner would put the name on another row.
+                let brandRows = words.filter { normalized($0.text) == "blabee" }.map(\.frame.midY)
+                #expect(!brandRows.isEmpty, "\(name): \(copy)")
+                for word in words where normalized(word.text).contains("codex") {
+                    #expect(brandRows.contains { abs($0 - word.frame.midY) < 0.03 }, "\(name): provider name outside the header: \(copy)")
+                }
                 #expect(!normalized(copy).contains("blabeepetair"))
                 #expect(!normalized(copy).contains("projectair"))
             }

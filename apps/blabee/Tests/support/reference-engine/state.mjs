@@ -29,6 +29,7 @@ const EVENT_CATEGORIES = Object.freeze({
   continuation_dispatched: "transport",
   continuation_consumed: "transport",
   continuation_transport_completed: "transport",
+  continuation_transport_not_submitted: "transport",
   continuation_transport_timed_out_unknown: "transport",
   work_outcome_recorded: "work_outcome",
   interaction_expired: "decision_lifecycle",
@@ -348,7 +349,7 @@ export function reduce(state, event) {
       const dispatched = next.continuations[boundary.dispatchedContinuationId];
       invariant(
         dispatched
-          && ["completed", "timed_out_unknown"].includes(dispatched.transport?.status),
+          && ["completed", "timed_out_unknown", "not_submitted"].includes(dispatched.transport?.status),
         "transport_terminal_observation_missing",
       );
     }
@@ -569,6 +570,7 @@ export function reduce(state, event) {
   if (
     event.event_type === "continuation_consumed"
     || event.event_type === "continuation_transport_completed"
+    || event.event_type === "continuation_transport_not_submitted"
     || event.event_type === "continuation_transport_timed_out_unknown"
     || event.event_type === "work_outcome_recorded"
   ) {
@@ -606,6 +608,21 @@ export function reduce(state, event) {
     return deepFreeze(next);
   }
 
+  if (event.event_type === "continuation_transport_not_submitted") {
+    invariant(continuation.dispatchMode === "queued_next_turn", "dispatch_mode_conflict");
+    invariant(!continuation.transport, "transport_already_terminal");
+    invariant(!continuation.workOutcome && !continuation.queuedActionContextClaim, "invalid_transport_not_submitted");
+    invariant(parseTimestamp(event.occurred_at) >= parseTimestamp(continuation.issuedAt), "continuation_not_yet_valid");
+    const payload = event.payload;
+    invariant(payload.transport_status === "not_submitted" && payload.work_outcome_status === "not_recorded"
+      && payload.automatic_retry === false && payload.command_invocation_attempted === false,
+    "invalid_transport_not_submitted");
+    assertStableCode(payload.failure_code, "dispatch_failure_code_invalid");
+    continuation.transport = { status: "not_submitted", occurredAt: event.occurred_at,
+      workOutcomeStatus: null, automaticRetry: false };
+    return deepFreeze(next);
+  }
+
   if (event.event_type === "continuation_transport_timed_out_unknown") {
     invariant(!continuation.transport, "transport_already_terminal");
     invariant(
@@ -628,6 +645,7 @@ export function reduce(state, event) {
 
   if (event.event_type === "work_outcome_recorded") {
     invariant(continuation.transport, "transport_terminal_observation_missing");
+    invariant(continuation.transport.status !== "not_submitted", "transport_not_submitted");
     invariant(!continuation.workOutcome, "work_outcome_already_recorded");
     invariant(event.payload.action_id === continuation.actionId, "decision_boundary_binding_mismatch");
     invariant(

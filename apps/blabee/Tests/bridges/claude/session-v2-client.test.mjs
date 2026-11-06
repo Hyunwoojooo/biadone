@@ -173,16 +173,16 @@ test('cancellation after socket creation but before connect sends no frame and r
     if (type === 'abort') {
       registrations++;
       assert.equal(getEventListeners(signal, 'abort').length, 1);
-      // This per-request listener is installed only after the socket exists.
-      // Aborting synchronously here precedes its asynchronous connect event.
-      cancellation.abort(new Error('PRIVATE CANCELLATION REASON'));
+      // The first listener protects filesystem preflight; the second is
+      // installed after socket creation, before its async connect event.
+      if (registrations === 2) cancellation.abort(new Error('PRIVATE CANCELLATION REASON'));
     }
     return result;
   });
   await assert.rejects(client.request(command, { signal }), {
     code: 'session_v2_request_cancelled', message: 'session_v2_request_cancelled',
   });
-  assert.equal(registrations, 1);
+  assert.equal(registrations, 2);
   assert.equal(getEventListeners(signal, 'abort').length, 0);
   assert.equal(f.requests.length, 0);
   const result = await client.request(command);

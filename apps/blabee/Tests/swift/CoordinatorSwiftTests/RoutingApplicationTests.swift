@@ -527,6 +527,110 @@ private func routingFocusedFixture(suffix: String) throws -> (
     return (journal, clock, app, binding, packet)
 }
 
+private func routingNotSubmittedFailure(attempted: Bool = false) -> CoordinatorNextTurnDispatchFailure {
+    .init(code: "codex_native_version_unqualified", stage: .qualification,
+          commandInvocationAttempted: attempted, elapsedMilliseconds: 1)
+}
+
+@Test("confirmed pre-submission failure immediately closes routing without requeue or timeout")
+func routingNotSubmittedClosesImmediately() throws {
+    let f = try routingQueuedDeliveryFixture(suffix: "not_submitted", wallTime: "2026-08-21T12:00:02Z")
+    let binding = try CoordinatorBinding(jsonObject: routingBinding(suffix: "not_submitted"))
+    let before = try f.journal.load().journalSequence
+    f.clock.advance(seconds: 1)
+    #expect(try f.app.failTransportBeforeSubmission(
+        continuationID: f.continuationID, binding: binding, failure: routingNotSubmittedFailure()
+    ) == .notSubmitted)
+    #expect(try routingObject(f.app.snapshotWithoutProcessingTime().canonicalJSON)["in_flight_count"] as? Int == 0)
+    let state = try f.app.authoritativeState()
+    #expect(state.boundary(for: binding)?.closed == true)
+    #expect(state.continuation(id: f.continuationID)?.transport?.occurredAt.rawValue == "2026-08-21T12:00:02Z")
+    #expect(state.eventSequence == before + 2)
+    #expect(try f.app.failTransportBeforeSubmission(
+        continuationID: f.continuationID, binding: binding, failure: routingNotSubmittedFailure()
+    ) == .notSubmitted)
+    f.clock.advance(seconds: 600)
+    #expect(try f.app.processTime().isEmpty)
+    #expect(try f.journal.load().journalSequence == before + 2)
+    let restarted = try routingApplication(journal: f.journal, clock: RoutingFakeClock())
+    #expect(try restarted.authoritativeState().continuation(id: f.continuationID)?.transport?.status == .notSubmitted)
+    #expect(try f.journal.load().journalSequence == before + 2)
+}
+
+@Test("not-submitted routing rejects ambiguous failure and incorrect session authority")
+func routingNotSubmittedRejectsUnprovenFailure() throws {
+    let f = try routingQueuedDeliveryFixture(suffix: "not_submitted_guard", wallTime: "2026-08-21T12:00:02Z")
+    let binding = try CoordinatorBinding(jsonObject: routingBinding(suffix: "not_submitted_guard"))
+    let before = try f.journal.load().journalSequence
+    routingExpectCode("transport_not_submitted_evidence_required") {
+        _ = try f.app.failTransportBeforeSubmission(
+            continuationID: f.continuationID, binding: binding, failure: routingNotSubmittedFailure(attempted: true)
+        )
+    }
+    var wrong = binding.jsonObject
+    wrong["session_id"] = "session_unrelated"
+    routingExpectCode("decision_boundary_binding_mismatch") {
+        _ = try f.app.failTransportBeforeSubmission(
+            continuationID: f.continuationID, binding: CoordinatorBinding(jsonObject: wrong),
+            failure: routingNotSubmittedFailure()
+        )
+    }
+    routingExpectCode("routing_dispatch_failure_evidence_required") {
+        _ = try f.app.executeCommand(routingData(["type": "record_transport_not_submitted"]))
+    }
+    #expect(try f.journal.load().journalSequence == before)
+    #expect(try routingObject(f.app.snapshotWithoutProcessingTime().canonicalJSON)["in_flight_count"] as? Int == 1)
+}
+
+@Test("not-submitted persistence failure retains authority until exact durable recovery", arguments: ["before", "after", "after_load_failure"])
+func routingNotSubmittedPersistenceRecovery(mode: String) throws {
+    let f = try routingQueuedDeliveryFixture(suffix: "not_submitted_recover", wallTime: "2026-08-21T12:00:02Z")
+    let binding = try CoordinatorBinding(jsonObject: routingBinding(suffix: "not_submitted_recover"))
+    f.journal.failNextAppend(eventType: "continuation_transport_not_submitted", commitFirst: mode != "before",
+                            followingLoadError: mode == "after_load_failure" ? "test_load_failed" : nil)
+    if mode == "after" {
+        #expect(try f.app.failTransportBeforeSubmission(
+            continuationID: f.continuationID, binding: binding, failure: routingNotSubmittedFailure()
+        ) == .notSubmitted)
+    } else {
+        routingExpectCode("test_append_failed") {
+            _ = try f.app.failTransportBeforeSubmission(
+                continuationID: f.continuationID, binding: binding, failure: routingNotSubmittedFailure()
+            )
+        }
+        #expect(try routingObject(f.app.snapshotWithoutProcessingTime().canonicalJSON)["in_flight_count"] as? Int == 1)
+        #expect(try f.app.failTransportBeforeSubmission(
+            continuationID: f.continuationID, binding: binding, failure: routingNotSubmittedFailure()
+        ) == .notSubmitted)
+    }
+    let snapshot = try f.journal.load()
+    #expect(try snapshot.events.filter { try routingObject($0)["event_type"] as? String == "continuation_transport_not_submitted" }.count == 1)
+    #expect(try CoordinatorSemanticReplay.replay(snapshot).boundary(for: binding)?.closed == true)
+    #expect(try routingObject(f.app.snapshotWithoutProcessingTime().canonicalJSON)["in_flight_count"] as? Int == 0)
+}
+
+@Test("competing completion and claim win over a late pre-submission failure", arguments: [false, true])
+func routingNotSubmittedPreservesCompletedClaim(claimed: Bool) throws {
+    let f = try routingQueuedDeliveryFixture(suffix: "not_submitted_completed", wallTime: "2026-08-21T12:00:02Z")
+    let binding = try CoordinatorBinding(jsonObject: routingBinding(suffix: "not_submitted_completed"))
+    var state = try f.app.authoritativeState()
+    var events: [Data] = []
+    for command in claimed ? [f.completion, f.close, f.claim] : [f.completion, f.close] {
+        let change = try CoordinatorSemanticDecision.decide(state: state, command: command)
+        events += change.events
+        state = try CoordinatorSemanticReplay.applying(change, to: state)
+    }
+    f.journal.installCompetingChange(CoordinatorSemanticChange(events: events))
+    #expect(try f.app.failTransportBeforeSubmission(
+        continuationID: f.continuationID, binding: binding, failure: routingNotSubmittedFailure()
+    ) == .completed)
+    let snapshot = try f.journal.load()
+    #expect(try snapshot.events.filter { try routingObject($0)["event_type"] as? String == "continuation_transport_not_submitted" }.isEmpty)
+    let after = try CoordinatorSemanticReplay.replay(snapshot)
+    #expect((after.continuation(id: f.continuationID)?.queuedActionContextClaim != nil) == claimed)
+    #expect(try routingObject(f.app.snapshotWithoutProcessingTime().canonicalJSON)["in_flight_count"] as? Int == 0)
+}
+
 @Test(
     "due expiry retires only its cached revision before or during an external reseal",
     arguments: [false, true], ["2026-08-21T02:09:59Z", "2026-08-21T02:10:00Z", "2026-08-21T02:10:01Z"]

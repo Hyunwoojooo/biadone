@@ -181,19 +181,16 @@ struct ClaudePetTransportTests {
         #expect(copied != changed)
     }
 
-    @Test("A card remains unselectable before ACK and matching Stop; heartbeat loss revokes readiness")
+    @Test("A successful emit is its own readiness; the card stays unselectable before matching Stop; heartbeat loss revokes readiness")
     func readinessAndStop() async throws {
         let f = try ClaudePetFixture()
         try f.prompt(); try f.open(); try f.emit()
-        let unready = try await f.snapshot()
-        let selection = try claudePetSelection(unready)
-        #expect(unready.interactions[0].state == .sealed)
-        #expect(unready.routing.foreground == nil && !unready.routing.selectionEnabled)
-        await claudePetExpectRejected { _ = try await f.transport.request(type: "focus_interaction", payload: PetFocusRequest(identity: selection.identity).data()) }
-        await claudePetExpectRejected { _ = try await f.transport.request(type: "select", payload: selection.data()) }
-        try f.ready()
         let unstopped = try await f.snapshot()
+        let selection = try claudePetSelection(unstopped)
+        // No check_connection/ACK: the stored proposal for the latest Hook
+        // boundary already proved the model round trip through this bridge.
         #expect(unstopped.providerStatus?.ready == true && !unstopped.routing.selectionEnabled)
+        await claudePetExpectRejected { _ = try await f.transport.request(type: "select", payload: selection.data()) }
         try f.stop()
         let stopped = try await f.snapshot()
         #expect(stopped.routing.selectionEnabled && stopped.interactions[0].isSelectionReady)
@@ -209,6 +206,37 @@ struct ClaudePetTransportTests {
         _ = try f.poll()
         let alive = try await f.snapshot()
         #expect(alive.providerStatus?.bridgeConnected == true && alive.providerStatus?.ready == false)
+    }
+
+    @Test("Emit-granted readiness lasts the same 5 minutes as an ACK and never extends the card")
+    func emitReadinessLifetime() async throws {
+        let f = try ClaudePetFixture()
+        try f.prompt(); try f.open(); try f.emit(); try f.stop()
+        let request = try claudePetSelection(try await f.snapshot())
+        for _ in 0..<74 { f.clock.advance(4); _ = try f.poll() }
+        let live = try await f.snapshot()
+        #expect(live.providerStatus?.ready == true && live.routing.selectionEnabled)
+        f.clock.advance(4); _ = try f.poll()
+        let expired = try await f.snapshot()
+        #expect(expired.providerStatus?.bridgeConnected == true && expired.providerStatus?.ready == false)
+        #expect(expired.interactions.count == 1 && expired.interactions[0].millisecondsUntilExpiry == 300_000)
+        #expect(!expired.routing.selectionEnabled)
+        await claudePetExpectRejected { _ = try await f.transport.request(type: "select", payload: request.data()) }
+        try f.ready()
+        #expect(try await f.snapshot().routing.selectionEnabled)
+    }
+
+    @Test("A rejected emit grants no readiness")
+    func rejectedEmitGrantsNoReadiness() async throws {
+        let f = try ClaudePetFixture()
+        try f.prompt(); try f.open()
+        let current = f.boundaryID
+        f.boundaryID = claudePetID()
+        #expect(throws: CoordinatorError.self) { try f.emit() }
+        #expect(try await f.snapshot().providerStatus?.ready == false)
+        f.boundaryID = current
+        try f.emit()
+        #expect(try await f.snapshot().providerStatus?.ready == true)
     }
 
     @Test("A is selected exactly once and reports channel pending without a queued submission")

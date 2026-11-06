@@ -136,6 +136,9 @@ private final class DoctorFixture {
     let codexPackage: URL
     let codex: URL
     let codeModeHost: URL
+    var execServer: URL {
+        codexPackage.appendingPathComponent("bin/codex-exec-server")
+    }
     let ripgrep: URL
     let plugin: URL
     var runtimeIdentityManifest: URL {
@@ -354,7 +357,16 @@ private final class DoctorFixture {
         if !FileManager.default.fileExists(atPath: ripgrep.path) {
             try makeExecutable(ripgrep, data: machOFixture)
         }
-        try writeJSON([
+        // The 0.166 package adds a declared standalone executor. Reusing this
+        // fixture for an older version must also restore that version's layout.
+        if version == "0.166.0" {
+            if !FileManager.default.fileExists(atPath: execServer.path) {
+                try makeExecutable(execServer, data: machOFixture)
+            }
+        } else if FileManager.default.fileExists(atPath: execServer.path) {
+            try FileManager.default.removeItem(at: execServer)
+        }
+        var manifest: [String: Any] = [
             "layoutVersion": 1,
             "version": version,
             "target": ManagedCodexRuntimeBundleInspector.expectedTarget,
@@ -362,7 +374,9 @@ private final class DoctorFixture {
             "entrypoint": "bin/codex",
             "resourcesDir": "codex-resources",
             "pathDir": "codex-path",
-        ], to: codexPackage.appendingPathComponent("codex-package.json"))
+        ]
+        if version == "0.166.0" { manifest["execServer"] = "bin/codex-exec-server" }
+        try writeJSON(manifest, to: codexPackage.appendingPathComponent("codex-package.json"))
     }
 
     func writeMCP(includeEnvironment: Bool) throws {
@@ -706,6 +720,22 @@ func doctorCodexVersionPolicy() throws {
         try fixture.writeCodexPackage(version: supportedVersion)
         execution = DoctorApplication(dependencies: fixture.dependencies())
             .run(arguments: try fixture.arguments())
+        if supportedVersion == "0.166.0",
+           ManagedCodexRuntimeBundleInspector.expectedTarget != "aarch64-apple-darwin"
+        {
+            // Version support does not qualify an unreviewed package target.
+            #expect(try doctorCheck(execution, id: "codex_runtime_layout").status == .fail)
+            #expect(try doctorCheck(execution, id: "codex_runtime_layout").code
+                == "codex_runtime_layout_invalid")
+            #expect(try doctorCheck(execution, id: "codex_version").blockedBy
+                == "codex_runtime_layout")
+            #expect(execution.exitCode == 1)
+            continue
+        }
+        #expect(try doctorCheck(execution, id: "codex_runtime_layout").status
+            == .pass, "version=\(supportedVersion)")
+        #expect(try doctorCheck(execution, id: "codex_runtime_identity").status
+            == .pass, "version=\(supportedVersion)")
         #expect(
             try doctorCheck(execution, id: "codex_version").status == .pass,
             "version=\(supportedVersion)"
@@ -725,6 +755,8 @@ func doctorCodexVersionPolicy() throws {
         try fixture.writeCodexPackage(version: unsupportedVersion)
         execution = DoctorApplication(dependencies: fixture.dependencies())
             .run(arguments: try fixture.arguments())
+        #expect(try doctorCheck(execution, id: "codex_runtime_layout").status
+            == .pass, "version=\(unsupportedVersion)")
         #expect(try doctorCheck(execution, id: "codex_version").status
             == .fail, "version=\(unsupportedVersion)")
         #expect(try doctorCheck(execution, id: "codex_version").code
@@ -820,8 +852,8 @@ func doctorCodexRuntimeBundleFailsClosed() throws {
         == "codex_runtime_layout_invalid")
     #expect(try doctorCheck(execution, id: "codex_runtime_identity").code
         == "codex_runtime_identity_unverified")
-    #expect(try doctorCheck(execution, id: "codex_runtime_layout").detail?
-        .contains("codex-code-mode-host") == true)
+    #expect(try doctorCheck(execution, id: "codex_runtime_layout").detail
+        == "Codex runtime bundle layout is invalid: bin contains missing or unknown executables")
     #expect(try doctorCheck(execution, id: "codex_runtime_identity").blockedBy
         == "codex_runtime_layout")
     #expect(try doctorCheck(execution, id: "codex_code_mode_compatibility").status == .actionRequired)
@@ -860,6 +892,41 @@ func doctorCodexRuntimeBundleFailsClosed() throws {
     #expect(try doctorCheck(execution, id: "codex_code_mode_compatibility").blockedBy
         == "codex_runtime_version")
 }
+
+#if arch(arm64)
+@Test("Doctor rejects incomplete 0.166 executor bundles without running Codex",
+      arguments: ["manifest-declaration", "executable"])
+func doctorCodexExecServerLayoutFailsClosed(missing: String) throws {
+    let fixture = try DoctorFixture()
+    try fixture.writeCodexPackage(version: "0.166.0")
+    if missing == "manifest-declaration" {
+        let url = fixture.codexPackage.appendingPathComponent("codex-package.json")
+        var manifest = try #require(
+            JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any]
+        )
+        manifest.removeValue(forKey: "execServer")
+        try fixture.writeJSON(manifest, to: url)
+    } else {
+        try FileManager.default.removeItem(at: fixture.execServer)
+    }
+    let before = try doctorFixtureTree(fixture.root)
+    let execution = DoctorApplication(dependencies: fixture.dependencies())
+        .run(arguments: try fixture.arguments())
+
+    #expect(try doctorCheck(execution, id: "codex_runtime_layout").code
+        == "codex_runtime_layout_invalid")
+    #expect(execution.report.checks.filter { $0.status == .fail }.map(\.id)
+        == ["codex_runtime_layout"])
+    #expect(try doctorCheck(execution, id: "codex_runtime_identity").blockedBy
+        == "codex_runtime_layout")
+    #expect(try doctorCheck(execution, id: "codex_version").blockedBy
+        == "codex_runtime_layout")
+    #expect(execution.exitCode == 1)
+    #expect(fixture.processes.invocations.isEmpty)
+    #expect(fixture.processes.hookTrustInvocations == 0)
+    #expect(try doctorFixtureTree(fixture.root) == before)
+}
+#endif
 
 @Test("Doctor runtime inspection is read only and creates no persistent artifact")
 func doctorCodexRuntimeInspectionIsReadOnly() throws {

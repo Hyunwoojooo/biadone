@@ -29,6 +29,7 @@ const CATEGORY = Object.freeze({
   continuation_dispatched: "transport",
   continuation_consumed: "transport",
   continuation_transport_completed: "transport",
+  continuation_transport_not_submitted: "transport",
   continuation_transport_timed_out_unknown: "transport",
   work_outcome_recorded: "work_outcome",
   interaction_expired: "decision_lifecycle",
@@ -407,6 +408,27 @@ function decideCompleteTransport(state, command) {
   return result({ events: [event] });
 }
 
+function decideTransportNotSubmitted(state, command) {
+  const continuation = state.continuations[command.continuation_id];
+  invariant(continuation, "continuation_not_dispatched");
+  assertContinuationBinding(command, continuation);
+  invariant(continuation.dispatchMode === "queued_next_turn", "dispatch_mode_conflict");
+  invariant(!continuation.transport, "transport_already_terminal");
+  invariant(!continuation.workOutcome && !continuation.queuedActionContextClaim, "invalid_transport_not_submitted");
+  invariant(command.command_invocation_attempted === false, "transport_not_submitted_evidence_required");
+  invariant(parseTimestamp(command.occurred_at) >= parseTimestamp(continuation.issuedAt), "continuation_not_yet_valid");
+  const failureCode = assertStableCode(command.failure_code, "dispatch_failure_code_invalid");
+  return result({ events: [eventFor(state, {
+    eventType: "continuation_transport_not_submitted",
+    eventId: command.event_id,
+    occurredAt: command.occurred_at,
+    binding: continuation.binding,
+    payload: { continuation_id: continuation.continuationId, transport_status: "not_submitted",
+      work_outcome_status: "not_recorded", automatic_retry: false,
+      failure_code: failureCode, command_invocation_attempted: false },
+  })] });
+}
+
 function decideTimeoutTransport(state, command) {
   const continuation = state.continuations[command.continuation_id];
   invariant(continuation, "continuation_not_dispatched");
@@ -440,6 +462,7 @@ function decideRecordWorkOutcome(state, command) {
   const boundary = state.boundaries[continuation.boundaryKey];
   invariant(boundary && !boundary.closed, "decision_boundary_closed");
   invariant(continuation.transport, "transport_terminal_observation_missing");
+  invariant(continuation.transport.status !== "not_submitted", "transport_not_submitted");
   invariant(!continuation.workOutcome, "work_outcome_already_recorded");
   invariant(["succeeded", "failed", "cancelled", "unknown"].includes(command.status), "work_outcome_status_invalid");
   assertNonEmptyString(command.summary, "summary");
@@ -486,7 +509,7 @@ function decideCloseBoundary(state, command) {
     const dispatched = state.continuations[boundary.dispatchedContinuationId];
     invariant(
       dispatched
-        && ["completed", "timed_out_unknown"].includes(dispatched.transport?.status),
+        && ["completed", "timed_out_unknown", "not_submitted"].includes(dispatched.transport?.status),
       "transport_terminal_observation_missing",
     );
   }
@@ -647,6 +670,7 @@ export function decide(state, command) {
     case "select_option": return decideSelectOption(state, command);
     case "consume_pet_action": return decideConsumePetAction(state, command);
     case "complete_transport": return decideCompleteTransport(state, command);
+    case "record_transport_not_submitted": return decideTransportNotSubmitted(state, command);
     case "timeout_transport_unknown": return decideTimeoutTransport(state, command);
     case "record_work_outcome": return decideRecordWorkOutcome(state, command);
     case "close_boundary": return decideCloseBoundary(state, command);

@@ -53,7 +53,7 @@ create, install or publish a candidate.
 3. Confirm any native macOS Automation, Claude login, project trust and MCP requests.
    **설정 저장됨** and **Claude 연결 확인 완료** are separate states. The latter requires an
    explicit successful `ack_readiness_probe_v1` using the same server's `check_connection_v1`
-   response. Current product launches do not request development Channels approval.
+   response, or (since 2026-11-06) a successful `emit_decision_v1` for the latest Hook boundary. Current product launches do not request development Channels approval.
 4. After saving automatic zsh setup, future new zsh terminals can use ordinary `claude` or
    `claude --resume`. Existing shells and conversations remain unchanged. Opening the first
    connected conversation from the app does not require sourcing a profile or changing PATH by hand.
@@ -115,9 +115,12 @@ flags and unrecognized option forms bypass automatic connection with their argum
 Existing shells and running conversations
 are not changed. A failed Blabee bootstrap does not replay work or restart Claude.
 
-Automatic configuration does not acknowledge readiness on the model's behalf. The model calls
-`check_connection_v1` and passes that successful response's `probe_id` and `nonce` to
-`ack_readiness_probe_v1` once. No Channel notification is expected in the current product path.
+Automatic configuration does not acknowledge readiness on the model's behalf. When asked to check
+the connection, the model calls `check_connection_v1` and passes that successful response's
+`probe_id` and `nonce` to `ack_readiness_probe_v1` once. A successful `emit_decision_v1` for the
+latest Hook boundary also refreshes readiness for 5 minutes, so the model does not probe before
+every proposal. Workflow rules are MCP server instructions only; each SessionStart/UserPromptSubmit
+Hook adds a single line (`blabee-claude boundary_id=<uuid>` or the no-boundary line). No Channel notification is expected in the current product path.
 The historical r63 development-Channel qualification below does not qualify this new path.
 
 ## Implementation boundary
@@ -152,6 +155,9 @@ is consumed through a typed native initialization method, not rewritten to `star
 
 Subsequent Hook calls use `blabee.claude-session.v3` (the internal source filenames retain `session-v2`). In-process `/resume`, `/clear`,
 source/ID/cwd changes terminate the current Blabee authority; they do not silently rebind it.
+The first Hook that sees the retired scope (`claude_bootstrap_session_changed` or `claude_bootstrap_already_started`)
+exits 0 with a user-facing `systemMessage` telling the person to quit the window and restart with `claude --resume`.
+It adds no model context and is shown once; later Hooks in that window stay quiet (`claude_bootstrap_unavailable`).
 The new process may resume Claude history, but requires a new prompt boundary and fresh
 readiness. An old proposal, selection or completion cannot acquire the new authority.
 

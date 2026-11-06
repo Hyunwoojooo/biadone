@@ -317,6 +317,7 @@ private actor OperationalNextTurnDispatchRecorder {
         case failWithEvidence(CoordinatorNextTurnDispatchFailure)
         case suspendThenSucceed
         case suspendThenFail(String)
+        case suspendThenFailWithEvidence(CoordinatorNextTurnDispatchFailure)
     }
 
     private let mode: Mode
@@ -343,6 +344,9 @@ private actor OperationalNextTurnDispatchRecorder {
         case .suspendThenFail(let code):
             await withCheckedContinuation { suspended.append($0) }
             throw CoordinatorError(code)
+        case .suspendThenFailWithEvidence(let failure):
+            await withCheckedContinuation { suspended.append($0) }
+            throw CoordinatorError(failure.code, dispatchFailure: failure)
         }
         return CoordinatorNextTurnDispatchReceipt(
             queuedSubmissionID: "queued_submission_operational_\(requests.count)"
@@ -3729,15 +3733,228 @@ func operationalDispatchDiagnosticEvidence(attempted: Bool) async throws {
     #expect(records.last?.continuationID == requests.first?.continuationID)
     #expect(probe.snapshot().failures == 0)
     let authority = try CoordinatorSemanticReplay.replay(fixture.journal.load())
-    #expect(authority.continuations.values.first?.transport == nil)
+    #expect(authority.continuations.values.first?.transport?.status == (attempted ? nil : .notSubmitted))
+    #expect(authority.boundaries.values.first?.closed == !attempted)
+    let routing = try operationalObject(fixture.routing.snapshotWithoutProcessingTime().canonicalJSON)
+    #expect(routing["in_flight_count"] as? Int == (attempted ? 1 : 0))
+    if !attempted {
+        let update = try operationalObject(await fixture.app.handle(
+            type: "update_status", payload: operationalData([:])))
+        #expect(update["pending_cards"] as? Int == 0)
+        #expect(update["pending_queued_actions"] as? Int == 0)
+        #expect(update["pending_reconciliation"] as? Int == 0)
+        #expect(update["ready"] as? Bool == true)
+    }
     await expectOperationalError("interaction_not_waiting") {
         _ = try await fixture.app.handle(type: "select", payload: operationalData(selection))
     }
     fixture.clock.advance(seconds: 300)
     _ = try await fixture.app.processTime()
     let timedOut = try CoordinatorSemanticReplay.replay(fixture.journal.load())
-    #expect(timedOut.continuations.values.first?.transport?.status == .timedOutUnknown)
+    #expect(timedOut.continuations.values.first?.transport?.status == (attempted ? .timedOutUnknown : .notSubmitted))
     #expect(probe.snapshot().records == records)
+    #expect(await fixture.nextTurnDispatcher.recordedRequests().count == 1)
+}
+
+private func operationalUnsubmittedFailure() -> CoordinatorNextTurnDispatchFailure {
+    .init(code: "codex_native_version_unqualified", stage: .qualification,
+        commandInvocationAttempted: false, elapsedMilliseconds: 3)
+}
+
+private func operationalUnsubmittedCard(
+    _ fixture: OperationalFixture, suffix: String
+) async throws -> (ids: [String: String], selection: [String: Any]) {
+    let ids = try await operationalBegin(fixture, suffix: suffix)
+    _ = try await fixture.app.handle(type: "emit_decision", payload: operationalData(
+        operationalWrapper(ids, proposal: operationalProposal(ids, suffix: suffix))))
+    _ = try await fixture.app.handle(type: "stop", payload: operationalStop(
+        ids: ids, active: false, message: "Failure cleanup test card"))
+    let interaction = try await waitForOperationalInteraction(fixture.app, state: "waiting")
+    return (ids, try operationalSelection(interaction, slot: 1))
+}
+
+@Test("Not-submitted cleanup retries only journal work after write or response loss",
+      arguments: ["write", "reply", "reply_and_read"])
+func operationalUnsubmittedCleanupRecovery(fault: String) async throws {
+    let failure = operationalUnsubmittedFailure()
+    let fixture = try operationalFixture(dispatchMode: .failWithEvidence(failure))
+    let card = try await operationalUnsubmittedCard(fixture, suffix: "not_submitted_\(fault)")
+    if fault == "write" {
+        fixture.journal.failNextAppend(eventType: "continuation_transport_not_submitted")
+    } else {
+        fixture.journal.loseNextCommittedResponse(eventType: "continuation_transport_not_submitted",
+            failFollowingLoads: fault == "reply_and_read" ? 1 : 0)
+    }
+    await expectOperationalError(failure.code) {
+        _ = try await fixture.app.handle(type: "select", payload: operationalData(card.selection))
+    }
+    if fault != "reply" {
+        let update = try operationalObject(await fixture.app.handle(
+            type: "update_status", payload: operationalData([:])))
+        #expect(update["pending_reconciliation"] as? Int == 1)
+        #expect(update["ready"] as? Bool == false)
+    }
+    // The cleanup cooldown is independent from the 300-second transport clock.
+    fixture.cooldownClock.advance(milliseconds: 250)
+    _ = try await fixture.app.processTime()
+    let journal = try fixture.journal.load()
+    let state = try CoordinatorSemanticReplay.replay(journal)
+    #expect(state.continuations.values.first?.transport?.status == .notSubmitted)
+    #expect(state.boundaries.values.first?.closed == true)
+    let events = try journal.events.map(operationalObject)
+    #expect(events.filter { $0["event_type"] as? String == "continuation_transport_not_submitted" }.count == 1)
+    #expect(events.filter { $0["event_type"] as? String == "decision_boundary_closed" }.count == 1)
+    #expect(try operationalObject(fixture.routing.snapshotWithoutProcessingTime().canonicalJSON)["in_flight_count"] as? Int == 0)
+    #expect(await fixture.nextTurnDispatcher.recordedRequests().count == 1)
+    let request = try #require(await fixture.nextTurnDispatcher.recordedRequests().first)
+    let rejected = try operationalObject(await fixture.app.handle(type: "user_prompt_submit",
+        payload: operationalData(["session_id": card.ids["session_id"]!,
+            "turn_id": "turn_unsubmitted_replay_\(fault)", "cwd": card.ids["cwd"]!,
+            "prompt": request.message, "hook_event_name": "UserPromptSubmit"])))
+    #expect(rejected["prompt_origin"] as? String == "blabee_rejected")
+    #expect(try CoordinatorSemanticReplay.replay(fixture.journal.load())
+        .continuations.values.first?.queuedActionContextClaim == nil)
+}
+
+@Test("Lost selection effect retries termination without dispatching or duplicating notices")
+func operationalUnsubmittedLostSelectionEffectRecovery() async throws {
+    let fixture = try operationalFixture()
+    let card = try await operationalUnsubmittedCard(fixture, suffix: "unsubmitted_lost_effect")
+    fixture.journal.loseNextCommittedResponse(eventType: "decision_selection_claimed", failFollowingLoads: 1)
+    await expectOperationalError("simulated_load_failure") {
+        _ = try await fixture.app.handle(type: "select", payload: operationalData(card.selection))
+    }
+    fixture.journal.failNextAppend(eventType: "continuation_transport_not_submitted")
+    fixture.cooldownClock.advance(milliseconds: 250)
+    await expectOperationalError("injected_append_failure") {
+        _ = try await fixture.app.processTime()
+    }
+    // Both the pending cleanup and its original time notice survive the error.
+    // Reprocessing them must preserve a single durable failure and close.
+    fixture.cooldownClock.advance(milliseconds: 500)
+    _ = try await fixture.app.processTime()
+    _ = try await fixture.app.processTime()
+    let journal = try fixture.journal.load()
+    let state = try CoordinatorSemanticReplay.replay(journal)
+    #expect(state.continuations.values.first?.consumedAt == nil)
+    #expect(state.continuations.values.first?.transport?.status == .notSubmitted)
+    #expect(state.boundaries.values.first?.closed == true)
+    let events = try journal.events.map(operationalObject)
+    #expect(events.filter { $0["event_type"] as? String == "continuation_transport_not_submitted" }.count == 1)
+    #expect(events.filter { $0["event_type"] as? String == "decision_boundary_closed" }.count == 1)
+    #expect(await fixture.nextTurnDispatcher.recordedRequests().isEmpty)
+    #expect(try operationalObject(fixture.routing.snapshotWithoutProcessingTime().canonicalJSON)["in_flight_count"] as? Int == 0)
+}
+
+@Test("Failure before consuming the effect closes without invoking the provider")
+func operationalUnsubmittedConsumeFailure() async throws {
+    let fixture = try operationalFixture()
+    let card = try await operationalUnsubmittedCard(fixture, suffix: "not_submitted_consume")
+    fixture.journal.failNextAppend(eventType: "continuation_consumed")
+    do {
+        _ = try await fixture.app.handle(type: "select", payload: operationalData(card.selection))
+        Issue.record("The consume failure must remain an error")
+    } catch {
+        #expect(error.coordinatorError.code == "injected_append_failure")
+        #expect(error.coordinatorError.dispatchFailure?.deliveryState == .notSubmitted)
+    }
+    let state = try CoordinatorSemanticReplay.replay(fixture.journal.load())
+    #expect(state.continuations.values.first?.consumedAt == nil)
+    #expect(state.continuations.values.first?.transport?.status == .notSubmitted)
+    #expect(state.boundaries.values.first?.closed == true)
+    #expect(await fixture.nextTurnDispatcher.recordedRequests().isEmpty)
+    #expect(try operationalObject(fixture.routing.snapshotWithoutProcessingTime().canonicalJSON)["in_flight_count"] as? Int == 0)
+}
+
+@Test("Not-submitted failure closes immediately and recovers staged promotion without redispatch")
+func operationalUnsubmittedPromotesStagedAfterStorageFailure() async throws {
+    let failure = operationalUnsubmittedFailure()
+    let fixture = try operationalFixture(dispatchMode: .suspendThenFailWithEvidence(failure))
+    let card = try await operationalUnsubmittedCard(fixture, suffix: "unsubmitted_staged_first")
+    let task = Task { try await fixture.app.handle(type: "select", payload: operationalData(card.selection)) }
+    _ = try await waitForRecordedDispatches(fixture.nextTurnDispatcher, count: 1)
+    let staged = try operationalObject(await fixture.app.handle(type: "emit_decision",
+        payload: operationalData(operationalWrapper(card.ids,
+            proposal: operationalProposal(card.ids, suffix: "unsubmitted_staged_second")))))
+    #expect(staged["staged"] as? Bool == true)
+    fixture.journal.failNextAppend(eventType: "decision_packet_sealed")
+    await fixture.nextTurnDispatcher.resumeSuspendedDispatches()
+    await expectOperationalError(failure.code) { _ = try await task.value }
+    #expect(try CoordinatorSemanticReplay.replay(fixture.journal.load())
+        .continuations.values.first?.transport?.status == .notSubmitted)
+    #expect(try operationalObject(fixture.routing.snapshotWithoutProcessingTime().canonicalJSON)["in_flight_count"] as? Int == 0)
+    fixture.cooldownClock.advance(milliseconds: 250)
+    _ = try await fixture.app.processTime()
+    _ = try await waitForOperationalInteraction(fixture.app, boundarySequence: 2, state: "waiting")
+    let events = try fixture.journal.load().events.map(operationalObject)
+    #expect(events.filter { $0["event_type"] as? String == "continuation_transport_not_submitted" }.count == 1)
+    #expect(await fixture.nextTurnDispatcher.recordedRequests().count == 1)
+}
+
+@Test("A not-submitted cleanup that keeps failing is set aside and the transport deadline closes it")
+func operationalUnsubmittedMarkerSetAsideAfterLimit() async throws {
+    let failure = operationalUnsubmittedFailure()
+    let fixture = try operationalFixture(dispatchMode: .failWithEvidence(failure))
+    let card = try await operationalUnsubmittedCard(fixture, suffix: "unsubmitted_set_aside")
+    for _ in 0..<5 {
+        fixture.journal.failNextAppend(eventType: "continuation_transport_not_submitted")
+    }
+    // Attempt 1 runs inside the selection; its dispatch error stays visible.
+    await expectOperationalError(failure.code) {
+        _ = try await fixture.app.handle(type: "select", payload: operationalData(card.selection))
+    }
+    // Attempts 2-4 still block requests under the bounded cooldown.
+    for milliseconds in [250, 500, 1_000] as [UInt64] {
+        fixture.cooldownClock.advance(milliseconds: milliseconds)
+        await expectOperationalError("injected_append_failure") {
+            _ = try await fixture.app.processTime()
+        }
+    }
+    // Attempt 5 reaches the limit: the marker is set aside and work resumes.
+    fixture.cooldownClock.advance(milliseconds: 2_000)
+    _ = try await fixture.app.processTime()
+    _ = try await fixture.app.processTime()
+    #expect(fixture.journal.appendAttemptCount(eventType: "continuation_transport_not_submitted") == 5)
+    let update = try operationalObject(await fixture.app.handle(
+        type: "update_status", payload: operationalData([:])))
+    #expect(update["pending_reconciliation"] as? Int == 0)
+    var state = try CoordinatorSemanticReplay.replay(fixture.journal.load())
+    #expect(state.continuations.values.first?.transport == nil)
+    #expect(state.boundaries.values.first?.closed == false)
+
+    // Nothing is resubmitted. The routing deadline records the terminal state.
+    fixture.clock.advance(seconds: 300)
+    _ = try await fixture.app.processTime()
+    state = try CoordinatorSemanticReplay.replay(fixture.journal.load())
+    #expect(state.continuations.values.first?.transport?.status == .timedOutUnknown)
+    #expect(state.boundaries.values.first?.closed == true)
+    #expect(state.boundaries.values.first?.closeReason == "transport_timed_out_unknown")
+    #expect(fixture.journal.appendAttemptCount(eventType: "continuation_transport_not_submitted") == 5)
+    #expect(await fixture.nextTurnDispatcher.recordedRequests().count == 1)
+}
+
+@Test("A late dispatcher failure cannot overwrite a Hook-claimed transport", arguments: [false, true])
+func operationalUnsubmittedPreservesHookWinner(attempted: Bool) async throws {
+    let failure = CoordinatorNextTurnDispatchFailure(code: "codex_native_probe_timeout",
+        stage: attempted ? .command : .qualification, commandInvocationAttempted: attempted,
+        elapsedMilliseconds: 10)
+    let fixture = try operationalFixture(dispatchMode: .suspendThenFailWithEvidence(failure))
+    let card = try await operationalUnsubmittedCard(fixture, suffix: "unsubmitted_hook_winner_\(attempted)")
+    let task = Task { try await fixture.app.handle(type: "select", payload: operationalData(card.selection)) }
+    let dispatch = try await waitForRecordedDispatch(fixture.nextTurnDispatcher)
+    let delivered = try operationalObject(await fixture.app.handle(type: "user_prompt_submit",
+        payload: operationalData(["session_id": card.ids["session_id"]!,
+            "turn_id": "turn_unsubmitted_winner_delivery_\(attempted)", "cwd": card.ids["cwd"]!,
+            "prompt": dispatch.message, "hook_event_name": "UserPromptSubmit"])))
+    #expect(delivered["prompt_origin"] as? String == "blabee_next_turn")
+    await fixture.nextTurnDispatcher.resumeSuspendedDispatches()
+    await expectOperationalError(failure.code) { _ = try await task.value }
+    let journal = try fixture.journal.load()
+    let state = try CoordinatorSemanticReplay.replay(journal)
+    #expect(state.continuations.values.first?.transport?.status == .completed)
+    #expect(state.continuations.values.first?.queuedActionContextClaim != nil)
+    #expect(!journal.events.contains { (try? operationalObject($0)["event_type"] as? String) == "continuation_transport_not_submitted" })
+    #expect(try operationalObject(fixture.routing.snapshotWithoutProcessingTime().canonicalJSON)["in_flight_count"] as? Int == 0)
     #expect(await fixture.nextTurnDispatcher.recordedRequests().count == 1)
 }
 

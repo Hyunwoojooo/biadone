@@ -48,6 +48,7 @@
         "continuation_dispatched",
         "continuation_consumed",
         "continuation_transport_completed",
+        "continuation_transport_not_submitted",
         "continuation_transport_timed_out_unknown",
         "queued_action_context_claimed",
         "work_outcome_recorded",
@@ -233,6 +234,21 @@
     },
     {
       "if": {
+        "$ref": "#/$defs/is_transport_not_submitted"
+      },
+      "then": {
+        "properties": {
+          "event_category": {
+            "const": "transport"
+          },
+          "payload": {
+            "$ref": "#/$defs/transport_not_submitted_payload"
+          }
+        }
+      }
+    },
+    {
+      "if": {
         "$ref": "#/$defs/is_transport_timed_out_unknown"
       },
       "then": {
@@ -318,6 +334,9 @@
         },
         {
           "$ref": "#/$defs/transport_completed_payload"
+        },
+        {
+          "$ref": "#/$defs/transport_not_submitted_payload"
         },
         {
           "$ref": "#/$defs/transport_timed_out_unknown_payload"
@@ -846,6 +865,46 @@
           "$ref": "https://schemas.blabee.local/contracts/v1/common.schema.json#/$defs/stable_code"
         },
         "automatic_selection": {
+          "const": false
+        }
+      }
+    },
+    "is_transport_not_submitted": {
+      "type": "object",
+      "properties": {
+        "event_type": {
+          "const": "continuation_transport_not_submitted"
+        }
+      }
+    },
+    "transport_not_submitted_payload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "continuation_id",
+        "transport_status",
+        "work_outcome_status",
+        "automatic_retry",
+        "failure_code",
+        "command_invocation_attempted"
+      ],
+      "properties": {
+        "continuation_id": {
+          "$ref": "https://schemas.blabee.local/contracts/v1/common.schema.json#/$defs/identifier"
+        },
+        "transport_status": {
+          "const": "not_submitted"
+        },
+        "work_outcome_status": {
+          "const": "not_recorded"
+        },
+        "automatic_retry": {
+          "const": false
+        },
+        "failure_code": {
+          "$ref": "https://schemas.blabee.local/contracts/v1/common.schema.json#/$defs/stable_code"
+        },
+        "command_invocation_attempted": {
           "const": false
         }
       }

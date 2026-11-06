@@ -68,6 +68,12 @@ public actor CoordinatorOperationalApplication {
     )
     private static let maximumPermanentInitialActivationAttempts = 5
     private static let maximumTransientInitialActivationAttempts = 10
+    // Same bounds for the not-submitted cleanup marker. Unlike an initial
+    // activation, a marker that reaches its limit is set aside instead of
+    // stopping every request: the dispatcher was never invoked, and the
+    // routing transport deadline still closes that continuation durably.
+    private static let maximumPermanentUnsubmittedTransportAttempts = 5
+    private static let maximumTransientUnsubmittedTransportAttempts = 10
     // Keep this allowlist narrow: each code must be safe for the exact same
     // open/seal batch to retry after the underlying transient condition clears.
     private static let transientInitialActivationErrorCodes: Set<String> = [
@@ -269,6 +275,13 @@ public actor CoordinatorOperationalApplication {
     private struct InitialActivationFailure {
         let consecutiveFailureCount: Int
         let errorCode: String
+    }
+
+    /// Only evidence returned by this adapter's current dispatch attempt is
+    /// retained here. Diagnostic history and client-supplied JSON never seed it.
+    private struct PendingUnsubmittedTransport {
+        let continuationID: String
+        let failure: CoordinatorNextTurnDispatchFailure
     }
 
     private struct PendingPermissionRequest {
@@ -503,6 +516,8 @@ public actor CoordinatorOperationalApplication {
     private var registrations: [String: ProposalRegistration] = [:]
     private var pendingTimeNotices: [Data] = []
     private var pendingCompletionClosures: Set<CoordinatorBindingKey> = []
+    private var pendingUnsubmittedTransports: [CoordinatorBindingKey: PendingUnsubmittedTransport] = [:]
+    private var unsubmittedTransportFailureCounts: [CoordinatorBindingKey: Int] = [:]
     private var pendingInitialActivations: Set<CoordinatorBindingKey> = []
     private var initialActivationFailures: [
         CoordinatorBindingKey: InitialActivationFailure
@@ -587,7 +602,10 @@ public actor CoordinatorOperationalApplication {
         self.stopObservationHMACKey = stopObservationHMACKey
             ?? SymmetricKey(size: .bits256).withUnsafeBytes { Data($0) }
         self.nextTurnDispatcher = nextTurnDispatcher ?? { _ in
-            throw CoordinatorError("next_turn_dispatcher_unavailable")
+            throw CoordinatorError("next_turn_dispatcher_unavailable", dispatchFailure: .init(
+                code: "next_turn_dispatcher_unavailable", stage: .access,
+                commandInvocationAttempted: false, elapsedMilliseconds: 0
+            ))
         }
         self.approvalAdmissionSequence = max(0, initialApprovalAdmissionSequence)
         self.permissionLifecycleObserver = permissionLifecycleObserver
@@ -696,8 +714,10 @@ public actor CoordinatorOperationalApplication {
         let queued = authority.continuations.values.filter {
             $0.dispatchMode == "queued_next_turn" && $0.queuedActionContextClaim == nil
                 && $0.consumedAt != nil && now < $0.expiresAt
+                && $0.transport?.status != .notSubmitted
         }.count
         let reconciliation = pendingInitialActivations.count + pendingCompletionClosures.count
+            + pendingUnsubmittedTransports.count
         // Claim resolution is synchronous on this actor: this observation
         // cannot run during its journal work. The socket server owns the live
         // response and retains update admission through its final write attempt.
@@ -919,6 +939,7 @@ public actor CoordinatorOperationalApplication {
     private var hasPendingOperationalWork: Bool {
         !pendingTimeNotices.isEmpty
             || !pendingCompletionClosures.isEmpty
+            || !pendingUnsubmittedTransports.isEmpty
             || !pendingInitialActivations.isEmpty
     }
 
@@ -1107,6 +1128,7 @@ public actor CoordinatorOperationalApplication {
 
     private func reconcilePendingOperationalWork() throws {
         try reconcilePendingInitialActivations()
+        try reconcilePendingUnsubmittedTransports()
         try reconcilePendingCompletionClosures()
         try reconcilePendingTimeNotices()
     }
@@ -1124,6 +1146,7 @@ public actor CoordinatorOperationalApplication {
             .union(stagedByTurn.values)
             .union(pendingInitialActivations)
             .union(pendingCompletionClosures)
+            .union(pendingUnsubmittedTransports.keys)
             .union(initialActivationFailures.keys)
             .union(quarantinedInitialActivations.keys)
         for key in Array(terminalPayloadCandidates) {
@@ -1186,6 +1209,14 @@ public actor CoordinatorOperationalApplication {
             boundary.continuationID = continuationID
             boundary.nextTurnDispatchPhase = .failed
             retainBoundary(boundary, for: key)
+            // Routing recovered the selection but deliberately emitted no
+            // dispatch effect. Nothing from this attempt reached the provider.
+            pendingUnsubmittedTransports[key] = PendingUnsubmittedTransport(
+                continuationID: continuationID,
+                failure: .init(code: "next_turn_dispatch_failed", stage: .unknown,
+                    commandInvocationAttempted: false, elapsedMilliseconds: 0)
+            )
+            try reconcileUnsubmittedTransport(for: key)
         } else if kind == "selection_pause_committed_response_lost" {
             let binding = try CoordinatorBinding(jsonObject: notice)
             let key = binding.fullKey
@@ -1247,6 +1278,88 @@ public actor CoordinatorOperationalApplication {
                 terminalKey: key
             )
             pendingCompletionClosures.remove(key)
+        }
+    }
+
+    private func reconcilePendingUnsubmittedTransports() throws {
+        for key in Array(pendingUnsubmittedTransports.keys) {
+            do {
+                try reconcileUnsubmittedTransport(for: key)
+            } catch {
+                if setAsideUnsubmittedTransportIfExhausted(key, after: error) { continue }
+                throw error
+            }
+        }
+    }
+
+    /// Counts one failed cleanup attempt. Returns true when the marker reached
+    /// its limit and was set aside, so later requests are no longer blocked.
+    /// Nothing is resubmitted: the dispatcher was never invoked for this
+    /// continuation, and the routing in-flight deadline later records
+    /// `continuation_transport_timed_out_unknown`, closes the boundary and
+    /// promotes any staged card through the normal time notice.
+    private func setAsideUnsubmittedTransportIfExhausted(
+        _ key: CoordinatorBindingKey, after error: Error
+    ) -> Bool {
+        let errorCode = reconciliationErrorCode(error)
+        if errorCode.hasPrefix("product_access_") { return false }
+        let maximumAttempts = Self.transientInitialActivationErrorCodes.contains(errorCode)
+            ? Self.maximumTransientUnsubmittedTransportAttempts
+            : Self.maximumPermanentUnsubmittedTransportAttempts
+        let attempts = (unsubmittedTransportFailureCounts[key] ?? 0) + 1
+        guard attempts >= maximumAttempts else {
+            unsubmittedTransportFailureCounts[key] = attempts
+            return false
+        }
+        pendingUnsubmittedTransports.removeValue(forKey: key)
+        unsubmittedTransportFailureCounts.removeValue(forKey: key)
+        return true
+    }
+
+    private func reconcileUnsubmittedTransport(for key: CoordinatorBindingKey) throws {
+        guard let pending = pendingUnsubmittedTransports[key],
+              var boundary = boundaries[key]
+        else { throw CoordinatorError("unsubmitted_transport_boundary_missing") }
+        try byteExactRequire(boundary.continuationID, pending.continuationID,
+            "continuation_binding_mismatch")
+        if boundary.phase != .closed {
+            let status = try routing.failTransportBeforeSubmission(
+                continuationID: pending.continuationID,
+                binding: boundary.binding,
+                failure: pending.failure
+            )
+            // A Hook/completion that won before this response remains the
+            // authority. Neither an error nor its diagnostic can undo it.
+            boundary.nextTurnDispatchPhase = status == .completed ? .accepted : .failed
+            boundary.phase = .closed
+            retainBoundary(boundary, for: key)
+        }
+        // Keep the exact marker until promotion also succeeds. Recovery retries
+        // only local/durable cleanup, never nextTurnDispatcher.
+        try promoteStagedAfterRecoveredTerminal(turnKey: boundary.binding.turnKey, terminalKey: key)
+        pendingUnsubmittedTransports.removeValue(forKey: key)
+        unsubmittedTransportFailureCounts.removeValue(forKey: key)
+        pendingCompletionClosures.remove(key)
+    }
+
+    private func finishUnsubmittedTransportIfKnown(
+        for key: CoordinatorBindingKey,
+        continuationID: String,
+        failure: CoordinatorNextTurnDispatchFailure
+    ) {
+        guard !failure.commandInvocationAttempted else { return }
+        pendingUnsubmittedTransports[key] = PendingUnsubmittedTransport(
+            continuationID: continuationID, failure: failure
+        )
+        do {
+            try reconcileUnsubmittedTransport(for: key)
+        } catch {
+            // Preserve the original dispatch error for the selecting UI while
+            // retaining the cleanup marker under the existing bounded cooldown.
+            // This first attempt counts toward the marker's attempt limit.
+            if !setAsideUnsubmittedTransportIfExhausted(key, after: error) {
+                recordReconciliationFailure(error)
+            }
         }
     }
 
@@ -3787,9 +3900,16 @@ private extension CoordinatorOperationalApplication {
             boundary.nextTurnDispatchPhase = .failed
             retainBoundary(boundary, for: candidate.key)
             if let continuationID {
+                let failure = CoordinatorNextTurnDispatchFailure(
+                    code: error.coordinatorError.code, stage: .unknown,
+                    commandInvocationAttempted: false, elapsedMilliseconds: 0
+                )
                 recordNextTurnDispatch(continuationID: continuationID, sessionID: sessionID,
-                    outcome: .failed, failure: .init(code: error.coordinatorError.code,
-                        stage: .unknown, commandInvocationAttempted: false, elapsedMilliseconds: 0))
+                    outcome: .failed, failure: failure)
+                finishUnsubmittedTransportIfKnown(for: candidate.key,
+                    continuationID: continuationID, failure: failure)
+                throw CoordinatorError(error.coordinatorError.code, error.coordinatorError.message,
+                    dispatchFailure: failure)
             }
             throw error
         }
@@ -3830,6 +3950,8 @@ private extension CoordinatorOperationalApplication {
                 elapsedMilliseconds: Int64(min(elapsed, 86_400_000)))
             recordNextTurnDispatch(continuationID: continuationID, sessionID: sessionID,
                 outcome: .failed, failure: diagnostic)
+            finishUnsubmittedTransportIfKnown(for: candidate.key,
+                continuationID: continuationID, failure: diagnostic)
             throw CoordinatorError(coordinatorError.code, coordinatorError.message,
                                    dispatchFailure: diagnostic)
         }

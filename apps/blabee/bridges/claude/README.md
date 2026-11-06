@@ -5,7 +5,7 @@ Swift 소스는 `swift/`, Node 통신 코드는 `src/`, 개발 세션 launcher�
 기존 SDK 1.30.0과 lockfile을 사용하며 새 의존성을 추가하지 않았습니다.
 
 현재 소스의 설치 제품 경로는 [일반 MCP·Stop Hook 연결](../../docs/bridges/claude/product-connection/PUBLIC_MCP_HOOK.md)을
-사용합니다. 설치 앱 반영 여부는 별도로 확인합니다. `check_connection_v1` 응답의 `probe_id`·`nonce`로 명시적 ACK를 하고,
+사용합니다. 설치 앱 반영 여부는 별도로 확인합니다. 연결 확인 요청 시 `check_connection_v1` 응답의 `probe_id`·`nonce`로 명시적 ACK를 하고(성공한 `emit_decision_v1`도 readiness를 5분 갱신),
 선택 참조는 같은 세션의 Stop Hook으로 받습니다. 제품 연결에서는 Channel 메시지를 기다리지 않습니다.
 아래 `claude:shared`는 기존 개발용 경로이며 설치 제품의 연결 방식과 구분합니다.
 

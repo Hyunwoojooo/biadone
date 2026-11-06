@@ -20,6 +20,34 @@ See the [README](README.md) for the current download and setup instructions.
 
 ## App updates
 
+### r89
+
+**Released:** 2026-11-03. **App version:** 0.1.0 (build 89, arm64).
+Developer ID signed and Apple notarized.
+[Download r89](https://github.com/Hyunwoojooo/biadone/releases/tag/blabee-v0.1.0%2Bbuild.89).
+
+#### Fixed
+
+- When a selected task is confirmed to have failed **before submission**, close its pending delivery state so it does not remain **Working** until the ordinary timeout. This also releases that request's update blocker and allows the next eligible card to appear.
+- Save the failed-delivery result and its closing record together. If saving fails, retry cleanup without resending the task. Preserve an existing successful completion or claim; deliveries with an uncertain outcome keep their existing timeout protection.
+- Honor cancellation and close while a Claude request is checking its local connection file. Add a bounded wait for that request-stage check and safely discard late results without sending a cancelled request.
+- Include fixes for cancellation during Claude connection setup and for diagnostic-output failures that could otherwise interrupt the connection.
+
+#### Update notes
+
+- Failed selections are **not automatically resent**. Request a fresh card or explicitly continue in the original conversation.
+- **Storage compatibility:** r89 can read existing history. After r89 writes its new failed-before-submission record, r88 and older cannot read that same local history store. Downgrading with that store is not supported. Installation does not reset history.
+- This is a targeted fix for confirmed pre-submission failures. It does not establish that every **Working** delay is resolved or that every Claude startup operation has a global timeout.
+- Codex and Claude Code still require their own installation and sign-in. Blabee uses its separate Google or GitHub sign-in.
+
+#### Validation
+
+- Implementation checks: 247 focused Swift tests passed (two performance checks excluded), 208 contract/reference-engine tests passed, and 234 Claude tests passed.
+- Build checks: 270 packaging checks passed (one optional isolated-environment check excluded), and the actual packaged Claude runtime passed its Swift qualifier test.
+- Bundled contract pins and Claude source files matched the build inputs. Release build, Developer ID signatures, Apple notarization, stapling, DMG integrity, and app/DMG Gatekeeper checks passed.
+
+The implementation and build counts come from separate runs. Clean-Mac installation, installed-app update/relaunch, OAuth, and live conversation-to-completed-work checks remain separate acceptance checks; they were not performed for this release.
+
 ### r88
 
 **Released:** 2026-10-26. **App version:** 0.1.0 (build 88, arm64).

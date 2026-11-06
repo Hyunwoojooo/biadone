@@ -471,9 +471,13 @@ test("concurrent builders never overwrite and leave one complete artifact pair",
   ]);
   const fulfilled = results.filter((result) => result.status === "fulfilled");
   const rejected = results.filter((result) => result.status === "rejected");
-  assert.equal(fulfilled.length, 1);
-  assert.equal(rejected.length, 1);
-  assert.equal(prePublishValidationCount, 1);
+  // Keep both builder outcomes in the failure text: a load-dependent failure
+  // is otherwise reported only as a bare count mismatch.
+  const outcomes = results.map((result) => result.status === "fulfilled"
+    ? "fulfilled" : `rejected: ${result.reason?.message ?? result.reason}`).join("\n");
+  assert.equal(fulfilled.length, 1, outcomes);
+  assert.equal(rejected.length, 1, outcomes);
+  assert.equal(prePublishValidationCount, 1, outcomes);
   assert.match(
     rejected[0].reason.message,
     /appeared during packaging|already exists|locked by active process|output lock exists but could not be verified/u,

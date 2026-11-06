@@ -1,5 +1,31 @@
 # 제품 연결 작업 상태
 
+2026-11-06 안내문 경량화: 같은 안내문(약 1,170자)이 MCP instructions, SessionStart Hook, 매 UserPromptSubmit Hook에
+세 번 들어가던 것을 줄였다. 이제 Hook에는 `blabee-claude boundary_id=<uuid>` 또는 boundary 없음 한 줄만 들어간다.
+규칙은 짧게 다시 쓴 MCP instructions(500자)에만 둔다. emit·complete 세부 규칙은 도구 description으로 옮겼다.
+`ClaudeNativeSession.emit`이 성공하면 readiness를 5분 갱신한다. 그래서 모델이 제안할 때마다
+check_connection/ack를 호출하던 2회를 없앴다(카드 TTL 불변, 실패 시 readiness 불변). 도구 이름·입력 스키마·
+wire 스키마·Contracts/v1은 바꾸지 않았다. Node·Swift 테스트를 새 규칙에 맞게 고치고 추가했다. 설치 앱 반영과 실사용 왕복은 후속이다.
+
+2026-11-02 수정 완료: 자동 MCP 시작 인수 오류도 공통 diagnostic writer로 처리하고,
+Hook 초기 context 및 자동 연결의 경로·socket·반환 grant 검증 중 취소/close가 파일 확인을
+기다리지 않도록 수정했다. 늦은 결과의 후속 IPC·권한 반환·출력은 차단하고 기존 Stop waiter
+세대와 전송된 제품 RPC의 응답 검증은 유지한다. 새 회귀 29개를 포함한 Node **208/208**,
+JavaScript 문법 **55개 파일**, 변경 범위 diff 검사를 통과했다.
+
+같은 작업에서 사용자 환경의 누락된 `shell/claude-v1/bin/claude`를 제품 템플릿으로 복구하고,
+기존 `.zshrc`의 정확한 예전 Blabee 블록만 현재 형식으로 갱신했다. 비공개 백업을 만들었으며
+나머지 바이트·UID/GID·권한을 보존했다. 새 로그인 interactive zsh에서 함수와 실제 실행 파일
+경로가 Blabee wrapper를 가리킴을 확인했다. Claude 자체나 기존 세션은 실행·종료하지 않았다.
+설치 앱 서명 검사는 샌드박스 안에서 실패했지만, 밖에서 같은 검사에 정상 통과했다.
+
+검증 로그·수정 전 기준점·검토한 복구안과 결과는
+`/private/tmp/blabee-claude-fix-20261102-a2pon97u/`에 있다. 셸 설정 백업은 사용자 Blabee의
+`shell/claude-v1/backups/zshrc-26b5f617-a035-4ec6-bcb0-0116757b2c08`이다.
+Node 소스 수정은 저장소에 반영했으며 설치 앱의 코드 교체는 하지 않았다. 빌드·Swift 테스트·
+설치·실제 모델 왕복은 수행하지 않았다. 현재 설치 CLI 경로는 2.1.316이며 그 버전의 실제
+선택 전달 검증은 후속이다. 구현 경계는 [일반 MCP·Hook 안내](PUBLIC_MCP_HOOK.md)를 따른다.
+
 2026-10-11 브릿지 디버깅: 전송 전 취소된 MCP 요청이 대기열 슬롯을 계속 차지하는 문제와
 Hook 출력 실패 뒤 늦은 EPIPE, 입력 실패 뒤 진단 중 취소로 발생하는 프로세스 종료를 수정했다.
 진행 중인 RPC의 슬롯·단일 전달·같은 waiter generation을 유지하며 회귀 12개를 추가했다.

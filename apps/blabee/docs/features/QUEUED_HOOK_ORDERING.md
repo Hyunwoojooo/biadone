@@ -2,6 +2,38 @@
 
 Codex 선택 전달은 `codex queue`의 반환과 `UserPromptSubmit` Hook이 서로 다른 순서로 도착할 수 있다. 그 사이 사용자가 새 프롬프트를 입력하더라도 이미 선택한 전달의 검증은 동일해야 한다.
 
+## 전송 전 확정 실패의 즉시 종결 (2026-11-02)
+
+네이티브 queue 호출 전의 호환성·권한·검증 실패는 응답이 불명확한 전송과 다르게 처리한다.
+공통 app은 이번 dispatch 호출에서 직접 받은 `commandInvocationAttempted=false` 또는
+provider 호출에 도달하지 않은 자체 effect/consume 실패만 전용 routing API에 전달한다.
+저장된 진단 이력이나 외부 IPC의 오류 JSON을 근거로 새 종결 권한을 만들지 않는다.
+
+Engine은 정확한 binding·continuation·`queued_next_turn`을 검증한 뒤
+`continuation_transport_not_submitted`와 `decision_boundary_closed`를 원자적으로 저장한다.
+진행 상태를 제거하고 후속 카드를 승격하되 자동 전송은 하지 않는다. 시간 초과 시각을
+앞당기거나 성공 완료로 기록하지 않는다. 이미 durable completion/claim/timeout이 이겼다면
+그 상태를 유지한다. 미전송 상태에서는 이후 claim·소비·완료·작업 결과를 거절한다.
+
+쓰기 실패나 저장 응답 유실은 기존 reconciliation cooldown을 따라 동일 경계의 정리만
+재시도한다. 정리가 검증되기 전에는 업데이트 안전점으로 표시하지 않는다. 저장 후 후속
+카드 승격에 실패해도 marker를 유지하며 dispatcher는 다시 호출하지 않는다. 서비스가
+재시작되어 아직 저장되지 않은 실패 관측을 잃으면 기존 보수적인 재시작 복구를 적용한다.
+이미 호출된 명령이나 호출 여부가 불명확한 실패는 기존 300초 watchdog과 결과 불명 정책을
+유지한다. 현재 사용자 프롬프트와 다른 카드의 경계는 변경하지 않는다.
+
+업데이트의 pending queue 집계는 durable `not_submitted`를 제외한다. 실행 중인 다른 요청,
+승인, 프롬프트와 복구 작업에 대한 안전점 검사는 유지한다. 실제 UI는 기존 failure notice와
+in-flight count를 사용하며, 실패한 카드의 권한을 되살리거나 다시 누를 수 있게 하지 않는다.
+
+새 runtime event를 모르는 앱은 그 이벤트가 기록된 journal을 읽을 수 없다. 기존 journal의
+새 reader 재생은 지원하지만 같은 저장소를 사용하는 구버전으로의 다운그레이드는 지원하지
+않는다. 배포/롤백 판단에 이 제한을 포함한다. SQL migration이나 운영 저장소 조작은 없다.
+
+회귀 검사는 `operationalUnsubmitted*`, `operationalDispatchDiagnosticEvidence`와
+Engine의 not-submitted semantic/routing/SQLite 검사 및 Node 계약·참조 구현으로 검증한다.
+설치 앱의 반영과 실제 모델 왕복 확인은 소스 테스트와 구분한다.
+
 ## 선택 내용이 보이는 프롬프트 (2026-10-17)
 
 새 전달에는 기존 `ref` 첫 줄 뒤에 선택한 옵션의 제목, 작업 목표, 제약 조건,

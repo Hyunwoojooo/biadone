@@ -1,14 +1,16 @@
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { EventEmitter } from 'node:events';
 import { PassThrough } from 'node:stream';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
+import { runAutoConnectMCP } from '../../../bridges/claude/src/auto-connect-mcp.mjs';
 import { SESSION_V2_AUTHORITY_KEYS, SessionV2ClientError } from '../../../bridges/claude/src/session-v2-client.mjs';
 import { createSessionV2DiagnosticWriter, runSessionV2MCP } from '../../../bridges/claude/src/session-v2-mcp.mjs';
 
 const moduleURL = new URL('../../../bridges/claude/src/session-v2-mcp.mjs', import.meta.url);
+const autoConnectModuleURL = new URL('../../../bridges/claude/src/auto-connect-mcp.mjs', import.meta.url);
 const ep = () => Object.assign(new Error('PRIVATE diagnostic pipe failure'), { code: 'EPIPE' });
 const turn = () => new Promise(resolve => setImmediate(resolve));
 async function until(predicate) {
@@ -258,12 +260,64 @@ test('a real Writable emitting EPIPE after runtime.closed does not crash its iso
   assert.equal(result.stderr, '');
 });
 
-for (const mode of ['throw', 'late-error', 'close-then-error']) {
-  test(`dedicated CLI startup catch safely reports ${mode} and preserves failure exit code`, () => {
+test('automatic MCP rejects invalid arguments before bootstrap or SDK startup', async () => {
+  const input = new PassThrough(); const output = sink(); const errorOutput = sink();
+  const signals = ['SIGINT', 'SIGTERM'].map(name => [name, process.listenerCount(name)]);
+  let bootstraps = 0, clients = 0;
+  try {
+    await assert.rejects(runAutoConnectMCP({ args: ['PRIVATE unexpected argument'], env: {}, input, output, errorOutput,
+      createBootstrapClient: async () => { bootstraps++; assert.fail('invalid arguments must not bootstrap'); },
+      createClient: async () => { clients++; assert.fail('invalid arguments must not create a client'); } }),
+    { code: 'auto_connect_invalid_configuration' });
+    assert.equal(bootstraps, 0);
+    assert.equal(clients, 0);
+    assert.deepEqual(output.writes, []);
+    assert.deepEqual(output.ownershipCalls, []);
+    assert.deepEqual(errorOutput.writes, []);
+    for (const event of ['data', 'end', 'close', 'error']) assert.equal(input.listenerCount(event), 0);
+    for (const [name, count] of signals) assert.equal(process.listenerCount(name), count);
+  } finally { input.destroy(); }
+});
+
+test('automatic CLI startup diagnostic masks invalid argument details', () => {
+  const result = spawnSync(process.execPath, [fileURLToPath(autoConnectModuleURL), 'PRIVATE unexpected argument'],
+    { env: {}, encoding: 'utf8', timeout: 5000 });
+  assert.equal(result.error, undefined);
+  assert.equal(result.signal, null);
+  assert.equal(result.status, 1);
+  assert.equal(result.stdout, '');
+  assert.equal(result.stderr, '[blabee-claude] 자동 연결 MCP 시작 실패 (auto_connect_invalid_configuration).\n');
+});
+
+for (const [name, entrypoint, args] of [
+  ['dedicated', moduleURL, []], ['automatic', autoConnectModuleURL, ['unexpected-arg']],
+]) {
+  test(`${name} CLI handles an actual closed stderr read pipe without an uncaught EPIPE`, { timeout: 5000 }, async () => {
+    const monitor = `process.on('uncaughtExceptionMonitor', () => process.stdout.write('unhandled stderr failure\\n'));`;
+    const child = spawn(process.execPath,
+      ['--import', 'data:text/javascript,' + encodeURIComponent(monitor), fileURLToPath(entrypoint), ...args],
+      { env: {}, stdio: ['ignore', 'pipe', 'pipe'], timeout: 4000 });
+    let stdout = '';
+    child.stdout.on('data', chunk => { stdout += chunk; });
+    child.stderr.destroy();
+    const status = await new Promise((resolve, reject) => {
+      child.once('error', reject);
+      child.once('close', (code, signal) => resolve({ code, signal }));
+    });
+    assert.deepEqual(status, { code: 1, signal: null });
+    assert.equal(stdout, '');
+  });
+}
+
+for (const [name, entrypoint, args, diagnostic] of [
+  ['dedicated', moduleURL, [], '제품 MCP 시작 실패'],
+  ['automatic', autoConnectModuleURL, ['unexpected-arg'], '자동 연결 MCP 시작 실패'],
+]) for (const mode of ['throw', 'late-error', 'close-then-error']) {
+  test(`${name} CLI startup catch safely reports ${mode} and preserves failure exit code`, () => {
     const preload = `
       let writes = 0, startup = false;
       process.stderr.write = (text, callback) => {
-        writes++; startup = text.includes('제품 MCP 시작 실패');
+        writes++; startup = text.includes(${JSON.stringify(diagnostic)});
         const error = Object.assign(new Error('PRIVATE startup stderr'), {code:'EPIPE'});
         if (${JSON.stringify(mode)} === 'throw') throw error;
         setImmediate(() => {
@@ -275,7 +329,7 @@ for (const mode of ['throw', 'late-error', 'close-then-error']) {
       process.on('exit', () => process.stdout.write(JSON.stringify({writes,startup})+'\\n'));
     `;
     const result = spawnSync(process.execPath,
-      ['--import', 'data:text/javascript,' + encodeURIComponent(preload), fileURLToPath(moduleURL)],
+      ['--import', 'data:text/javascript,' + encodeURIComponent(preload), fileURLToPath(entrypoint), ...args],
       { env: {}, encoding: 'utf8', timeout: 5000 });
     assert.equal(result.error, undefined);
     assert.equal(result.signal, null);

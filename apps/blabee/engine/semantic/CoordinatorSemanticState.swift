@@ -123,6 +123,7 @@ public struct CoordinatorContinuationIdentity: Sendable, Equatable {
 public enum CoordinatorTransportStatus: String, Sendable, Equatable {
     case completed
     case timedOutUnknown = "timed_out_unknown"
+    case notSubmitted = "not_submitted"
 }
 
 public struct CoordinatorTransportState: Sendable, Equatable {
@@ -488,6 +489,8 @@ public enum CoordinatorSemanticReplay {
             try completeTransport(&state, event: event)
         case "continuation_transport_timed_out_unknown":
             try timeoutTransport(&state, event: event)
+        case "continuation_transport_not_submitted":
+            try recordTransportNotSubmitted(&state, event: event)
         default:
             throw CoordinatorError("runtime_event_type_unhandled")
         }
@@ -558,7 +561,8 @@ public enum CoordinatorSemanticReplay {
         }
         if let continuationID = boundary.dispatchedContinuationID {
             let status = state.continuations[continuationID]?.transport?.status
-            try require(status == .completed || status == .timedOutUnknown, "transport_terminal_observation_missing")
+            try require(status == .completed || status == .timedOutUnknown || status == .notSubmitted,
+                        "transport_terminal_observation_missing")
         }
         try SemanticJSON.stableCode(reason, code: "close_reason_invalid")
         boundary.closed = true
@@ -891,10 +895,36 @@ public enum CoordinatorSemanticReplay {
         state.continuations[id] = item
     }
 
+    private static func recordTransportNotSubmitted(
+        _ state: inout CoordinatorSemanticState,
+        event: SemanticEvent
+    ) throws {
+        let (id, original) = try continuation(state, event: event)
+        var item = original
+        try require(item.dispatchMode == "queued_next_turn", "dispatch_mode_conflict")
+        try require(item.transport == nil, "transport_already_terminal")
+        try require(item.queuedActionContextClaim == nil && item.workOutcome == nil,
+                    "transport_submission_already_observed")
+        try require(event.occurredAt >= item.issuedAt, "continuation_not_yet_valid")
+        let payload = event.payload
+        try require(payload["transport_status"] as? String == "not_submitted"
+            && payload["work_outcome_status"] as? String == "not_recorded"
+            && (try? SemanticJSON.bool(payload["automatic_retry"])) == false
+            && (try? SemanticJSON.bool(payload["command_invocation_attempted"])) == false,
+            "invalid_transport_not_submitted")
+        try SemanticJSON.stableCode(payload["failure_code"] as? String ?? "", code: "dispatch_failure_code_invalid")
+        item.transport = CoordinatorTransportState(
+            status: .notSubmitted, occurredAt: event.occurredAt,
+            workOutcomeStatus: nil, automaticRetry: false
+        )
+        state.continuations[id] = item
+    }
+
     private static func recordWorkOutcome(_ state: inout CoordinatorSemanticState, event: SemanticEvent) throws {
         let (id, original) = try continuation(state, event: event)
         var item = original
         try require(item.transport != nil, "transport_terminal_observation_missing")
+        try require(item.transport?.status != .notSubmitted, "transport_not_submitted")
         try require(item.workOutcome == nil, "work_outcome_already_recorded")
         let payload = event.payload
         let actionID = try SemanticJSON.string(payload, "action_id", field: "action_id", identifier: true)
@@ -1015,6 +1045,7 @@ private enum SemanticJSON {
         "continuation_consumed": "transport",
         "continuation_transport_completed": "transport",
         "continuation_transport_timed_out_unknown": "transport",
+        "continuation_transport_not_submitted": "transport",
         "queued_action_context_claimed": "transport",
         "work_outcome_recorded": "work_outcome",
         "interaction_expired": "decision_lifecycle",

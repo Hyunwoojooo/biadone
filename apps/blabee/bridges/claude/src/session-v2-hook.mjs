@@ -1,7 +1,7 @@
 import { pathToFileURL } from 'node:url';
 import { expectedSessionArgument, ProductBridgeInputError } from './product-context.mjs';
 import { createSessionV2Client, parseSessionV2JSON, SessionV2ClientError, validateSessionV2Result } from './session-v2-client.mjs';
-import { SESSION_V2_WORKFLOW_INSTRUCTIONS, safeSessionV2ErrorCode, sessionV2Context } from './session-v2-context.mjs';
+import { SESSION_V2_NO_BOUNDARY_LINE, safeSessionV2ErrorCode, sessionV2BoundaryLine, sessionV2Context } from './session-v2-context.mjs';
 import { normalizeSessionV2Hook } from './session-v2-lifecycle.mjs';
 import { createSessionV2HookWaiter, SESSION_V2_HOOK_REWAKE, writeSessionV2HookOutput } from './session-v2-waiter.mjs';
 
@@ -11,13 +11,7 @@ export async function handleSessionV2Hook(input, { env = process.env, expectedSe
     if (signal?.aborted) throw new SessionV2ClientError('session_v2_client_closed');
   };
   requireActive();
-  // Validate the enrolled connection before accepting raw native observations.
-  const context = await sessionV2Context('hook', { env, expectedSessionID });
-  requireActive();
-  const payload = normalizeSessionV2Hook(input);
-  // Never substitute the configured native ID/cwd or synthesize native input.
-  // The service must observe valid mismatches to retire unsupported sessions.
-  // Only the same native session's authenticated MCP claim grants an action.
+  let payload;
   let client;
   let closing;
   let requestStarted = false;
@@ -38,12 +32,21 @@ export async function handleSessionV2Hook(input, { env = process.env, expectedSe
     // before cancelling that exact generation; other observations publish no
     // waiter and retain their prompt cancellation behavior.
     if (waiter) void waiter.cancel();
-    else if (payload.event !== 'Stop' || !requestStarted) void closeClient()?.catch(() => {});
+    else if (payload?.event !== 'Stop' || !requestStarted) void closeClient()?.catch(() => {});
     rejectCancellation(new SessionV2ClientError('session_v2_client_closed'));
   };
   signal?.addEventListener('abort', abort, { once: true });
   try {
     requireActive();
+    // Validate the enrolled connection before accepting raw native observations.
+    // Its first filesystem wait must share the same cancellation boundary as
+    // client admission, so a late result cannot start any Hook work.
+    const context = await Promise.race([sessionV2Context('hook', { env, expectedSessionID }), cancelled]);
+    requireActive();
+    payload = normalizeSessionV2Hook(input);
+    // Never substitute the configured native ID/cwd or synthesize native input.
+    // The service must observe valid mismatches to retire unsupported sessions.
+    // Only the same native session's authenticated MCP claim grants an action.
     const admission = Promise.resolve().then(() => {
       requireActive();
       return createClient(context.configuration);
@@ -76,11 +79,11 @@ export async function handleSessionV2Hook(input, { env = process.env, expectedSe
     }
     requireActive();
     if (['SessionStart', 'UserPromptSubmit'].includes(payload.event)) {
-      const boundary = result.observation_status === 'accepted' && result.boundary_id
-        ? `현재 blabee-claude boundary_id=${result.boundary_id}`
-        : '아직 유효한 작업 boundary가 없습니다. 다음 실제 UserPromptSubmit Hook을 기다리세요. 이전 값을 재사용하지 마세요.';
-      resultContext = { hookSpecificOutput: { hookEventName: payload.event,
-        additionalContext: `${SESSION_V2_WORKFLOW_INSTRUCTIONS}\n${boundary}` } };
+      // Workflow rules are MCP server instructions, loaded once per session.
+      // Each prompt carries only the current boundary line.
+      const additionalContext = result.observation_status === 'accepted' && result.boundary_id
+        ? sessionV2BoundaryLine(result.boundary_id) : SESSION_V2_NO_BOUNDARY_LINE;
+      resultContext = { hookSpecificOutput: { hookEventName: payload.event, additionalContext } };
     }
   } finally {
     try { await closeClient(); }

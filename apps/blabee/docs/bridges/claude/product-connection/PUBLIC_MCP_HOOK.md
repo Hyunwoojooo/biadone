@@ -86,6 +86,42 @@ caller 소유 stderr를 destroy/end/unref하거나 stdout으로 우회 출력하
 결과 코드·단일 실행·재전송 금지는 기존 경로를 따른다. 보호한 로그 출력을 이유로
 실제 RPC/선택 결과가 성공했다고 표시하지 않는다.
 
+### 2026-11-02: 자동 MCP 시작 오류와 초기 파일 확인의 취소
+
+자동 연결 MCP 진입점도 시작 인수 검증 전에 같은 diagnostic writer를 설치한다.
+잘못된 인수로 공통 MCP 초기화에 도달하지 않아도 닫힌 stderr·동기 write 예외·늦은
+EPIPE를 처리하며, 고정 오류 코드와 실패 종료 코드를 유지한다. 실패한 진단을 다시 쓰거나
+stdout으로 우회하지 않는다.
+
+Hook의 초기 context 확인은 취소 대기와 같은 경계에 들어간다. 자동 연결의 canonical 경로,
+private socket, 요청 전 확인, 반환 grant 검증도 abort·SIGTERM·명시적 close가 파일 확인을
+기다리지 않도록 한다. 기저 파일시스템 작업 자체를 중단했다는 뜻은 아니다. 늦은 성공·실패를
+소비하고 후속 파일 확인·IPC·client admission·권한 반환·선택 출력을 시작하지 않는다.
+이미 전송한 제품 RPC의 응답 검증과 정확한 Stop waiter generation 취소는 유지한다.
+
+새 회귀 29개와 기존 검사를 포함한 Node **208/208**, JavaScript 문법 **55개 파일**을 통과했다.
+이는 소스와 격리 검증 결과이며, 빌드·설치 앱의 코드 반영·실제 모델 왕복 증거는 아니다.
+
+### 2026-11-03: 제품 RPC 직전 파일 확인의 취소·종료
+
+`session-v2-client`의 각 요청은 소켓을 만들기 직전에 private socket을 다시 검증한다.
+이 비동기 확인 중에도 request abort 또는 client close가 대기를 종료하며, 기본 5초의
+`timeoutMs` 안에 확인이 끝나지 않으면 `session_v2_unavailable`로 실패한다. 파일 확인과
+전송 후 응답에는 각각 제한 시간을 적용한다. 네이티브 요청을 아직 보내지 않은 이 timeout을
+`session_v2_response_unknown`으로 기록하지 않는다.
+
+전송 전 abort는 해당 요청 슬롯을 해제하고 client 재사용을 허용한다. close 또는 timeout은
+해당 client의 새 요청을 막는다. 늦은 파일 확인 성공·실패를 소비하여 소켓 생성이나 자동
+재전송으로 이어지지 않게 하며, 이미 시작된 다음 요청의 슬롯도 건드리지 않는다. 파일시스템
+작업 자체가 강제 종료되는 것은 아니다. 이미 전송한 요청의 응답·권한 검증과 timeout 처리는
+유지한다. 최초 client 생성의 파일 확인은 별도 admission 경로이며 이 요청 단계의 timeout에
+포함되지 않는다.
+
+실제 client와 Hook runner를 사용한 신규 격리 검사 26개를 포함해 Node **234/234**, JavaScript
+문법 **56개 파일**을 통과했다. `UserPromptSubmit`·`Stop`의 abort/SIGTERM, 파일 확인 중 close와
+timeout, 늦은 성공·실패, listener 정리, 다음 요청 슬롯 보존, 미전송 요청의 IPC 0회를 확인했다.
+이는 설치 앱이나 실제 Claude 모델의 왕복 검사가 아니다.
+
 ## 필수 검증
 
 - 자동: 새 wire 계약의 Swift/Node/JSON Schema 일치, 잘못된 role/세션/세대 거절,

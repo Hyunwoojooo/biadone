@@ -397,6 +397,121 @@ private func semanticReceiptFixture(
     return (journal, CoordinatorSemanticApplication(journal: journal), binding)
 }
 
+private func semanticNotSubmittedCommands(
+    suffix: String, binding: [String: Any]
+) throws -> (failure: Data, close: Data) {
+    (
+        try semanticData([
+            "type": "record_transport_not_submitted", "event_id": "event_\(suffix)_not_submitted",
+            "occurred_at": "2026-08-21T01:00:05Z", "binding": binding,
+            "continuation_id": "continuation_semantic_\(suffix)",
+            "failure_code": "codex_native_version_unqualified", "command_invocation_attempted": false,
+        ]),
+        try semanticData([
+            "type": "close_boundary", "event_id": "event_\(suffix)_not_submitted_close",
+            "occurred_at": "2026-08-21T01:00:05Z", "binding": binding,
+            "close_reason": "transport_not_submitted",
+        ])
+    )
+}
+
+@Test("not-submitted failure and close commit atomically before or after consumption", arguments: [4, 5])
+func semanticNotSubmittedAtomicAndTerminal(existingEvents: Int) throws {
+    let suffix = "not_submitted_\(existingEvents)"
+    let f = try semanticReceiptFixture(suffix: suffix, existingEvents: existingEvents)
+    let commands = try semanticNotSubmittedCommands(suffix: suffix, binding: f.binding)
+    let status = try f.app.executeTransportNotSubmitted(
+        failure: commands.failure, close: commands.close, using: f.app.authorityProjection()
+    )
+    #expect(status == .notSubmitted)
+    #expect(f.journal.appendAttempts == 1)
+    let snapshot = try f.journal.load()
+    let state = try CoordinatorSemanticReplay.replay(snapshot)
+    let continuation = try #require(state.continuations.values.first)
+    #expect(state.boundaries.values.first?.closed == true)
+    #expect(state.boundaries.values.first?.closeReason == "transport_not_submitted")
+    #expect(continuation.transport?.status == .notSubmitted)
+    #expect(continuation.transport?.automaticRetry == false)
+    #expect(continuation.workOutcome == nil)
+    #expect(try snapshot.events.suffix(2).map { try semanticObject($0)["event_type"] as? String }
+        == ["continuation_transport_not_submitted", "decision_boundary_closed"])
+    #expect(try f.app.executeTransportNotSubmitted(
+        failure: commands.failure, close: commands.close, using: f.app.authorityProjection()
+    ) == .notSubmitted)
+    #expect(f.journal.appendAttempts == 1)
+
+    let action = try state.selectedActionJSON(for: continuation.continuationID)
+    semanticExpectCode(existingEvents == 4 ? "continuation_not_consumed" : "transport_terminal_observation_missing") {
+        _ = try f.app.execute(command: semanticQueuedActionClaim(
+            suffix: suffix, binding: f.binding, actionJSON: action
+        ))
+    }
+    semanticExpectCode("transport_not_submitted") {
+        _ = try f.app.execute(command: semanticData([
+            "type": "record_work_outcome", "event_id": "event_\(suffix)_false_success",
+            "occurred_at": "2026-08-21T01:00:06Z", "binding": f.binding,
+            "continuation_id": continuation.continuationID,
+            "status": "succeeded", "summary": "must not be accepted", "evidence_ids": [],
+        ]))
+    }
+    semanticExpectCode(existingEvents == 4 ? "continuation_not_consumed" : "transport_already_terminal") {
+        _ = try f.app.execute(command: semanticReceiptCommands(suffix: suffix, binding: f.binding).completion)
+    }
+    #expect(try f.journal.load().journalSequence == snapshot.journalSequence)
+}
+
+@Test("not-submitted CAS preserves a competing terminal observation", arguments: ["completed", "closed", "timed_out"])
+func semanticNotSubmittedPreservesTerminalWinner(winner: String) throws {
+    let suffix = "not_submitted_race"
+    let f = try semanticReceiptFixture(suffix: suffix)
+    let commands = try semanticNotSubmittedCommands(suffix: suffix, binding: f.binding)
+    let receipt = try semanticReceiptCommands(suffix: suffix, binding: f.binding)
+    let authority = try f.app.authorityProjection()
+    var terminalCommand = try semanticObject(receipt.completion)
+    if winner == "timed_out" {
+        terminalCommand["type"] = "timeout_transport_unknown"
+        terminalCommand["occurred_at"] = "2026-08-21T01:05:03Z"
+    }
+    let terminal = try CoordinatorSemanticDecision.decide(state: authority.state, command: semanticData(terminalCommand))
+    var competing = terminal
+    if winner == "closed" {
+        let state = try CoordinatorSemanticReplay.applying(terminal, to: authority.state)
+        let close = try CoordinatorSemanticDecision.decide(state: state, command: receipt.close)
+        competing = CoordinatorSemanticChange(events: terminal.events + close.events)
+    }
+    f.journal.installCompetingChange(competing)
+    #expect(try f.app.executeTransportNotSubmitted(
+        failure: commands.failure, close: commands.close, using: authority
+    ) == (winner == "timed_out" ? .timedOutUnknown : .completed))
+    let snapshot = try f.journal.load()
+    #expect(try snapshot.events.filter { try semanticObject($0)["event_type"] as? String == "continuation_transport_not_submitted" }.isEmpty)
+    #expect(try CoordinatorSemanticReplay.replay(snapshot).boundaries.values.first?.closed == true)
+}
+
+@Test("not-submitted observations reject attempted calls, wrong binding, and pre-issue time")
+func semanticNotSubmittedRejectsInvalidEvidence() throws {
+    let suffix = "not_submitted_invalid"
+    let f = try semanticReceiptFixture(suffix: suffix)
+    let commands = try semanticNotSubmittedCommands(suffix: suffix, binding: f.binding)
+    let authority = try f.app.authorityProjection()
+    let changes: [(String, Any, String)] = [
+        ("command_invocation_attempted", true, "transport_not_submitted_evidence_required"),
+        ("occurred_at", "2026-08-21T01:00:02Z", "continuation_not_yet_valid"),
+        ("binding", semanticBinding(suffix: "other"), "decision_boundary_binding_mismatch"),
+        ("failure_code", "not a code", "dispatch_failure_code_invalid"),
+    ]
+    for (field, value, code) in changes {
+        var failure = try semanticObject(commands.failure)
+        failure[field] = value
+        semanticExpectCode(code) {
+            _ = try f.app.executeTransportNotSubmitted(
+                failure: semanticData(failure), close: commands.close, using: authority
+            )
+        }
+    }
+    #expect(f.journal.appendAttempts == 0)
+}
+
 @Test("receipt lifecycle commits only the missing zero one or two events", arguments: [5, 6, 7])
 func semanticReceiptCompletionAtomicAndLegacy(existingEvents: Int) throws {
     let suffix = "receipt_legacy"

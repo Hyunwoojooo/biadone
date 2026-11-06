@@ -271,9 +271,9 @@ test('actual Hook and MCP children use the common Coordinator and preserve C/D a
   const emitted = await mcp.call('emit_decision_v1', { boundary_id: original.boundaryID, proposal: input });
   let state = await host.selectorClient.request({ operation: 'snapshot' });
   const selection = selectionFor(state, emitted.packet_id);
-  assert.equal(state.ready, false);
+  assert.equal(state.ready, true, 'A stored proposal for the latest Hook boundary is the model readiness');
   assert.equal(state.selection_enabled, false);
-  await assert.rejects(host.selectorClient.request(selection), { code: 'claude_session_readiness_required' });
+  await assert.rejects(host.selectorClient.request(selection), { code: 'claude_session_stop_required' });
   await readiness(host, mcp);
   await assert.rejects(host.selectorClient.request(selection), { code: 'claude_session_stop_required' });
   await hook(host, 'Stop', { prompt_id: promptID });

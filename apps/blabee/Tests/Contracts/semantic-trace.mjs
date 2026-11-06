@@ -30,6 +30,7 @@ const BOUNDARY_EVENT_TYPES = new Set([
   "continuation_dispatched",
   "continuation_consumed",
   "continuation_transport_completed",
+  "continuation_transport_not_submitted",
   "continuation_transport_timed_out_unknown",
   "queued_action_context_claimed",
   "work_outcome_recorded",
@@ -542,6 +543,7 @@ export function validateSemanticTrace(trace) {
         revision: data.revision,
         terminal: false,
         timedOut: false,
+        notSubmitted: false,
         consumed: false,
         workOutcomeRecorded: false,
         inFlightDeadlineAt: timing.inFlightDeadlineAt,
@@ -598,6 +600,29 @@ export function validateSemanticTrace(trace) {
       continue;
     }
 
+    if (type === "continuation_transport_not_submitted") {
+      const id = continuationId(wrapperEvent);
+      const continuation = continuations.get(id);
+      if (!continuation) return failure("continuation_not_dispatched", index, "not-submitted requires a prior dispatch");
+      if (continuation.boundaryKey !== key) return failure("decision_boundary_binding_mismatch", index, "not-submitted crossed a decision boundary");
+      if (continuation.dispatchMode !== "queued_next_turn") return failure("dispatch_mode_conflict", index, "not-submitted requires queued_next_turn");
+      if (continuation.terminal) return failure("transport_already_terminal", index, "transport has already reached a terminal observation");
+      const time = parseStrictRfc3339DateTime(occurredAt(wrapperEvent));
+      if (time === null) return failure("runtime_event_time_invalid", index, "not-submitted requires a strict RFC3339 occurred_at");
+      if (time < continuation.issuedAt) return failure("continuation_not_yet_valid", index, "not-submitted cannot precede issue time");
+      const data = traceEventData(wrapperEvent);
+      if (data.transport_status !== "not_submitted" || data.work_outcome_status !== "not_recorded"
+        || data.automatic_retry !== false || data.command_invocation_attempted !== false) {
+        return failure("invalid_transport_not_submitted", index, "not-submitted must never imply work, retry, or attempted submission");
+      }
+      if (typeof data.failure_code !== "string" || !/^[a-z][a-z0-9_]{0,127}$/.test(data.failure_code)) {
+        return failure("dispatch_failure_code_invalid", index, "not-submitted needs a stable failure code");
+      }
+      continuation.terminal = true;
+      continuation.notSubmitted = true;
+      continue;
+    }
+
     if (type === "continuation_transport_timed_out_unknown") {
       const id = continuationId(wrapperEvent);
       const continuation = continuations.get(id);
@@ -639,7 +664,7 @@ export function validateSemanticTrace(trace) {
       if (!continuation.consumed) {
         return failure("continuation_not_consumed", index, "queued action context claim requires a consumed continuation");
       }
-      if (!continuation.terminal || continuation.timedOut) {
+      if (!continuation.terminal || continuation.timedOut || continuation.notSubmitted) {
         return failure("transport_terminal_observation_missing", index, "queued action context claim requires completed transport");
       }
       if (!currentBoundary.closed) {
@@ -698,6 +723,7 @@ export function validateSemanticTrace(trace) {
       if (continuation.boundaryKey !== key) return failure("decision_boundary_binding_mismatch", index, "work outcome crossed a decision boundary");
       if (continuation.workOutcomeRecorded) return failure("work_outcome_already_recorded", index, "work outcome may be recorded once");
       if (!continuation.terminal) return failure("transport_terminal_observation_missing", index, "work outcome cannot stand in for transport completion");
+      if (continuation.notSubmitted) return failure("transport_not_submitted", index, "an unsubmitted action cannot record a work outcome");
       if (traceEventData(wrapperEvent).action_id !== continuation.actionId) {
         return failure("decision_boundary_binding_mismatch", index, "work outcome action differs from the dispatched action");
       }

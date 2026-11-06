@@ -2,6 +2,9 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { SessionV2ClientError, validateSessionV2Payload, validateSessionV2Result } from './session-v2-client.mjs';
 
 export const SESSION_V2_HOOK_REWAKE = Symbol('blabee-claude-hook-rewake');
+// Consecutive polls that failed locally before submission (slow filesystem
+// preflight). The overall wait budget still bounds the waiter.
+const MAX_CONSECUTIVE_UNSUBMITTED_POLLS = 10;
 
 // Canonical UTF-8 stderr bytes, including the final LF. The server can bind a
 // verified native continuation to these exact bytes; keep rendering centralized.
@@ -43,6 +46,7 @@ export function createSessionV2HookWaiter({ client, observation, waiter, signal,
   let closed = false;
   let delivered = false;
   let expired = false;
+  let unsubmittedPolls = 0;
   const request = command => {
     const pending = Promise.resolve().then(() => {
       if (command.operation === 'hook.poll' && cancelled) throw new SessionV2ClientError('session_v2_client_closed');
@@ -85,7 +89,17 @@ export function createSessionV2HookWaiter({ client, observation, waiter, signal,
           requireActive();
           await wait(Math.min(500, remaining()), { signal: stopping.signal });
           requireActive();
-          const result = await request({ operation: 'hook.poll', ...binding });
+          let result;
+          try {
+            result = await request({ operation: 'hook.poll', ...binding });
+          } catch (error) {
+            // A local preflight timeout proves this poll never reached the
+            // service, so nothing could have been consumed. Poll again on the
+            // next tick within the same budget; anything else stays terminal.
+            if (error?.notSubmitted === true && ++unsubmittedPolls <= MAX_CONSECUTIVE_UNSUBMITTED_POLLS) continue;
+            throw error;
+          }
+          unsubmittedPolls = 0;
           requireActive();
           validateSessionV2Result('hook.poll', result, binding);
           if (result.status === 'closed') { closed = true; return false; }

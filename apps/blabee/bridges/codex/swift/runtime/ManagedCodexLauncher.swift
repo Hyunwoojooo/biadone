@@ -218,6 +218,7 @@ struct ManagedCodexLauncherArguments: Equatable {
             || qualifiedVersion == "0.162.1"
             || qualifiedVersion == "0.163.0"
             || qualifiedVersion == "0.164.0"
+            || qualifiedVersion == "0.166.0"
         var tui: [String] = []
         var server: [String] = []
         var hasProfile = false

@@ -33,21 +33,28 @@ const absolute = (value, maximum = 4096) => typeof value === 'string' && value.i
   && isAbsolute(value) && resolve(value) === value && !/[\x00-\x1f\x7f]/.test(value)
   && Buffer.byteLength(value) <= maximum;
 
-async function canonicalDirectory(path, code) {
+async function canonicalDirectory(path, code, whileOpen) {
   try {
-    requireValue(absolute(path) && await realpath(path) === path && (await lstat(path)).isDirectory(), code);
-  } catch { throw new AutoConnectError(code); }
+    requireValue(absolute(path) && await whileOpen(() => realpath(path)) === path
+      && (await whileOpen(() => lstat(path))).isDirectory(), code);
+  } catch (error) {
+    if (error?.code === 'auto_connect_closed') throw error;
+    throw new AutoConnectError(code);
+  }
 }
 
-async function privateSocket(path) {
+async function privateSocket(path, whileOpen) {
   try {
     requireValue(absolute(path, 103));
     const parent = dirname(path);
-    const [directory, socket, canonical] = await Promise.all([lstat(parent), lstat(path), realpath(parent)]);
+    const [directory, socket, canonical] = await whileOpen(() => Promise.all([lstat(parent), lstat(path), realpath(parent)]));
     requireValue(canonical === parent && directory.isDirectory() && !directory.isSymbolicLink()
       && directory.uid === process.getuid() && (directory.mode & 0o077) === 0
       && socket.isSocket() && !socket.isSymbolicLink() && socket.uid === process.getuid() && (socket.mode & 0o077) === 0);
-  } catch { throw new AutoConnectError('auto_connect_invalid_socket'); }
+  } catch (error) {
+    if (error?.code === 'auto_connect_closed') throw error;
+    throw new AutoConnectError('auto_connect_invalid_socket');
+  }
 }
 
 /** Private per-launch admission only. No saved settings, prior v2 authority or
@@ -72,26 +79,46 @@ export async function createAutoConnectClient({ role, env = process.env, nativeS
       && (!/_(?:TOKEN|CAPABILITY)$/.test(key) || [PREFIX + 'HOOK_TOKEN', PREFIX + 'BRIDGE_TOKEN'].includes(key)),
     'auto_connect_invalid_configuration');
   }
-  await canonicalDirectory(launchCWD, 'auto_connect_invalid_configuration');
-  await canonicalDirectory(cwd, 'auto_connect_invalid_configuration');
-  await privateSocket(socketPath);
   let closed = false;
   let failure;
   let pending;
   let delay;
   let started = false;
   let waiting = false;
+  const preflightWaiters = new Set();
   const unavailable = () => failure ?? new AutoConnectError('auto_connect_closed');
+  const whileOpen = async operation => {
+    if (closed || failure) throw unavailable();
+    let cancel;
+    const cancelled = new Promise((_, reject) => { cancel = () => reject(unavailable()); });
+    preflightWaiters.add(cancel);
+    try {
+      // The race consumes a late filesystem result or rejection. Checking both
+      // sides prevents it from starting the next validation or publishing a grant.
+      const result = await Promise.race([Promise.resolve().then(() => {
+        if (closed || failure) throw unavailable();
+        return operation();
+      }), cancelled]);
+      if (closed || failure) throw unavailable();
+      return result;
+    } finally { preflightWaiters.delete(cancel); }
+  };
   const close = async () => {
     closed = true;
     signal?.removeEventListener('abort', onAbort);
+    for (const cancel of preflightWaiters) cancel();
     pending?.cancel();
     delay?.cancel();
     await pending?.done;
   };
   const onAbort = () => { void close(); };
   signal?.addEventListener('abort', onAbort, { once: true });
-  if (signal?.aborted) { await close(); throw unavailable(); }
+  try {
+    if (signal?.aborted) throw unavailable();
+    await canonicalDirectory(launchCWD, 'auto_connect_invalid_configuration', whileOpen);
+    await canonicalDirectory(cwd, 'auto_connect_invalid_configuration', whileOpen);
+    await privateSocket(socketPath, whileOpen);
+  } catch (error) { await close(); throw error; }
 
   const grantEnvironment = async value => {
     fields(value, [...PUBLIC_KEYS, SESSION + (role === 'hook' ? 'HOOK_TOKEN' : 'BRIDGE_TOKEN')]);
@@ -99,9 +126,12 @@ export async function createAutoConnectClient({ role, env = process.env, nativeS
       && !secrets.some(secret => item.includes(secret))));
     requireValue(value[SESSION + 'NATIVE_SESSION_ID'] === nativeSessionID && value[SESSION + 'CWD'] === cwd
       && absolute(value[SESSION + 'SOCKET'], 103) && /^sha256:[0-9a-f]{64}$/.test(value[SESSION + 'RUNTIME_IDENTITY']));
-    try { await sessionV2Context(role, { env: value, expectedSessionID: nativeSessionID }); }
-    catch { throw new AutoConnectError('auto_connect_invalid_response'); }
-    await privateSocket(value[SESSION + 'SOCKET']);
+    try { await whileOpen(() => sessionV2Context(role, { env: value, expectedSessionID: nativeSessionID })); }
+    catch (error) {
+      if (error?.code === 'auto_connect_closed') throw error;
+      throw new AutoConnectError('auto_connect_invalid_response');
+    }
+    await privateSocket(value[SESSION + 'SOCKET'], whileOpen);
     return Object.freeze({ ...value });
   };
 
@@ -137,7 +167,7 @@ export async function createAutoConnectClient({ role, env = process.env, nativeS
     const active = { cancel: () => {}, done: new Promise(resolveDone => { finishDone = resolveDone; }) };
     pending = active;
     try {
-      await privateSocket(socketPath);
+      await privateSocket(socketPath, whileOpen);
       if (closed || failure) throw unavailable();
       return await new Promise((resolveRequest, rejectRequest) => {
         let bytes = Buffer.alloc(0);

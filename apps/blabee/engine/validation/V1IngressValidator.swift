@@ -434,6 +434,7 @@ private enum V {
         "continuation_dispatched": "transport",
         "continuation_consumed": "transport",
         "continuation_transport_completed": "transport",
+        "continuation_transport_not_submitted": "transport",
         "continuation_transport_timed_out_unknown": "transport",
         "queued_action_context_claimed": "transport",
         "work_outcome_recorded": "work_outcome",
@@ -519,6 +520,19 @@ private enum V {
             _ = try string(payload, "continuation_id", identifier: true)
             try constant(payload, "transport_status", "completed")
             try constant(payload, "work_outcome_status", "not_recorded")
+        case "continuation_transport_not_submitted":
+            try exact(payload, required: [
+                "continuation_id", "transport_status", "work_outcome_status", "automatic_retry",
+                "failure_code", "command_invocation_attempted",
+            ])
+            _ = try string(payload, "continuation_id", identifier: true)
+            try constant(payload, "transport_status", "not_submitted")
+            try constant(payload, "work_outcome_status", "not_recorded")
+            _ = try stableCode(payload, "failure_code")
+            let automaticRetry = try bool(payload, "automatic_retry")
+            let commandInvocationAttempted = try bool(payload, "command_invocation_attempted")
+            try require(automaticRetry == false, "contract_validation_failed")
+            try require(commandInvocationAttempted == false, "contract_validation_failed")
         case "continuation_transport_timed_out_unknown":
             let keys: Set<String> = [
                 "continuation_id", "transport_status", "work_outcome_status", "automatic_retry",

@@ -1,5 +1,16 @@
 # Codex 버전별 지원·검증 기록
 
+## 2026-11-04: 0.166.0 지원과 새 executor 패키지 검사
+
+설치 r89에서 0.166.0이 지원 목록에 없어 Plugin 검사 전에 거부되는 원인을 확인했다.
+정확한 버전·primary CDHash·42파일 catalog와 추가 executor 선언, private custody,
+workspace 라우팅·업데이트 lifecycle을 함께 갱신했다. 기존 v1 fingerprint는 보존한다.
+[공식 근거·검증·남은 경계](CODEX_0166_QUALIFICATION.md).
+
+계정 없는 실제 Plugin 설치·조회·제거와 세션 생성·정상 종료·cold resume를 확인했다.
+Node/Python 회귀 261개, Swift 집중 회귀 353개와 공식 패키지의 71개 smoke를 통과했다.
+서로 다른 명령 cwd의 기본 승인 fallback은 유지한다. 설치 앱에는 아직 반영하지 않았다.
+
 ## 2026-10-24: 0.164.0 지원과 Hook 신뢰 진단 보완
 
 공식 macOS arm64 Codex 0.164.0의 일반 Plugin·Hook·MCP·queue, Pet 일회성 승인,

@@ -989,7 +989,7 @@ public final class ClaudeNativeSession: @unchecked Sendable {
             readyUntilNanoseconds = value.expiresNanoseconds
             if productAuthority != nil { readyReference = value.nonce }
             return ["ready": true, "expires_at": productAuthority == nil ? Self.epochMilliseconds(value.expires) : 0]
-        case "proposal.emit": return try emit(request)
+        case "proposal.emit": return try emit(request, at: instant)
         case "select": return try select(request, at: instant)
         case "dismiss_interaction": return try dismissInteraction(request, at: instant)
         case "selection.claim": return try claim(request, at: instant)
@@ -1168,7 +1168,7 @@ public final class ClaudeNativeSession: @unchecked Sendable {
         return hookResult()
     }
 
-    private func emit(_ request: [String: Any]) throws -> [String: Any] {
+    private func emit(_ request: [String: Any], at instant: Date) throws -> [String: Any] {
         let accessGeneration = try productAccessCheck()
         try Self.fields(request, ["bridge_id", "boundary_id", "proposal"])
         try requireBridge(request)
@@ -1193,7 +1193,31 @@ public final class ClaudeNativeSession: @unchecked Sendable {
         value.card = Card(accessGeneration: accessGeneration, interactionID: interactionID, packetID: packetID, revision: revision,
                           optionIDs: optionIDs, expiresNanoseconds: cardDeadline)
         boundary = value
+        try refreshReadinessAfterEmit(at: instant)
         return ["packet_id": packetID, "revision": revision]
+    }
+
+    /// A stored proposal for the latest Hook boundary is a model round trip
+    /// through this bridge, at least as strong as a model-initiated
+    /// check_connection ACK (whose nonce also returns over MCP). It refreshes
+    /// readiness for the same 5-minute lifetime so the model need not probe
+    /// before every proposal. Never moves an existing expiry earlier (every
+    /// readiness lasts at most one lifetime, so this only matters for an ACK
+    /// at the same instant), never extends card TTL, and leaves an open
+    /// Pet/startup Channel probe untouched. Applies to both the product and
+    /// the legacy handle() path; a later model-initiated readiness.begin
+    /// still replaces it until that probe's nonce is acknowledged.
+    private func refreshReadinessAfterEmit(at instant: Date) throws {
+        guard isConnected(at: instant), !productObservationRetirementPending else { return }
+        let expires = instant.addingTimeInterval(Self.readinessLifetime)
+        let expiresNanoseconds = try productDeadline(after: 300_000_000_000)
+        if isReady(at: instant), let current = readyUntil {
+            let longer = productClock == nil ? current >= expires
+                : (readyUntilNanoseconds ?? 0) >= (expiresNanoseconds ?? .max)
+            if longer { return }
+        }
+        readyUntil = expires
+        readyUntilNanoseconds = expiresNanoseconds
     }
 
     private func select(_ request: [String: Any], at instant: Date) throws -> [String: Any] {

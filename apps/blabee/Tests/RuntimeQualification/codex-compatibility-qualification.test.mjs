@@ -23,18 +23,24 @@ const voiceFixtureFiles = [
   "licenses/PCRE2.md", "licenses/libffi.txt", "licenses/proxy-libintl.txt", "licenses/sljit.txt", "licenses/zlib.txt",
 ].map((path) => `${voiceRoot}/${path}`);
 
-async function fixture(t, { voice = false, version = voice ? "0.164.0" : "0.153.4", bundledShell = !["0.163.0", "0.164.0"].includes(version) } = {}) {
+async function fixture(t, {
+  voice = false, version = voice ? "0.164.0" : "0.153.4",
+  bundledShell = !["0.163.0", "0.164.0", "0.166.0"].includes(version),
+  execServer = version === "0.166.0",
+} = {}) {
   const directory = await realpath(await mkdtemp(join(tmpdir(), "blabee-codex-qualification-fixture-")));
   t.after(() => rm(directory, { recursive: true, force: true }));
   const runtimeDir = join(directory, "runtime");
   const executables = ["bin/codex", "bin/codex-code-mode-host", "codex-path/rg"];
   if (bundledShell) executables.push("codex-resources/zsh/bin/zsh");
+  if (execServer) executables.push("bin/codex-exec-server");
   for (const name of executables) {
     await mkdir(dirname(join(runtimeDir, name)), { recursive: true, mode: 0o700 });
     // Inert fixture bytes are never executed. Only the injected runner sees them.
     await writeFile(join(runtimeDir, name), `fixture:${name}`, { mode: 0o700 });
   }
   const manifest = { layoutVersion: 1, version, target: "aarch64-apple-darwin", variant: "codex", entrypoint: "bin/codex", resourcesDir: "codex-resources", pathDir: "codex-path" };
+  if (execServer) manifest.execServer = "bin/codex-exec-server";
   await writeFile(join(runtimeDir, "codex-package.json"), JSON.stringify(manifest), { mode: 0o600 });
   if (voice) {
     for (const name of voiceFixtureFiles) {
@@ -88,7 +94,7 @@ test("fixture evidence binds package contract checks without claiming real runti
   assert.ok(f.calls.every((call) => call.options.env === env));
 });
 
-for (const version of ["0.155.0", "0.155.1", "0.156.0", "0.156.1", "0.157.0", "0.157.1", "0.158.0", "0.159.0", "0.159.1", "0.159.2", "0.159.3", "0.160.0", "0.160.1", "0.161.0", "0.162.0", "0.162.1", "0.163.0", "0.164.0"]) {
+for (const version of ["0.155.0", "0.155.1", "0.156.0", "0.156.1", "0.157.0", "0.157.1", "0.158.0", "0.159.0", "0.159.1", "0.159.2", "0.159.3", "0.160.0", "0.160.1", "0.161.0", "0.162.0", "0.162.1", "0.163.0", "0.164.0", "0.166.0"]) {
   test(`${version} arm64 requires the complete voice layout and verifies every native resource before CLI execution`, async (t) => {
     const f = await fixture(t, { voice: true, version });
     const report = await qualifyCodexCompatibility(f.options, f.dependencies);
@@ -101,7 +107,15 @@ for (const version of ["0.155.0", "0.155.1", "0.156.0", "0.156.1", "0.157.0", "0
     const expectedTrustChecks = ["0.163.0", "0.164.0"].includes(version) ? 58 : 60;
     assert.equal(trustCalls.length, expectedTrustChecks);
     assert.ok(f.calls.slice(0, expectedTrustChecks).every((call) => call.command === "/usr/bin/codesign"));
-    assert.equal(trustCalls.some((call) => call.args.at(-1).endsWith("/zsh/bin/zsh")), !["0.163.0", "0.164.0"].includes(version));
+    assert.equal(trustCalls.some((call) => call.args.at(-1).endsWith("/zsh/bin/zsh")), !["0.163.0", "0.164.0", "0.166.0"].includes(version));
+    const execServerChecks = trustCalls.filter((call) => call.args.at(-1) === join(f.runtimeDir, "bin/codex-exec-server"));
+    assert.equal(execServerChecks.length, version === "0.166.0" ? 2 : 0);
+    if (version === "0.166.0") {
+      assert.equal(report.package.manifest.execServer, "bin/codex-exec-server");
+      assert.ok(report.testedCapabilities.includes("exec-server-present"));
+      assert.ok(execServerChecks.some((call) => call.args.includes('-R=anchor apple generic and certificate leaf[subject.OU] = "2DC432GLL2" and identifier "codex-exec-server"')));
+      assert.ok(execServerChecks.some((call) => call.args.includes("-R=notarized") && call.args.includes("--check-notarization")));
+    }
     for (const path of voiceFixtureFiles.filter((name) => name.endsWith(".dylib") || name.endsWith("/codex-voice-host"))) {
       const checks = trustCalls.filter((call) => call.args.at(-1) === join(f.runtimeDir, path));
       assert.equal(checks.length, 2, path);
@@ -123,10 +137,11 @@ for (const [version, unreviewedVersion] of [
   ["0.162.0", "0.162.2"], ["0.162.1", "0.162.2"],
   ["0.163.0", "0.163.1"],
   ["0.164.0", "0.164.1"],
+  ["0.166.0", "0.166.1"],
 ]) {
   test(`${version} voice layout rejects omitted resources, unknown files and unreviewed version or target combinations`, async (t) => {
     for (const kind of ["host", "library", "license", "manifest", "extra", "version", "target", "entire-voice-layout"]) {
-      const f = await fixture(t, { voice: kind !== "entire-voice-layout", version: kind === "version" ? unreviewedVersion : version, bundledShell: !["0.163.0", "0.164.0"].includes(version) });
+      const f = await fixture(t, { voice: kind !== "entire-voice-layout", version: kind === "version" ? unreviewedVersion : version, bundledShell: !["0.163.0", "0.164.0", "0.166.0"].includes(version), execServer: version === "0.166.0" });
       const missing = { host: "bin/codex-voice-host", library: "lib/libopus.0.dylib", license: "licenses/Opus.txt", manifest: "manifest.json" }[kind];
       if (missing) await rm(join(f.runtimeDir, voiceRoot, missing));
       if (kind === "extra") await writeFile(join(f.runtimeDir, voiceRoot, "plugins/unreviewed.dylib"), "extra");
@@ -173,6 +188,7 @@ test("retired bundled shell and partial older packages fail before any child is 
   for (const [version, bundledShell, voice] of [
     ["0.163.0", true, true],
     ["0.164.0", true, true],
+    ["0.166.0", true, true],
     ["0.162.1", false, true],
     ["0.155.0", false, true],
     ["0.153.4", false, false],
@@ -185,7 +201,7 @@ test("retired bundled shell and partial older packages fail before any child is 
 });
 
 test("unreviewed patch and minor versions reject both voice layouts before execution", async (t) => {
-  for (const version of ["0.164.1", "0.165.0"]) {
+  for (const version of ["0.164.1", "0.165.0", "0.166.1"]) {
     for (const bundledShell of [false, true]) {
       const f = await fixture(t, { version, voice: true, bundledShell });
       const report = await qualifyCodexCompatibility(f.options, f.dependencies);
@@ -193,6 +209,108 @@ test("unreviewed patch and minor versions reject both voice layouts before execu
       assert.equal(f.calls.length, 0, `${version} bundledShell=${bundledShell}`);
     }
   }
+});
+
+test("exec-server layout is limited to the exact 0.166.0 arm64 target before any child is launched", async (t) => {
+  for (const version of ["0.164.0", "0.165.0", "0.166.1", "0.166.0-alpha.1"]) {
+    const f = await fixture(t, { version, voice: true, bundledShell: false, execServer: true });
+    const report = await qualifyCodexCompatibility(f.options, f.dependencies);
+    assert.equal(report.failure.code, version.includes("alpha") ? "invalid_input" : "package_layout_invalid", version);
+    assert.equal(f.calls.length, 0, version);
+  }
+  for (const [target, host] of [
+    ["x86_64-apple-darwin", { platform: "darwin", arch: "x64" }],
+    ["aarch64-unknown-linux-gnu", { platform: "linux", arch: "arm64" }],
+    ["x86_64-apple-darwin", { platform: "darwin", arch: "arm64" }],
+  ]) {
+    const f = await fixture(t, { version: "0.166.0", voice: true });
+    f.manifest.target = target;
+    await writeFile(join(f.runtimeDir, "codex-package.json"), JSON.stringify(f.manifest));
+    const report = await qualifyCodexCompatibility(f.options, { ...f.dependencies, ...host });
+    assert.equal(report.failure.code, host.platform !== "darwin" ? "unsupported_host" : host.arch === "x64" ? "package_layout_invalid" : "package_manifest_mismatch", target);
+    assert.equal(f.calls.length, 0, target);
+  }
+});
+
+test("0.166.0 x64 cannot fall back to a legacy five-file layout before child execution", async (t) => {
+  const f = await fixture(t, { version: "0.166.0", voice: false, bundledShell: true, execServer: false });
+  f.manifest.target = "x86_64-apple-darwin";
+  await writeFile(join(f.runtimeDir, "codex-package.json"), JSON.stringify(f.manifest));
+  const report = await qualifyCodexCompatibility(f.options, { ...f.dependencies, arch: "x64" });
+  assert.equal(report.status, "failed");
+  assert.equal(report.failure.code, "package_layout_invalid");
+  assert.equal(f.calls.length, 0);
+});
+
+test("0.166.0 exec-server requires its exact executable and manifest declaration before any child is launched", async (t) => {
+  for (const kind of ["missing-file", "not-executable", "extra-file", "missing-declaration", "wrong-declaration", "null-declaration", "wrong-type-declaration"]) {
+    const f = await fixture(t, { version: "0.166.0", voice: true });
+    const executable = join(f.runtimeDir, "bin/codex-exec-server");
+    if (kind === "missing-file") await rm(executable);
+    if (kind === "not-executable") await chmod(executable, 0o600);
+    if (kind === "extra-file") await writeFile(join(f.runtimeDir, "bin/other-exec-server"), "extra", { mode: 0o700 });
+    if (kind === "missing-declaration") delete f.manifest.execServer;
+    if (kind === "wrong-declaration") f.manifest.execServer = "bin/codex-code-mode-host";
+    if (kind === "null-declaration") f.manifest.execServer = null;
+    if (kind === "wrong-type-declaration") f.manifest.execServer = ["bin/codex-exec-server"];
+    await writeFile(join(f.runtimeDir, "codex-package.json"), JSON.stringify(f.manifest));
+    const report = await qualifyCodexCompatibility(f.options, f.dependencies);
+    assert.equal(report.failure.code, kind.endsWith("declaration") ? "package_manifest_mismatch" : "package_layout_invalid", kind);
+    assert.equal(f.calls.length, 0, kind);
+  }
+});
+
+test("package manifests reject unknown, duplicate, escaped duplicate, null and non-object fields before execution", async (t) => {
+  for (const version of ["0.153.4", "0.164.0", "0.166.0"]) {
+    for (const kind of ["unknown", "duplicate", "escaped-duplicate", "null", "array"]) {
+      const f = await fixture(t, { version, voice: version !== "0.153.4" });
+      let manifestText = JSON.stringify(f.manifest);
+      if (kind === "unknown") manifestText = JSON.stringify({ ...f.manifest, unreviewed: true });
+      if (kind === "duplicate") manifestText = manifestText.replace("{", '{"version":"unreviewed",');
+      if (kind === "escaped-duplicate") manifestText = manifestText.replace("{", '{"ver\\u0073ion":"unreviewed",');
+      if (kind === "null") manifestText = JSON.stringify({ ...f.manifest, resourcesDir: null });
+      if (kind === "array") manifestText = JSON.stringify([f.manifest]);
+      await writeFile(join(f.runtimeDir, "codex-package.json"), manifestText);
+      const report = await qualifyCodexCompatibility(f.options, f.dependencies);
+      assert.equal(report.failure.code, "package_manifest_mismatch", `${version} ${kind}`);
+      assert.equal(f.calls.length, 0, `${version} ${kind}`);
+    }
+  }
+});
+
+test("older layouts reject an exec-server declaration even without an additional executable", async (t) => {
+  for (const version of ["0.153.4", "0.164.0"]) {
+    const f = await fixture(t, { version, voice: version !== "0.153.4" });
+    f.manifest.execServer = "bin/codex-exec-server";
+    await writeFile(join(f.runtimeDir, "codex-package.json"), JSON.stringify(f.manifest));
+    const report = await qualifyCodexCompatibility(f.options, f.dependencies);
+    assert.equal(report.failure.code, "package_manifest_mismatch", version);
+    assert.equal(f.calls.length, 0, version);
+  }
+});
+
+test("0.166.0 exec-server signature and notarization failures stop before candidate CLI execution", async (t) => {
+  for (const notarization of [false, true]) {
+    const f = await fixture(t, { version: "0.166.0", voice: true });
+    const report = await qualifyCodexCompatibility(f.options, { ...f.dependencies, run: async (...args) => {
+      const result = await f.run(...args);
+      return args[1].at(-1) === join(f.runtimeDir, "bin/codex-exec-server") && args[1].includes("-R=notarized") === notarization ? { ...result, code: 1 } : result;
+    } });
+    assert.equal(report.failure.code, notarization ? "notarization_unverified" : "signature_invalid");
+    assert.equal(f.calls.some((call) => call.command.endsWith("/bin/codex")), false);
+  }
+});
+
+test("0.166.0 exec-server changes during trust checks invalidate the full package fingerprint", async (t) => {
+  const f = await fixture(t, { version: "0.166.0", voice: true });
+  const report = await qualifyCodexCompatibility(f.options, { ...f.dependencies, run: async (...args) => {
+    const result = await f.run(...args);
+    await writeFile(join(f.runtimeDir, "bin/codex-exec-server"), "changed executable");
+    return result;
+  } });
+  assert.equal(report.failure.code, "package_changed");
+  assert.equal(f.calls.length, 1);
+  assert.equal(f.calls.some((call) => call.command.endsWith("/bin/codex")), false);
 });
 
 test("added voice resources retain link and write-permission protections", async (t) => {

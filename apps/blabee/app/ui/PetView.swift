@@ -293,7 +293,16 @@ struct PetRootView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
+    /// The status title outranks the badge: when the whole row with the name
+    /// badge does not fit, the row with the tinted dot is used instead.
     private var header: some View {
+        ViewThatFits(in: .horizontal) {
+            headerRow(compactBadge: false)
+            headerRow(compactBadge: true)
+        }
+    }
+
+    private func headerRow(compactBadge: Bool) -> some View {
         HStack(spacing: 10) {
             PetAirBeeMark()
                 .frame(width: 20, height: 26)
@@ -303,8 +312,7 @@ struct PetRootView: View {
                 .lineLimit(1)
                 .fixedSize(horizontal: true, vertical: false)
             if !viewModel.isProductAccessBlocked, let source = displayedProvider {
-                PetProviderMark(provider: source)
-                    .foregroundStyle(PetAirPalette.secondary(for: colorScheme))
+                PetProviderMark(provider: source, compact: compactBadge)
             }
             Spacer(minLength: 8)
             HStack(spacing: 8) {
@@ -327,6 +335,8 @@ struct PetRootView: View {
                 }
             }
             .accessibilityElement(children: .combine)
+            // Claim the title's full width before the Spacer takes the remainder.
+            .layoutPriority(1)
             if viewModel.feedback != nil {
                 Button(action: viewModel.requestFeedback) {
                     Image(systemName: "bubble.left.and.text.bubble.right")
@@ -366,7 +376,7 @@ struct PetRootView: View {
         }
     }
 
-    /// The glyph describes the currently displayed card, never a destination
+    /// The badge describes the currently displayed card, never a destination
     /// selected independently from it. Settings and the empty inbox have no
     /// provider selection affordance.
     private var displayedProvider: PetProvider? {

@@ -1,4 +1,5 @@
 import Foundation
+import CoreFoundation
 
 /// Persistence seam used by the semantic coordinator. `SQLiteJournal` is the
 /// production implementation; tests can inject a deterministic conflict port.
@@ -363,6 +364,99 @@ public final class CoordinatorSemanticApplication: @unchecked Sendable {
         }
     }
 
+    /// A trusted adapter observed that no submission was attempted. Persist
+    /// that observation and its boundary close together. A concurrent durable
+    /// terminal observation always wins; it is never relabeled as a failure.
+    func executeTransportNotSubmitted(
+        failure failureData: Data,
+        close closeData: Data,
+        using initialAuthority: CoordinatorSemanticAuthorityProjection,
+        maxSequenceConflicts: Int = 2,
+        validateAdmission: () throws -> Void = {}
+    ) throws -> CoordinatorTransportStatus {
+        try require(initialAuthority.authorityID == authorityID, "authority_projection_mismatch")
+        try require(maxSequenceConflicts >= 0, "retry_limit_invalid")
+        let failure = try SemanticJSON.command(failureData)
+        let close = try SemanticJSON.command(closeData)
+        let failureType = try SemanticJSON.commandType(failure)
+        let closeType = try SemanticJSON.commandType(close)
+        try require(failureType == "record_transport_not_submitted"
+            && closeType == "close_boundary", "transport_failure_commands_invalid")
+        let binding = try SemanticJSON.binding(failure, nestedAt: "binding")
+        let closeBinding = try SemanticJSON.binding(close, nestedAt: "binding")
+        try require(closeBinding == binding, "decision_boundary_binding_mismatch")
+        let continuationID = try SemanticJSON.identifier(failure, "continuation_id")
+        let failureID = try SemanticJSON.identifier(failure, "event_id")
+        let closeID = try SemanticJSON.identifier(close, "event_id")
+        try require(failureID != closeID, "runtime_event_id_duplicate")
+        _ = try SemanticJSON.timestamp(failure, "occurred_at", code: "runtime_event_time_invalid")
+        _ = try SemanticJSON.timestamp(close, "occurred_at", code: "runtime_event_time_invalid")
+        _ = try SemanticJSON.stableCode(failure, "failure_code", code: "dispatch_failure_code_invalid")
+        try require((try? SemanticJSON.bool(failure["command_invocation_attempted"])) == false,
+                    "transport_not_submitted_evidence_required")
+        try require(close["close_reason"] as? String == "transport_not_submitted",
+                    "transport_failure_commands_invalid")
+
+        var authority = initialAuthority
+        var conflicts = 0
+        while true {
+            guard let continuation = authority.state.continuation(id: continuationID) else {
+                throw CoordinatorError("continuation_not_dispatched")
+            }
+            try require(continuation.binding == binding, "decision_boundary_binding_mismatch")
+            try require(continuation.dispatchMode == "queued_next_turn", "dispatch_mode_conflict")
+            guard let boundary = authority.state.boundary(for: binding),
+                  boundary.dispatchedContinuationID == continuationID
+            else { throw CoordinatorError("continuation_binding_mismatch") }
+
+            let needsAdmission = continuation.transport == nil
+            if needsAdmission { try validateAdmission() }
+            var commands: [[String: Any]] = needsAdmission ? [failure] : []
+            if !boundary.closed {
+                var terminalClose = close
+                // Partial legacy completion/timeout may still need its close.
+                // Use that terminal observation's real meaning and timestamp.
+                if let terminal = continuation.transport {
+                    terminalClose["occurred_at"] = terminal.occurredAt.rawValue
+                    switch terminal.status {
+                    case .completed: terminalClose["close_reason"] = "transport_terminal_observed"
+                    case .timedOutUnknown: terminalClose["close_reason"] = "transport_timed_out_unknown"
+                    case .notSubmitted: break
+                    }
+                }
+                commands.append(terminalClose)
+            }
+            var state = authority.state
+            var events: [Data] = []
+            for command in commands {
+                let change = try CoordinatorSemanticDecision.decide(
+                    state: state, commandObject: command, tokenMaterial: nil, tokenHMACKey: tokenHMACKey
+                )
+                try require(change.events.count == 1 && change.documents.isEmpty
+                    && change.verificationRecords.isEmpty && change.effects.isEmpty,
+                    "transport_failure_change_invalid")
+                events.append(contentsOf: change.events)
+                state = try CoordinatorSemanticReplay.applying(change, to: state, observing: workObserver)
+            }
+            guard let status = state.continuation(id: continuationID)?.transport?.status else {
+                throw CoordinatorError("transport_terminal_observation_missing")
+            }
+            if events.isEmpty { return status }
+            do {
+                _ = try journal.append(expectedSequence: authority.state.eventSequence,
+                    events: events, documents: [], verificationRecords: [],
+                    validateAdmission: { if needsAdmission { try validateAdmission() } })
+                return status
+            } catch let error as CoordinatorError where error.code == "journal_sequence_conflict" {
+                guard conflicts < maxSequenceConflicts else { throw error }
+                conflicts += 1
+                authority = try authorityProjection()
+            } catch {
+                throw CoordinatorSemanticAppendOutcomeUnknown(underlying: error)
+            }
+        }
+    }
+
     private func execute(
         command commandData: Data,
         initialAuthority: CoordinatorSemanticAuthorityProjection?,
@@ -493,6 +587,8 @@ public enum CoordinatorSemanticDecision {
             return try claimQueuedActionContext(state, command)
         case "timeout_transport_unknown":
             return try timeoutTransport(state, command)
+        case "record_transport_not_submitted":
+            return try recordTransportNotSubmitted(state, command)
         case "record_work_outcome":
             return try recordWorkOutcome(state, command)
         case "close_boundary":
@@ -530,6 +626,7 @@ private extension CoordinatorSemanticDecision {
         "continuation_consumed": "transport",
         "continuation_transport_completed": "transport",
         "continuation_transport_timed_out_unknown": "transport",
+        "continuation_transport_not_submitted": "transport",
         "queued_action_context_claimed": "transport",
         "work_outcome_recorded": "work_outcome",
         "interaction_expired": "decision_lifecycle",
@@ -1079,6 +1176,36 @@ private extension CoordinatorSemanticDecision {
         return try change(events: [eventObject])
     }
 
+    static func recordTransportNotSubmitted(
+        _ state: CoordinatorSemanticState,
+        _ command: [String: Any]
+    ) throws -> CoordinatorSemanticChange {
+        let continuation = try continuationForCommand(state, command)
+        try require(continuation.dispatchMode == "queued_next_turn", "dispatch_mode_conflict")
+        try require(continuation.transport == nil, "transport_already_terminal")
+        try require(continuation.queuedActionContextClaim == nil && continuation.workOutcome == nil,
+                    "transport_submission_already_observed")
+        try require((try? SemanticJSON.bool(command["command_invocation_attempted"])) == false,
+                    "transport_not_submitted_evidence_required")
+        let occurredAt = try SemanticJSON.timestamp(command, "occurred_at", code: "runtime_event_time_invalid")
+        try require(occurredAt >= continuation.issuedAt, "continuation_not_yet_valid")
+        let failureCode = try SemanticJSON.stableCode(command, "failure_code", code: "dispatch_failure_code_invalid")
+        let eventObject = try event(
+            state: state, type: "continuation_transport_not_submitted",
+            id: SemanticJSON.identifier(command, "event_id"),
+            occurredAt: occurredAt.rawValue, binding: continuation.binding,
+            payload: [
+                "continuation_id": continuation.continuationID,
+                "transport_status": "not_submitted",
+                "work_outcome_status": "not_recorded",
+                "automatic_retry": false,
+                "failure_code": failureCode,
+                "command_invocation_attempted": false,
+            ]
+        )
+        return try change(events: [eventObject])
+    }
+
     static func recordWorkOutcome(
         _ state: CoordinatorSemanticState,
         _ command: [String: Any]
@@ -1088,6 +1215,7 @@ private extension CoordinatorSemanticDecision {
             throw CoordinatorError("unknown_decision_boundary")
         }
         try require(continuation.transport != nil, "transport_terminal_observation_missing")
+        try require(continuation.transport?.status != .notSubmitted, "transport_not_submitted")
         try require(continuation.workOutcome == nil, "work_outcome_already_recorded")
         guard let status = command["status"] as? String,
               ["succeeded", "failed", "cancelled", "unknown"].contains(status)
@@ -1166,7 +1294,8 @@ private extension CoordinatorSemanticDecision {
         }
         if let continuationID = boundary.dispatchedContinuationID {
             let status = state.continuations[continuationID]?.transport?.status
-            try require(status == .completed || status == .timedOutUnknown, "transport_terminal_observation_missing")
+            try require(status == .completed || status == .timedOutUnknown || status == .notSubmitted,
+                        "transport_terminal_observation_missing")
         }
         let reason = try SemanticJSON.stableCode(command, "close_reason", code: "close_reason_invalid")
         let eventID = try SemanticJSON.identifier(command, "event_id")
@@ -1525,6 +1654,13 @@ private enum SemanticJSON {
               value.range(of: "^[a-z][a-z0-9_]{0,127}$", options: .regularExpression) != nil
         else { throw CoordinatorError(code) }
         return value
+    }
+
+    static func bool(_ value: Any?) throws -> Bool {
+        guard let number = value as? NSNumber,
+              CFGetTypeID(number) == CFBooleanGetTypeID()
+        else { throw CoordinatorError("boolean_invalid") }
+        return number.boolValue
     }
 
     static func timestamp(

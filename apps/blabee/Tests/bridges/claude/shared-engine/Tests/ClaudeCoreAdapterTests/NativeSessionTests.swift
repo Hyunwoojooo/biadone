@@ -333,15 +333,20 @@ struct ClaudeNativeSessionTests {
         #expect(try f.journal.load().journalSequence == 0)
     }
 
-    @Test("Readiness is independent of delivery, expires, and still requires matching Stop")
+    @Test("Readiness comes from a stored proposal or an ACK, expires, and still requires matching Stop")
     func readiness() throws {
         let f = try NativeFixture()
         try f.prompt()
         try f.open()
         try f.emit()
         let fields = try f.selectionFields()
-        nativeReject("claude_session_readiness_required") { _ = try f.call("select", fields: fields, role: "selector") }
+        // A stored proposal for the latest Hook boundary is the model's readiness.
+        #expect(try f.snapshot()["ready"] as? Bool == true)
+        nativeReject("claude_session_stop_required") { _ = try f.call("select", fields: fields, role: "selector") }
+        // A model-initiated probe replaces that readiness until its nonce is acknowledged.
         let begin = try f.begin()
+        #expect(try f.snapshot()["ready"] as? Bool == false)
+        nativeReject("claude_session_readiness_required") { _ = try f.call("select", fields: fields, role: "selector") }
         nativeReject("claude_session_readiness_invalid") {
             _ = try f.call("readiness.ack", fields: ["bridge_id": f.bridgeID!, "probe_id": begin["probe_id"]!, "nonce": nativeToken(99)])
         }

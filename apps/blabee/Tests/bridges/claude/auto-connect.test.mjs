@@ -7,9 +7,10 @@ import { join } from 'node:path';
 import { PassThrough, Readable } from 'node:stream';
 import test from 'node:test';
 import { AUTO_CONNECT_SCHEMA, createAutoConnectClient } from '../../../bridges/claude/src/auto-connect-client.mjs';
-import { handleAutoConnectHook, runAutoConnectHook } from '../../../bridges/claude/src/auto-connect-hook.mjs';
+import { AUTO_CONNECT_SESSION_CHANGED_NOTICE, handleAutoConnectHook, runAutoConnectHook } from '../../../bridges/claude/src/auto-connect-hook.mjs';
 import { runAutoConnectMCP } from '../../../bridges/claude/src/auto-connect-mcp.mjs';
 import { SESSION_V2_AUTHORITY_KEYS } from '../../../bridges/claude/src/session-v2-client.mjs';
+import { SESSION_V2_NO_BOUNDARY_LINE, sessionV2BoundaryLine } from '../../../bridges/claude/src/session-v2-context.mjs';
 
 const B = 'BLABEE_CLAUDE_BOOTSTRAP_';
 const P = 'BLABEE_CLAUDE_SESSION_V2_';
@@ -144,7 +145,8 @@ test('actual startup, resume and fork are consumed once without a second Hook or
     const result = await handleAutoConnectHook(f.input('SessionStart', { source, prompt_id: randomUUID(), prompt: 'OLD PRIVATE PROMPT' }),
       { env: f.hookEnv, createClient: async () => { assert.fail('initial SessionStart must not be resent'); } });
     assert.equal(result.hookSpecificOutput.hookEventName, 'SessionStart');
-    assert.match(result.hookSpecificOutput.additionalContext, /아직 유효한 작업 boundary가 없습니다/);
+    // Rules are MCP server instructions; SessionStart adds one line only.
+    assert.equal(result.hookSpecificOutput.additionalContext, SESSION_V2_NO_BOUNDARY_LINE);
     assert.doesNotMatch(JSON.stringify(result), /boundary_id=|[abcd]{64}|OLD PRIVATE PROMPT/);
     assert.equal(f.requests.length, 1);
     assert.deepEqual(Object.keys(f.requests[0]).sort(), ['schema_version', 'request_id', 'operation', 'role',
@@ -194,7 +196,7 @@ test('only the next actual prompt obtains a boundary; compact and Stop retain th
   };
   const result = await handleAutoConnectHook(f.input('UserPromptSubmit', { prompt_id: promptID, prompt: 'new actual prompt' }),
     { env: f.hookEnv, createClient });
-  assert.match(result.hookSpecificOutput.additionalContext, new RegExp(`boundary_id=${boundary}`));
+  assert.equal(result.hookSpecificOutput.additionalContext, sessionV2BoundaryLine(boundary));
   assert.equal(calls[0].prompt_sha256, createHash('sha256').update('new actual prompt').digest('hex'));
   await handleAutoConnectHook(f.input('SessionStart', { source: 'compact' }), { env: f.hookEnv, createClient });
   await handleAutoConnectHook(f.input('Stop', { prompt_id: promptID }), { env: f.hookEnv, createClient });
@@ -591,6 +593,31 @@ test('pending must be a bare read-only response and cannot stand in for an ackno
     const client = await createAutoConnectClient({ role: 'hook', env: f.hookEnv, nativeSessionID: f.authority.native_session_id });
     await assert.rejects(operation === 'start' ? client.start('startup') : client.grant(), { code: 'auto_connect_invalid_response' });
     await client.close();
+  }
+});
+
+test('a retired scope tells the person once how to restart, exits 0 and never rebinds', async t => {
+  for (const changed of ['resume-new-session', 'clear-new-session', 'resume-same-session']) {
+    const f = await fixture(t);
+    await handleAutoConnectHook(f.input(), { env: f.hookEnv });
+    const nextSession = changed === 'resume-same-session' ? f.authority.native_session_id : randomUUID();
+    const input = changed === 'clear-new-session'
+      ? f.input('SessionStart', { source: 'clear', session_id: nextSession })
+      : f.input('SessionStart', { source: 'resume', session_id: nextSession });
+    let stdout = '', stderr = '', usedV2 = false;
+    const run = value => runAutoConnectHook({ env: { ...f.hookEnv, CLAUDE_CODE_SESSION_ID: value.session_id }, args: [],
+      input: Readable.from([JSON.stringify(value)]), createClient: async () => { usedV2 = true; assert.fail('retired scope'); },
+      output: { write: text => { stdout += text; } }, errorOutput: { write: text => { stderr += text; } } });
+    assert.equal(await run(input), 0);
+    assert.deepEqual(JSON.parse(stdout), { systemMessage: AUTO_CONNECT_SESSION_CHANGED_NOTICE });
+    assert.match(stderr, changed === 'resume-same-session' ? /claude_bootstrap_already_started/ : /claude_bootstrap_session_changed/);
+    assert.doesNotMatch(stdout, /additionalContext|boundary|[0-9a-f]{8}-[0-9a-f]{4}-/);
+    // Later Hooks in the same window stay quiet on stdout.
+    stdout = ''; stderr = '';
+    assert.equal(await run(f.input('UserPromptSubmit', { session_id: nextSession, prompt_id: randomUUID(), prompt: 'later' })), 0);
+    assert.equal(stdout, '');
+    assert.match(stderr, /claude_bootstrap_unavailable/);
+    assert.equal(usedV2, false);
   }
 });
 

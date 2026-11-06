@@ -610,6 +610,55 @@ private func withSQLiteClaimFixture<Result>(
     return try await body(fixture)
 }
 
+@Test("SQLite not-submitted transport persists one atomic close and refuses queued claims")
+func sqliteNotSubmittedPersistsAndReplays() throws {
+    let suffix = "not_submitted"
+    let fixture = try makeSQLiteClaimFixture(suffix) { journal, routing, meter, _, _ in
+        let before = try journal.load().journalSequence
+        meter.start()
+        #expect(try routing.failTransportBeforeSubmission(
+            continuationID: "continuation_sqlite_claim_\(suffix)",
+            binding: CoordinatorBinding(jsonObject: sqliteClaimBinding(suffix)),
+            failure: CoordinatorNextTurnDispatchFailure(
+                code: "codex_native_version_unqualified", stage: .qualification,
+                commandInvocationAttempted: false, elapsedMilliseconds: 1
+            )
+        ) == .notSubmitted)
+        let counts = meter.stop()
+        #expect(counts.publicAppends == 1)
+        #expect(counts.appendedEventCounts == [2])
+        #expect(try journal.load().journalSequence == before + 2)
+    }
+    defer { fixture.remove() }
+    // The second SQLite connection and routing instance replay authenticated
+    // state, using only temporary paths and an in-memory freshness anchor.
+    let snapshot = try fixture.journalB.load()
+    let events = try snapshot.events.suffix(2).map(sqliteClaimObject)
+    #expect(events.compactMap { $0["event_type"] as? String } == [
+        "continuation_transport_not_submitted", "decision_boundary_closed",
+    ])
+    let state = try fixture.routingB.authoritativeState()
+    let continuation = try #require(state.continuation(id: fixture.continuationID))
+    #expect(continuation.transport?.status == .notSubmitted)
+    #expect(continuation.workOutcome == nil)
+    #expect(continuation.queuedActionContextClaim == nil)
+    #expect(state.boundary(for: continuation.binding)?.closeReason == "transport_not_submitted")
+    sqliteClaimExpectCode("transport_terminal_observation_missing") {
+        _ = try fixture.routingB.routeQueuedActionContextClaim(sqliteClaimCommand(
+            fixture: fixture, eventID: "event_sqlite_claim_not_submitted_claim",
+            turnID: "turn_sqlite_claim_not_submitted_delivery"
+        ))
+    }
+    #expect(try fixture.routingB.failTransportBeforeSubmission(
+        continuationID: fixture.continuationID, binding: continuation.binding,
+        failure: CoordinatorNextTurnDispatchFailure(
+            code: "codex_native_version_unqualified", stage: .qualification,
+            commandInvocationAttempted: false, elapsedMilliseconds: 1
+        )
+    ) == .notSubmitted)
+    #expect(try fixture.journalB.load().journalSequence == snapshot.journalSequence)
+}
+
 @Test("SQLite rejects a persisted duplicate queued action claim")
 func sqliteQueuedActionClaimPersistsOneUniqueEvent() throws {
     try withSQLiteClaimFixture("direct_unique") { fixture in

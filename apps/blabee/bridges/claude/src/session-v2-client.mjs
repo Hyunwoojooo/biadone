@@ -255,8 +255,9 @@ async function requirePrivateSocket(socketPath) {
 }
 
 /** Explicit v3 wire only. One bounded socket per request, no retries and no fallback.
- * A timeout or malformed response permanently closes this logical client.
- * Only cancellation before the first write leaves this shared client reusable;
+ * A response timeout or malformed response permanently closes this logical client.
+ * Cancellation or a local preflight timeout before the first write leaves this
+ * shared client reusable (the error carries notSubmitted: true for the timeout);
  * after writing, the original exchange must finish its response/timeout checks. */
 export async function createSessionV2Client({ socketPath, runtimeIdentity, authority, role, authToken, channelSource,
   credentialCorpus = [], timeoutMs = 5000 } = {}) {
@@ -330,10 +331,37 @@ export async function createSessionV2Client({ socketPath, runtimeIdentity, autho
       throw new SessionV2ClientError(error?.code === 'session_v2_request_too_large' ? error.code : 'session_v2_invalid_request');
     }
     let settled;
-    const active = { socket: undefined, done: new Promise(resolveDone => { settled = resolveDone; }) };
+    const active = { socket: undefined, cancelPreflight: undefined,
+      done: new Promise(resolveDone => { settled = resolveDone; }) };
     pending = active;
     try {
-      await requirePrivateSocket(socketPath);
+      // Filesystem promises themselves cannot be aborted. Bound the local wait
+      // and consume their late outcome without allowing it to create a socket.
+      // close() must also settle this phase before a socket exists to destroy.
+      await new Promise((resolveCheck, rejectCheck) => {
+        let finished = false;
+        const finish = error => {
+          if (finished) return;
+          finished = true;
+          clearTimeout(timer);
+          signal?.removeEventListener('abort', cancel);
+          active.cancelPreflight = undefined;
+          if (error) rejectCheck(error); else resolveCheck();
+        };
+        const cancel = () => finish(new SessionV2ClientError('session_v2_request_cancelled'));
+        const timer = setTimeout(() => {
+          // No native request was submitted; do not label this an unknown
+          // service result. Only this request fails: the client stays usable
+          // and the caller decides whether a fresh request is safe. The client
+          // itself never resubmits.
+          finish(Object.assign(new SessionV2ClientError('session_v2_unavailable'), { notSubmitted: true }));
+        }, timeoutMs);
+        active.cancelPreflight = () => finish(failure ?? new SessionV2ClientError('session_v2_client_closed'));
+        signal?.addEventListener('abort', cancel, { once: true });
+        if (closed) return active.cancelPreflight();
+        if (signal?.aborted) return cancel();
+        requirePrivateSocket(socketPath).then(() => finish(), finish);
+      });
       if (closed) throw new SessionV2ClientError('session_v2_client_closed');
       if (signal?.aborted) throw new SessionV2ClientError('session_v2_request_cancelled');
       return await new Promise((resolveRequest, rejectRequest) => {
@@ -403,6 +431,7 @@ export async function createSessionV2Client({ socketPath, runtimeIdentity, autho
       closed = true;
       if (pending) {
         failure ??= new SessionV2ClientError('session_v2_client_closed');
+        pending.cancelPreflight?.();
         pending.socket?.destroy();
         await pending.done;
       }

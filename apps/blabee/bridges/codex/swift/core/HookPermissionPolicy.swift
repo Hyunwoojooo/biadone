@@ -53,6 +53,8 @@ public enum HookPermissionPolicy {
     // The unchanged one-shot path was also reviewed for 0.163.0 and 0.164.0;
     // see docs/features/CODEX_0164_QUALIFICATION.md. Plugin content trust
     // migration is separate from this live-caller one-shot approval identity.
+    // Rechecked for 0.166.0; local Plugin Hooks are still spawned by codex,
+    // not the newly packaged codex-exec-server. See CODEX_0166_QUALIFICATION.md.
     public static let qualifiedProfiles: [RuntimeProfile] = [
         .init(version: "0.153.4", cdHash: "9227334847123dd04d3369b05b27769de1987426"),
         .init(version: "0.154.0", cdHash: "506770a222b6e1e63c332cbfe40dc399876c1d2a"),
@@ -74,6 +76,7 @@ public enum HookPermissionPolicy {
         .init(version: "0.162.1", cdHash: "9ddc61acceef79aa2aad437ba1fe94239f2e0423"),
         .init(version: "0.163.0", cdHash: "5a4eec85679683d4b137579cb2555fe0b42a02dd"),
         .init(version: "0.164.0", cdHash: "3a7d7f1461a52f92f4a4fdc2cc70fc06bee91285"),
+        .init(version: "0.166.0", cdHash: "0b4f0c8e07400d2beb156987f9af592071ee78f4"),
     ]
 
     // Retain the original marker for existing fixtures and older callers.

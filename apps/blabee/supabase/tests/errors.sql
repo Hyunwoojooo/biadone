@@ -1,4 +1,8 @@
--- Run after both analytics migrations in a DISPOSABLE database as the owner.
+-- Legacy-stage test: run after 202609170001_blabee_usage.sql and
+-- 202609170002_blabee_errors.sql only, BEFORE 202609240001_blabee_connection_diagnostics.sql,
+-- in a DISPOSABLE database as the owner. It pins the pre-upgrade 8-column error_events
+-- shape on purpose; Tests/Cloud/connection-diagnostics.test.mjs (npm run test:connection-sql)
+-- runs it at that stage, then upgrades and checks the current schema with connection-diagnostics.sql.
 -- Requires Supabase auth.users/auth.uid() and anon/authenticated/service_role.
 -- All fixtures and temporary privilege/schema changes are rolled back.
 -- Single-connection tests cover quota state and atomicity; they do not replace

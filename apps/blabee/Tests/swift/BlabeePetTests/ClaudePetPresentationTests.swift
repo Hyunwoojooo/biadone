@@ -8,7 +8,7 @@ import Vision
 @Suite("Claude shared Pet presentation", .petLanguage(.korean))
 @MainActor
 struct ClaudePetPresentationTests {
-    @Test("Shared buttons require native readiness and Stop; a model result keeps the next card")
+    @Test("Shared buttons require Stop after an emit-ready card; a model result keeps the next card")
     func buttonRoundTrip() async throws {
         let fixture = try ClaudePetFixture()
         try fixture.prompt()
@@ -19,15 +19,23 @@ struct ClaudePetPresentationTests {
         await model.refresh()
         let original = try #require(model.displayInteraction)
         #expect(!model.canRequestPanelSelection(original.identity))
+        // A successful emit is the model's readiness; only Stop is missing.
+        #expect(model.snapshot?.providerStatus?.ready == true)
+        #expect(model.presentationTitle == "Claude 응답 대기")
+        // Emit-granted readiness expires like an ACK; the card then asks for a connection check.
+        for _ in 0..<76 { fixture.clock.advance(4); _ = try fixture.poll() }
+        await model.refresh()
+        #expect(model.snapshot?.providerStatus?.bridgeConnected == true)
         #expect(model.presentationTitle == "연결 확인 필요")
+        #expect(!model.canRequestPanelSelection(original.identity))
+        try fixture.ready()
+        await model.refresh()
+        #expect(model.presentationTitle == "Claude 응답 대기")
         #expect(!model.supportsProductSettings && model.supportsDecisionDismissal)
         #expect(!model.canSkipDecision(original.identity))
         await model.focusAndRequestPanelSelection(1, interaction: original.identity)
         #expect(model.snapshot?.routing.inFlightCount == 0)
 
-        try fixture.ready()
-        await model.refresh()
-        #expect(!model.canRequestPanelSelection(original.identity))
         try fixture.stop()
         await model.refresh()
         #expect(model.canRequestPanelSelection(original.identity))

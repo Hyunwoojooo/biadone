@@ -21,8 +21,8 @@ export const CLAUDE_RUNTIME_SOURCE_FILES = Object.freeze([
 // This is the pinned stdio/server runtime closure, not the SDK's unrelated HTTP
 // integrations. Keep package licenses and export/type metadata beside the code.
 export const CLAUDE_RUNTIME_PACKAGES = Object.freeze({
-  "@modelcontextprotocol/sdk": "1.30.0", zod: "4.6.2", "zod-to-json-schema": "3.25.2",
-  ajv: "8.20.0", "ajv-formats": "3.0.1", "fast-deep-equal": "3.1.3", "fast-uri": "3.1.7",
+  "@modelcontextprotocol/sdk": "1.30.0", zod: "4.6.6", "zod-to-json-schema": "3.25.2",
+  ajv: "8.20.0", "ajv-formats": "3.0.1", "fast-deep-equal": "3.1.3", "fast-uri": "3.1.9",
   "json-schema-traverse": "1.0.0", "require-from-string": "2.0.2",
 });
 export const CLAUDE_NODE_ENTITLEMENTS = `<?xml version="1.0" encoding="UTF-8"?>

@@ -71,6 +71,7 @@ Blabee 앱 / 공통 Pet ── 앱 소유 공통 Coordinator 서비스
 | --- | --- | --- |
 | 세션 authority | **60분 sliding lease**, owner가 **5분마다** 선행 갱신 | 모델 호출 없이 native owner가 갱신. 활성·유휴 모두 적용. 세션 자체에 고정 1시간 종료를 두지 않음 |
 | Channel readiness | **probe 생성부터 5분**, ACK해도 만료 시각 연장 없음 | 실제 Channel을 받은 모델만 nonce ACK. owner renewal·MCP heartbeat로 대신하지 않음 |
+| 모델 제안 readiness | 최신 Hook boundary로 **성공한 `emit_decision_v1` 시각부터 5분** | 모델이 이 bridge로 실제 왕복했다는 증거(모델 시작 `check_connection_v1` ACK와 같은 MCP 왕복 + Hook boundary). 더 긴 기존 readiness를 줄이지 않고 카드 TTL을 연장하지 않음. 실패·mismatch는 readiness를 바꾸지 않음. 열린 probe는 그대로 둠. product·레거시 `handle()` 경로 모두 적용. 이후 모델이 `check_connection_v1`을 부르면 그 probe를 ACK할 때까지 readiness는 다시 비워짐 |
 | bridge heartbeat | 현재의 **5초** 연결 신선도 기준 | 손실은 readiness와 미claim 선택의 전달 적격성을 폐기. 실행 취소/성공 증거 아님 |
 | 제안 카드 | 공통 엔진의 카드 TTL 유지, 현재 기본 **10분** | authority 갱신·readiness ACK로 카드 TTL을 연장하지 않음. 만료된 카드는 새 제안 필요 |
 
@@ -80,7 +81,7 @@ owner 갱신은 살아 있는 owner 연결·정확한 세션·유효한 기존 l
 
 판정은 수면 시간도 포함하는 단조 시계를 사용하고 wall clock은 표시/감사에만 쓴다. wake 시 **실제 남은 lease**를 검사한다. 1시간보다 짧게 잤다는 이유만으로 유효하다고 판단하지 않는다. 앱/서비스 재시작 때 단조 시계 기준점과 메모리 권한을 복원하지 않는다.
 
-readiness는 시작 시 1회와 사용자의 **연결 확인** 요청으로만 새 probe를 보낸다. 시작 시 bridge/Hook 준비가 안 됐으면 준비 후 최초 1회만 보낸다. 5분마다 모델을 깨우는 상시 갱신은 하지 않는다. busy/permission 대기에서는 확인 중으로 표시하고 모델이 받을 때까지 기다리며, 만료되면 자동 반복하지 않는다. ACK는 기존 카드 실행을 예약하거나 대행하지 않는다.
+readiness는 시작 시 1회와 사용자의 **연결 확인** 요청으로만 새 probe를 보낸다. 모델은 제안 전에 연결 확인을 하지 않는다(2026-11-06부터). 성공한 제안이 readiness를 갱신하므로 사용자가 요청할 때만 `check_connection_v1`→`ack_readiness_probe_v1`을 호출한다. 시작 시 bridge/Hook 준비가 안 됐으면 준비 후 최초 1회만 보낸다. 5분마다 모델을 깨우는 상시 갱신은 하지 않는다. busy/permission 대기에서는 확인 중으로 표시하고 모델이 받을 때까지 기다리며, 만료되면 자동 반복하지 않는다. ACK는 기존 카드 실행을 예약하거나 대행하지 않는다.
 
 카드가 있어도 readiness 만료 시 A/B는 비활성화하고 별도 `연결 확인` 버튼을 제공한다. 성공하면 아직 유효한 카드만 다시 선택할 수 있다. UI 요청으로 보낸 정확한 probe Channel의 Hook만 카드 경계를 보존한다. 사용자가 채팅으로 “다시 확인”을 입력하면 일반 새 입력이므로 이전 카드가 무효화될 수 있다. 실제 사용자 입력/compact/bridge 교체로 폐기하거나 TTL이 지난 카드는 ACK만으로 복구하지 않고 새 제안을 요구한다.
 

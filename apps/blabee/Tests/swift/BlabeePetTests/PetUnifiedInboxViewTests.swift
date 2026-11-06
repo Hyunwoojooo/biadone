@@ -87,34 +87,78 @@ struct PetUnifiedInboxViewTests {
         #expect(await transport.operationCount == 0)
     }
 
-    @Test("Provider marks render as two distinct compact symbols")
+    @Test("Provider marks are name badges with distinct tints in light and dark")
     func distinctProviderMarks() async throws {
-        var renderedMarks: [Data] = []
-        for provider in [PetProvider.codex, .claude] {
-            #expect(NSImage(systemSymbolName: provider.symbolName, accessibilityDescription: nil) != nil)
-            let size = CGSize(width: 40, height: 40)
-            let view = PetProviderMark(provider: provider)
-                .foregroundStyle(Color.black)
-                .frame(width: size.width, height: size.height)
-                .background(Color.white)
-            let (host, window) = hosting(view: AnyView(view), size: size, dark: false)
-            defer { window.contentView = nil; window.close() }
-            await settle(host)
-            let bitmap = try render(host, name: "source-mark-\(provider.displayName.lowercased())")
-            var inkPixels = 0
-            for y in 0..<bitmap.pixelsHigh {
-                for x in 0..<bitmap.pixelsWide {
-                    if let color = bitmap.colorAt(x: x, y: y)?.usingColorSpace(.deviceRGB),
-                       color.redComponent < 0.5 {
-                        inkPixels += 1
+        #expect(PetProvider.codex.badgeTint(for: .light) != PetProvider.claude.badgeTint(for: .light))
+        #expect(PetProvider.codex.badgeTint(for: .dark) != PetProvider.claude.badgeTint(for: .dark))
+        var renderedMarks: [String: Data] = [:]
+        for dark in [false, true] {
+            for provider in [PetProvider.codex, .claude] {
+                let size = CGSize(width: 80, height: 32)
+                let view = PetProviderMark(provider: provider)
+                    .frame(width: size.width, height: size.height)
+                    .background(dark ? Color.black : Color.white)
+                let (host, window) = hosting(view: AnyView(view), size: size, dark: dark)
+                defer { window.contentView = nil; window.close() }
+                await settle(host)
+                let name = "\(provider.displayName)-\(dark ? "dark" : "light")"
+                let bitmap = try render(host, name: "source-mark-\(name.lowercased())")
+                var tintedPixels = 0
+                var red = 0.0, green = 0.0
+                for y in 0..<bitmap.pixelsHigh {
+                    for x in 0..<bitmap.pixelsWide {
+                        guard let color = bitmap.colorAt(x: x, y: y)?.usingColorSpace(.deviceRGB) else { continue }
+                        // Neutral background/ink has r ≈ g ≈ b; the badge tint does not.
+                        if abs(color.redComponent - color.greenComponent) > 0.05
+                            || abs(color.greenComponent - color.blueComponent) > 0.05 {
+                            tintedPixels += 1
+                            red += color.redComponent
+                            green += color.greenComponent
+                        }
                     }
                 }
+                #expect(tintedPixels > 40, "\(name): \(tintedPixels)")
+                #expect(tintedPixels < bitmap.pixelsWide * bitmap.pixelsHigh / 2)
+                // Claude's tint is warm (red over green) and Codex's is teal (green over red)
+                // in both schemes; a swapped or scheme-ignoring tint would flip one of them.
+                #expect((red > green) == (provider == .claude), "\(name): red \(red) green \(green)")
+                renderedMarks[name] = try #require(bitmap.representation(using: .png, properties: [:]))
             }
-            #expect(inkPixels > 10)
-            #expect(inkPixels < bitmap.pixelsWide * bitmap.pixelsHigh / 3)
-            renderedMarks.append(try #require(bitmap.representation(using: .png, properties: [:])))
+            #expect(renderedMarks["Codex-\(dark ? "dark" : "light")"] != renderedMarks["Claude-\(dark ? "dark" : "light")"])
         }
-        #expect(renderedMarks[0] != renderedMarks[1])
+        #expect(renderedMarks["Codex-light"] != renderedMarks["Codex-dark"])
+        #expect(renderedMarks["Claude-light"] != renderedMarks["Claude-dark"])
+    }
+
+    @Test("The header keeps the whole status title beside the Claude badge at narrow widths")
+    func headerStatusTitleBesideBadge() async throws {
+        let transport = InboxRenderTransport()
+        let model = try model(provider: .claude, hasCard: true, transport: transport)
+        defer { model.stopPolling() }
+        let title = model.presentationTitle
+        #expect(!title.isEmpty)
+        for width in [340.0, 380.0, 460.0] {
+            for dark in [false, true] {
+                let (host, window) = hosting(model: model, size: CGSize(width: width, height: 570), dark: dark)
+                defer { window.contentView = nil; window.close() }
+                await settle(host)
+                let bitmap = try render(host, name: "header-claude-\(Int(width))-\(dark ? "dark" : "light")")
+                // The 11pt Korean status title needs the upscaled, Korean-aware pass.
+                let words = try recognizedSettingsText(bitmap).map { normalized($0.text) }
+                let copy = words.joined(separator: "|")
+                let label = "\(Int(width)) \(dark ? "dark" : "light"): \(copy)"
+                // The wordmark always stays. At the product width (460) the name badge
+                // and the whole title fit; at 380 the badge collapses to its tinted dot
+                // so the title still fits. 340 is below any real screen width: the
+                // header there is as tight as before the badge (the title may be
+                // ellipsized, which Vision cannot read reliably), so only the wordmark
+                // is required.
+                #expect(words.contains { $0.hasPrefix("blabee") }, "\(label)")
+                if width >= 380 { #expect(words.contains { $0.contains(normalized(title)) }, "\(label)") }
+                if width == 460 { #expect(words.contains { $0.contains("claude") }, "\(label)") }
+            }
+        }
+        #expect(await transport.operationCount == 0)
     }
 
     @Test("General and Connection settings show Codex and Claude at the same level", arguments: [PetSettingsTab.general, .connection])
@@ -137,20 +181,23 @@ struct PetUnifiedInboxViewTests {
         let bitmap = try render(host, name: "settings-\(tab.rawValue)-460-light")
         let words = try recognizedSettingsText(bitmap)
         let copy = words.map(\.text).joined(separator: "\n")
-        // The shared setup card now presents both tool rows first. Detailed
-        // installation controls remain in disclosure groups below the fold.
-        let codexLabel = tab == .general ? "Codex Plugin" : "Codex"
-        let claudeLabel = tab == .general ? "Claude 연결" : "Claude"
-        let codex = try #require(words.first {
-            tab == .general ? normalized($0.text).contains(normalized(codexLabel))
-                : normalized($0.text) == normalized(codexLabel)
-        },
-            "Codex settings should be fully readable: \(copy)")
-        let claude = try #require(words.first {
-            tab == .general ? normalized($0.text).contains(normalized(claudeLabel))
-                : normalized($0.text) == normalized(claudeLabel)
-        },
-            "Claude settings should be fully readable: \(copy)")
+        // General shows the two connection summary rows ("Codex 연결" and
+        // "Claude 연결"). Connection shows the two disclosure rows under the
+        // shared setup card; the card's own side-by-side Codex/Claude
+        // checkboxes are not the peer rows checked here. Test builds share one
+        // presentation language across suites, so either language may render.
+        let codexLabels = tab == .general
+            ? ["Codex 연결", "Codex connection"]
+            : ["Codex · 수동 설정", "Codex · Manual Settings"]
+        let claudeLabels = tab == .general
+            ? ["Claude 연결", "Claude connection"]
+            : ["Claude · 터미널", "Claude · Terminal Settings"]
+        let codex = try #require(words.first { word in
+            codexLabels.contains { normalized(word.text).contains(normalized($0)) }
+        }, "Codex settings should be fully readable: \(copy)")
+        let claude = try #require(words.first { word in
+            claudeLabels.contains { normalized(word.text).contains(normalized($0)) }
+        }, "Claude settings should be fully readable: \(copy)")
         // Vision coordinates start at the bottom: these peer rows must both
         // be visible, vertically separate and share the same left alignment.
         #expect(codex.frame.minY > claude.frame.maxY)
@@ -296,7 +343,10 @@ struct PetUnifiedInboxViewTests {
         request.recognitionLanguages = ["ko-KR", "en-US"]
         request.recognitionLevel = .accurate
         request.minimumTextHeight = 0
-        request.customWords = ["Codex Plugin", "Claude 연결", "Codex 연결 · 설치 설정", "Claude 연결 · 터미널 설정"]
+        request.customWords = [
+            "Codex 연결", "Claude 연결", "Codex · 수동 설정과 진단", "Claude · 터미널 설정",
+            "Codex connection", "Claude connection", "Codex · Manual Settings and Diagnostics", "Claude · Terminal Settings",
+        ]
         try VNImageRequestHandler(cgImage: image).perform([request])
         return (request.results ?? []).compactMap { observation in
             observation.topCandidates(1).first.map {

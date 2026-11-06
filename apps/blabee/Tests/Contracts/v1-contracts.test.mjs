@@ -28,6 +28,78 @@ import { isStrictRfc3339DateTime, parseStrictRfc3339DateTime } from "./rfc3339.m
 
 const suitePromise = loadV1ContractSuite();
 
+test("not-submitted transport is terminal without claiming execution or allowing later work", async (t) => {
+  const suite = await suitePromise;
+  const validator = suite.compiled.validatorsByName.get("runtime_event");
+  const source = await readJson(path.join(FIXTURE_ROOT, "event-traces/same-turn-two-boundaries.json"));
+  const makeTrace = (consumed = true) => {
+    const closeIndex = source.events.findIndex(event => traceEventType(event) === "decision_boundary_closed");
+    const trace = { trace_version: "1.0", name: "not_submitted", events: clone(source.events.slice(0, closeIndex + 1)) };
+    trace.events = trace.events.filter(event => traceEventType(event) !== "work_outcome_recorded"
+      && (consumed || traceEventType(event) !== "continuation_consumed"));
+    const dispatched = eventOfType(trace, "continuation_dispatched");
+    traceEventData(dispatched).dispatch_mode = "queued_next_turn";
+    traceEventData(dispatched).queued_action_context_claim_protocol = "v1";
+    if (consumed) traceEventData(eventOfType(trace, "continuation_consumed")).dispatch_mode = "queued_next_turn";
+    const terminal = extractRuntimeEvent(eventOfType(trace, "continuation_transport_completed"));
+    terminal.event_type = "continuation_transport_not_submitted";
+    terminal.payload = { continuation_id: traceEventData(dispatched).continuation_id,
+      transport_status: "not_submitted", work_outcome_status: "not_recorded", automatic_retry: false,
+      failure_code: "codex_native_version_unqualified", command_invocation_attempted: false };
+    traceEventData(eventOfType(trace, "decision_boundary_closed")).close_reason = "transport_not_submitted";
+    return resequenceTrace(trace);
+  };
+  for (const consumed of [false, true]) await t.test(`valid before/after consume: ${consumed}`, () => {
+    const trace = makeTrace(consumed);
+    for (const event of trace.events) assertSchemaResult(validator, extractRuntimeEvent(event), true, trace.name);
+    assert.equal(validateSemanticTrace(trace).valid, true);
+  });
+  for (const [field, value] of [
+    ["automatic_retry", true], ["command_invocation_attempted", true], ["work_outcome_status", "failed"],
+    ["transport_status", "completed"], ["failure_code", "invalid code"], ["extra", "forbidden"],
+  ]) await t.test(`reject invalid payload ${field}`, () => {
+    const event = extractRuntimeEvent(eventOfType(makeTrace(), "continuation_transport_not_submitted"));
+    event.payload[field] = value;
+    assertSchemaResult(validator, event, false, field);
+  });
+  for (const [name, mutate, code] of [
+    ["wrong mode", trace => {
+      const dispatch = traceEventData(eventOfType(trace, "continuation_dispatched"));
+      dispatch.dispatch_mode = "same_turn_stop"; delete dispatch.queued_action_context_claim_protocol;
+    }, "dispatch_mode_conflict"],
+    ["wrong session", trace => { eventOfType(trace, "continuation_transport_not_submitted").session_id = "wrong_session"; }, "decision_boundary_binding_mismatch"],
+    ["before issue", trace => { eventOfType(trace, "continuation_transport_not_submitted").occurred_at = "2026-01-15T09:00:00Z"; }, "continuation_not_yet_valid"],
+    ["duplicate terminal", trace => {
+      const terminal = clone(eventOfType(trace, "continuation_transport_not_submitted"));
+      terminal.event_id += "_duplicate"; trace.events.splice(-1, 0, terminal);
+    }, "transport_already_terminal"],
+    ["work after failure", trace => {
+      const outcome = clone(eventOfType(source, "work_outcome_recorded"));
+      trace.events.splice(-1, 0, outcome);
+    }, "transport_not_submitted"],
+    ["consume after failure", trace => {
+      const consume = clone(eventOfType(source, "continuation_consumed"));
+      traceEventData(consume).dispatch_mode = "queued_next_turn";
+      trace.events.splice(-1, 0, consume);
+    }, "transport_already_terminal"],
+    ["complete after failure", trace => {
+      trace.events.splice(-1, 0, clone(eventOfType(source, "continuation_transport_completed")));
+    }, "transport_already_terminal"],
+  ]) await t.test(name, () => {
+    const trace = makeTrace(false); mutate(trace); resequenceTrace(trace);
+    assertSemanticError(trace, code, validator, name);
+  });
+  await t.test("claim after failure is not completed delivery", () => {
+    const trace = makeTrace();
+    const terminal = eventOfType(trace, "continuation_transport_not_submitted");
+    const claim = { ...clone(terminal), event_id: "event_not_submitted_claim", event_type: "queued_action_context_claimed",
+      payload: { continuation_id: traceEventData(terminal).continuation_id, delivery_turn_id: "delivery_turn",
+        queued_prompt_sha256: `sha256:${"1".repeat(64)}`, cwd_sha256: `sha256:${"2".repeat(64)}`, action_sha256: `sha256:${"3".repeat(64)}` } };
+    trace.events.push(claim); resequenceTrace(trace);
+    assertSemanticError(trace, "transport_terminal_observation_missing", validator, "claim after failure");
+  });
+});
+
 const TRACE_BINDING_FIELDS = Object.freeze([
   "project_id",
   "session_id",

@@ -179,6 +179,8 @@ public final class CoordinatorRoutingApplication: @unchecked Sendable {
             throw CoordinatorError("routing_token_consumption_required")
         case "claim_queued_action_context":
             throw CoordinatorError("routing_queued_action_context_claim_required")
+        case "record_transport_not_submitted":
+            throw CoordinatorError("routing_dispatch_failure_evidence_required")
         case "expire_interaction", "timeout_transport_unknown":
             throw CoordinatorError("routing_scheduler_command_required")
         default:
@@ -417,6 +419,97 @@ public final class CoordinatorRoutingApplication: @unchecked Sendable {
         inFlight.removeValue(forKey: continuationID)
         let now = clock.nowNanoseconds()
         lastClockNanoseconds = max(lastClockNanoseconds ?? now, now)
+    }
+
+    /// Only the service-owned dispatcher may supply this observation. Public
+    /// semantic command ingress cannot assert that a native call never began.
+    /// No action or retry is authorized by this failure-only transition.
+    func failTransportBeforeSubmission(
+        continuationID: String,
+        binding: CoordinatorBinding,
+        failure: CoordinatorNextTurnDispatchFailure
+    ) throws -> CoordinatorTransportStatus {
+        lock.lock()
+        defer { lock.unlock() }
+        try requireRestartRecoveryWritableLocked()
+        try require(!failure.commandInvocationAttempted, "transport_not_submitted_evidence_required")
+        let authority = try semantic.authorityProjection()
+        guard let continuation = authority.state.continuation(id: continuationID) else {
+            throw CoordinatorError("continuation_not_dispatched")
+        }
+        try require(continuation.binding == binding, "decision_boundary_binding_mismatch")
+        guard let boundary = authority.state.boundary(for: binding),
+              boundary.dispatchedContinuationID == continuationID
+        else { throw CoordinatorError("continuation_binding_mismatch") }
+
+        let occurredAt: RFC3339Instant
+        if let terminal = continuation.transport {
+            occurredAt = terminal.occurredAt
+        } else {
+            guard let current = inFlight[continuationID] else {
+                throw CoordinatorError("routing_continuation_not_in_flight")
+            }
+            try require(current.binding == binding && current.issuedAt == continuation.issuedAt,
+                        "continuation_binding_mismatch")
+            let observed = clock.nowNanoseconds()
+            if lastClockNanoseconds.map({ observed < $0 }) == true {
+                // Failure is revocation, not new authority. Persist the known
+                // outcome while retaining the clock-regression fence for all
+                // other work; never manufacture a future deadline timeout.
+                deferredClockRegression = true
+            }
+            let now = max(max(observed, lastClockNanoseconds ?? observed), current.anchorNanoseconds)
+            occurredAt = try current.issuedAt.adding(
+                nanoseconds: elapsedNanoseconds(from: current.anchorNanoseconds, to: now)
+            )
+            lastClockNanoseconds = now
+        }
+        let failureData = try StrictJSONTransport.data(forJSONObject: [
+            "type": "record_transport_not_submitted",
+            "event_id": eventIDGenerator("transport_not_submitted"),
+            "occurred_at": occurredAt.rawValue,
+            "binding": binding.jsonObject,
+            "continuation_id": continuationID,
+            "failure_code": failure.code,
+            "command_invocation_attempted": false,
+        ])
+        let closeData = try StrictJSONTransport.data(forJSONObject: [
+            "type": "close_boundary",
+            "event_id": eventIDGenerator("transport_not_submitted_close"),
+            "occurred_at": occurredAt.rawValue,
+            "binding": binding.jsonObject,
+            "close_reason": "transport_not_submitted",
+        ])
+        let status: CoordinatorTransportStatus
+        do {
+            status = try semantic.executeTransportNotSubmitted(
+                failure: failureData, close: closeData, using: authority,
+                validateAdmission: {
+                    guard let current = self.inFlight[continuationID],
+                          current.binding == binding,
+                          current.issuedAt == continuation.issuedAt
+                    else { throw CoordinatorError("routing_continuation_not_in_flight") }
+                }
+            )
+        } catch let ambiguity as CoordinatorSemanticAppendOutcomeUnknown {
+            do {
+                let recovered = try authoritativeStateLocked()
+                guard let current = recovered.continuation(id: continuationID),
+                      current.binding == binding,
+                      let terminal = current.transport,
+                      let closed = recovered.boundary(for: binding),
+                      closed.dispatchedContinuationID == continuationID,
+                      closed.closed
+                else { throw ambiguity.underlying }
+                status = terminal.status
+                removeTerminalRuntimeEntriesLocked(using: recovered)
+            } catch {
+                // Keep local authority until durable termination is proven.
+                throw ambiguity.underlying
+            }
+        }
+        inFlight.removeValue(forKey: continuationID)
+        return status
     }
 
     /// Trusted provider adapters may close only the exact pending foreground

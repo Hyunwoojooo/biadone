@@ -1,10 +1,17 @@
 import { pathToFileURL } from 'node:url';
 import { createAutoConnectClient, AutoConnectError, safeAutoConnectErrorCode } from './auto-connect-client.mjs';
 import { createSessionV2Client } from './session-v2-client.mjs';
-import { SESSION_V2_WORKFLOW_INSTRUCTIONS } from './session-v2-context.mjs';
+import { SESSION_V2_NO_BOUNDARY_LINE } from './session-v2-context.mjs';
 import { handleSessionV2Hook, readSessionV2HookInput } from './session-v2-hook.mjs';
 import { normalizeSessionV2Hook } from './session-v2-lifecycle.mjs';
 import { SESSION_V2_HOOK_REWAKE, writeSessionV2HookOutput } from './session-v2-waiter.mjs';
+
+// Shown once to the person, not the model, when Claude Code moves this window
+// to another native session in-process (/resume, /clear). The bootstrap scope
+// is retired by then; later Hooks stay quiet, so this is the only signal.
+export const AUTO_CONNECT_SESSION_CHANGED_NOTICE = '[Blabee] 이 Claude 창의 세션이 바뀌어(/resume·/clear) Blabee 연결이 끊겼습니다. '
+  + '이 창에서는 Blabee 카드가 더 오지 않습니다. 이어서 쓰려면 이 창을 종료하고 터미널에서 `claude --resume`으로 대화를 골라 다시 시작하세요.';
+const RETIRED_SCOPE_CODES = new Set(['claude_bootstrap_session_changed', 'claude_bootstrap_already_started']);
 
 export async function handleAutoConnectHook(input, { env = process.env, signal,
   createBootstrapClient = createAutoConnectClient, createClient = createSessionV2Client, emitSelection, waiterOptions } = {}) {
@@ -24,8 +31,7 @@ export async function handleAutoConnectHook(input, { env = process.env, signal,
     if (input.hook_event_name === 'SessionStart' && ['startup', 'resume', 'fork'].includes(input.source)) {
       await bootstrap.start(input.source);
       requireActive();
-      result = { hookSpecificOutput: { hookEventName: 'SessionStart', additionalContext:
-        `${SESSION_V2_WORKFLOW_INSTRUCTIONS}\n아직 유효한 작업 boundary가 없습니다. 다음 실제 UserPromptSubmit Hook을 기다리세요. 이전 값을 재사용하지 마세요.` } };
+      result = { hookSpecificOutput: { hookEventName: 'SessionStart', additionalContext: SESSION_V2_NO_BOUNDARY_LINE } };
     } else {
       const grant = await bootstrap.grant();
       requireActive();
@@ -70,6 +76,14 @@ export async function runAutoConnectHook({ args = process.argv.slice(2), env = p
       try { await writeSessionV2HookOutput(errorOutput,
         `[blabee-claude] 자동 연결 Hook을 확인하지 못했습니다 (${code}).\n`, { timeoutMs: 250 }); }
       catch { /* No selected-reference retry after an unknown write. */ }
+    }
+    if (RETIRED_SCOPE_CODES.has(code)) {
+      // A user-facing systemMessage with exit 0: no model context, no block,
+      // and no "hook error" banner. The retired scope is never rebound here.
+      try { await writeSessionV2HookOutput(output,
+        JSON.stringify({ systemMessage: AUTO_CONNECT_SESSION_CHANGED_NOTICE }) + '\n', { timeoutMs: 250 }); }
+      catch { /* Best effort notice only. */ }
+      return 0;
     }
     return ['auto_connect_unavailable', 'auto_connect_response_unknown', 'auto_connect_invalid_socket', 'auto_connect_closed',
       'claude_bootstrap_unavailable', 'session_v2_unavailable', 'session_v2_response_unknown',

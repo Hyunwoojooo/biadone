@@ -43,6 +43,22 @@ queue receipt는 메시지가 큐에 인수되었다는 증거이고, `queued_ac
 
 `continuation_transport_timed_out_unknown`은 작업 결과가 `unknown`이라는 뜻이다. 취소나 실패를 추론하지 않으며 `automatic_retry`는 항상 `false`다. 중복 실행 위험 때문에 자동 재시도하지 않는다.
 
+2026-11-02 제품 reader는 `continuation_transport_not_submitted`를 추가로 읽고 쓴다.
+이는 서비스가 해당 전달 시도에서 네이티브 제출 명령을 호출하지 않았음을 직접 확인한
+종결 관측이다. payload는 `continuation_id`, `transport_status: "not_submitted"`,
+`work_outcome_status: "not_recorded"`, `automatic_retry: false`, `failure_code`,
+`command_invocation_attempted: false`만 가진다. 작업 실행의 실패나 성공을 뜻하지 않는다.
+소비 이전의 실패도 기록할 수 있지만 `queued_next_turn`과 정확히 같은 continuation·전체
+binding이어야 하고, 이미 종결된 전송을 덮어쓸 수 없다. 이 상태에서는 consume·완료·claim·
+작업 결과 기록을 허용하지 않는다. 제품 경로는 이 이벤트와 `decision_boundary_closed`를
+하나의 journal batch에 저장한다. 외부 선택 요청이나 진단 로그로 이 상태를 주장할 수 없다.
+
+이는 runtime event 종류의 추가이며 SQL 테이블 구조와 다른 v1 메시지는 바꾸지 않는다.
+새 reader는 기존 journal을 계속 검증하지만, 새 이벤트가 기록된 journal은 이를 모르는
+이전 앱에서 읽을 수 없다. **새 이벤트가 기록된 뒤에는 같은 저장소를 사용하는 구버전으로
+다운그레이드할 수 없다.** 배포·롤백 시 이 reader 호환성을 확인해야 하며, 구버전 호환을 위해
+이벤트를 삭제하거나 성공/timeout으로 바꾸지 않는다. 런타임 스키마의 pin도 함께 갱신한다.
+
 새 `pet_action` 봉투는 `dispatch_mode: "queued_next_turn"`만 허용한다. 선택은 완료된 Codex 응답을 다시 열지 않고 같은 세션의 새 사용자 턴으로 큐잉된다. 이전 결정의 binding은 선택이 만들어진 원본 에피소드를 가리키고, 큐 메시지가 `UserPromptSubmit`으로 들어오면 새 turn·prompt·episode·baseline을 만든다. queue receipt는 Codex가 메시지를 인수했다는 전송 증거일 뿐 실행 시작이나 작업 성공 증거가 아니다. 런타임 이벤트 스키마는 기존 로컬 저널 재생을 위해 과거 `same_turn_stop` 값도 읽을 수 있지만 새 봉투를 그 모드로 발급하지 않는다. `internal_format_repair`는 `dispatch_mode: "submitted_envelope"`만 허용하며 같은 결정 경계에서 `repair_attempt = max_repair_attempts = 1`이다. 각 봉투의 필드는 서로 섞을 수 없다.
 
 두 모드 모두 전체 바인딩과 만료 시각이 정확히 일치할 때만 한 번 claim할 수 있다. `continuation_id`와 token fingerprint는 Pet 작업과 형식 보정을 합친 저널 전체에서 재사용할 수 없다. `internal_format_repair`는 새 ID와 토큰을 발급하더라도 같은 결정 경계에서 두 번째로 claim할 수 없다. Pet dispatch는 `issued_at < expires_at <= in_flight_deadline_at` 순서를 지켜야 하며 deadline 전에는 timeout으로 기록할 수 없다. 형식 보정의 예약·claim 이벤트는 각각 `issued_at <= occurred_at < expires_at` 범위 안에 있어야 한다.

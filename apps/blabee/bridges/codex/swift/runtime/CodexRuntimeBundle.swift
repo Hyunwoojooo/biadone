@@ -38,8 +38,17 @@ struct ManagedCodexRuntimeBundleManifest: Codable, Equatable, Sendable {
     let target: String
     let variant: String
     let entrypoint: String
+    let execServer: String?
     let resourcesDir: String?
     let pathDir: String
+
+    fileprivate var hasSupportedExecServerLayout: Bool {
+        if version == "0.166.0" {
+            return target == "aarch64-apple-darwin"
+                && execServer == "bin/codex-exec-server"
+        }
+        return execServer == nil
+    }
 }
 
 private enum ManagedCodexRuntimeBundleEntryKind: String, Codable, Sendable {
@@ -319,6 +328,7 @@ enum ManagedCodexRuntimeBundleInspector {
         }
         guard manifest.variant == "codex",
               manifest.entrypoint == "bin/codex",
+              manifest.hasSupportedExecServerLayout,
               manifest.pathDir == "codex-path",
               manifest.resourcesDir == nil
                 || manifest.resourcesDir == "codex-resources"
@@ -358,11 +368,15 @@ enum ManagedCodexRuntimeBundleInspector {
             count: &count
         )
         defer { close(binDescriptor) }
-        guard Set(try directoryNames(binDescriptor, maximumNames: 3))
-            == Set(["codex", "codex-code-mode-host"])
+        var expectedBin = Set(["codex", "codex-code-mode-host"])
+        if manifest.execServer != nil { expectedBin.insert("codex-exec-server") }
+        guard Set(try directoryNames(
+            binDescriptor,
+            maximumNames: expectedBin.count + 1
+        )) == expectedBin
         else {
             throw ManagedCodexRuntimeBundleError.layout(
-                "bin must contain only codex and codex-code-mode-host"
+                "bin contains missing or unknown executables"
             )
         }
         let codexEntry = try inspectedFile(
@@ -386,6 +400,18 @@ enum ManagedCodexRuntimeBundleInspector {
             totalBytes: &totalBytes,
             executableVerification: executableVerification
         ))
+        if let execServer = manifest.execServer {
+            entries.append(try inspectedFile(
+                parentDescriptor: binDescriptor,
+                name: "codex-exec-server",
+                relativePath: execServer,
+                requiresNativeExecutable: true,
+                maximumBytes: maximumFileBytes,
+                count: &count,
+                totalBytes: &totalBytes,
+                executableVerification: executableVerification
+            ))
+        }
 
         let pathDescriptor = try openInspectedDirectory(
             parentDescriptor: rootDescriptor,
@@ -508,7 +534,7 @@ enum ManagedCodexRuntimeBundleInspector {
         )
     }
 
-    private static func decodeManifest(
+    fileprivate static func decodeManifest(
         _ data: Data
     ) throws -> ManagedCodexRuntimeBundleManifest {
         try requireBoundedJSONDepth(data)
@@ -529,7 +555,7 @@ enum ManagedCodexRuntimeBundleInspector {
             "layoutVersion", "version", "target", "variant", "entrypoint",
             "pathDir",
         ])
-        let allowed = required.union(["resourcesDir"])
+        let allowed = required.union(["resourcesDir", "execServer"])
         guard required.isSubset(of: dictionary.keys),
               Set(dictionary.keys).isSubset(of: allowed)
         else {
@@ -537,12 +563,12 @@ enum ManagedCodexRuntimeBundleInspector {
                 "codex-package.json has missing or unknown fields"
             )
         }
-        if dictionary.keys.contains("resourcesDir"),
-           !(dictionary["resourcesDir"] is String)
-        {
-            throw ManagedCodexRuntimeBundleError.layout(
-                "resourcesDir must be an explicit supported string"
-            )
+        for key in ["resourcesDir", "execServer"] {
+            if dictionary.keys.contains(key), !(dictionary[key] is String) {
+                throw ManagedCodexRuntimeBundleError.layout(
+                    "\(key) must be an explicit supported string"
+                )
+            }
         }
         do { return try JSONDecoder().decode(
             ManagedCodexRuntimeBundleManifest.self,
@@ -3518,6 +3544,99 @@ enum ManagedCodexRuntimeBundleQualificationCatalog {
             fingerprint:
                 "d517a3752fe11e23aae487b07d6a9699b55031bc118253159c8d23bd26c01fb3"
         ),
+        // Official rust-v0.166.0 arm64 archive sha256:55a440cb579f970abe7c79ab181e54b0ea4c419be99f333bbd868eebac9c21f0.
+        // All 42 file digests and 30 native signatures/notarization checks were verified on 2026-11-04.
+        Key(version: "0.166.0", target: "aarch64-apple-darwin"): Record(
+            signingTeamIdentifier: "2DC432GLL2",
+            fileDigests: [
+                "bin/codex":
+                    "39acf979729dd290f9a24ee38b2914e036c91b65952872e28ae2a6b88a7db7c1",
+                "bin/codex-code-mode-host":
+                    "fd37051bfdce0b65cf22a7077e265720a7bd6709d5e400dcbc26197f3041400a",
+                "bin/codex-exec-server":
+                    "b3073157bdbb5cc598b10c8bbf8785f2ba052f65f3893f9cbeb9432e4c027c08",
+                "codex-package.json":
+                    "0f56701b92cc0f72708a11ff1fd60cce97caced6812ee86e5125bc26ce3d25db",
+                "codex-path/rg":
+                    "db94328a1765b7d5fd4ee6a94442ebf24a78d1fce246fe3219b578561ab3dfc1",
+                "codex-resources/voice/bin/codex-voice-host":
+                    "fd1c7f5e50cfb5a4e429409a55250775155a0638cb876f5544bf0d489bd6ed92",
+                "codex-resources/voice/lib/libffi.8.dylib":
+                    "dbf54fa0ceed6923761104469e7a08adc698f69b53b9cfa4df3276d3a27f85ca",
+                "codex-resources/voice/lib/libgio-2.0.0.dylib":
+                    "27593f8bbbea13807c613bdaa012c60c6489a08a66fd8dd4d7f20af7d91fd489",
+                "codex-resources/voice/lib/libglib-2.0.0.dylib":
+                    "d9faacd54a231c400fa79062c15f16fc90d068f4f379c1334b079ee1f1665958",
+                "codex-resources/voice/lib/libgmodule-2.0.0.dylib":
+                    "2536f89ff59b71308a4b90e9627576020b02d9c535e7e702731319dfae1bdf32",
+                "codex-resources/voice/lib/libgobject-2.0.0.dylib":
+                    "e5a03e7e7491c3ac67cdd8d5acdad457ff72c51a7d53b2be9bd03d7ce7b636fc",
+                "codex-resources/voice/lib/libgstapp-1.0.0.dylib":
+                    "4eb8b4f3e404bf447aadd38c135ea201cc352380f4e0f57adb7f6ad74cad4fb6",
+                "codex-resources/voice/lib/libgstaudio-1.0.0.dylib":
+                    "f71dfa81459c9f5e2633d2e9041ed1490485dd8ca39ccf7c29bc38a9fddf399a",
+                "codex-resources/voice/lib/libgstbase-1.0.0.dylib":
+                    "d5e0c5f9af330ab56fe407235813dc91b35382e5319247fd509fab1cd5f0760c",
+                "codex-resources/voice/lib/libgstnet-1.0.0.dylib":
+                    "2bf4f715052e27ff4d18e434d4f9fb2ea143be1627b9a098bb322913598b5773",
+                "codex-resources/voice/lib/libgstpbutils-1.0.0.dylib":
+                    "164adfc7bf0b6098848758943f2fa2defab5ef88f18c8a92f1e77eb91643a84b",
+                "codex-resources/voice/lib/libgstreamer-1.0.0.dylib":
+                    "d2826bea7ffc2bb614a1e1d6b87467df7dd234f5c6cb6f095706ed9ce53625ae",
+                "codex-resources/voice/lib/libgstrtp-1.0.0.dylib":
+                    "f6bb1a1709e8d0d2b0cdccc79605b53b314d2811b61a720221f0ce91a4af9482",
+                "codex-resources/voice/lib/libgsttag-1.0.0.dylib":
+                    "10be6ac3eaf9dfd99299ac63439e11006e848333c42adb0a62ea1fc6bf22ec11",
+                "codex-resources/voice/lib/libgstvideo-1.0.0.dylib":
+                    "eca01c3ad6b3f588c36de5d87a1bcbc841a1821f40f91b5e6f08b2c81facda52",
+                "codex-resources/voice/lib/libintl.8.dylib":
+                    "9e62640081319bd817aa87d4452bb122874c98749ecacf0fbf2b2ac3a07cea9b",
+                "codex-resources/voice/lib/libopus.0.dylib":
+                    "968f97996e7ef013993df7ea36f7fe55f5d0e98303f0281ffeed8dff52dd065c",
+                "codex-resources/voice/lib/libpcre2-8.0.dylib":
+                    "0826393e367d3bc892aad61f19ad5731efdf774a246ad08970155e8b30f979c9",
+                "codex-resources/voice/lib/libz.1.dylib":
+                    "334667fff3f0182f766d1d2a7ca21db0bfe7b09d045f8ebeff18a0b6a5dbf465",
+                "codex-resources/voice/licenses/LGPL-2.1.txt":
+                    "ad2eec519ebd4b5df86ea84dff24ae3bfa2edea846a703b58902dd221ae375db",
+                "codex-resources/voice/licenses/libffi.txt":
+                    "17b64dc60f3b6897a60f971e288b973f655c2edcdf08b25f3c3dd5549857881c",
+                "codex-resources/voice/licenses/Opus.txt":
+                    "01e1167d54a096d123cf6dfbbeb19587278845c6481d2d66d545669846079551",
+                "codex-resources/voice/licenses/PCRE2.md":
+                    "197d8a73ffee0d6b09adba2f9c677b5f5aede24edf89258a68e48248d010d811",
+                "codex-resources/voice/licenses/proxy-libintl.txt":
+                    "d245807f90032872d1438d741ed21e2490e1175dc8aa3afa5ddb6c8e529b58e5",
+                "codex-resources/voice/licenses/sljit.txt":
+                    "5f216505c0f6ea3273caec89e766eef93cdeb7bbb0c429f9360116d7c938feeb",
+                "codex-resources/voice/licenses/zlib.txt":
+                    "e32ff4e00d9d94930537635291da39e7e612703334bf6fde8c7f1686fe8a45a2",
+                "codex-resources/voice/manifest.json":
+                    "3dd83509b6e2a59b618889038fd74104c8da3733a7a8977e5b9a6ad928c95a04",
+                "codex-resources/voice/NOTICE.md":
+                    "40097a1799441051aa0b6645cdc819cceb19be73cdd265eb602aa2b15e0b1f48",
+                "codex-resources/voice/plugins/libgstapp.dylib":
+                    "3acbd669616aa5dabfa8bc835d838a6ddc4e036f84286cd29111e92e2e020c9c",
+                "codex-resources/voice/plugins/libgstaudioconvert.dylib":
+                    "4d42e95c5f2a721f5e480b11b6e833bc2aa48677d95f9286ca3740aaa0601e2d",
+                "codex-resources/voice/plugins/libgstaudioresample.dylib":
+                    "48853de0438210321ec15699cce043223259679257ecce1551464ac53814839c",
+                "codex-resources/voice/plugins/libgstcoreelements.dylib":
+                    "95b75eb27dbe62a542b30eb179c8d655a4b93b6b543d38cf38a419cbfc03f17e",
+                "codex-resources/voice/plugins/libgstopus.dylib":
+                    "399b2e6e3070ead2f55f3d2b0d051cc97af5c8450c431bed5ed918052eb62d62",
+                "codex-resources/voice/plugins/libgstrtp.dylib":
+                    "4a46bd6a00effb3c2047223efbf07ed012189eac1baf3e72072b179b958cdcc1",
+                "codex-resources/voice/plugins/libgstrtpmanager.dylib":
+                    "ca350e42881083c96001a4def9fcc9770a6f8780265fe6200b1ddb924810c46b",
+                "codex-resources/voice/runtime.json":
+                    "0e5ea0ce3f0e7f21dfaf72d9e545aa1e3a93deca4af1be2e6d60b519b6d4e437",
+                "codex-resources/voice/sources.json":
+                    "e2f6b124f6277e7c3c4f5c7cc8830c66190f671ad65e972bb2cc9507dbfcb937",
+            ],
+            fingerprint:
+                "e34cede97a151936ae1e2ec7af1ae38cc145857d6571981ddbab0723d7f86214"
+        ),
     ]
 
     static func requireQualified(
@@ -3589,7 +3708,11 @@ enum ManagedCodexRuntimeBundleQualificationCatalog {
         _ inspection: ManagedCodexRuntimeBundleInspection
     ) -> String {
         var bytes = Data()
-        append("blabee-codex-runtime-qualification-v1", to: &bytes)
+        // Preserve every audited legacy fingerprint. The new domain binds the
+        // declared execution companion without adding a nil field to v1.
+        append(inspection.manifest.execServer == nil
+            ? "blabee-codex-runtime-qualification-v1"
+            : "blabee-codex-runtime-qualification-v2", to: &bytes)
         append(String(inspection.manifest.layoutVersion), to: &bytes)
         append(inspection.manifest.version, to: &bytes)
         append(inspection.manifest.target, to: &bytes)
@@ -3597,6 +3720,9 @@ enum ManagedCodexRuntimeBundleQualificationCatalog {
         append(inspection.manifest.entrypoint, to: &bytes)
         append(inspection.manifest.resourcesDir, to: &bytes)
         append(inspection.manifest.pathDir, to: &bytes)
+        if let execServer = inspection.manifest.execServer {
+            append(execServer, to: &bytes)
+        }
         let entries = inspection.entries.sorted { $0.path < $1.path }
         append(String(entries.count), to: &bytes)
         for entry in entries {
@@ -5262,6 +5388,7 @@ final class ManagedCodexPinnedRuntimeBundle: @unchecked Sendable {
                   (byte >= 48 && byte <= 57) || byte == 46 || byte == 45
               }),
               plan.manifest.entrypoint == "bin/codex",
+              plan.manifest.hasSupportedExecServerLayout,
               plan.manifest.pathDir == "codex-path",
               plan.manifest.resourcesDir == nil
                 || plan.manifest.resourcesDir == "codex-resources"
@@ -5297,10 +5424,15 @@ final class ManagedCodexPinnedRuntimeBundle: @unchecked Sendable {
                 declaredFiles[entry.path] = entry
             }
         }
-        let fixedRuntimePaths = Set([
+        var fixedRuntimePaths = Set([
             "codex-package.json", "bin", "bin/codex",
             "bin/codex-code-mode-host", "codex-path", "codex-path/rg",
         ])
+        if let execServer = plan.manifest.execServer {
+            guard declaredFiles[execServer]?.executable == true
+            else { return false }
+            fixedRuntimePaths.insert(execServer)
+        }
         guard declaredFiles["codex-package.json"]?.executable == false,
               declaredDirectories.contains("bin"),
               declaredFiles["bin/codex"]?.executable == true,
@@ -5389,8 +5521,12 @@ final class ManagedCodexPinnedRuntimeBundle: @unchecked Sendable {
               Set(dictionary.keys) == Set([
                 "planVersion", "createdAtSeconds", "rootIdentity",
                 "leaseIdentity", "manifest", "entries",
-              ])
+              ]),
+              let manifest = dictionary["manifest"] as? [String: Any]
         else { throw ManagedCodexRuntimeBundleError.changed }
+        _ = try ManagedCodexRuntimeBundleInspector.decodeManifest(
+            JSONSerialization.data(withJSONObject: manifest)
+        )
         return data
     }
 
@@ -5567,8 +5703,12 @@ final class ManagedCodexPinnedRuntimeBundle: @unchecked Sendable {
               Set(dictionary.keys) == Set([
                 "sealVersion", "rootIdentity", "leaseIdentity", "manifest",
                 "entries",
-              ])
+              ]),
+              let manifest = dictionary["manifest"] as? [String: Any]
         else { throw ManagedCodexRuntimeBundleError.changed }
+        _ = try ManagedCodexRuntimeBundleInspector.decodeManifest(
+            JSONSerialization.data(withJSONObject: manifest)
+        )
         return data
     }
 

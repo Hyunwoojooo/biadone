@@ -739,6 +739,25 @@ struct ProductAuthorityIntegrationTests {
         #expect(f.authority.snapshot() == authority)
     }
 
+    @Test("A stored proposal grants product readiness on the monotonic clock without a probe ACK")
+    func emitGrantsReadinessWithoutProbe() throws {
+        let f = try ProductAuthorityFixture()
+        try f.startup(); try f.prompt(); try f.open(); try f.emit()
+        let ready = try f.snapshot()
+        #expect(ready["ready"] as? Bool == true)
+        #expect(ready["selection_enabled"] as? Bool == false)
+        let card = try #require((ready["cards"] as? [[String: Any]])?.first)
+        for _ in 0..<74 { f.clock.advance(4); _ = try f.poll() }
+        #expect(try f.snapshot()["ready"] as? Bool == true)
+        f.clock.advance(4); _ = try f.poll()
+        let expired = try f.snapshot()
+        #expect(expired["ready"] as? Bool == false)
+        #expect(expired["bridge_connected"] as? Bool == true)
+        #expect((expired["cards"] as? [[String: Any]])?.first?["packet_id"] as? String == card["packet_id"] as? String)
+        try f.ready()
+        #expect(try f.snapshot()["ready"] as? Bool == true)
+    }
+
     @Test("Heartbeat loss denies an unclaimed reference but preserves an already claimed report", arguments: [false, true])
     func heartbeatLossSeparatesDeliveryAndReport(_ claimed: Bool) throws {
         let f = try ProductAuthorityFixture()
