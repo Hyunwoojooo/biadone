@@ -11,17 +11,17 @@
 
 Next steps from Codex and Claude Code, together in your Mac’s menu bar.<br>Review a card, choose what happens next, and continue in the original session.
 
-[![macOS 13+](https://img.shields.io/badge/macOS-13%2B-253746?style=flat-square)](#requirements) [![Apple Silicon](https://img.shields.io/badge/Apple_Silicon-arm64-456779?style=flat-square)](#requirements) [![Release r89](https://img.shields.io/badge/release-r89-C4A64C?style=flat-square)](https://github.com/Hyunwoojooo/biadone/releases/tag/blabee-v0.1.0%2Bbuild.89)
+[![macOS 13+](https://img.shields.io/badge/macOS-13%2B-253746?style=flat-square)](#requirements) [![Apple Silicon](https://img.shields.io/badge/Apple_Silicon-arm64-456779?style=flat-square)](#requirements) [![Release r91](https://img.shields.io/badge/release-r91-C4A64C?style=flat-square)](https://github.com/Hyunwoojooo/biadone/releases/tag/blabee-v0.1.0%2Bbuild.91)
 
-**[Download for macOS](https://github.com/Hyunwoojooo/biadone/releases/download/blabee-v0.1.0%2Bbuild.89/Blabee-0.1.0-arm64-r89.dmg)** · [Get started](#get-started) · [Changelog](CHANGELOG.md) · [Website](https://biadone.com/blabee/) · [한국어](README.ko.md)
+**[Download for macOS](https://github.com/Hyunwoojooo/biadone/releases/download/blabee-v0.1.0%2Bbuild.91/Blabee-0.1.0-arm64-r91.dmg)** · [Get started](#get-started) · [Changelog](CHANGELOG.md) · [Website](https://biadone.com/blabee/) · [한국어](README.ko.md)
 
 </div>
 
 <p align="center"><sub>An illustrated preview of the Blabee decision panel.</sub></p>
 
-> **App download: r89.** This repository publishes selected integration components under the MIT license. The full macOS application and Swift Engine are not included. See [source scope](PUBLIC_SCOPE.md).
+> **App download: r91.** This repository publishes selected integration components under the MIT license. The full macOS application and Swift Engine are not included. See [source scope](PUBLIC_SCOPE.md).
 
-Read the [r89 selection-failure and Claude cancellation fixes](CHANGELOG.md#r89) in the release notes. Released on 2026-11-03.
+Read the [r91 lighter Claude context, provider badges, and Codex 0.166.0 support](CHANGELOG.md#r91) in the release notes. Released on 2026-11-06.
 
 ## A small place for the next decision
 
@@ -47,11 +47,11 @@ Your Codex and Claude Code accounts and any usage charges remain with those serv
 
 ### 1. Install Blabee
 
-Download **[Blabee 0.1.0 r89](https://github.com/Hyunwoojooo/biadone/releases/tag/blabee-v0.1.0%2Bbuild.89)** and open the DMG. Install **Blabee.app** in **Applications**, then launch it from there.
+Download **[Blabee 0.1.0 r91](https://github.com/Hyunwoojooo/biadone/releases/tag/blabee-v0.1.0%2Bbuild.91)** and open the DMG. Install **Blabee.app** in **Applications**, then launch it from there.
 
-The r89 app and DMG are Developer ID signed and Apple notarized. The release includes a SHA-256 checksum and build provenance.
+The r91 app and DMG are Developer ID signed and Apple notarized. The release includes a SHA-256 checksum and build provenance.
 
-**Before updating:** After r89 writes its new failed-before-submission history record, r88 and older cannot read that same local history store. Downgrading with that store is not supported. See the [r89 update notes](CHANGELOG.md#r89).
+**Before updating:** r91 adds no new history record types, and the lighter Claude context and the provider badge apply to Claude sessions started after installation. If you are upgrading from r88 or older: after r89 or later writes its failed-before-submission history record, r88 and older cannot read that same local history store, and downgrading with that store is not supported. See the [r91 update notes](CHANGELOG.md#r91).
 
 ### 2. Finish the first-run guide
 
@@ -150,7 +150,7 @@ npm test
 
 These checks use fake peers, temporary sockets and synthetic data. They do not launch the installed app, Codex or Claude, use a model account, or access production Keychain/DB state.
 
-Read the [integration guide](docs/integrations.md), [public source scope](PUBLIC_SCOPE.md), and [contributing guide](CONTRIBUTING.md). `PUBLIC_SOURCES.json` records the exact file inventory and hashes. The public integration source snapshot remains r85; r89 updates the app download and release documentation without replacing that source snapshot.
+Read the [integration guide](docs/integrations.md), [public source scope](PUBLIC_SCOPE.md), and [contributing guide](CONTRIBUTING.md). `PUBLIC_SOURCES.json` records the exact file inventory and hashes. The public integration source snapshot remains r85; r91 updates the app download and release documentation without replacing that source snapshot.
 
 ## License and feedback
 
@@ -158,4 +158,4 @@ The **published integration source** is [MIT licensed](LICENSE). The separately 
 
 Use [Issues](https://github.com/Biadone/blabee/issues/new/choose) for bugs and feature requests. For suspected security issues, follow [SECURITY.md](SECURITY.md) before sharing details.
 
-**More:** [Website](https://biadone.com/blabee/) · [Changelog](CHANGELOG.md) · [Download r89](https://github.com/Hyunwoojooo/biadone/releases/tag/blabee-v0.1.0%2Bbuild.89) · [한국어](README.ko.md)
+**More:** [Website](https://biadone.com/blabee/) · [Changelog](CHANGELOG.md) · [Download r91](https://github.com/Hyunwoojooo/biadone/releases/tag/blabee-v0.1.0%2Bbuild.91) · [한국어](README.ko.md)

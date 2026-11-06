@@ -20,6 +20,39 @@ See the [README](README.md) for the current download and setup instructions.
 
 ## App updates
 
+### r91
+
+**Released:** 2026-11-06. **App version:** 0.1.0 (build 91, arm64).
+Developer ID signed and Apple notarized.
+[Download r91](https://github.com/Hyunwoojooo/biadone/releases/tag/blabee-v0.1.0%2Bbuild.91).
+
+#### Changed
+
+- **Lighter Claude session context.** Blabee no longer injects its full workflow instructions (about 1,170 characters) into every prompt. Each prompt now carries one short line with the current `boundary_id`, or a "no boundary" line. The rules live once in the MCP server instructions, shortened to about 500 characters, and the detailed rules for `emit_decision_v1` and `complete_selection_v1` moved into those tools' descriptions, which load only when the tool is used. Tool names, input schemas, wire schemas, and `Contracts/v1` are unchanged.
+- **No connection check before each proposal.** A successful `emit_decision_v1` now refreshes the session's readiness for 5 minutes, so the model no longer calls `check_connection_v1` and `ack_readiness_probe_v1` before every proposal. Card lifetime is unchanged, a rejected proposal does not change readiness, and probes started by the Pet or at session start still use their Channel acknowledgement.
+- **Provider badge on the Pet header.** Each card now shows a tinted name badge, **Claude** (orange) or **Codex** (teal), next to the Blabee wordmark, so you can see at a glance which tool a card came from. When the header is too narrow the badge shrinks to a dot in the same tint; the wordmark and the status text always stay visible.
+- **Codex 0.166.0 support.** The exact 0.166.0 version joins the supported list for the plugin CLI, the managed App Server, workspace routing, and the update lifecycle. The new `codex-exec-server` executable in the 0.166.0 package is verified by digest and signature, and only the primary `codex` caller is trusted for one-shot Hook approvals. 0.165.0, 0.166.1, and alpha builds are not added. Existing packages keep their v1 fingerprint.
+
+#### Fixed
+
+- **Session change notice.** When Claude Code moves a window to another session in-process (`/resume`, `/clear`), Blabee now shows a one-time notice that cards will no longer arrive in that window and how to continue: quit the window and start `claude --resume` from the terminal. Nothing is rebound automatically.
+- **Local preflight timeouts before submission.** If the Claude bridge times out while checking its local connection file before a request is written, that request fails as not submitted instead of permanently closing the shared client. The Stop Hook waiter retries such unsubmitted polls (up to 10 in a row) within its existing wait budget. Nothing is resubmitted after a request has been written.
+- **Bridge diagnostics and runtime pins.** MCP startup argument errors use the same diagnostic writer as other bridge failures. The bundled Claude runtime pins zod 4.6.6 and fast-uri 3.1.9; Node 22.23.2 is unchanged.
+
+#### Update notes
+
+- The lighter context and the badge take effect only after installing r91 and starting a new Claude session. Sessions that are already open keep the previous instructions until they are restarted.
+- r91 adds no new history record types. If you are upgrading from r88 or older, the r89 note still applies: after r89 or later writes its failed-before-submission record, r88 and older cannot read that same local history store. Installation does not reset history.
+- Failed selections are still **not automatically resent**. Codex and Claude Code still require their own installation and sign-in. Blabee uses its separate Google or GitHub sign-in.
+
+#### Validation
+
+- Implementation checks on the release tree: 2364 Swift tests in 120 suites plus 42 XCTest cases passed, 694 root Node tests passed (one optional isolated-environment check skipped), and 237 Claude bridge tests passed. Earlier runs on the same sources passed 101 Swift and 207 Node shared-engine tests and 28 native-session integration checks.
+- Codex 0.166.0 qualification, recorded on 2026-11-04: 261 Node/Python regressions, 353 focused Swift regressions, and 71 smoke checks against the official package passed.
+- Build checks: 270 packaging checks passed (one optional isolated-environment check excluded), and the actual packaged Claude runtime passed its Swift qualifier test. Bundled contract pins and Claude source files matched the build inputs, and the bundled bridge carries the one-line boundary context. Release build, Developer ID signatures, Apple notarization, stapling, DMG integrity, and app/DMG Gatekeeper checks passed.
+
+A first build numbered r90 was notarized but discarded before publication: the app's Swift runtime qualifier still pinned the previous zod/fast-uri versions and rejected the freshly bundled Claude runtime. r91 aligns the Swift pins with the bundled packages, adds a packaging check that keeps the three version lists equal, and passed the packaged-runtime qualifier. The implementation and build counts come from separate runs. The badge and the lighter context were verified with rendered-view and bridge tests; the installed-app round trip (install, new session, one-line context, proposal → card → selection → claim → completion) was not performed before publication. Clean-Mac installation, installed-app update/relaunch, and OAuth checks also remain separate acceptance checks.
+
 ### r89
 
 **Released:** 2026-11-03. **App version:** 0.1.0 (build 89, arm64).

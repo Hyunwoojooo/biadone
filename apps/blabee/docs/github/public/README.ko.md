@@ -11,17 +11,17 @@
 
 Codex와 Claude Code의 다음 작업을 Mac 메뉴바에서 확인하세요.<br>카드를 살펴보고 선택하면, 원래 대화에서 작업을 이어갑니다.
 
-[![macOS 13+](https://img.shields.io/badge/macOS-13%2B-253746?style=flat-square)](#사용-조건) [![Apple Silicon](https://img.shields.io/badge/Apple_Silicon-arm64-456779?style=flat-square)](#사용-조건) [![Release r89](https://img.shields.io/badge/release-r89-C4A64C?style=flat-square)](https://github.com/Hyunwoojooo/biadone/releases/tag/blabee-v0.1.0%2Bbuild.89)
+[![macOS 13+](https://img.shields.io/badge/macOS-13%2B-253746?style=flat-square)](#사용-조건) [![Apple Silicon](https://img.shields.io/badge/Apple_Silicon-arm64-456779?style=flat-square)](#사용-조건) [![Release r91](https://img.shields.io/badge/release-r91-C4A64C?style=flat-square)](https://github.com/Hyunwoojooo/biadone/releases/tag/blabee-v0.1.0%2Bbuild.91)
 
-**[macOS용 다운로드](https://github.com/Hyunwoojooo/biadone/releases/download/blabee-v0.1.0%2Bbuild.89/Blabee-0.1.0-arm64-r89.dmg)** · [시작하기](#시작하기) · [변경 이력](CHANGELOG.ko.md) · [웹사이트](https://biadone.com/blabee/) · [English](README.md)
+**[macOS용 다운로드](https://github.com/Hyunwoojooo/biadone/releases/download/blabee-v0.1.0%2Bbuild.91/Blabee-0.1.0-arm64-r91.dmg)** · [시작하기](#시작하기) · [변경 이력](CHANGELOG.ko.md) · [웹사이트](https://biadone.com/blabee/) · [English](README.md)
 
 </div>
 
 <p align="center"><sub>Blabee의 선택 패널을 표현한 제품 일러스트입니다.</sub></p>
 
-> **앱 다운로드는 r89입니다.** 이 저장소는 연동 구성요소를 MIT 라이선스로 공개합니다. macOS 앱 전체와 Swift Engine 소스는 포함하지 않습니다. [공개 범위](PUBLIC_SCOPE.md)를 확인하세요.
+> **앱 다운로드는 r91입니다.** 이 저장소는 연동 구성요소를 MIT 라이선스로 공개합니다. macOS 앱 전체와 Swift Engine 소스는 포함하지 않습니다. [공개 범위](PUBLIC_SCOPE.md)를 확인하세요.
 
-[r89의 선택 전달 실패·Claude 취소 처리 수정](CHANGELOG.ko.md#r89)을 패치노트에서 확인할 수 있습니다. 배포일은 2026-11-03입니다.
+[r91의 Claude 안내문 경량화·출처 배지·Codex 0.166.0 지원](CHANGELOG.ko.md#r91)을 패치노트에서 확인할 수 있습니다. 배포일은 2026-11-06입니다.
 
 ## 다음 결정을 위한 작은 공간
 
@@ -47,11 +47,11 @@ Codex·Claude Code의 계정과 사용 요금은 각 서비스에 따릅니다.
 
 ### 1. Blabee 설치
 
-[**Blabee 0.1.0 r89**](https://github.com/Hyunwoojooo/biadone/releases/tag/blabee-v0.1.0%2Bbuild.89)를 다운로드하고 DMG를 엽니다. **Blabee.app**을 **응용 프로그램**에 설치한 뒤 그 위치에서 실행하세요.
+[**Blabee 0.1.0 r91**](https://github.com/Hyunwoojooo/biadone/releases/tag/blabee-v0.1.0%2Bbuild.91)를 다운로드하고 DMG를 엽니다. **Blabee.app**을 **응용 프로그램**에 설치한 뒤 그 위치에서 실행하세요.
 
-r89 앱과 DMG는 Developer ID 서명과 Apple 공증을 완료했습니다. 릴리스에서 SHA-256 체크섬과 빌드 출처도 확인할 수 있습니다.
+r91 앱과 DMG는 Developer ID 서명과 Apple 공증을 완료했습니다. 릴리스에서 SHA-256 체크섬과 빌드 출처도 확인할 수 있습니다.
 
-**업데이트 전 확인:** r89의 새 제출 전 실패 기록이 생성된 뒤에는 r88 이하가 같은 내부 이력 저장소를 읽을 수 없습니다. 해당 저장소를 사용하는 구버전으로의 다운그레이드는 지원하지 않습니다. [r89 업데이트 안내](CHANGELOG.ko.md#r89)를 확인하세요.
+**업데이트 전 확인:** r91은 새 이력 기록 유형을 추가하지 않으며, 경량화된 Claude 안내문과 출처 배지는 설치 후 새로 시작한 Claude 세션부터 적용됩니다. r88 이하에서 올라오는 경우 r89 이상이 제출 전 실패 기록을 쓴 뒤에는 r88 이하가 같은 내부 이력 저장소를 읽을 수 없고, 해당 저장소를 사용하는 구버전으로의 다운그레이드는 지원하지 않습니다. [r91 업데이트 안내](CHANGELOG.ko.md#r91)를 확인하세요.
 
 ### 2. 첫 실행 안내 완료
 
@@ -150,7 +150,7 @@ npm test
 
 검사는 가상 상대·임시 소켓·합성 데이터를 사용합니다. 설치 앱·Codex·Claude 실행, 모델 계정 로그인, 운영 Keychain·DB 접근은 하지 않습니다.
 
-[연동 안내](docs/integrations.md), [공개 소스 범위](PUBLIC_SCOPE.md), [기여 안내](CONTRIBUTING.md)를 참고하세요. `PUBLIC_SOURCES.json`에 공개 파일 목록과 해시를 기록합니다. 공개 연동 소스 스냅샷은 r85를 유지하며, 이번 r89 반영은 앱 다운로드와 배포 문서만 갱신합니다.
+[연동 안내](docs/integrations.md), [공개 소스 범위](PUBLIC_SCOPE.md), [기여 안내](CONTRIBUTING.md)를 참고하세요. `PUBLIC_SOURCES.json`에 공개 파일 목록과 해시를 기록합니다. 공개 연동 소스 스냅샷은 r85를 유지하며, 이번 r91 반영은 앱 다운로드와 배포 문서만 갱신합니다.
 
 ## 라이선스와 피드백
 
@@ -158,4 +158,4 @@ npm test
 
 버그·기능 제안은 [Issues](https://github.com/Biadone/blabee/issues/new/choose)로 보내 주세요. 보안 문제가 의심되면 상세 내용을 공유하기 전에 [SECURITY.md](SECURITY.md)를 확인하세요.
 
-**더 보기:** [웹사이트](https://biadone.com/blabee/) · [변경 이력](CHANGELOG.ko.md) · [r89 다운로드](https://github.com/Hyunwoojooo/biadone/releases/tag/blabee-v0.1.0%2Bbuild.89) · [English](README.md)
+**더 보기:** [웹사이트](https://biadone.com/blabee/) · [변경 이력](CHANGELOG.ko.md) · [r91 다운로드](https://github.com/Hyunwoojooo/biadone/releases/tag/blabee-v0.1.0%2Bbuild.91) · [English](README.md)
