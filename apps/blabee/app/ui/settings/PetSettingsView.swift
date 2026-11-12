@@ -314,6 +314,13 @@ struct PetSettingsView: View {
                         Task { await viewModel.checkForAppUpdates() }
                     }
                 }
+                Toggle(PetL10n.text("Check for updates automatically", korean: "업데이트 자동 확인"), isOn: Binding(
+                    get: { viewModel.automaticUpdateChecksEnabled },
+                    set: { viewModel.automaticUpdateChecksEnabled = $0 }))
+                    .toggleStyle(.checkbox)
+                    .font(.blabee(.caption))
+                    .help(PetL10n.text("Only checks. Installing always asks first.", korean: "확인만 합니다. 설치는 항상 먼저 묻습니다."))
+                    .accessibilityIdentifier("settings-automatic-update-check")
             }
         }
         .fixedSize(horizontal: false, vertical: true)

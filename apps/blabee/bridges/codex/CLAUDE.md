@@ -11,6 +11,8 @@
 - **관리형 `blabee-codex` 경로(fail-closed).** 사용자가 고른 경우에만 App Server를 WebSocket으로 중계한다.
   실패하면 관리형 기능만 멈추고 공식 `codex`는 건드리지 않는다. 신뢰 모델은 `docs/features/MANAGED_CODEX_TRUST.md`.
 
+미등록 Codex(2026-11-12): SessionStart Hook이 호출자 계보를 읽어 `codex_runtime`(`qualified`/`unqualified`)을 붙인다(`CodexHookApprovalQualification.currentCaller()`). OpenAI 서명이지만 CDHash가 `qualifiedProfiles`에 없으면 `unqualified`이고, 코디네이터는 그 세션의 SessionStart·사람 프롬프트에 `enabled:false`를 돌려주며 Pet 스냅샷에 `codex_runtime_status`를 싣는다. 계보를 읽을 수 없으면 값을 보내지 않고 기존 동작을 유지한다. `signedCodex` 요구는 판별용일 뿐 승인 권한을 주지 않는다.
+
 선택 전달은 `codex queue --thread <session> --message <msg>`(`swift/delivery/CodexQueueNextTurnDispatcher.swift`)로 다음 턴에 들어간다. 실패한 전달은 재전송하지 않는다.
 
 ## 파일 지도

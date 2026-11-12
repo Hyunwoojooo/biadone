@@ -2168,3 +2168,30 @@ func blabeePetReturnTargetOwnership() async throws {
     await viewModel.requestPanelSelection(1)
     #expect(opener.opened.map(\.processIdentifier) == [402, 401])
 }
+
+@Suite("Unsupported Codex runtime notice")
+struct PetCodexRuntimeNoticeTests {
+    @Test("The snapshot flag is optional, exact and drives the panel diagnostic")
+    func codexRuntimeFlag() throws {
+        var object = petTestSnapshotObject(cards: [])
+        #expect(try PetSnapshot.parse(petTestData(object)).codexRuntimeUnqualified == false)
+        object["codex_runtime_status"] = "unqualified"
+        #expect(try PetSnapshot.parse(petTestData(object)).codexRuntimeUnqualified)
+        object["codex_runtime_status"] = "qualified"
+        #expect(throws: (any Error).self) { try PetSnapshot.parse(petTestData(object)) }
+    }
+
+    @Test("An unsupported Codex version points to an update, not to another recheck")
+    func deliveryNotice() throws {
+        let identity = try PetSnapshot.parse(petTestSnapshotData(cards: [PetTestCard(suffix: "notice")]))
+            .interactions[0].identity
+        let notice = PetSelectionDeliveryNotice(id: UUID(), identity: identity, selectionID: "selection_notice",
+            provider: .codex, deliveryState: .notSubmitted, code: "codex_native_version_unqualified",
+            requiresCodexRecheck: true)
+        #expect(notice.codexVersionUnsupported)
+        let other = PetSelectionDeliveryNotice(id: UUID(), identity: identity, selectionID: "selection_notice",
+            provider: .codex, deliveryState: .notSubmitted, code: "codex_native_probe_timeout",
+            requiresCodexRecheck: true)
+        #expect(!other.codexVersionUnsupported)
+    }
+}

@@ -375,7 +375,15 @@ export async function createSessionV2Client({ socketPath, runtimeIdentity, autho
           answer = { error: failure };
           active.socket?.destroy();
         };
-        const timer = setTimeout(() => fail('session_v2_response_unknown'), timeoutMs);
+        // Nothing was written yet: the service cannot have seen this request.
+        // Fail only this request and keep the client usable; the caller decides
+        // whether a fresh request is safe. The client itself never resubmits.
+        const failUnsent = () => {
+          if (cancelled || answer) return;
+          answer = { error: Object.assign(new SessionV2ClientError('session_v2_unavailable'), { notSubmitted: true }) };
+          active.socket?.destroy();
+        };
+        const timer = setTimeout(() => (sent ? fail('session_v2_response_unknown') : failUnsent()), timeoutMs);
         const socket = createConnection({ path: socketPath });
         active.socket = socket;
         const cancelBeforeSend = () => {
@@ -405,7 +413,7 @@ export async function createSessionV2Client({ socketPath, runtimeIdentity, autho
           catch (error) { return fail(error?.code === 'session_v2_service_rejected' ? error.code : 'session_v2_invalid_response'); }
           socket.destroy();
         });
-        socket.once('error', () => fail(sent ? 'session_v2_response_unknown' : 'session_v2_unavailable'));
+        socket.once('error', () => (sent ? fail('session_v2_response_unknown') : failUnsent()));
         socket.once('close', () => {
           clearTimeout(timer);
           signal?.removeEventListener('abort', cancelBeforeSend);

@@ -377,6 +377,7 @@ final class PetApplicationDelegate: NSObject, NSApplicationDelegate {
         menuBarController = PetMenuBarController(viewModel: viewModel)
         PetStartupDiagnostics.record(.menuBarReady)
         viewModel.startPolling()
+        viewModel.startAutomaticUpdateChecks()
         PetStartupDiagnostics.record(.pollingStarted)
         if showPanel { viewModel.requestPanelToggle() }
     }

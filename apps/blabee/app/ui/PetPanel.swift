@@ -891,7 +891,9 @@ final class PetMenuBarController: NSObject {
             guard let event else { return }
             let menu = NSMenu()
             let updateItem = NSMenuItem(
-                title: PetL10n.text("Check for Updates…", korean: "업데이트 확인…"),
+                title: viewModel.appUpdateState.availableRelease.map {
+                    PetL10n.text("Install Update \($0.version.displayLabel)…", korean: "\($0.version.displayLabel) 업데이트…")
+                } ?? PetL10n.text("Check for Updates…", korean: "업데이트 확인…"),
                 action: #selector(checkForAppUpdates(_:)),
                 keyEquivalent: ""
             )

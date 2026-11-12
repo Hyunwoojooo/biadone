@@ -165,9 +165,10 @@ enum AppUpdateTransitionPreflight {
         case .clear:
             guard inspection.outstandingUseCount == 0 else { throw AppUpdateTransitionError.unverified }
         case .inUse:
+            let count = inspection.outstandingUseCount ?? 0
             throw AppUpdateTransitionError.waiting(PetL10n.text(
-                    "Claude still has an unreleased Blabee connection. Save your work and close the connected Claude session normally. If it has already closed, use Prepare Connection Recovery, then restart your Mac and retry.",
-                    korean: "Claude의 Blabee 연결이 아직 종료되지 않았습니다. 작업을 저장하고 연결된 Claude 세션을 정상 종료해 주세요. 이미 종료했다면 ‘연결 복구 준비’를 누른 뒤 Mac을 재시작하고 다시 시도해 주세요."))
+                    "Claude still has \(count) unreleased Blabee connection(s) (one per `claude` window started with Blabee). Save your work and close those Claude sessions normally. If they have already closed, use Prepare Connection Recovery, then restart your Mac and retry.",
+                    korean: "아직 종료되지 않은 Claude의 Blabee 연결이 \(count)개 있습니다(Blabee와 함께 시작한 `claude` 창마다 1개). 작업을 저장하고 그 Claude 세션들을 정상 종료해 주세요. 이미 종료했다면 ‘연결 복구 준비’를 누른 뒤 Mac을 재시작하고 다시 시도해 주세요."))
         case .unavailable: throw AppUpdateTransitionError.unverified
         }
     }

@@ -210,6 +210,7 @@ struct PetGitHubAppUpdateChecker: PetAppUpdateChecking {
         }
         let deadline = ProcessInfo.processInfo.systemUptime + Self.maximumCheckDuration
         var latest: PetAppUpdateRelease?
+        var sawMalformedTag = false
         do {
             for page in 1...Self.maximumPages {
                 try Task.checkCancellation()
@@ -239,8 +240,12 @@ struct PetGitHubAppUpdateChecker: PetAppUpdateChecking {
                 for release in releases where !release.draft && !release.prerelease {
                     try Task.checkCancellation()
                     guard release.tagName.hasPrefix(Self.releaseTagPrefix) else { continue }
+                    // One malformed tag must not hide a valid newer release from
+                    // every user. It is skipped, but it still prevents claiming
+                    // "up to date" below, since it might have been the newest.
                     guard let version = Self.version(forTag: release.tagName) else {
-                        return .unavailable(PetL10n.text("A published Blabee version on GitHub has an invalid format. Check the release information.", korean: "GitHub에 게시된 Blabee 배포 버전 표기가 올바르지 않습니다. 릴리스 정보를 확인하세요."))
+                        sawMalformedTag = true
+                        continue
                     }
                     if latest.map({ version > $0.version }) ?? true {
                         let installer = Self.installerAssets(
@@ -256,6 +261,10 @@ struct PetGitHubAppUpdateChecker: PetAppUpdateChecking {
                     }
                 }
                 if releases.count < Self.pageSize {
+                    if let latest, latest.version > currentVersion { return .available(latest) }
+                    if sawMalformedTag {
+                        return .unavailable(PetL10n.text("A published Blabee version on GitHub has an invalid format. Check the release information.", korean: "GitHub에 게시된 Blabee 배포 버전 표기가 올바르지 않습니다. 릴리스 정보를 확인하세요."))
+                    }
                     guard let latest else { return .noPublishedRelease }
                     return latest.version > currentVersion ? .available(latest) : .upToDate
                 }

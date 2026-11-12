@@ -77,7 +77,14 @@ final class ClaudeProductServiceCoordinator: CoordinatorOperationalHandling, @un
         case "claude_session_v1":
             // The old native host is a separate contract.
             throw CoordinatorError("claude_product_unavailable")
+        case PetProviderService.codexRequestType:
+            guard let pet else { throw CoordinatorError("pet_provider_unauthorized") }
+            return try await pet.handleCodex(payload)
         default:
+            // With a Pet credential, UI authority is never granted by UID alone.
+            if pet != nil, PetProviderService.petOnlyRequestTypes.contains(type) {
+                throw CoordinatorError("pet_provider_unauthorized")
+            }
             return try await codex.handle(type: type, payload: payload)
         }
     }

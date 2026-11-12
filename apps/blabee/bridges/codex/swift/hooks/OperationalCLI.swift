@@ -368,6 +368,16 @@ func runHookCommand(arguments: [String]) {
         // The coordinator may expose Hook allow-once only after attesting the
         // live Codex ancestry. Never trust a caller-supplied marker; derive it
         // locally and omit it when the attestation cannot be established.
+        // Once per session: an OpenAI-signed Codex that is not registered cannot
+        // receive a card, so the coordinator turns Blabee off for this session.
+        // An unreadable lineage reports nothing and keeps the current behavior.
+        if eventName == "SessionStart" {
+            switch CodexHookApprovalQualification.currentCaller() {
+            case .qualified: payload["codex_runtime"] = "qualified"
+            case .unqualified: payload["codex_runtime"] = "unqualified"
+            case .unknown: payload.removeValue(forKey: "codex_runtime")
+            }
+        }
         if eventName == "PermissionRequest" {
             let qualification = CodexHookApprovalQualification.currentQualification()
             payload = HookPermissionOutputPolicy.qualifiedPayload(

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { createHash, randomUUID } from 'node:crypto';
 import { spawn } from 'node:child_process';
-import { chmod, mkdtemp, realpath, rm, symlink } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, realpath, rm, symlink } from 'node:fs/promises';
 import { createServer } from 'node:net';
 import { join } from 'node:path';
 import { PassThrough, Readable } from 'node:stream';
@@ -207,14 +207,30 @@ test('only the next actual prompt obtains a boundary; compact and Stop retain th
   assert.equal(new Set(f.requests.map(request => request.request_id)).size, 4);
 });
 
+test('a Bash cd inside the session keeps the connection: every Hook is observed at the launch folder', async t => {
+  const f = await fixture(t);
+  await handleAutoConnectHook(f.input(), { env: f.hookEnv });
+  const subfolder = join(f.cwd, 'nested');
+  await mkdir(subfolder, { mode: 0o700 });
+  const calls = [], boundary = randomUUID(), promptID = randomUUID();
+  const createClient = async () => ({ request: async value => { calls.push(value);
+    return { observed: true, waiter: null, observation_status: 'accepted',
+      boundary_id: value.event === 'UserPromptSubmit' ? boundary : null }; }, close: async () => {} });
+  const result = await handleAutoConnectHook(f.input('UserPromptSubmit', { prompt_id: promptID, prompt: 'after cd', cwd: subfolder }),
+    { env: f.hookEnv, createClient });
+  assert.equal(result.hookSpecificOutput.additionalContext, sessionV2BoundaryLine(boundary));
+  await handleAutoConnectHook(f.input('Stop', { prompt_id: promptID, cwd: subfolder }), { env: f.hookEnv, createClient });
+  assert.deepEqual(calls.map(value => value.cwd), [f.cwd, f.cwd]);
+  assert.ok(f.requests.every(request => request.cwd === f.cwd));
+  assert.equal(f.state.retired, false);
+});
+
 test('in-process resume and identity changes retire authority instead of silently rebinding or using a stale grant', async t => {
-  for (const changed of ['resume', 'identity', 'cwd']) {
+  for (const changed of ['resume', 'identity']) {
     const f = await fixture(t);
     await handleAutoConnectHook(f.input(), { env: f.hookEnv });
-    const anotherCWD = await realpath(await mkdtemp('/private/tmp/blabee-auto-other-'));
-    t.after(() => rm(anotherCWD, { recursive: true, force: true }));
     const input = changed === 'resume' ? f.input() : f.input('UserPromptSubmit', {
-      prompt_id: randomUUID(), prompt: 'actual prompt', ...(changed === 'identity' ? { session_id: randomUUID() } : { cwd: anotherCWD }) });
+      prompt_id: randomUUID(), prompt: 'actual prompt', session_id: randomUUID() });
     let usedV2 = false;
     const options = { env: f.hookEnv, createClient: async () => { usedV2 = true; assert.fail('retired scope'); } };
     await assert.rejects(handleAutoConnectHook(input, options), { code: changed === 'resume'

@@ -189,6 +189,14 @@ struct PetAppUpdateWindowView: View {
                             controller.loadLastResult()
                         }
                     }
+                    if controller.phase == .recoveryRequired {
+                        // The person has checked the preserved apps in Finder;
+                        // closing the record re-enables updates. Nothing runs.
+                        Button(PetL10n.text("I Checked the Apps — Allow Updating Again", korean: "앱을 확인했습니다 · 다시 업데이트할 수 있게")) {
+                            controller.acknowledgeUnresolvedUpdate()
+                        }
+                        .accessibilityIdentifier("app-update-acknowledge-recovery")
+                    }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(24)

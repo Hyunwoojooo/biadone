@@ -1094,6 +1094,9 @@ struct PetSnapshot: Sendable, Equatable {
     var providerDiagnostic: String? = nil
     var providerDirectory: PetProviderDirectoryStatus? = nil
     var providerInbox: PetProviderInbox? = nil
+    /// The coordinator saw a session started by an OpenAI-signed Codex that
+    /// this Blabee build does not support yet.
+    var codexRuntimeUnqualified = false
 
     /// The product router can retain a disabled Claude card after its directory
     /// read fails. Such a local fallback is not a fresh service response.
@@ -1141,11 +1144,13 @@ struct PetSnapshot: Sendable, Equatable {
             "permission_requests", "permission_notice_count",
             "managed_command_approvals", "managed_command_approval_notice_count",
         ]
-        try petExactKeys(
-            object,
-            object["event_navigation"] == nil ? snapshotKeys : snapshotKeys.union(["event_navigation"]),
-            "snapshot"
-        )
+        var allowedKeys = snapshotKeys
+        if object["event_navigation"] != nil { allowedKeys.insert("event_navigation") }
+        if object["codex_runtime_status"] != nil { allowedKeys.insert("codex_runtime_status") }
+        try petExactKeys(object, allowedKeys, "snapshot")
+        if object["codex_runtime_status"] != nil {
+            try petRequire(object["codex_runtime_status"] as? String == "unqualified", "snapshot.codex_runtime_status")
+        }
         let schemaVersion = try petString(object, "schema_version", maximum: 16)
         let kind = try petString(object, "kind", maximum: 64)
         try petRequire(schemaVersion == "1.0", "snapshot.schema_version")
@@ -1327,7 +1332,8 @@ struct PetSnapshot: Sendable, Equatable {
                 "managed_command_approval_notice_count",
                 minimum: 0
             ),
-            eventNavigation: eventNavigation
+            eventNavigation: eventNavigation,
+            codexRuntimeUnqualified: object["codex_runtime_status"] != nil
         )
     }
 

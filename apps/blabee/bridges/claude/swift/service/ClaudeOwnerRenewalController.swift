@@ -25,6 +25,10 @@ final class ClaudeOwnerRenewalController: @unchecked Sendable {
     private enum Step { case wait, renew(UInt64), terminate(StopReason) }
     private let identity: ClaudeSessionAuthority.Identity
     private let clock: any CoordinatorContinuousClock
+    /// Deadlines, due times and expiry below are kept on awake time, matching
+    /// the service authority: sleeping through the lease does not end it.
+    private let awakeClock: any CoordinatorContinuousClock
+    private let sharesClock: Bool
     private let codec: ClaudeProductWireCodec
     private let exchange: Exchange
     private let disconnected: @Sendable (StopReason) -> Void
@@ -46,23 +50,31 @@ final class ClaudeOwnerRenewalController: @unchecked Sendable {
     init(identity: ClaudeSessionAuthority.Identity, initialDeadlineNanoseconds: UInt64,
          initialRenewalSequence: UInt64 = 0,
          clock: any CoordinatorContinuousClock = SystemCoordinatorContinuousClock(),
+         awakeClock: (any CoordinatorContinuousClock)? = nil,
          secretCorpus: RuntimeSecretCorpus, exchange: @escaping Exchange,
          disconnected: @escaping @Sendable (StopReason) -> Void) throws {
+        let awake = awakeClock ?? ClaudeSessionAuthority.defaultAwakeClock(for: clock)
+        let shares = awakeClock == nil && !(clock is SystemCoordinatorContinuousClock)
         let now = clock.nowNanoseconds()
+        let awakeNow = shares ? now : awake.nowNanoseconds()
         let (latest, overflow) = now.addingReportingOverflow(ClaudeSessionAuthority.leaseDurationNanoseconds)
-        guard now != UInt64.max, !overflow, initialDeadlineNanoseconds > now,
+        guard now != UInt64.max, awakeNow != UInt64.max, !overflow, initialDeadlineNanoseconds > now,
               initialDeadlineNanoseconds <= latest else {
             throw CoordinatorError("claude_owner_renewal_configuration_invalid")
         }
+        let (initialAwakeDeadline, awakeOverflow) = awakeNow.addingReportingOverflow(initialDeadlineNanoseconds - now)
+        guard !awakeOverflow else { throw CoordinatorError("claude_owner_renewal_configuration_invalid") }
         self.identity = identity
         self.clock = clock
+        self.awakeClock = awake
+        sharesClock = shares
         self.codec = ClaudeProductWireCodec(credentialCorpus: secretCorpus)
         self.exchange = exchange
         self.disconnected = disconnected
-        deadlineNanoseconds = initialDeadlineNanoseconds
+        deadlineNanoseconds = initialAwakeDeadline
         renewalSequence = initialRenewalSequence
-        nextRenewalNanoseconds = Self.nextDue(deadline: initialDeadlineNanoseconds)
-        lastObservedNanoseconds = now
+        nextRenewalNanoseconds = Self.nextDue(deadline: initialAwakeDeadline)
+        lastObservedNanoseconds = awakeNow
     }
 
     deinit { stop() }
@@ -91,7 +103,7 @@ final class ClaudeOwnerRenewalController: @unchecked Sendable {
         defer { exchangeLock.unlock() }
         let step: Step = lock.withLock {
             guard terminalReason == nil, !ending else { return .wait }
-            let now = clock.nowNanoseconds()
+            let now = awakeClock.nowNanoseconds()
             if let reason = observeClock(now) { return .terminate(reason) }
             guard now >= nextRenewalNanoseconds else { return .wait }
             let (sequence, overflow) = renewalSequence.addingReportingOverflow(1)
@@ -114,17 +126,20 @@ final class ClaudeOwnerRenewalController: @unchecked Sendable {
                 let failure: StopReason? = lock.withLock {
                     guard terminalReason == nil, !ending else { return nil }
                     let now = clock.nowNanoseconds()
+                    let awakeNow = sharesClock ? now : awakeClock.nowNanoseconds()
                     // The server may have renewed just before the old deadline
                     // and replied just after it. Validate the new receipt's
                     // deadline, rather than treating the superseded one as final.
-                    if let reason = observeClock(now, enforceDeadline: false) { return reason }
+                    if let reason = observeClock(awakeNow, enforceDeadline: false) { return reason }
                     let (latest, overflow) = now.addingReportingOverflow(ClaudeSessionAuthority.leaseDurationNanoseconds)
-                    guard !overflow, deadline > now, deadline > deadlineNanoseconds, deadline <= latest else {
+                    guard now != UInt64.max, !overflow, deadline > now, deadline <= latest else {
                         return .responseInvalid
                     }
-                    deadlineNanoseconds = deadline
+                    let (awakeDeadline, awakeOverflow) = awakeNow.addingReportingOverflow(deadline - now)
+                    guard !awakeOverflow, awakeDeadline > deadlineNanoseconds else { return .responseInvalid }
+                    deadlineNanoseconds = awakeDeadline
                     renewalSequence = sequence
-                    nextRenewalNanoseconds = Self.nextDue(deadline: deadline)
+                    nextRenewalNanoseconds = Self.nextDue(deadline: awakeDeadline)
                     return nil
                 }
                 if let failure { terminate(failure) }
@@ -183,8 +198,9 @@ final class ClaudeOwnerRenewalController: @unchecked Sendable {
         if shouldClose { disconnected(reason) }
     }
 
-    /// Called only under state lock. Expiry is checked before any next request,
-    /// so sleeping through the remaining lease never initiates a rescue renew.
+    /// Called only under state lock, with awake time. Sleep does not consume the
+    /// lease, so a lid closed for hours renews normally on the first tick after
+    /// wake. Awake time past the deadline still never initiates a rescue renew.
     private func observeClock(_ now: UInt64, enforceDeadline: Bool = true) -> StopReason? {
         guard now != UInt64.max, now >= lastObservedNanoseconds else { return .clockInvalid }
         lastObservedNanoseconds = now

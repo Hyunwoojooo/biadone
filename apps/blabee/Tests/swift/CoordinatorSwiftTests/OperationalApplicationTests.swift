@@ -9611,3 +9611,35 @@ func operationalUpdateStatusRetainsClaimRetryWithoutBlocking(retryAfterReadiness
         #expect(await fixture.nextTurnDispatcher.recordedRequests().count == 1)
     }
 }
+
+@Test("A session started by an unregistered signed Codex stays off and the Pet snapshot says so")
+func operationalUnqualifiedCodexSessionStaysOff() async throws {
+    let fixture = try operationalFixture()
+    let cwd = "/tmp/blabee-operational-unqualified"
+    _ = try await fixture.app.handle(type: "enable_project", payload: operationalData([
+        "cwd": cwd, "project_id": "project_operational_unqualified",
+    ]))
+    let start = try operationalObject(await fixture.app.handle(type: "session_start", payload: operationalData([
+        "session_id": "session_unqualified", "cwd": cwd, "hook_event_name": "SessionStart",
+        "codex_runtime": "unqualified",
+    ])))
+    #expect(start["enabled"] as? Bool == false)
+    #expect(start["additionalContext"] == nil)
+    let prompt = try operationalObject(await fixture.app.handle(type: "user_prompt_submit", payload: operationalData([
+        "session_id": "session_unqualified", "turn_id": "turn_unqualified", "cwd": cwd,
+        "prompt": "Do something", "hook_event_name": "UserPromptSubmit",
+    ])))
+    #expect(prompt["enabled"] as? Bool == false)
+    #expect(prompt["identifiers"] == nil)
+    let snapshot = try operationalObject(await fixture.app.handle(type: "get_state", payload: operationalData([:])))
+    #expect(snapshot["codex_runtime_status"] as? String == "unqualified")
+
+    // A later attested, registered Codex clears the notice for new sessions.
+    let qualified = try operationalObject(await fixture.app.handle(type: "session_start", payload: operationalData([
+        "session_id": "session_qualified", "cwd": cwd, "hook_event_name": "SessionStart",
+        "codex_runtime": "qualified",
+    ])))
+    #expect(qualified["enabled"] as? Bool == true)
+    let cleared = try operationalObject(await fixture.app.handle(type: "get_state", payload: operationalData([:])))
+    #expect(cleared["codex_runtime_status"] == nil)
+}

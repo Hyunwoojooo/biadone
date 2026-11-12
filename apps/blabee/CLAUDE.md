@@ -75,6 +75,7 @@ Blabee에 해당하는 루트 규칙을 여기 옮긴다. 원문이 우선한다
   다른 세션이 돌리는 중이면 `lockf -t 0`이 즉시 실패한다. 기다렸다가 다시 돌리고, 다른 세션의 프로세스를 죽이지 않는다.
 - `xcode-select`는 CommandLineTools를 가리키므로 Swift 명령에서 `DEVELOPER_DIR`을 생략하지 않는다. npm 스크립트는 이미 지정한다.
 - 빌드·패키징·서명·공증·설치(`build:*`, `notarize:dmg`, `prepare:dogfood`)는 사용자가 요청할 때만 실행한다.
+- 공개 릴리스는 `npm run release -- <단계> --build N`으로만 진행한다(`docs/development/RELEASE.md`). 단계를 건너뛰거나 `notarize:dmg`를 직접 먼저 돌리지 않는다.
 - 보고할 때 기존 실패와 새 회귀, 테스트/빌드/패키징/설치/실사용 결과를 구분한다.
 
 ## 이 저장소에서 `claude`를 실행하면 생기는 일

@@ -224,7 +224,9 @@ struct AppUpdateLaunchedServiceHealth {
     }
     var uptime: () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }
     var sleep: (Duration) async throws -> Void = { try await Task.sleep(for: $0) }
-    var timeout: TimeInterval = 30
+    // Matches the app's own service startup budget; a slower first launch of
+    // the new build must not be recorded as an unresolved update.
+    var timeout: TimeInterval = 120
 
     func requireHealthy(expectedIdentity: String) async throws {
         let deadline = uptime() + timeout
@@ -722,13 +724,27 @@ final class AppUpdateTransactionController: ObservableObject {
     }
 
     /// Startup only reports persisted state. It never retries an interrupted stop, install, or resume.
+    /// It may close a record nobody is working on, from what is actually installed (see
+    /// `installedResolution`); otherwise one interrupted update would disable the updater forever.
     func loadLastResult() {
         guard updatesEnabled else { return }
         guard ![.preparing, .review, .waitingForSafePoint, .waitingForSessionExit, .deferred,
                 .preparingConnectionRecovery, .connectionRestartRequired, .startingHelper].contains(phase) else { return }
         recoverProductMetrics()
         do {
-            guard let journal = try store.latest() else { return }
+            guard var journal = try store.latest() else { return }
+            if !journal.phase.isTerminal || journal.phase == .recoveryRequired,
+               let resolved = installedResolution(for: journal) {
+                journal.phase = resolved
+                journal.detail = resolved == .succeeded
+                    ? PetL10n.text("The update was installed. This Blabee is the new version.", korean: "업데이트가 설치됐습니다. 지금 실행 중인 Blabee가 새 버전입니다.")
+                    : PetL10n.text("The previous update did not finish and the existing app is unchanged. You can try the update again.", korean: "이전 업데이트가 끝나지 않았고 기존 앱은 그대로입니다. 업데이트를 다시 시도할 수 있습니다.")
+                journal.updatedAt = Date()
+                try store.save(journal)
+                lastResult = journal; detail = journal.detail
+                phase = resolved == .succeeded ? .succeeded : .failed
+                return
+            }
             lastResult = journal; detail = journal.detail
             if AppUpdateProgressPolicy.isStalled(journal, now: Date()) {
                 phase = .recoveryRequired
@@ -752,6 +768,40 @@ final class AppUpdateTransactionController: ObservableObject {
                 }
             }
         } catch { phase = .recoveryRequired; detail = AppUpdateTransactionEngine.message(error) }
+    }
+
+    /// A record is closed automatically only when no helper is working on it
+    /// and the installed app proves the outcome: the candidate is running
+    /// (succeeded), or the previous app is running with no paused or uncertain
+    /// conversation left to restore (failed, safe to retry).
+    private func installedResolution(for journal: AppUpdateJournal) -> AppUpdateJournal.Phase? {
+        if helperProcess?.isRunning == true { return nil }
+        if let pid = journal.helperPID, let start = journal.helperStartTime,
+           (try? UpdateManagedCodexProcessIdentity.isAlive(pid: pid, startTime: start)) != false { return nil }
+        guard let current = try? installedVersion() else { return nil }
+        if current.identity == journal.candidateIdentity { return .succeeded }
+        if current.identity == journal.previousIdentity,
+           !journal.sessions.contains(where: { [.pausing, .paused, .restoring, .uncertain].contains($0.step) }) {
+            return .failed
+        }
+        return nil
+    }
+
+    /// For a record that cannot be resolved automatically: after the person has
+    /// checked the preserved apps, close it so the updater can be used again.
+    /// Refused while an update helper is still running.
+    func acknowledgeUnresolvedUpdate() {
+        guard updatesEnabled, phase == .recoveryRequired, helperProcess?.isRunning != true else { return }
+        do {
+            guard var journal = try store.latest() else { phase = .idle; return }
+            if let pid = journal.helperPID, let start = journal.helperStartTime,
+               (try? UpdateManagedCodexProcessIdentity.isAlive(pid: pid, startTime: start)) != false { return }
+            journal.phase = .failed
+            journal.detail = PetL10n.text("Closed after you checked the preserved apps. You can try the update again.", korean: "보존된 앱을 확인한 뒤 기록을 닫았습니다. 업데이트를 다시 시도할 수 있습니다.")
+            journal.updatedAt = Date()
+            try store.save(journal)
+            lastResult = journal; detail = journal.detail; phase = .failed
+        } catch { detail = AppUpdateTransactionEngine.message(error) }
     }
 
     /// This read-only observation never changes installation or restore behavior.

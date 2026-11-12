@@ -28,10 +28,15 @@ async function preflightProbe(configuration) {
   const socketPath = join(bootstrapDirectory, 'bridge.sock'), grantedSocket = join(sessionDirectory, 'bridge.sock');
   const authority = Object.fromEntries(SESSION_V2_AUTHORITY_KEYS.map(key => [key, randomUUID()]));
   const role = configuration.cancellation === 'close' || configuration.failure ? 'bridge' : 'hook';
+  // The auto-connect Hook observes every event at the launch folder (a Bash
+  // `cd` is not a session change), so its native checks re-read that folder.
+  const anchored = role === 'hook' && configuration.kind === 'auto-connect';
+  const observed = anchored ? launch : cwd;
+  const again = anchored ? 1 : 0;
   const environment = {
     ...Object.fromEntries(Object.entries(authority).map(([key, value]) => [P + key.toUpperCase(), value])),
     [P + 'SOCKET']: grantedSocket, [P + 'RUNTIME_IDENTITY']: `sha256:${'1'.repeat(64)}`,
-    [P + 'CWD']: cwd, [P + 'CHANNEL_SOURCE']: 'blabee-claude',
+    [P + 'CWD']: observed, [P + 'CHANNEL_SOURCE']: 'blabee-claude',
     [P + (role === 'hook' ? 'HOOK_TOKEN' : 'BRIDGE_TOKEN')]: 'c'.repeat(64),
   };
   const bootstrapEnvironment = { [B + 'SOCKET']: socketPath, [B + 'CWD']: launch,
@@ -40,11 +45,11 @@ async function preflightProbe(configuration) {
   const stages = {
     context: ['realpath', cwd, 1],
     'launch-realpath': ['realpath', launch, 1], 'launch-lstat': ['lstat', launch, 1],
-    'native-realpath': ['realpath', cwd, 1], 'native-lstat': ['lstat', cwd, 1],
+    'native-realpath': ['realpath', observed, 1 + again], 'native-lstat': ['lstat', observed, 1 + again],
     'socket-realpath': ['realpath', bootstrapDirectory, 1],
     'socket-parent-lstat': ['lstat', bootstrapDirectory, 1], 'socket-lstat': ['lstat', socketPath, 1],
     'exchange-lstat': ['lstat', socketPath, 2],
-    'grant-context': ['realpath', cwd, 2], 'grant-socket-lstat': ['lstat', grantedSocket, 1],
+    'grant-context': ['realpath', observed, 2 + again], 'grant-socket-lstat': ['lstat', grantedSocket, 1],
   };
   const [method, gatedPath, occurrence] = stages[configuration.stage];
   const filesystemCalls = [], requests = [], sockets = new Set(), unhandled = [];

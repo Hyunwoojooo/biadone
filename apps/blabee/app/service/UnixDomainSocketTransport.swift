@@ -924,6 +924,7 @@ final class UnixDomainSocketServer: @unchecked Sendable {
         "pet_provider_v1",
         "pet_directory_v1",
         "pet_inbox_v1",
+        "pet_codex_v1",
         "product_access_v1",
     ]
 
@@ -1231,7 +1232,7 @@ final class UnixDomainSocketServer: @unchecked Sendable {
             requestSecretCorpus.registerKnownSecrets(inJSONObject: payload)
             // A Claude capability is an input only. Do not weaken the existing
             // response guard or let an unauthenticated value poison other calls.
-            if [ClaudeBridgeCoordinator.requestType, "claude_session_v1", "claude_session_v2", "pet_provider_v1", "pet_directory_v1", "pet_inbox_v1", "product_access_v1"].contains(type),
+            if [ClaudeBridgeCoordinator.requestType, "claude_session_v1", "claude_session_v2", "pet_provider_v1", "pet_directory_v1", "pet_inbox_v1", "pet_codex_v1", "product_access_v1"].contains(type),
                let token = payload["auth_token"] as? String {
                 requestSecretCorpus.register(token)
             }

@@ -154,7 +154,10 @@ role capabilities; no historical scope or credentials are restored. The actual i
 is consumed through a typed native initialization method, not rewritten to `startup`.
 
 Subsequent Hook calls use `blabee.claude-session.v3` (the internal source filenames retain `session-v2`). In-process `/resume`, `/clear`,
-source/ID/cwd changes terminate the current Blabee authority; they do not silently rebind it.
+source/ID changes terminate the current Blabee authority; they do not silently rebind it.
+A Bash `cd` inside the session is not a session change (2026-11-12): the auto-connect Hook observes every event
+at the launch folder (`BLABEE_CLAUDE_BOOTSTRAP_CWD`), so the native session id and verified process tree alone
+identify the launch. Cards keep the launch folder as their project.
 The first Hook that sees the retired scope (`claude_bootstrap_session_changed` or `claude_bootstrap_already_started`)
 exits 0 with a user-facing `systemMessage` telling the person to quit the window and restart with `claude --resume`.
 It adds no model context and is shown once; later Hooks in that window stay quiet (`claude_bootstrap_unavailable`).

@@ -232,15 +232,43 @@ private final class ProviderServiceFixture {
         }
     }
 
-    func assertCodex() throws {
-        let result = try client.request(type: "get_state", payload: [:], connectTimeoutMilliseconds: 1_000,
-                                        responseTimeoutMilliseconds: 5_000)
+    /// Codex stays reachable for the Pet while its service is active. A
+    /// stopped Pet service (shutdown) grants no UI authority by UID alone.
+    func assertCodex(petActive: Bool = true) throws {
+        // UI authority is never granted by the socket's user ID alone.
+        #expect(throws: (any Error).self) {
+            _ = try client.request(type: "get_state", payload: [:], connectTimeoutMilliseconds: 1_000,
+                                   responseTimeoutMilliseconds: 5_000)
+        }
+        let envelope: [String: Any] = ["type": "get_state", "payload": [:]]
+        guard petActive else { expectDenied(PetProviderService.codexRequestType, envelope: envelope); return }
+        let result = try request(PetProviderService.codexRequestType, envelope: envelope)
         #expect(result["codex_preserved"] as? Bool == true)
     }
 }
 
 @Suite("Authenticated Pet provider service", .serialized)
 struct PetProviderServiceTests {
+    @Test("Pet-only Codex requests need the Pet credential; Hook requests keep their original path",
+          arguments: ["get_state", "select", "dismiss_interaction", "focus_interaction", "focus_event",
+                      "resolve_permission_request", "resolve_managed_command_approval", "enable_project", "pet_snapshot"])
+    func petOnlyRequestsNeedCredential(type: String) throws {
+        let f = try ProviderServiceFixture(claude: false)
+        #expect(throws: (any Error).self) {
+            _ = try f.client.request(type: type, payload: [:], connectTimeoutMilliseconds: 1_000,
+                                     responseTimeoutMilliseconds: 5_000)
+        }
+        f.expectDenied(PetProviderService.codexRequestType, envelope: ["type": type, "payload": [:]],
+                       credential: String(repeating: "0", count: 64))
+        f.expectDenied(PetProviderService.codexRequestType, envelope: ["type": "session_start", "payload": [:]])
+        #expect(f.codex.requestCount == 0)
+        if type == "get_state" {
+            let result = try f.request(PetProviderService.codexRequestType, envelope: ["type": type, "payload": [:]])
+            #expect(result["codex_preserved"] as? Bool == true)
+            #expect(f.codex.requestCount == 1)
+        }
+    }
+
     @Test("Authenticated Claude dismissal removes only its card and creates no Hook delivery or Codex request")
     func claudeDismissalOverUDS() throws {
         let f = try ProviderServiceFixture(), a = try f.enroll(), b = try f.enroll()
@@ -334,7 +362,7 @@ struct PetProviderServiceTests {
         }
         f.pet.stop()
         f.expectDenied("pet_inbox_v1", envelope: request)
-        try f.assertCodex()
+        try f.assertCodex(petActive: false)
     }
 
     @Test("Real UDS accepts only the app capability and rejects role tokens, substrings and reflection")
@@ -384,7 +412,7 @@ struct PetProviderServiceTests {
         #expect(f.registry?.activeScopeCount == 0)
         f.expectDenied("pet_directory_v1", envelope: try f.listEnvelope())
         f.expectDenied("pet_provider_v1", envelope: f.snapshotEnvelope(target: currentB))
-        try f.assertCodex()
+        try f.assertCodex(petActive: false)
     }
 
     @Test("General UDS provider dispatch cannot gain Hook, owner or an unsupported provider version")
@@ -437,6 +465,6 @@ struct PetProviderServiceTests {
         }
         f.pet.stop()
         f.expectDenied("pet_directory_v1", envelope: try f.listEnvelope())
-        try f.assertCodex()
+        try f.assertCodex(petActive: false)
     }
 }

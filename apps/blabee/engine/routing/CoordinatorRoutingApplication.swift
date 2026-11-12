@@ -8,6 +8,16 @@ public protocol CoordinatorContinuousClock: Sendable {
     func nowNanoseconds() -> UInt64
 }
 
+/// Monotonic time that does NOT advance while the Mac sleeps (`CLOCK_UPTIME_RAW`).
+/// Use it only for leases that must not expire merely because the lid was
+/// closed; no process can act on a lease while the system sleeps. Values are
+/// a different domain from `SystemCoordinatorContinuousClock` and must never
+/// be compared with it directly.
+public struct SystemCoordinatorAwakeClock: CoordinatorContinuousClock {
+    public init() {}
+    public func nowNanoseconds() -> UInt64 { clock_gettime_nsec_np(CLOCK_UPTIME_RAW) }
+}
+
 public struct SystemCoordinatorContinuousClock: CoordinatorContinuousClock {
     private static let timebase: mach_timebase_info_data_t = {
         var value = mach_timebase_info_data_t()

@@ -232,7 +232,35 @@ struct CodexHookApprovalQualificationTests {
 
         #expect(fixture.evaluate() == nil)
         #expect(fixture.processReads[fixture.codexID] == nil)
-        #expect(fixture.signatureRequests.map(\.1) == [.qualifiedCodex])
+        // The broker is neither a registered nor a signed Codex: unknown.
+        #expect(fixture.signatureRequests.map(\.1) == [.qualifiedCodex, .signedCodex])
+    }
+
+    @Test("an OpenAI-signed Codex with an unregistered CDHash is reported unsupported, never approved")
+    func unregisteredSignedCodexIsUnqualified() {
+        let fixture = HookQualificationFixture(shells: ["/bin/sh"])
+        fixture.signatures[fixture.codexID] = .init(
+            identifier: "codex", teamIdentifier: Gate.codexTeamIdentifier,
+            cdHash: String(repeating: "e", count: 40), requirementSatisfied: true
+        )
+        #expect(fixture.caller() == .unqualified)
+        #expect(fixture.evaluate() == nil)
+        #expect(!HookPermissionPolicy.allowsOnce(qualification: fixture.evaluate()))
+    }
+
+    @Test("a different signer or a registered runtime is never reported as unsupported")
+    func callerOutcomes() {
+        let registered = HookQualificationFixture(shells: [])
+        #expect(registered.caller() == .qualified(HookPermissionPolicy.qualifiedRuntime))
+        let other = HookQualificationFixture(shells: [])
+        other.signatures[other.codexID] = .init(
+            identifier: "codex", teamIdentifier: "ABCDE12345",
+            cdHash: String(repeating: "e", count: 40), requirementSatisfied: true
+        )
+        #expect(other.caller() == .unknown)
+        let wrapped = HookQualificationFixture()
+        wrapped.replaceProcess(90, path: "/usr/local/bin/process-broker")
+        #expect(wrapped.caller() == .unknown)
     }
 
     @Test("all processes must have the current effective UID")
@@ -406,6 +434,14 @@ private final class HookQualificationFixture {
         guard let process = processes[pid] else { return }
         processes[pid] = replacing(
             process, parentID: parentID, userID: userID, start: start, path: path
+        )
+    }
+
+    func caller() -> HookGate.CallerCodex {
+        HookGate.caller(
+            processID: 100, effectiveUserID: 501,
+            processEvidence: { self.processes[$0] },
+            signatureEvidence: { pid, _ in self.signatures[pid] }
         )
     }
 

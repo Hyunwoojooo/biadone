@@ -165,3 +165,82 @@ for (const hookEvent of ['UserPromptSubmit', 'Stop']) {
       runProbe(t, { stage: 'socket', action, late, hookEvent }));
   }
 }
+
+// A refused connection writes nothing, so it must fail only that request and
+// leave the client usable; a write that may have reached the service still
+// poisons the client (no resubmission of an unknown outcome).
+async function refusedProbe(configuration) {
+  const assert = (await import('node:assert/strict')).default;
+  const fs = (await import('node:fs')).default;
+  const net = (await import('node:net')).default;
+  const { EventEmitter } = await import('node:events');
+  const { syncBuiltinESMExports } = await import('node:module');
+  const { randomUUID } = await import('node:crypto');
+  const { createSessionV2Client, SESSION_V2_AUTHORITY_KEYS } = await import(configuration.clientURL);
+  const original = { lstat: fs.promises.lstat, connect: net.createConnection };
+  const root = await fs.promises.realpath(await fs.promises.mkdtemp('/private/tmp/blabee-refused-'));
+  const socketPath = `${root}/service.sock`;
+  const authority = Object.fromEntries(SESSION_V2_AUTHORITY_KEYS.map(key => [key, randomUUID()]));
+  let connections = 0, frames = 0;
+  fs.promises.lstat = path => path === socketPath
+    ? Promise.resolve({ uid: process.getuid(), mode: 0o600, isSocket: () => true, isSymbolicLink: () => false })
+    : original.lstat(path);
+  net.createConnection = () => {
+    const index = ++connections;
+    const socket = new EventEmitter();
+    let destroyed = false;
+    socket.destroy = () => { if (!destroyed) { destroyed = true; queueMicrotask(() => socket.emit('close')); } };
+    socket.write = (frame, callback) => {
+      frames++;
+      callback?.();
+      const request = JSON.parse(frame);
+      if (configuration.phase === 'after-write' && index === 1) {
+        queueMicrotask(() => { socket.emit('error', new Error('reset')); socket.destroy(); });
+        return;
+      }
+      const { payload: ignored, ...envelope } = request.payload.envelope;
+      queueMicrotask(() => {
+        socket.emit('data', Buffer.from(JSON.stringify({ request_id: request.request_id, runtime_identity: request.runtime_identity,
+          ok: true, result: { ...envelope, kind: 'response', ok: true, result: { bridge_id: randomUUID() } } }) + '\n'));
+        socket.emit('end');
+      });
+    };
+    queueMicrotask(() => {
+      if (configuration.phase === 'before-write' && index === 1) { socket.emit('error', new Error('ECONNREFUSED')); socket.destroy(); }
+      else socket.emit('connect');
+    });
+    return socket;
+  };
+  syncBuiltinESMExports();
+  try {
+    const client = await createSessionV2Client({ socketPath, authority, runtimeIdentity: `sha256:${'1'.repeat(64)}`,
+      role: 'bridge', authToken: 'a'.repeat(64), channelSource: 'blabee-claude', timeoutMs: 1000 });
+    const first = await client.request({ operation: 'bridge.open' }).then(() => null, error => error);
+    if (configuration.phase === 'before-write') {
+      assert.equal(first.code, 'session_v2_unavailable'); assert.equal(first.notSubmitted, true); assert.equal(frames, 0);
+      assert.match((await client.request({ operation: 'bridge.open' })).bridge_id, /^[0-9a-f-]{36}$/);
+      assert.equal(connections, 2);
+    } else {
+      assert.equal(first.code, 'session_v2_response_unknown'); assert.notEqual(first.notSubmitted, true);
+      await assert.rejects(client.request({ operation: 'bridge.open' }), { code: 'session_v2_response_unknown' });
+      assert.equal(connections, 1);
+    }
+    await client.close();
+  } finally {
+    fs.promises.lstat = original.lstat; net.createConnection = original.connect; syncBuiltinESMExports();
+    await fs.promises.rm(root, { recursive: true, force: true });
+  }
+}
+
+for (const phase of ['before-write', 'after-write']) {
+  test(`connection failure ${phase}: ${phase === 'before-write' ? 'fails only that request' : 'stays terminal for the client'}`, async t => {
+    const clientURL = new URL('../../../bridges/claude/src/session-v2-client.mjs', import.meta.url).href;
+    const child = spawn(process.execPath, ['--input-type=module', '--eval',
+      `await (${refusedProbe.toString()})(${JSON.stringify({ clientURL, phase })});`], { stdio: ['ignore', 'pipe', 'pipe'] });
+    let output = '';
+    child.stdout.on('data', value => { output += value; }); child.stderr.on('data', value => { output += value; });
+    t.after(() => { if (child.exitCode === null) child.kill('SIGKILL'); });
+    const code = await new Promise(resolve => child.once('close', resolve));
+    assert.equal(code, 0, output);
+  });
+}

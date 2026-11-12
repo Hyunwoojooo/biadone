@@ -15,6 +15,8 @@
 
 일반 UDS에는 `pet_provider_v1`과 `pet_directory_v1` 두 type을 추가했다. 요청 wrapper는 `auth_token`과 `envelope`로 닫혀 있으며 capability는 입력 wrapper에만 사용한다. `PetProviderService`가 먼저 인증한 뒤 해당 계약을 검사한다. registry의 Claude scope별 selector capability는 서비스 내부에 남는다. Hook·MCP·모델은 앱 selector를 획득하지 않는다. 응답에는 known-secret 검사를 적용하고 입력 토큰의 request-local 검사를 유지한다.
 
+2026-11-12부터 서비스가 앱 자격을 가진 동안에는 Pet 전용 Codex 요청(`get_state`, `pet_snapshot`, `enable_project`, `select`, `dismiss_interaction`, `focus_interaction`, `focus_event`, `resolve_permission_request`, `resolve_managed_command_approval`)을 자격 없이 받으면 `pet_provider_unauthorized`로 거부한다. 같은 UID의 다른 프로세스가 사용자보다 먼저 승인하거나 카드를 고르는 것을 막기 위해서다. Pet은 이 요청들을 원래 형태 그대로 `pet_codex_v1` wrapper(`auth_token`, `envelope: {type, payload}`)에 담아 보낸다. legacy fallback의 `get_state`도 같다. 응답 시간 제한은 안쪽 요청 종류를 따른다. Hook·MCP가 쓰는 요청과 자격 없는 daemon 모드는 바뀌지 않는다.
+
 기존 [pet-provider.v1](../../../../Contracts/bridge/pet-provider.v1.json)은 유지한다. 별도 [pet-directory.v1](../../../../Contracts/bridge/pet-directory.v1.json)을 추가해 목록과 연결 해제를 표현한다. `Contracts/v1`과 core 저장 schema는 변경하지 않는다.
 
 | Directory operation | 요청 payload | 성공 result |

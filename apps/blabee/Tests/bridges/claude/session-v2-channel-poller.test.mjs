@@ -130,3 +130,32 @@ test('stop before a queued poll creates no new exchange and configuration remain
   configuration.authority.scope_id = randomUUID();
   assert.equal(accept(cursor, original, null), null);
 });
+
+test('a heartbeat that never left the process is retried within a bounded window, then ends the bridge', async () => {
+  const configuration = config();
+  let clock = 0, requests = 0, failUnsent = 3, errors = [];
+  const unsent = () => Object.assign(new Error('session_v2_unavailable'), { code: 'session_v2_unavailable', notSubmitted: true });
+  const poller = createSessionV2ChannelPoller({ ...configuration, now: () => clock, unsentToleranceMs: 10_000,
+    onError: code => errors.push(code),
+    exchange: async request => {
+      requests++;
+      if (failUnsent > 0) { failUnsent--; throw unsent(); }
+      return response(configuration, request.request_id, null);
+    } });
+  for (let index = 0; index < 4; index++) { clock += 2_000; await poller.pollOnce(); }
+  assert.deepEqual(errors, []);
+  assert.equal(poller.snapshot().stopped, false);
+  assert.equal(requests, 4);
+
+  // A long outage of unsent heartbeats is still terminal after the window.
+  failUnsent = Infinity;
+  for (let index = 0; index < 6 && !poller.snapshot().stopped; index++) { clock += 2_000; await poller.pollOnce(); }
+  assert.deepEqual(errors, ['session_v2_channel_transport_unknown']);
+
+  // A submitted failure stays terminal at once.
+  const sent = createSessionV2ChannelPoller({ ...configuration, onError: code => errors.push(code),
+    exchange: async () => { throw Object.assign(new Error('session_v2_response_unknown'), { code: 'session_v2_response_unknown' }); } });
+  await sent.pollOnce();
+  assert.equal(sent.snapshot().errorCode, 'session_v2_channel_transport_unknown');
+  await poller.stop(); await sent.stop();
+});

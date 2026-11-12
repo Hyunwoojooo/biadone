@@ -150,6 +150,18 @@ private actor ProviderTransportPeer: PetCoordinatorTransport {
     }
 
     func request(type: String, payload: Data) async throws -> Data {
+        if type == PetProviderService.codexRequestType {
+            // Same checks as the service: exact wrapper and the Pet credential.
+            let wrapper = try StrictJSONTransport.object(from: payload)
+            guard Set(wrapper.keys) == ["auth_token", "envelope"],
+                  wrapper["auth_token"] as? String == expectedCredential,
+                  let envelope = wrapper["envelope"] as? [String: Any], Set(envelope.keys) == ["type", "payload"],
+                  let inner = envelope["type"] as? String, PetProviderService.petOnlyRequestTypes.contains(inner),
+                  let body = envelope["payload"] as? [String: Any] else {
+                throw PetTestError.injected("private_auth_envelope")
+            }
+            return try await request(type: inner, payload: StrictJSONTransport.data(forJSONObject: body))
+        }
         if !["pet_provider_v1", "pet_directory_v1", "pet_inbox_v1"].contains(type) {
             calls.append(Call(type: type, operation: nil, provider: nil, scope: nil, data: payload,
                 admittedAtNanoseconds: clock?.current()))

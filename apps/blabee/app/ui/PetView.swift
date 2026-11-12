@@ -172,6 +172,14 @@ struct PetRootView: View {
                     .truncationMode(.tail)
                     .help(diagnostic)
             }
+            if let message = viewModel.availableUpdateMessage {
+                HStack(spacing: 6) {
+                    Text(message).lineLimit(1).truncationMode(.tail).help(message)
+                    Button(PetL10n.text("Update", korean: "업데이트")) { viewModel.showAppUpdateSettings() }
+                        .buttonStyle(.link)
+                        .accessibilityIdentifier("panel-update-available")
+                }
+            }
             if let diagnostic = viewModel.providerDiagnostic, diagnostic != viewModel.lastError {
                 Text(diagnostic)
                     .foregroundStyle(.orange)
@@ -195,7 +203,12 @@ struct PetRootView: View {
                 .lineLimit(3)
                 .help(notice.detail)
             HStack(spacing: 8) {
-                if notice.requiresCodexRecheck && !notice.nativeRecheckSucceeded {
+                if notice.codexVersionUnsupported {
+                    Button(PetL10n.text("Check for Updates", korean: "업데이트 확인")) {
+                        Task { await viewModel.checkForAppUpdates() }
+                    }
+                    .disabled(viewModel.isCheckingForAppUpdate)
+                } else if notice.requiresCodexRecheck && !notice.nativeRecheckSucceeded {
                     Button(viewModel.isCodexPluginOperationInFlight ? PetL10n.text("Checking…", korean: "검사 중…") : PetL10n.text("Check Codex Again", korean: "Codex 다시 검사")) {
                         Task { await viewModel.recheckSelectionDeliveryCodex(noticeID: notice.id) }
                     }

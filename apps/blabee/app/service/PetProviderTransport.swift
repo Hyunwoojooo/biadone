@@ -79,8 +79,17 @@ actor PetProviderTransport: PetProviderControlling {
                 return try StrictJSONTransport.data(forJSONObject: value)
             }
             // Codex retains its original focus, native approval and event APIs.
-            // A nil-context legacy path exists only before an owned bootstrap.
-            let result = try await codex.request(type: type, payload: payload)
+            // With an owned bootstrap they travel inside the credential wrapper;
+            // the service refuses them otherwise. A nil-access legacy path
+            // exists only before an owned bootstrap.
+            let result: Data
+            if let owned, PetProviderService.petOnlyRequestTypes.contains(type) {
+                try requireAccess(owned)
+                result = try await rpc(PetProviderService.codexRequestType,
+                    ["type": type, "payload": try StrictJSONTransport.object(from: payload)], access: owned)
+            } else {
+                result = try await codex.request(type: type, payload: payload)
+            }
             guard await access() == owned else { throw failure("service_replaced") }
             try requireCurrent(expectedContext, generation: generation)
             return result
@@ -377,7 +386,15 @@ actor PetProviderTransport: PetProviderControlling {
                 displayedContext = nil
                 useLegacyFallback = true
                 diagnostic = diagnostic ?? scopeDiagnostics[selectedID]
-                let data = try await codex.request(type: "get_state", payload: payload)
+                // The fallback still proves the Pet credential when it has one;
+                // the service refuses a bare get_state while it holds a credential.
+                let data: Data
+                if let owned {
+                    data = try await rpc(PetProviderService.codexRequestType,
+                        ["type": "get_state", "payload": try StrictJSONTransport.object(from: payload)], access: owned)
+                } else {
+                    data = try await codex.request(type: "get_state", payload: payload)
+                }
                 displayed = try await codex.decodeSnapshot(data)
             }
         } else if let selected {

@@ -53,12 +53,18 @@ export function createSessionV2ChannelCursor({ authority, bridgeID, channelSourc
  * No legacy environment, client, launcher, SDK channel or tool is auto-selected.
  */
 export function createSessionV2ChannelPoller({ authority, bridgeID, channelSource, exchange,
-  onError = () => {}, intervalMs = 500 } = {}) {
+  onError = () => {}, intervalMs = 500, unsentToleranceMs = 30_000, now = () => performance.now() } = {}) {
   const cursor = createSessionV2ChannelCursor({ authority, bridgeID, channelSource });
-  if (typeof exchange !== 'function' || typeof onError !== 'function'
-      || !Number.isInteger(intervalMs) || intervalMs < 20 || intervalMs > 1000) {
+  if (typeof exchange !== 'function' || typeof onError !== 'function' || typeof now !== 'function'
+      || !Number.isInteger(intervalMs) || intervalMs < 20 || intervalMs > 1000
+      || !Number.isInteger(unsentToleranceMs) || unsentToleranceMs < 0 || unsentToleranceMs > 120_000) {
     throw new SessionV2ChannelError('session_v2_channel_invalid_configuration');
   }
+  // A heartbeat that never left this process (service briefly busy, socket
+  // not accepting, slow filesystem check) proves nothing was consumed. Keep
+  // polling for a bounded time instead of ending the bridge. The service
+  // still accepts the next poll and only retires the observation it lost.
+  let lastHealthy = now();
   const identity = Object.freeze({ ...authority });
   let stopped = false;
   let started = false;
@@ -76,9 +82,13 @@ export function createSessionV2ChannelPoller({ authority, bridgeID, channelSourc
         response = await exchange({ schema_version: SESSION_V2_WIRE_VERSION, kind: 'request', provider: 'claude',
           request_id: requestID, role: 'bridge', operation: 'bridge.poll', authority: identity,
           payload: { bridge_id: bridgeID } });
-      } catch { throw new SessionV2ChannelError('session_v2_channel_transport_unknown'); }
+      } catch (error) {
+        if (error?.notSubmitted === true && now() - lastHealthy < unsentToleranceMs) return;
+        throw new SessionV2ChannelError('session_v2_channel_transport_unknown');
+      }
       if (stopped) return;
       cursor.accept(response, { requestID, bridgeID });
+      lastHealthy = now();
     }).catch(error => {
       if (!stopped) {
         stopped = true;

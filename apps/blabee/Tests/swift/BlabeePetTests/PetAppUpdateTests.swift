@@ -186,6 +186,15 @@ struct PetAppUpdateTests {
         #expect(state.detail.contains("버전 표기"))
     }
 
+    @Test("A malformed tag does not hide a valid newer release")
+    func malformedTagDoesNotHideNewerRelease() async throws {
+        let transport = PetAppUpdateFixtureTransport([
+            .init(data: try releaseData([release("blabee-v0.1.0+build.40"), release("blabee-v0.1.0+build.030")])),
+        ])
+        let state = await (try checker(transport: transport)).checkForUpdates()
+        #expect(state.availableRelease?.version.build == "40")
+    }
+
     @Test("HTTP failures never claim latest", arguments: [301, 302, 403, 404, 429, 500])
     func reportsHTTPFailures(_ status: Int) async throws {
         let transport = PetAppUpdateFixtureTransport([.init(statusCode: status, data: Data())])

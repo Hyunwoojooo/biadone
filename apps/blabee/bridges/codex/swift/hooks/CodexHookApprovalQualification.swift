@@ -43,6 +43,10 @@ enum CodexHookApprovalQualification {
 
     enum CodeRequirement: Equatable, Sendable {
         case qualifiedCodex
+        /// Any OpenAI-signed `codex`, regardless of CDHash. Used only to tell a
+        /// newer, unregistered Codex apart from an unreadable lineage. It never
+        /// grants approval authority.
+        case signedCodex
         case systemShell(identifier: String)
 
         var expression: String {
@@ -54,6 +58,9 @@ enum CodexHookApprovalQualification {
                 return "identifier \"codex\" and anchor apple generic "
                     + "and certificate leaf[subject.OU] = \"\(codexTeamIdentifier)\" "
                     + "and (\(hashes))"
+            case .signedCodex:
+                return "identifier \"codex\" and anchor apple generic "
+                    + "and certificate leaf[subject.OU] = \"\(codexTeamIdentifier)\""
             case .systemShell(let identifier):
                 return "identifier \"\(identifier)\" and anchor apple"
             }
@@ -66,6 +73,9 @@ enum CodexHookApprovalQualification {
                 return evidence.identifier == "codex"
                     && evidence.teamIdentifier == codexTeamIdentifier
                     && HookPermissionPolicy.qualification(forCDHash: evidence.cdHash) != nil
+            case .signedCodex:
+                return evidence.identifier == "codex"
+                    && evidence.teamIdentifier == codexTeamIdentifier && !evidence.cdHash.isEmpty
             case .systemShell(let identifier):
                 return evidence.identifier == identifier && !evidence.cdHash.isEmpty
             }
@@ -81,6 +91,21 @@ enum CodexHookApprovalQualification {
         )
     }
 
+    /// What the live Hook caller proves about Codex support. `unqualified`
+    /// means an OpenAI-signed Codex whose exact CDHash is not registered (a
+    /// newer or unreviewed release). `unknown` covers every lineage Blabee
+    /// cannot read (wrappers, recycled processes); it must not disable Blabee.
+    enum CallerCodex: Equatable, Sendable {
+        case qualified(String)
+        case unqualified
+        case unknown
+    }
+
+    static func currentCaller() -> CallerCodex {
+        caller(processID: getpid(), effectiveUserID: geteuid(),
+               processEvidence: runningProcessEvidence, signatureEvidence: runningSignatureEvidence)
+    }
+
     /// Both readers are bounded local observations. There is deliberately no
     /// environment override, executable discovery, version subprocess or cache.
     static func qualification(
@@ -89,14 +114,27 @@ enum CodexHookApprovalQualification {
         processEvidence: (Int32) -> ProcessEvidence?,
         signatureEvidence: (Int32, CodeRequirement) -> SignatureEvidence?
     ) -> String? {
+        guard case .qualified(let runtime) = caller(processID: processID, effectiveUserID: effectiveUserID,
+                                                    processEvidence: processEvidence,
+                                                    signatureEvidence: signatureEvidence) else { return nil }
+        return runtime
+    }
+
+    static func caller(
+        processID: Int32,
+        effectiveUserID: UInt32,
+        processEvidence: (Int32) -> ProcessEvidence?,
+        signatureEvidence: (Int32, CodeRequirement) -> SignatureEvidence?
+    ) -> CallerCodex {
         guard let current = processEvidence(processID),
               current.isValid(processID: processID, effectiveUserID: effectiveUserID)
-        else { return nil }
+        else { return .unknown }
 
         var chain = [current]
         var signatures: [(CodeRequirement, SignatureEvidence)] = []
         var visited: Set<Int32> = [processID]
         var qualifiedRuntime: String?
+        var signedCodexSeen = false
 
         for _ in 0..<maximumAncestorCount {
             let child = chain[chain.count - 1]
@@ -105,26 +143,34 @@ enum CodexHookApprovalQualification {
                   let parent = processEvidence(parentID),
                   parent.isValid(processID: parentID, effectiveUserID: effectiveUserID),
                   parent.existedBefore(child)
-            else { return nil }
+            else { return .unknown }
 
-            let requirement: CodeRequirement
+            var requirement: CodeRequirement
             switch parent.executablePath {
             case "/bin/sh": requirement = .systemShell(identifier: "com.apple.sh")
             case "/bin/zsh": requirement = .systemShell(identifier: "com.apple.zsh")
             case "/bin/bash": requirement = .systemShell(identifier: "com.apple.bash")
             default: requirement = .qualifiedCodex
             }
-            guard let signature = signatureEvidence(parentID, requirement),
-                  requirement.accepts(signature)
-            else { return nil }
+            var evidence = signatureEvidence(parentID, requirement)
+            if requirement == .qualifiedCodex, !(evidence.map(requirement.accepts) ?? false) {
+                // Not a registered runtime. Check only whether it is still an
+                // OpenAI-signed codex, to report "unsupported version".
+                requirement = .signedCodex
+                evidence = signatureEvidence(parentID, requirement)
+            }
+            guard let signature = evidence, requirement.accepts(signature)
+            else { return .unknown }
             chain.append(parent)
             signatures.append((requirement, signature))
-            if requirement == .qualifiedCodex {
-                qualifiedRuntime = HookPermissionPolicy.qualification(forCDHash: signature.cdHash)
+            if requirement == .qualifiedCodex || requirement == .signedCodex {
+                signedCodexSeen = true
+                qualifiedRuntime = requirement == .qualifiedCodex
+                    ? HookPermissionPolicy.qualification(forCDHash: signature.cdHash) : nil
                 break
             }
         }
-        guard let qualifiedRuntime else { return nil }
+        guard signedCodexSeen else { return .unknown }
 
         // Fail closed on missing/reparented/recycled processes or exec changes
         // during qualification. Re-check the dynamic signature as well as the
@@ -134,12 +180,12 @@ enum CodexHookApprovalQualification {
             let (requirement, signature) = signatures[index - 1]
             guard processEvidence(process.processID) == process,
                   signatureEvidence(process.processID, requirement) == signature
-            else { return nil }
+            else { return .unknown }
         }
         guard chain.allSatisfy({ processEvidence($0.processID) == $0 }) else {
-            return nil
+            return .unknown
         }
-        return qualifiedRuntime
+        return qualifiedRuntime.map(CallerCodex.qualified) ?? .unqualified
     }
 
     private static func runningProcessEvidence(_ processID: Int32) -> ProcessEvidence? {

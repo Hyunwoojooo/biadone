@@ -98,6 +98,12 @@ struct PetSelectionDeliveryNotice: Sendable, Equatable, Identifiable {
         provider == .codex && deliveryState == .notSubmitted && code == "queued_prompt_preview_invalid"
     }
 
+    /// Rechecking cannot fix an unsupported Codex version; only a Blabee
+    /// update that registers it can. Do not send the person in a loop.
+    var codexVersionUnsupported: Bool {
+        provider == .codex && code == "codex_native_version_unqualified"
+    }
+
     var title: String {
         if previewTooLarge { return PetL10n.text("Card content is too long", korean: "카드 내용이 너무 길어요") }
         if nativeRecheckSucceeded { return PetL10n.text("Codex check complete", korean: "Codex 검사를 마쳤어요") }
@@ -108,6 +114,9 @@ struct PetSelectionDeliveryNotice: Sendable, Equatable, Identifiable {
     var detail: String {
         if previewTooLarge {
             return PetL10n.text("Ask Codex for a shorter card, then choose the task again. The selected task was not sent.", korean: "Codex에 내용을 줄인 새 카드를 요청한 뒤 다시 선택해 주세요. 선택한 작업은 전달되지 않았어요.")
+        }
+        if codexVersionUnsupported {
+            return PetL10n.text("This Codex version is not supported by this Blabee yet, so the task was not sent. Check for a Blabee update.", korean: "이 Codex 버전은 아직 이 Blabee에서 지원되지 않아 작업을 보내지 않았어요. Blabee 업데이트를 확인해 주세요.")
         }
         if nativeRecheckSucceeded {
             return deliveryState == .notSubmitted
@@ -490,6 +499,9 @@ final class PetViewModel: ObservableObject {
     private let suggestionModeStore: any BlabeeSuggestionModeStoring
     private let projectFolderChooser: any PetProjectFolderChoosing
     private let appUpdateChecker: any PetAppUpdateChecking
+    private let automaticUpdateDefaults: UserDefaults
+    private let automaticUpdateNow: @MainActor () -> Date
+    private var automaticUpdateTask: Task<Void, Never>?
     private let appUpdateURLOpener: @MainActor (URL) -> Bool
     private let selectionIDGenerator: @Sendable () -> String
     private let permissionResponseIDGenerator: @Sendable () -> String
@@ -562,6 +574,8 @@ final class PetViewModel: ObservableObject {
             currentVersion: nil, repository: nil
         ),
         appUpdateURLOpener: @escaping @MainActor (URL) -> Bool = { NSWorkspace.shared.open($0) },
+        automaticUpdateDefaults: UserDefaults = .standard,
+        automaticUpdateNow: @escaping @MainActor () -> Date = { Date() },
         automaticAppUpdate: AppUpdateTransactionController? = nil,
         account: PetAccountController? = nil,
         productAccess: PetAccessController? = nil,
@@ -589,6 +603,8 @@ final class PetViewModel: ObservableObject {
         self.claudeConnection = claudeConnection ?? PetClaudeConnectionController()
         self.connectionSetupStore = connectionSetupStore ?? PetConnectionSetupMemorySelectionStore()
         self.connectionSetupPollLimit = max(1, connectionSetupPollLimit)
+        self.automaticUpdateDefaults = automaticUpdateDefaults
+        self.automaticUpdateNow = automaticUpdateNow
         self.connectionSetupPollIntervalNanoseconds = connectionSetupPollIntervalNanoseconds
         self.externalApplicationOpener = externalApplicationOpener
         self.onboardingAdapter = onboardingAdapter
@@ -803,7 +819,7 @@ final class PetViewModel: ObservableObject {
 
     var hasVisibleStatusMessage: Bool {
         selectionDeliveryNotice != nil || lastError != nil
-            || visibleShortcutDiagnostic != nil || providerDiagnostic != nil
+            || visibleShortcutDiagnostic != nil || providerDiagnostic != nil || availableUpdateMessage != nil
     }
 
     var hasPersistentApprovalResolutionError: Bool {
@@ -980,7 +996,14 @@ final class PetViewModel: ObservableObject {
         supportsProviderSessions && provider == .claude && selectedProviderContext != nil
             && !isSwitchingProvider && !isProviderConnectionOperationInFlight && !isShuttingDown
     }
-    var providerDiagnostic: String? { snapshot?.providerDiagnostic }
+    var providerDiagnostic: String? {
+        if let diagnostic = snapshot?.providerDiagnostic { return diagnostic }
+        if snapshot?.codexRuntimeUnqualified == true { return Self.codexRuntimeUnsupportedMessage }
+        return nil
+    }
+    static var codexRuntimeUnsupportedMessage: String {
+        PetL10n.text("This Codex version is not supported yet, so Blabee stays off in its sessions. Check for a Blabee update.", korean: "이 Codex 버전은 아직 지원되지 않아 해당 세션에서는 Blabee가 꺼져 있어요. Blabee 업데이트를 확인해 주세요.")
+    }
     var providerPendingResultDescription: String? {
         guard supportsProviderSessions, provider == .claude, providerHasPendingResult else { return nil }
         if selectedProviderSession?.state == "disconnected" {
@@ -2231,6 +2254,79 @@ final class PetViewModel: ObservableObject {
 
     var isCheckingForAppUpdate: Bool { appUpdateState.isChecking }
 
+    // MARK: Automatic update checks
+    // Only the check is automatic. Download and installation still need the
+    // person to confirm, exactly as with the manual button.
+    static let automaticUpdateCheckDefaultsKey = "com.biadone.blabee.update.automatic-check.v1"
+    static let lastAutomaticUpdateCheckDefaultsKey = "com.biadone.blabee.update.last-automatic-check.v1"
+    static let automaticUpdateCheckInterval: TimeInterval = 24 * 60 * 60
+
+    var automaticUpdateChecksEnabled: Bool {
+        get { automaticUpdateDefaults.object(forKey: Self.automaticUpdateCheckDefaultsKey) as? Bool ?? true }
+        set {
+            automaticUpdateDefaults.set(newValue, forKey: Self.automaticUpdateCheckDefaultsKey)
+            objectWillChange.send()
+            if newValue { Task { await runAutomaticUpdateCheckIfDue() } }
+        }
+    }
+
+    /// Starts the background schedule: 30 s after launch, then whenever the
+    /// last automatic check is older than a day. The hourly wake-up only reads
+    /// a timestamp; it also covers time spent asleep.
+    func startAutomaticUpdateChecks(initialDelay: Duration = .seconds(30), recheckEvery: Duration = .seconds(3_600)) {
+        #if BLABEE_TEST_APP
+        return
+        #else
+        guard automaticUpdateTask == nil else { return }
+        automaticUpdateTask = Task { [weak self] in
+            try? await Task.sleep(for: initialDelay)
+            while !Task.isCancelled {
+                await self?.runAutomaticUpdateCheckIfDue()
+                try? await Task.sleep(for: recheckEvery)
+            }
+        }
+        #endif
+    }
+
+    func stopAutomaticUpdateChecks() {
+        automaticUpdateTask?.cancel()
+        automaticUpdateTask = nil
+    }
+
+    /// A quiet check: success updates the shared state; a failure keeps the
+    /// previous state so a network blip never shows an error nobody asked for.
+    func runAutomaticUpdateCheckIfDue(force: Bool = false) async {
+        guard automaticUpdateChecksEnabled, !isShuttingDown, !isCheckingForAppUpdate else { return }
+        let now = automaticUpdateNow()
+        if !force, let last = automaticUpdateDefaults.object(forKey: Self.lastAutomaticUpdateCheckDefaultsKey) as? Date,
+           now.timeIntervalSince(last) >= 0, now.timeIntervalSince(last) < Self.automaticUpdateCheckInterval { return }
+        automaticUpdateDefaults.set(now, forKey: Self.lastAutomaticUpdateCheckDefaultsKey)
+        let previous = appUpdateState
+        let productContext = usageAnalytics?.captureContext()
+        let result = await appUpdateChecker.checkForUpdates()
+        guard !Task.isCancelled, !isShuttingDown, !isCheckingForAppUpdate else { return }
+        switch result {
+        case .available(let release):
+            if previous.availableRelease != release, let productContext {
+                usageAnalytics?.observeUpdateAvailable(
+                    version: release.version.version, build: release.version.build, context: productContext)
+            }
+            appUpdateState = result
+        case .upToDate, .noPublishedRelease:
+            appUpdateState = result
+        case .unavailable, .notChecked, .checking:
+            break
+        }
+    }
+
+    /// Shown in the panel's status area once an automatic or manual check found
+    /// a newer build.
+    var availableUpdateMessage: String? {
+        guard let release = appUpdateState.availableRelease else { return nil }
+        return PetL10n.text("Blabee \(release.version.displayLabel) is available.",
+                            korean: "새 Blabee \(release.version.displayLabel)을 설치할 수 있어요.")
+    }
+
     func showAppUpdateWindow(_ release: PetAppUpdateRelease?) {
         onAppUpdateRequested?(release)
     }
@@ -2950,6 +3046,7 @@ final class PetViewModel: ObservableObject {
     func stopPolling() {
         pollingTask?.cancel()
         pollingTask = nil
+        stopAutomaticUpdateChecks()
         endChoicePreview()
         choicePreviewHoldMonitor.stop()
         hotKeyRegistry?.reconcilePreviews(eligibleSlots: [])
@@ -3894,6 +3991,11 @@ final class PetViewModel: ObservableObject {
             && priorHead?.reminderDue == true
             ? priorHead?.identity
             : nil
+        // An unsupported Codex can only be fixed by a Blabee update: check now
+        // instead of waiting for the daily schedule.
+        if newSnapshot.codexRuntimeUnqualified, snapshot?.codexRuntimeUnqualified != true {
+            Task { [weak self] in await self?.runAutomaticUpdateCheckIfDue(force: true) }
+        }
         if snapshot != newSnapshot { snapshot = newSnapshot }
         if selectionDeliveryNoticeAwaitingSnapshotRecovery {
             if restoresSelectionDeliveryNotice {

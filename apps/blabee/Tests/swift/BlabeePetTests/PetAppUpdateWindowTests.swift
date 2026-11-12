@@ -122,6 +122,43 @@ struct PetAppUpdateWindowTests {
         f.window.close()
     }
 
+    @Test("An abandoned update record is closed from the installed app, or by the person, and updates work again",
+          arguments: ["previous-installed", "candidate-installed", "unprovable"])
+    func abandonedRecordResolution(_ case_: String) throws {
+        // The fixture's candidate build is "b". "a" is the previous build;
+        // "d" is some other build that proves nothing.
+        let installed = "sha256:" + String(repeating: case_ == "previous-installed" ? "a"
+            : case_ == "candidate-installed" ? "b" : "d", count: 64)
+        let f = try UpdateWindowFixture(installedIdentity: installed)
+        defer { try? FileManager.default.removeItem(at: f.rootURL) }
+        let jobID = UUID().uuidString.lowercased()
+        let journal = AppUpdateJournal(schema: 3, jobID: jobID, nonce: UUID().uuidString.lowercased(),
+            parentPID: 1, parentStartTime: 1, createdAt: .now,
+            previousIdentity: "sha256:" + String(repeating: "a", count: 64),
+            candidateIdentity: f.prepared.runtimeIdentity,
+            download: try .init(f.prepared),
+            helperApplicationURL: f.rootURL.appendingPathComponent("helper-runtime-\(jobID)/Blabee.app"),
+            phase: .installing, sessions: [], detail: "Interrupted", updatedAt: .now)
+        try f.store.save(journal)
+        f.controller.loadLastResult()
+        switch case_ {
+        case "previous-installed":
+            #expect(f.controller.phase == .failed)
+            #expect(try f.store.latest()?.phase == .failed)
+        case "candidate-installed":
+            #expect(f.controller.phase == .succeeded)
+            #expect(try f.store.latest()?.phase == .succeeded)
+        default:
+            #expect(f.controller.phase == .recoveryRequired)
+            #expect(!f.controller.canPrepare)
+            f.controller.acknowledgeUnresolvedUpdate()
+            #expect(f.controller.phase == .failed)
+            #expect(try f.store.latest()?.phase == .failed)
+        }
+        #expect(f.controller.canPrepare)
+        f.window.close()
+    }
+
     @Test("recovery pauses session waiting and only explicit confirmation can resume installation")
     func recoveryFencesWaitingResponseAndKeepsDownload() async throws {
         var waitingResponse: CheckedContinuation<Void, Never>?
@@ -233,9 +270,11 @@ struct PetAppUpdateWindowTests {
         let f = try UpdateWindowFixture()
         defer { try? FileManager.default.removeItem(at: f.rootURL) }
         let jobID = UUID().uuidString.lowercased()
+        // Neither the previous nor the candidate build is installed here, so
+        // the record cannot be closed automatically.
         let journal = AppUpdateJournal(schema: 3, jobID: jobID, nonce: UUID().uuidString.lowercased(),
             parentPID: 1, parentStartTime: 1, createdAt: .now,
-            previousIdentity: "sha256:" + String(repeating: "a", count: 64),
+            previousIdentity: "sha256:" + String(repeating: "c", count: 64),
             candidateIdentity: f.prepared.runtimeIdentity, download: try .init(f.prepared),
             helperApplicationURL: f.rootURL.appendingPathComponent("helper-runtime-\(jobID)/Blabee.app"),
             phase: phase, sessions: [], detail: "Saved result", updatedAt: .now)
@@ -376,7 +415,8 @@ private final class UpdateWindowFixture {
     var terminationCalls: Int { counts.terminationCalls }
     var recoveryCalls: Int { counts.recoveryCalls }
 
-    init(waiter: AppUpdateSafePointWaiter = .init(requireReady: { _ in }),
+    init(installedIdentity: String = "sha256:" + String(repeating: "a", count: 64),
+         waiter: AppUpdateSafePointWaiter = .init(requireReady: { _ in }),
          prepareRecovery: (@MainActor () async throws -> ClaudeRuntimePayloadUse.RecoveryPreparation)? = nil,
          holdHelper: (@MainActor () async -> Void)? = nil) throws {
         let version = try #require(PetAppUpdateVersion(version: "0.1.0", build: "84"))
@@ -403,7 +443,7 @@ private final class UpdateWindowFixture {
             closedSessionsWaiter: waiter,
             prepareDownload: { _ in await download.prepare() },
             cleanupDownload: { _ in await download.cleanup() },
-            installedVersion: { (version: current, identity: "sha256:" + String(repeating: "a", count: 64)) },
+            installedVersion: { (version: current, identity: installedIdentity) },
             prepareConnectionRecovery: {
                 counts.recoveryCalls += 1
                 return try await prepareRecovery?() ?? .clear

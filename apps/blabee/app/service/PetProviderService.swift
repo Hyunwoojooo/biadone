@@ -32,6 +32,31 @@ final class PetProviderService: @unchecked Sendable {
 
     func stop() { lock.withLock { stopped = true } }
 
+    /// Requests only the Pet may make. While this service holds the Pet
+    /// credential, the general socket refuses them unless they arrive wrapped
+    /// in `pet_codex_v1` with that credential: the socket alone authenticates
+    /// only the user ID, so any same-user process could otherwise answer an
+    /// approval or choose a card before the person sees it.
+    static let petOnlyRequestTypes: Set<String> = [
+        "get_state", "pet_snapshot", "enable_project", "select", "dismiss_interaction",
+        "focus_interaction", "focus_event", "resolve_permission_request", "resolve_managed_command_approval",
+    ]
+    static let codexRequestType = "pet_codex_v1"
+
+    /// Authenticated pass-through for the Codex operations the Pet still sends
+    /// with their original request shapes (focus, dismissal, approvals).
+    func handleCodex(_ payload: Data) async throws -> Data {
+        let envelope = try authenticate(payload)
+        guard Set(envelope.keys) == ["type", "payload"], let type = envelope["type"] as? String,
+              Self.petOnlyRequestTypes.contains(type), let body = envelope["payload"] as? [String: Any] else {
+            throw CoordinatorError("pet_provider_request_invalid")
+        }
+        let result = try await codex.handle(type: type, payload: StrictJSONTransport.data(forJSONObject: body))
+        try requireActive()
+        try corpus.assertNoKnownSecret(in: result)
+        return result
+    }
+
     /// Reads service-admission order only. Polling the Pet never assigns an
     /// order, revives authority or changes a provider's current focus.
     func handleInbox(_ payload: Data) throws -> Data {

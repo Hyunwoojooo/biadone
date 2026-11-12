@@ -80,6 +80,11 @@ enum PetTransportTimeoutPolicy {
     }
 
     static func operationType(_ type: String, payload: [String: Any]) -> String {
+        // A credential-wrapped Codex request keeps its original deadline.
+        if type == "pet_codex_v1", let envelope = payload["envelope"] as? [String: Any],
+           let inner = envelope["type"] as? String {
+            return inner == "get_state" ? "pet_provider_snapshot" : inner
+        }
         guard type == "pet_provider_v1", let envelope = payload["envelope"] as? [String: Any],
               envelope["schema_version"] as? String == "blabee.pet-provider.v1",
               let operation = envelope["operation"] as? String else { return type }

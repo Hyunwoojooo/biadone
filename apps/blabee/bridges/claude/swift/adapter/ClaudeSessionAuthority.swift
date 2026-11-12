@@ -93,23 +93,46 @@ public final class ClaudeSessionAuthority: @unchecked Sendable {
     public var ownerHandle: OwnerHandle { OwnerHandle(identity: identity, instanceID: instanceID) }
     private let instanceID = UUID()
     private let clock: any CoordinatorContinuousClock
+    /// Expiry is decided on awake time so a Mac sleeping through the remaining
+    /// lease does not end every Claude window. Published deadlines stay in the
+    /// continuous domain (`clock`) and are translated from the awake remainder.
+    private let awakeClock: any CoordinatorContinuousClock
+    /// One injected clock serves both domains: sample it once per observation.
+    private let sharesClock: Bool
     private let lock = NSLock()
     private var lastObservedNanoseconds: UInt64
+    private var lastObservedAwakeNanoseconds: UInt64
     private var deadlineNanoseconds: UInt64
+    private var awakeDeadlineNanoseconds: UInt64
     private var lastRenewal: Lease?
     private var termination: TerminationReason?
 
+    /// `awakeClock` defaults to the system awake clock only with the system
+    /// continuous clock; an injected test clock is used for both domains.
     public init(identity: Identity,
-                clock: any CoordinatorContinuousClock = SystemCoordinatorContinuousClock()) throws {
+                clock: any CoordinatorContinuousClock = SystemCoordinatorContinuousClock(),
+                awakeClock: (any CoordinatorContinuousClock)? = nil) throws {
+        let awake = awakeClock ?? Self.defaultAwakeClock(for: clock)
+        let shares = awakeClock == nil && !(clock is SystemCoordinatorContinuousClock)
         let now = clock.nowNanoseconds()
+        let awakeNow = shares ? now : awake.nowNanoseconds()
         let (deadline, overflow) = now.addingReportingOverflow(Self.leaseDurationNanoseconds)
-        guard now != UInt64.max, !overflow else {
+        let (awakeDeadline, awakeOverflow) = awakeNow.addingReportingOverflow(Self.leaseDurationNanoseconds)
+        guard now != UInt64.max, awakeNow != UInt64.max, !overflow, !awakeOverflow else {
             throw AuthorityError.terminated(.clockOverflow)
         }
         self.identity = identity
         self.clock = clock
+        self.awakeClock = awake
+        sharesClock = shares
         lastObservedNanoseconds = now
+        lastObservedAwakeNanoseconds = awakeNow
         deadlineNanoseconds = deadline
+        awakeDeadlineNanoseconds = awakeDeadline
+    }
+
+    public static func defaultAwakeClock(for clock: any CoordinatorContinuousClock) -> any CoordinatorContinuousClock {
+        clock is SystemCoordinatorContinuousClock ? SystemCoordinatorAwakeClock() : clock
     }
 
     /// Observes expiry or a broken clock without extending the lease. The first
@@ -133,11 +156,14 @@ public final class ClaudeSessionAuthority: @unchecked Sendable {
             let (expected, sequenceOverflow) = (lastRenewal?.renewalSequence ?? 0).addingReportingOverflow(1)
             guard !sequenceOverflow, sequence == expected else { throw AuthorityError.invalidRenewalSequence }
             let (deadline, overflow) = now.addingReportingOverflow(Self.leaseDurationNanoseconds)
-            guard !overflow else {
+            let (awakeDeadline, awakeOverflow) = lastObservedAwakeNanoseconds
+                .addingReportingOverflow(Self.leaseDurationNanoseconds)
+            guard !overflow, !awakeOverflow else {
                 termination = .clockOverflow
                 throw AuthorityError.terminated(.clockOverflow)
             }
             deadlineNanoseconds = deadline
+            awakeDeadlineNanoseconds = awakeDeadline
             let renewed = Lease(deadlineNanoseconds: deadline, renewalSequence: sequence,
                                 authorityEpoch: identity.authorityEpoch)
             lastRenewal = renewed
@@ -189,8 +215,14 @@ public final class ClaudeSessionAuthority: @unchecked Sendable {
 
     // All private state helpers below run with `lock` held.
     private func currentLease() -> Lease {
-        Lease(deadlineNanoseconds: deadlineNanoseconds, renewalSequence: lastRenewal?.renewalSequence ?? 0,
-              authorityEpoch: identity.authorityEpoch)
+        // Remaining awake time, expressed at the last observed continuous
+        // instant. Sleep since the last renewal slides this forward.
+        let remaining = awakeDeadlineNanoseconds > lastObservedAwakeNanoseconds
+            ? awakeDeadlineNanoseconds - lastObservedAwakeNanoseconds : 0
+        let (translated, overflow) = lastObservedNanoseconds.addingReportingOverflow(remaining)
+        deadlineNanoseconds = overflow ? UInt64.max : max(deadlineNanoseconds, translated)
+        return Lease(deadlineNanoseconds: deadlineNanoseconds, renewalSequence: lastRenewal?.renewalSequence ?? 0,
+                     authorityEpoch: identity.authorityEpoch)
     }
 
     private func status() -> Status {
@@ -209,13 +241,15 @@ public final class ClaudeSessionAuthority: @unchecked Sendable {
     private func observeClock() -> UInt64? {
         guard termination == nil else { return nil }
         let now = clock.nowNanoseconds()
-        if now == UInt64.max {
+        let awakeNow = sharesClock ? now : awakeClock.nowNanoseconds()
+        if now == UInt64.max || awakeNow == UInt64.max {
             termination = .clockOverflow
-        } else if now < lastObservedNanoseconds {
+        } else if now < lastObservedNanoseconds || awakeNow < lastObservedAwakeNanoseconds {
             termination = .clockRegression
         } else {
             lastObservedNanoseconds = now
-            if now >= deadlineNanoseconds { termination = .expired }
+            lastObservedAwakeNanoseconds = awakeNow
+            if awakeNow >= awakeDeadlineNanoseconds { termination = .expired }
         }
         return termination == nil ? now : nil
     }

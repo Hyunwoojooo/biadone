@@ -12,6 +12,19 @@ import { SESSION_V2_HOOK_REWAKE, writeSessionV2HookOutput } from './session-v2-w
 export const AUTO_CONNECT_SESSION_CHANGED_NOTICE = '[Blabee] 이 Claude 창의 세션이 바뀌어(/resume·/clear) Blabee 연결이 끊겼습니다. '
   + '이 창에서는 Blabee 카드가 더 오지 않습니다. 이어서 쓰려면 이 창을 종료하고 터미널에서 `claude --resume`으로 대화를 골라 다시 시작하세요.';
 const RETIRED_SCOPE_CODES = new Set(['claude_bootstrap_session_changed', 'claude_bootstrap_already_started']);
+const BOOTSTRAP_CWD = 'BLABEE_CLAUDE_BOOTSTRAP_CWD';
+
+/** The launch is bound to its folder, not to the shell's current folder.
+ * Claude Code reports the live cwd, which follows a Bash `cd` inside the
+ * session. That is not a new session: the native session id and the verified
+ * process tree still identify the same launch. Observe every Hook against the
+ * launch folder so a `cd` cannot retire the connection. A different session
+ * id (/resume, /clear) still retires it. */
+export function anchorHookInputToLaunch(input, env) {
+  const launchCWD = env?.[BOOTSTRAP_CWD];
+  if (input === null || typeof input !== 'object' || Array.isArray(input) || typeof launchCWD !== 'string') return input;
+  return { ...input, cwd: launchCWD };
+}
 
 export async function handleAutoConnectHook(input, { env = process.env, signal,
   createBootstrapClient = createAutoConnectClient, createClient = createSessionV2Client, emitSelection, waiterOptions } = {}) {
@@ -19,6 +32,7 @@ export async function handleAutoConnectHook(input, { env = process.env, signal,
     if (signal?.aborted) throw new AutoConnectError('auto_connect_closed');
   };
   requireActive();
+  input = anchorHookInputToLaunch(input, env);
   // Normalization checks the actual native identity and rejects subagent input.
   // Initial resume/fork sources are consumed by native enrollment, never
   // rewritten to startup or forwarded a second time through session-v2.

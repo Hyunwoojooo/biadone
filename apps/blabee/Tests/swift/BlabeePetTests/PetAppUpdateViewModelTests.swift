@@ -127,6 +127,42 @@ struct PetAppUpdateViewModelTests {
     }
 
     @MainActor
+    @Test("Automatic checks run at most once a day, stay quiet on failure and respect the toggle")
+    func automaticCheckSchedule() async throws {
+        let suite = "blabee-auto-update-\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        var now = Date(timeIntervalSince1970: 1_800_000_000)
+        let release = PetAppUpdateRelease(
+            version: try #require(PetAppUpdateVersion(version: "0.1.0", build: "31")),
+            releaseURL: try #require(URL(string: "https://github.com/Hyunwoojooo/biadone/releases/tag/blabee-v0.1.0%2Bbuild.31")))
+        let checker = AppUpdateTestChecker(result: .unavailable("offline"))
+        let vm = PetViewModel(transport: PetFakeTransport(), externalApplicationOpener: PetFakeApplicationOpener(),
+            appUpdateChecker: checker, automaticUpdateDefaults: defaults, automaticUpdateNow: { now })
+        #expect(vm.automaticUpdateChecksEnabled)
+
+        await vm.runAutomaticUpdateCheckIfDue()
+        #expect(await checker.calls == 1)
+        #expect(vm.appUpdateState == .notChecked)  // a failed background check shows nothing
+        now = now.addingTimeInterval(3_600)
+        await vm.runAutomaticUpdateCheckIfDue()
+        #expect(await checker.calls == 1)          // not due within a day
+
+        await checker.finish(with: .available(release))
+        now = now.addingTimeInterval(24 * 3_600)
+        await vm.runAutomaticUpdateCheckIfDue()
+        #expect(await checker.calls == 2)
+        #expect(vm.appUpdateState.availableRelease == release)
+        #expect(vm.availableUpdateMessage != nil && vm.hasVisibleStatusMessage)
+
+        await vm.runAutomaticUpdateCheckIfDue(force: true)
+        #expect(await checker.calls == 3)          // forced, e.g. an unsupported Codex
+        vm.automaticUpdateChecksEnabled = false
+        await vm.runAutomaticUpdateCheckIfDue(force: true)
+        #expect(await checker.calls == 3)
+    }
+
+    @MainActor
     private func viewModel(
         checker: AppUpdateTestChecker,
         onboarding: any PetOnboardingAdapting = PetUnavailableOnboardingAdapter(),

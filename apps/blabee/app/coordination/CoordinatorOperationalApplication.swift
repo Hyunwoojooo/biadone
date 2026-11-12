@@ -517,6 +517,12 @@ public actor CoordinatorOperationalApplication {
     private var pendingTimeNotices: [Data] = []
     private var pendingCompletionClosures: Set<CoordinatorBindingKey> = []
     private var pendingUnsubmittedTransports: [CoordinatorBindingKey: PendingUnsubmittedTransport] = [:]
+    /// Sessions whose SessionStart Hook was spawned by an OpenAI-signed Codex
+    /// with an unregistered CDHash. Blabee stays off for them: a card could not
+    /// be delivered, so injecting instructions would only waste the model's work.
+    private var unqualifiedCodexSessions: Set<String> = []
+    /// Last attested Codex runtime result, shown once in the Pet. Process-local.
+    private var lastCodexRuntimeObservation: String?
     private var unsubmittedTransportFailureCounts: [CoordinatorBindingKey: Int] = [:]
     private var pendingInitialActivations: Set<CoordinatorBindingKey> = []
     private var initialActivationFailures: [
@@ -1584,6 +1590,20 @@ private extension CoordinatorOperationalApplication {
         guard let project = project(containing: cwd), project.enabled else {
             return try publicData(["enabled": false])
         }
+        // Set only by the Hook's own ancestry attestation; absent when unknown.
+        switch payload["codex_runtime"] as? String {
+        case "unqualified":
+            if unqualifiedCodexSessions.count < Self.maximumRegisteredSessions {
+                unqualifiedCodexSessions.insert(sessionID)
+            }
+            lastCodexRuntimeObservation = "unqualified"
+            return try publicData(["enabled": false])
+        case "qualified":
+            unqualifiedCodexSessions.remove(sessionID)
+            lastCodexRuntimeObservation = "qualified"
+        default:
+            break
+        }
         _ = try session(
             registeringIfNeeded: sessionID,
             cwd: cwd,
@@ -1606,6 +1626,9 @@ private extension CoordinatorOperationalApplication {
         }
         let cwd = try Self.normalizedPath(try string(payload, "cwd"))
         guard let project = project(containing: cwd), project.enabled else {
+            return try publicData(["enabled": false])
+        }
+        if unqualifiedCodexSessions.contains(sessionID), case .human = QueuedPromptEnvelope.classify(prompt) {
             return try publicData(["enabled": false])
         }
         var session = try session(
@@ -4392,7 +4415,8 @@ private extension CoordinatorOperationalApplication {
             ),
             "managed_command_approval_notice_count": managedCommandApprovalNoticeCount,
             "event_navigation": try petEventNavigationSnapshot(interactions: interactionObjects),
-        ])
+        ].merging(lastCodexRuntimeObservation == "unqualified"
+            ? ["codex_runtime_status": "unqualified"] : [:]) { current, _ in current })
         if recordsPetConsumerHeartbeat {
             // Record presence only after a complete snapshot was produced.
             // Failed/malformed state responses therefore cannot make a Hook

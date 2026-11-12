@@ -4,7 +4,7 @@
 
 ## 책임과 신뢰 경계
 
-`ClaudeSessionAuthority`는 `ClaudeCoreAdapter` 모듈 안에서 한 세션의 lease·회수 상태·commit 진입을 직렬화한다. `CoordinatorContinuousClock`을 주입하고 기본값은 수면 시간을 포함하는 `SystemCoordinatorContinuousClock`이다. Foundation과 기존 공통 모듈만 사용하며 새 패키지 의존성은 없다.
+`ClaudeSessionAuthority`는 `ClaudeCoreAdapter` 모듈 안에서 한 세션의 lease·회수 상태·commit 진입을 직렬화한다. `CoordinatorContinuousClock`을 주입하고 기본값은 수면 시간을 포함하는 `SystemCoordinatorContinuousClock`이다. 2026-11-12부터 만료 판정만은 깨어 있는 시간(`SystemCoordinatorAwakeClock`, `CLOCK_UPTIME_RAW`)으로 한다. 잠자기 동안에는 어떤 프로세스도 권한을 쓸 수 없으므로, 덮개를 닫았다는 이유만으로 모든 Claude 창의 연결이 끝나지 않게 하기 위해서다. 밖으로 내보내는 `Lease.deadlineNanoseconds`는 계속 연속 시각 기준이며, 남은 깨어 있는 시간을 마지막 관측 시각에 더해 환산한다. 잠자기 뒤에는 이 값이 앞으로 밀린다. owner 쪽 `ClaudeOwnerRenewalController`도 같은 방식으로 판정하므로 깨어난 뒤 첫 갱신이 그대로 성공한다. 테스트가 시계 하나만 주입하면 두 영역에 같은 시계를 쓴다. Foundation과 기존 공통 모듈만 사용하며 새 패키지 의존성은 없다.
 
 Identity는 scope, 실제 native session, session incarnation, service incarnation, owner 연결, authority epoch의 UUID 조합이다. 값이 다른 세션의 요청이나 다른 객체가 발급한 ticket을 수용하지 않는다. role credential·nonce·raw prompt·readiness·카드·DB는 이 객체에 넣지 않는다.
 

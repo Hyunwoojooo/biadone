@@ -31,6 +31,50 @@ struct ClaudeOwnerRenewalControllerTests {
         #expect(fixture.record.closures.isEmpty)
     }
 
+    @Test("hours of system sleep do not consume the lease; the first awake tick renews the same authority",
+          arguments: [2, 12])
+    func sleepDoesNotExpireLease(hours: UInt64) throws {
+        let fixture = try OwnerRenewalFixture(separateAwakeClock: true)
+        defer { fixture.controller.stop() }
+        let epoch = fixture.authority.identity.authorityEpoch
+        fixture.clock.advance(4 * 60); fixture.awake.advance(4 * 60)
+        fixture.controller.tick()
+        // Lid closed: continuous time moves, awake time does not.
+        fixture.clock.advance(hours * 3600)
+        fixture.controller.tick()
+        #expect(fixture.controller.snapshot().terminalReason == nil)
+        guard case .active(let slid) = fixture.authority.snapshot() else {
+            Issue.record("Sleep expired the service authority"); return
+        }
+        #expect(slid.deadlineNanoseconds > fixture.clock.nowNanoseconds())
+        // One awake minute later the five-minute renewal is due and accepted.
+        fixture.clock.advance(60); fixture.awake.advance(60)
+        fixture.controller.tick()
+        #expect(fixture.controller.snapshot().renewalSequence == 1)
+        #expect(fixture.controller.snapshot().terminalReason == nil)
+        guard case .active(let lease) = fixture.authority.snapshot() else {
+            Issue.record("Renewal after wake failed"); return
+        }
+        #expect(lease.authorityEpoch == epoch)
+        #expect(fixture.record.closures.isEmpty)
+    }
+
+    @Test("awake time past the deadline still expires without a rescue renewal")
+    func awakeTimeStillExpires() throws {
+        let fixture = try OwnerRenewalFixture(separateAwakeClock: true)
+        defer { fixture.controller.stop() }
+        fixture.clock.advance(4 * 60); fixture.awake.advance(4 * 60)
+        fixture.controller.tick()
+        // Timer starved while awake (no sleep) for the remaining lease.
+        fixture.clock.advance(57 * 60); fixture.awake.advance(57 * 60)
+        fixture.controller.tick()
+        #expect(fixture.record.requests.isEmpty)
+        #expect(fixture.controller.snapshot().terminalReason == .expired)
+        guard case .terminated(.expired) = fixture.authority.snapshot() else {
+            Issue.record("Service authority outlived its awake lease"); return
+        }
+    }
+
     @Test("continuous sleep time is judged against the remaining lease", arguments: [55, 56, 58])
     func sleepUsesRemainingLease(minutes: Int) throws {
         let fixture = try OwnerRenewalFixture()
@@ -202,13 +246,16 @@ private final class OwnerRenewalRecord: @unchecked Sendable {
 
 private final class OwnerRenewalFixture: @unchecked Sendable {
     let clock = OwnerRenewalClock()
+    let awake = OwnerRenewalClock()
     let record = OwnerRenewalRecord()
     let authority: ClaudeSessionAuthority
     let controller: ClaudeOwnerRenewalController
-    init(behavior: OwnerRenewalBehavior = .normal, rejection: String? = nil, initialSequence: UInt64 = 0) throws {
+    init(behavior: OwnerRenewalBehavior = .normal, rejection: String? = nil, initialSequence: UInt64 = 0,
+         separateAwakeClock: Bool = false) throws {
         let identity = ClaudeSessionAuthority.Identity(scopeID: UUID(), nativeSessionID: UUID(), sessionIncarnation: UUID(),
             serviceIncarnation: UUID(), ownerConnectionID: UUID(), authorityEpoch: UUID())
-        authority = try ClaudeSessionAuthority(identity: identity, clock: clock)
+        let awakeClock: (any CoordinatorContinuousClock)? = separateAwakeClock ? awake : nil
+        authority = try ClaudeSessionAuthority(identity: identity, clock: clock, awakeClock: awakeClock)
         guard case .active(let lease) = authority.snapshot() else { throw CoordinatorError("owner_fixture_invalid") }
         let corpus = RuntimeSecretCorpus()
         let secret = String(repeating: "c", count: 64)
@@ -218,7 +265,7 @@ private final class OwnerRenewalFixture: @unchecked Sendable {
         let clock = self.clock
         controller = try ClaudeOwnerRenewalController(identity: identity,
             initialDeadlineNanoseconds: lease.deadlineNanoseconds, initialRenewalSequence: initialSequence,
-            clock: clock, secretCorpus: corpus, exchange: { data in
+            clock: clock, awakeClock: awakeClock, secretCorpus: corpus, exchange: { data in
                 record.received(data)
                 if behavior == .pause {
                     guard record.resume.wait(timeout: .now() + 5) == .success else { throw CoordinatorError("owner_fixture_timeout") }
