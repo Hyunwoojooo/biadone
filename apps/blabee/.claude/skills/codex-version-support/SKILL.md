@@ -73,7 +73,7 @@ exec-server 레이아웃은 catalog record의 파일 목록이 정한다(`record
 ```sh
 npm run test:codex-compatibility
 npm run test:t005
-npm run qualify:codex-compatibility -- --expected-version <ver> --runtime-dir <절대경로> --check-notarization --hook-tests --plugin-lifecycle --json
+npm run qualify:codex-compatibility -- --expected-version <ver> --runtime-dir <절대경로> --evidence <절대경로.json> --hook-tests --plugin-lifecycle
 python3 scripts/verify-update-managed-codex-native.py --execute --expected-version <ver> --codex <bin/codex> --catalog <catalog> --expected-sha256 <archive sha>
 BLABEE_CODEX_RUNTIME_ARTIFACT=<패키지> BLABEE_REQUIRE_CODEX_RUNTIME_ARTIFACT=1 npm run test:swift -- --filter 'Codex|ManagedCodex|UpdateManagedCodex|Hook|DoctorApplication'
 ```

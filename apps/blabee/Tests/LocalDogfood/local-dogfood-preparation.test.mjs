@@ -102,9 +102,16 @@ async function makePreviousApp(root, parentName, runtimeIdentity) {
   return app;
 }
 
+// Audit REPO-17: these run the installed `codex` (PATH or
+// BLABEE_LIVE_CODEX_EXECUTABLE), whose version changes underneath the suite.
+// They are opt-in: `npm run test:codex-live`.
+const liveCodex = process.env.BLABEE_LIVE_CODEX === "1"
+  ? false : "set BLABEE_LIVE_CODEX=1 (npm run test:codex-live) to run against the installed codex";
+const codexExecutable = process.env.BLABEE_LIVE_CODEX_EXECUTABLE || "codex";
+
 function runCodex(args, env) {
   return new Promise((resolveResult, reject) => {
-    const child = spawn("codex", args, {
+    const child = spawn(codexExecutable, args, {
       cwd: repositoryRoot,
       env,
       stdio: ["ignore", "pipe", "pipe"],
@@ -1123,7 +1130,7 @@ test("preparation CLI accepts one or two previous apps and rejects a third or ra
   );
 });
 
-test("two prepared marketplaces coexist and complete the real Codex lifecycle in an isolated CODEX_HOME", async (t) => {
+test("two prepared marketplaces coexist and complete the real Codex lifecycle in an isolated CODEX_HOME", { skip: liveCodex }, async (t) => {
   const fixture = await makeWorkspace(t, "blabee-local-dogfood-codex-");
   const first = await prepareLocalDogfood({
     binaryPath: fixture.binary,

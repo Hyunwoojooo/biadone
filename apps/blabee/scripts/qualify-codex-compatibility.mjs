@@ -130,6 +130,22 @@ async function snapshotTree(root) {
   return files.sort((a, b) => a.path.localeCompare(b.path, "en"));
 }
 
+// Cheap identity of every entry (audit CDX-10). Any write to a file changes
+// its size, mtime or ctime, and ctime cannot be set back by a user process, so
+// comparing this between probes detects a change without rehashing ~250 MB of
+// package per probe. The full content hash is still compared once at the end.
+async function metadataTree(root) {
+  const entries = [];
+  async function visit(path) {
+    const info = await lstat(path, { bigint: true });
+    entries.push([relative(root, path), String(info.ino), String(info.size), String(info.mode),
+      String(info.mtimeNs), String(info.ctimeNs), String(info.nlink)].join(":"));
+    if (info.isDirectory()) for (const entry of (await readdir(path)).sort()) await visit(join(path, entry));
+  }
+  await visit(root);
+  return createHash("sha256").update(entries.join("\n")).digest("hex");
+}
+
 function fingerprint(files) {
   return createHash("sha256").update(JSON.stringify(files)).digest("hex");
 }
@@ -233,8 +249,12 @@ export async function qualifyCodexCompatibility(options, dependencies = {}) {
     temporaryRoot = await realpath(await mkdtemp(join(tmpdir(), "blabee-codex-qualification-")));
     const env = isolatedEnvironment(temporaryRoot);
     for (const path of [env.CODEX_HOME, env.XDG_CONFIG_HOME, env.XDG_CACHE_HOME, env.TMPDIR]) await mkdir(path, { mode: 0o700 });
-    async function unchanged() {
-      if (fingerprint(await snapshotTree(runtimeRoot)) !== originalFingerprint) fail("package_changed", "Package bytes or permissions changed during qualification");
+    const originalMetadata = await metadataTree(runtimeRoot);
+    async function unchanged({ full = false } = {}) {
+      if (await metadataTree(runtimeRoot) !== originalMetadata
+          || (full && fingerprint(await snapshotTree(runtimeRoot)) !== originalFingerprint)) {
+        fail("package_changed", "Package bytes or permissions changed during qualification");
+      }
     }
     async function probe(capability, command, args, settings = {}) {
       await unchanged();
@@ -300,7 +320,7 @@ export async function qualifyCodexCompatibility(options, dependencies = {}) {
       await probe("hook-contract-unit-tests", process.execPath, ["--test", "--test-concurrency=1", testPath], { timeoutMs: 60_000, outputLimit: 262_144 });
       report.testedCapabilities.push("hook-contract-unit-tests");
     }
-    await unchanged();
+    await unchanged({ full: true });
     report.status = evidenceMode === "fixture" ? "fixture_passed" : "smoke_passed";
   } catch (error) {
     report.failure = { code: error.qualificationCode ?? "qualification_io_failed", detail: String(error.message).slice(0, 1_000) };

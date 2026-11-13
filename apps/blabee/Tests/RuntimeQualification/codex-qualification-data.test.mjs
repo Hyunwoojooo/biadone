@@ -61,3 +61,18 @@ test('registration builds a record only from measured official facts', async () 
       notarization: false, date: '2026-11-13', ...bad }));
   }
 });
+
+test('check-latest reports only stable releases newer than every registered version', async () => {
+  const { unregisteredReleases } = await import('../../scripts/codex/check-latest.mjs');
+  const releases = [
+    { tag_name: 'rust-v0.167.1', published_at: '2026-11-10T00:00:00Z' },
+    { tag_name: 'rust-v0.167.0', published_at: '2026-11-06T00:00:00Z' },
+    { tag_name: 'rust-v0.168.0-alpha.1', prerelease: true },
+    { tag_name: 'rust-v0.168.0', draft: true },
+    { tag_name: 'rust-v0.165.0', published_at: '2026-10-27T00:00:00Z' },
+    { tag_name: 'rust-v0.166.0' },
+    { tag_name: 'codex-cli-legacy' },
+  ];
+  assert.deepEqual(unregisteredReleases(releases, ['0.164.0', '0.166.0']).map(r => r.version), ['0.167.0', '0.167.1']);
+  assert.deepEqual(unregisteredReleases(releases, ['0.166.0', '0.167.1']), []);
+});

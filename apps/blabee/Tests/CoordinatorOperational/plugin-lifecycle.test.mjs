@@ -14,9 +14,16 @@ const packagedMarketplaceManifest = path.join(
   "Packaging/macos/Resources/CodexMarketplace.json",
 );
 
+// Audit REPO-17: these run the installed `codex` (PATH or
+// BLABEE_LIVE_CODEX_EXECUTABLE), whose version changes underneath the suite.
+// They are opt-in: `npm run test:codex-live`.
+const liveCodex = process.env.BLABEE_LIVE_CODEX === "1"
+  ? false : "set BLABEE_LIVE_CODEX=1 (npm run test:codex-live) to run against the installed codex";
+const codexExecutable = process.env.BLABEE_LIVE_CODEX_EXECUTABLE || "codex";
+
 function runCodex(args, env) {
   return new Promise((resolve, reject) => {
-    const child = spawn("codex", args, {
+    const child = spawn(codexExecutable, args, {
       cwd: repositoryRoot,
       env,
       stdio: ["ignore", "pipe", "pipe"],
@@ -49,7 +56,7 @@ function containsJSONValue(value, expected) {
   return false;
 }
 
-test("Codex can install, cache-bust update, remove, and forget an isolated Blabee plugin", async () => {
+test("Codex can install, cache-bust update, remove, and forget an isolated Blabee plugin", { skip: liveCodex }, async () => {
   const temporaryRoot = await mkdtemp(path.join(os.tmpdir(), "blabee-t011-plugin-lifecycle-"));
   const codexHome = path.join(temporaryRoot, "codex-home");
   const marketplaceRoot = path.join(temporaryRoot, "marketplace");
@@ -133,7 +140,7 @@ test("Codex can install, cache-bust update, remove, and forget an isolated Blabe
   }
 });
 
-test("Codex accepts the packaged Blabee Resources layout as a local marketplace", async () => {
+test("Codex accepts the packaged Blabee Resources layout as a local marketplace", { skip: liveCodex }, async () => {
   const temporaryRoot = await mkdtemp(path.join(os.tmpdir(), "blabee-product-marketplace-"));
   const codexHome = path.join(temporaryRoot, "codex-home");
   const resourcesRoot = path.join(temporaryRoot, "Resources");

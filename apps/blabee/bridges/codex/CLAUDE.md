@@ -65,8 +65,11 @@ Plugin: `plugin/.codex-plugin/plugin.json`, `plugin/.mcp.json`, `plugin/hooks/ho
 | 명령 | 범위 |
 | --- | --- |
 | `npm run test:codex-compatibility` | 패키지 검사기 회귀. 계정·네트워크 불필요 |
-| `npm run test:t005` | `Tests/RuntimeQualification/*` 전체 |
-| `npm run qualify:codex-compatibility -- --expected-version X --runtime-dir <절대경로> [--release-evidence …] [--check-notarization] [--hook-tests] [--plugin-lifecycle] [--json]` | 공식 런타임 smoke. darwin, 정확한 stable 버전 필요 |
+| `npm run test:t005` | `Tests/RuntimeQualification/*` 전체(qualification JSON·생성 Swift 일치 포함) |
+| `npm run codex:check-latest` | 등록되지 않은 새 Codex 안정판 목록(GitHub 공개 API 조회만). `--fail-on-new`면 있을 때 exit 2 |
+| `npm run codex:register -- --version X --download` | 새 버전 등록(공식 asset 다운로드라 사용자 승인 후). `/codex-version-support` 참고 |
+| `npm run test:codex-live` | 설치된 `codex`로 Plugin 설치·제거 왕복(opt-in, `BLABEE_LIVE_CODEX_EXECUTABLE`로 경로 지정). 기본 `npm test`에서는 건너뛴다(REPO-17) |
+| `npm run qualify:codex-compatibility -- --expected-version X --runtime-dir <절대경로> --evidence <절대경로.json> [--release-evidence …] [--source-revision …] [--hook-tests] [--plugin-lifecycle]` | 공식 런타임 smoke. darwin, 정확한 stable 버전 필요. 서명·공증은 항상 검사하고 결과는 `--evidence` JSON에 쓴다(2026-11-13 전 안내의 `--check-notarization`·`--json`은 없는 인자) |
 | `python3 scripts/verify-update-managed-codex-native.py --execute --expected-version X --codex … --catalog … --expected-sha256 …` | native lifecycle. `--execute` 없으면 프로세스를 띄우지 않음 |
 | `npm run test:swift -- --filter 'Codex\|ManagedCodex\|UpdateManagedCodex\|Hook\|PetHookReadiness\|DoctorApplication'` | 이 영역 Swift suite(`Tests/swift/BlabeePetTests/`). `DoctorApplicationTests`는 소비자지만 패키지 레이아웃·버전 목록을 그대로 검사하므로 함께 돌린다 |
 
