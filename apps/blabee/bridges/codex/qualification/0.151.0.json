@@ -1,0 +1,22 @@
+{
+  "schema": "blabee.codex-qualification.v1",
+  "version": "0.151.0",
+  "target": "aarch64-apple-darwin",
+  "capabilities": [
+    "managedAppServer",
+    "pluginCLI"
+  ],
+  "hook_cdhash": null,
+  "catalog": {
+    "signing_team": "2DC432GLL2",
+    "fingerprint": "3519a4614dbea34f15941b0886e29aa4c9a961b5b40bab942a3f38f61cc8eef9",
+    "file_digests": {
+      "bin/codex": "98491713ffb196061003ee148636e743997cc31d76144ba7c53462269896891d",
+      "bin/codex-code-mode-host": "f5c96dc8cca0f760f525076c1f9f4efad31355c0fe18efb56e76df7e40592376",
+      "codex-package.json": "90082c2535f1be7f4abe613d8d20efadad490d9fb8b6f623c2799a181cf9e7ca",
+      "codex-path/rg": "345c4e819ed4a17806cec23fc0b54592731ccc265052d2bac6c400e2d24ba728",
+      "codex-resources/zsh/bin/zsh": "612bc88e8f9705f40a6cf54fe551cbce9cf8e7582c45bf3c0569860161a5db8f"
+    }
+  },
+  "notes": []
+}

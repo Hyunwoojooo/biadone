@@ -9,6 +9,21 @@ Codex Bridge 영역 작업이다. 버전은 **정확한 문자열**로만 등록
 증거 없이 값을 추측하지 않는다. 공식 release asset을 내려받아 직접 계산한 해시·CDHash만 쓴다.
 직전 사례: `docs/features/CODEX_0166_QUALIFICATION.md`.
 
+## 2026-11-13부터: 등록 스크립트
+
+버전 데이터는 `bridges/codex/qualification/<ver>.json` 하나에 있다(기능, `bin/codex` CDHash, 파일별 해시 catalog, fingerprint, 출처 메모).
+Swift는 생성된 `core/HookPermissionProfiles.generated.swift`와 `setup/CodexQualificationData.generated.swift`만 읽는다(앱 서명에 포함, 실행 중 JSON 로드 없음).
+
+1. `npm run codex:register -- --version <ver> --download --check-notarization`
+   (네트워크로 공식 GitHub asset을 받으므로 사용자 승인 후 실행. 로컬 archive는 `--archive <path>`.)
+   archive SHA-256·크기를 GitHub 메타데이터와 대조 → 새 빈 폴더에 전개 → opt-in Swift probe(`codexQualificationRegistrationProbe`, production 검사)로
+   파일 해시·Team ID·fingerprint 측정 → codesign으로 CDHash → JSON·증거(`docs/features/codex-evidence/<ver>.json`)·fixture 작성 → Swift 재생성.
+   기능은 기본값으로 직전 버전과 같다. 다르면 `--capabilities`.
+2. 아래 0절의 "이전 버전과 공식 소스 비교"는 여전히 사람이 한다(queue 인자, Hook 형식, App Server 승인 schema, 패키지 레이아웃).
+3. 3절 검증과 4절 문서. 생성 파일을 손으로 고치지 않는다(`npm run codex:qualification -- check`가 t005에서 확인).
+
+아래 0~1절은 스크립트가 하는 일의 근거와, 스크립트가 다루지 않는 변경(레이아웃·Plugin)이 있을 때의 수동 절차다.
+
 ## 0. 공식 근거 수집
 
 - GitHub release `rust-v<ver>`의 `codex-package-aarch64-apple-darwin.tar.gz`: 공개 시각, 크기, archive SHA-256. GitHub asset metadata와 로컬 archive를 대조한다.

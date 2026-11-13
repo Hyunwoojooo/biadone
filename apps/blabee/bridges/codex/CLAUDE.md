@@ -39,6 +39,8 @@ Plugin: `plugin/.codex-plugin/plugin.json`, `plugin/.mcp.json`, `plugin/hooks/ho
 
 ## 신규 Codex 버전 지원
 
+버전 데이터는 `bridges/codex/qualification/<ver>.json`이 유일한 출처이고 Swift는 생성 파일(`*.generated.swift`)을 읽는다. 등록은 `npm run codex:register`(2026-11-13).
+
 `/codex-version-support` 스킬의 체크리스트를 따른다. 버전은 정확한 문자열로만 등록하고 범위·prerelease로 일반화하지 않는다.
 기록은 `docs/features/CODEX_LATEST_SUPPORT.md`(최신이 맨 위)와 `docs/features/CODEX_<ver>_QUALIFICATION.md`.
 

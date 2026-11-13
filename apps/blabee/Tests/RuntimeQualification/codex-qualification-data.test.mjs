@@ -1,0 +1,63 @@
+import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
+import { readFile, readdir } from 'node:fs/promises';
+import test from 'node:test';
+import { checkGenerated, loadRecords, validateRecord } from '../../scripts/codex/qualification.mjs';
+
+const root = new URL('../../', import.meta.url);
+
+test('generated Codex qualification Swift sources match the reviewed JSON records', async () => {
+  assert.deepEqual(await checkGenerated(), [], 'run: npm run codex:qualification -- generate');
+});
+
+test('each reviewed release keeps its fixtures and catalog in agreement', async () => {
+  const records = await loadRecords();
+  assert.ok(records.length >= 30);
+  for (const fixture of await readdir(new URL('Fixtures/codex/', root))) {
+    const record = records.find(r => r.version === fixture);
+    assert.ok(record?.catalog, `fixture ${fixture} has a catalog record`);
+    const data = await readFile(new URL(`Fixtures/codex/${fixture}/voice-runtime.json`, root));
+    assert.equal(createHash('sha256').update(data).digest('hex'),
+      record.catalog.file_digests['codex-resources/voice/runtime.json'], fixture);
+  }
+  for (const record of records.filter(r => r.capabilities.includes('serverOwnedWorkspaceRoots'))) {
+    assert.ok(record.capabilities.includes('managedAppServer'), record.version);
+  }
+});
+
+test('qualification records reject ranges, unknown capabilities and malformed digests', () => {
+  const valid = { schema: 'blabee.codex-qualification.v1', version: '0.200.0', target: 'aarch64-apple-darwin',
+    capabilities: ['pluginCLI'], hook_cdhash: 'a'.repeat(40), catalog: null, notes: [] };
+  assert.doesNotThrow(() => validateRecord(valid, '0.200.0.json'));
+  for (const change of [
+    { version: '0.200' }, { version: '0.200.0-alpha.1' }, { capabilities: ['everything'] }, { capabilities: [] },
+    { hook_cdhash: 'A'.repeat(40) }, { target: 'x86_64-apple-darwin' }, { extra: true },
+    { catalog: { signing_team: '2DC432GLL2', fingerprint: 'f'.repeat(64), file_digests: { '../bin/codex': 'a'.repeat(64) } } },
+    { catalog: { signing_team: '2DC432GLL2', fingerprint: 'f'.repeat(64), file_digests: { 'bin/other': 'a'.repeat(64) } } },
+  ]) assert.throws(() => validateRecord({ ...valid, ...change }, '0.200.0.json'), JSON.stringify(change));
+  assert.throws(() => validateRecord(valid, '0.201.0.json'));
+});
+
+test('registration builds a record only from measured official facts', async () => {
+  const { buildRecord, parseArguments, parseCodesign } = await import('../../scripts/codex/register-version.mjs');
+  assert.deepEqual(parseArguments(['--version', '0.200.0', '--download']).download, true);
+  for (const argv of [['--version', '0.200'], ['--version', '0.200.0'], ['--version', '0.200.0', '--download', '--archive', '/x'],
+    ['--version', '0.200.0', '--download', '--capabilities', 'everything']]) assert.throws(() => parseArguments(argv));
+  const codesign = parseCodesign('Executable=/x/bin/codex\nCDHash=' + 'b'.repeat(40) + '\nTeamIdentifier=2DC432GLL2\n');
+  assert.deepEqual(codesign, { cdhash: 'b'.repeat(40), team: '2DC432GLL2' });
+  const probe = { version: '0.200.0', target: 'aarch64-apple-darwin', exec_server: 'bin/codex-exec-server',
+    executable_teams: ['2DC432GLL2'], fingerprint: 'c'.repeat(64),
+    file_digests: { 'bin/codex-exec-server': 'e'.repeat(64), 'bin/codex': 'd'.repeat(64) } };
+  const archive = { sha256: 'a'.repeat(64), bytes: 10, publishedAt: '2026-11-10T00:00:00Z' };
+  const record = buildRecord({ version: '0.200.0', capabilities: ['updateLifecycle', 'pluginCLI'], probe, codesign, archive,
+    notarization: true, date: '2026-11-13' });
+  assert.deepEqual(record.capabilities, ['pluginCLI', 'updateLifecycle']);
+  assert.deepEqual(Object.keys(record.catalog.file_digests), ['bin/codex', 'bin/codex-exec-server']);
+  assert.equal(record.hook_cdhash, 'b'.repeat(40));
+  assert.match(record.notes[0], /sha256:a{64}/);
+  for (const bad of [{ probe: { ...probe, version: '0.199.0' } }, { codesign: { ...codesign, team: 'XXXXXXXXXX' } },
+    { probe: { ...probe, executable_teams: ['2DC432GLL2', 'OTHERTEAM1'] } }, { codesign: { ...codesign, cdhash: undefined } }]) {
+    assert.throws(() => buildRecord({ version: '0.200.0', capabilities: ['pluginCLI'], probe, codesign, archive,
+      notarization: false, date: '2026-11-13', ...bad }));
+  }
+});

@@ -1,0 +1,11 @@
+{
+  "schema": "blabee.codex-qualification.v1",
+  "version": "0.152.1",
+  "target": "aarch64-apple-darwin",
+  "capabilities": [
+    "pluginCLI"
+  ],
+  "hook_cdhash": null,
+  "catalog": null,
+  "notes": []
+}

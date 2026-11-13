@@ -8,6 +8,8 @@
     "test:access-sql": "node --test Tests/Cloud/access-control.test.mjs",
     "test:connection-sql": "node --test Tests/Cloud/connection-diagnostics.test.mjs",
     "test:usage-sql": "node --test Tests/Cloud/usage-quota.test.mjs",
+    "codex:qualification": "node scripts/codex/qualification.mjs",
+    "codex:register": "node scripts/codex/register-version.mjs",
     "test": "node --test --test-concurrency=1 Tests/Contracts/*.test.mjs Tests/CoordinatorCore/*.test.mjs Tests/CoordinatorOperational/*.test.mjs Tests/CoordinatorPersistence/*.test.mjs Tests/RuntimeQualification/*.test.mjs Tests/AppPackaging/*.test.mjs Tests/LocalDogfood/*.test.mjs",
     "test:swift": "DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer /usr/bin/lockf -t 0 -k -w /tmp/blabee-coordinator-swift-tests.lock /usr/bin/xcrun swift test --package-path . --scratch-path /tmp/blabee-coordinator-swift-build --experimental-maximum-parallelization-width 1",
     "test:release": "npm test && npm run test:access-sql && npm run test:connection-sql && npm run test:usage-sql && npm --prefix bridges/claude run check && npm --prefix bridges/claude test && npm --prefix bridges/claude run test:shared-engine && npm run test:swift",

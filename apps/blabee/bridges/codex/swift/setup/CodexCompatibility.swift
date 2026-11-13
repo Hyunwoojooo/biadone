@@ -21,38 +21,9 @@ enum CodexCompatibility {
     /// One version-to-capability matrix keeps feature-specific qualification
     /// explicit without duplicating version literals across independent
     /// allowlists. A version is approved only for the capabilities listed here.
-    private static let capabilityMatrix: [String: Set<CapabilityProfile>] = [
-        "0.149.1": [.managedAppServer],
-        "0.150.1": [.managedAppServer],
-        "0.151.0": [.managedAppServer, .pluginCLI],
-        "0.152.0": [.pluginCLI],
-        "0.152.1": [.pluginCLI],
-        "0.153.0": [.pluginCLI],
-        "0.153.1": [.pluginCLI],
-        "0.153.2": [.pluginCLI],
-        "0.153.3": [.pluginCLI],
-        "0.153.4": [.pluginCLI],
-        "0.154.0": [.pluginCLI, .updateLifecycle],
-        "0.155.0": [.managedAppServer, .pluginCLI, .updateLifecycle],
-        "0.155.1": [.managedAppServer, .pluginCLI, .updateLifecycle],
-        "0.156.0": [.managedAppServer, .pluginCLI, .serverOwnedWorkspaceRoots, .updateLifecycle],
-        "0.156.1": [.managedAppServer, .pluginCLI, .serverOwnedWorkspaceRoots, .updateLifecycle],
-        "0.157.0": [.managedAppServer, .pluginCLI, .serverOwnedWorkspaceRoots, .updateLifecycle],
-        "0.157.1": [.managedAppServer, .pluginCLI, .serverOwnedWorkspaceRoots, .updateLifecycle],
-        "0.158.0": [.managedAppServer, .pluginCLI, .serverOwnedWorkspaceRoots, .updateLifecycle],
-        "0.159.0": [.managedAppServer, .pluginCLI, .serverOwnedWorkspaceRoots, .updateLifecycle],
-        "0.159.1": [.managedAppServer, .pluginCLI, .serverOwnedWorkspaceRoots, .updateLifecycle],
-        "0.159.2": [.managedAppServer, .pluginCLI, .serverOwnedWorkspaceRoots, .updateLifecycle],
-        "0.159.3": [.managedAppServer, .pluginCLI, .serverOwnedWorkspaceRoots, .updateLifecycle],
-        "0.160.0": [.managedAppServer, .pluginCLI, .serverOwnedWorkspaceRoots, .updateLifecycle],
-        "0.160.1": [.managedAppServer, .pluginCLI, .serverOwnedWorkspaceRoots, .updateLifecycle],
-        "0.161.0": [.managedAppServer, .pluginCLI, .serverOwnedWorkspaceRoots, .updateLifecycle],
-        "0.162.0": [.managedAppServer, .pluginCLI, .serverOwnedWorkspaceRoots, .updateLifecycle],
-        "0.162.1": [.managedAppServer, .pluginCLI, .serverOwnedWorkspaceRoots, .updateLifecycle],
-        "0.163.0": [.managedAppServer, .pluginCLI, .serverOwnedWorkspaceRoots, .updateLifecycle],
-        "0.164.0": [.managedAppServer, .pluginCLI, .serverOwnedWorkspaceRoots, .updateLifecycle],
-        "0.166.0": [.managedAppServer, .pluginCLI, .serverOwnedWorkspaceRoots, .updateLifecycle],
-    ]
+    private static let capabilityMatrix: [String: Set<CapabilityProfile>] = Dictionary(
+        uniqueKeysWithValues: CodexQualificationData.releases.map { ($0.version, $0.capabilities) }
+    )
 
     static let supportedVersions = supportedVersions(for: .managedAppServer)
     static let pluginCLISupportedVersions = supportedVersions(for: .pluginCLI)
