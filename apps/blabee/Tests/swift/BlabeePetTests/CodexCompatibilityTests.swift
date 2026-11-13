@@ -44,6 +44,14 @@ func codexCompatibilityQualification() {
         "0.153.3", "0.153.4", "0.154.0", "0.155.0", "0.155.1", "0.156.0", "0.156.1",
         "0.157.0", "0.157.1", "0.158.0", "0.159.0", "0.159.1", "0.159.2", "0.159.3", "0.160.0", "0.160.1", "0.161.0", "0.162.0", "0.162.1", "0.163.0", "0.164.0", "0.166.0",
     ])
+    // Server-owned workspace routing was audited from 0.156.0; update-time
+    // lifecycle from 0.154.0 (which has no managed App Server capability).
+    #expect(CodexCompatibility.supportedVersions(for: .serverOwnedWorkspaceRoots)
+        == CodexCompatibility.supportedVersions.filter { $0.compare("0.156.0", options: .numeric) != .orderedAscending })
+    #expect(CodexCompatibility.supportedVersions(for: .updateLifecycle)
+        == CodexCompatibility.pluginCLISupportedVersions.filter { $0.compare("0.154.0", options: .numeric) != .orderedAscending })
+    #expect(UpdateManagedCodexProfile.supportedVersions
+        == CodexCompatibility.supportedVersions(for: .updateLifecycle))
     #expect(CodexCompatibility.supportedVersions(for: .managedAppServer)
         == CodexCompatibility.supportedVersions)
     #expect(CodexCompatibility.supportedVersions(for: .pluginCLI)

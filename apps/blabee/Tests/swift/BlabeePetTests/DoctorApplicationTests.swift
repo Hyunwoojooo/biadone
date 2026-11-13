@@ -357,9 +357,10 @@ private final class DoctorFixture {
         if !FileManager.default.fileExists(atPath: ripgrep.path) {
             try makeExecutable(ripgrep, data: machOFixture)
         }
-        // The 0.166 package adds a declared standalone executor. Reusing this
-        // fixture for an older version must also restore that version's layout.
-        if version == "0.166.0" {
+        // Packages from 0.166 add a declared standalone executor; the catalog
+        // record says which. Reusing this fixture must restore each layout.
+        let hasExecServer = ManagedCodexRuntimeBundleQualificationCatalog.releaseHasExecServer(version: version)
+        if hasExecServer {
             if !FileManager.default.fileExists(atPath: execServer.path) {
                 try makeExecutable(execServer, data: machOFixture)
             }
@@ -375,7 +376,9 @@ private final class DoctorFixture {
             "resourcesDir": "codex-resources",
             "pathDir": "codex-path",
         ]
-        if version == "0.166.0" { manifest["execServer"] = "bin/codex-exec-server" }
+        if ManagedCodexRuntimeBundleQualificationCatalog.releaseHasExecServer(version: version) {
+            manifest["execServer"] = "bin/codex-exec-server"
+        }
         try writeJSON(manifest, to: codexPackage.appendingPathComponent("codex-package.json"))
     }
 
@@ -720,7 +723,7 @@ func doctorCodexVersionPolicy() throws {
         try fixture.writeCodexPackage(version: supportedVersion)
         execution = DoctorApplication(dependencies: fixture.dependencies())
             .run(arguments: try fixture.arguments())
-        if supportedVersion == "0.166.0",
+        if ManagedCodexRuntimeBundleQualificationCatalog.releaseHasExecServer(version: supportedVersion),
            ManagedCodexRuntimeBundleInspector.expectedTarget != "aarch64-apple-darwin"
         {
             // Version support does not qualify an unreviewed package target.

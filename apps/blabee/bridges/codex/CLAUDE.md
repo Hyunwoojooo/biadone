@@ -28,9 +28,9 @@
 | `runtime/CodexRuntimeBundle.swift` | 공식 패키지 검사: 파일별 SHA-256, 서명, Team ID, 공증, `QualificationCatalog`, fingerprint(v1/v2), private copy·seal·재검증 |
 | `runtime/ManagedCodexTrust.swift`, `ManagedCodexLauncher.swift`, `ManagedCodexWebSocket.swift`, `ManagedCodexApprovalRuntime.swift` | 관리형 실행 파일 신뢰, TUI·App Server 실행(workspace 라우팅), WebSocket, 승인 브로커 |
 | `runtime/CodexRuntimeTrust.swift`, `CodexNativeRuntime.swift`, `CodexNativeFailureGuard.swift` | PATH 런타임 진단, native CLI 조회, 실패 캐시 |
-| `setup/CodexCompatibility.swift` | 버전별 capability(`.managedAppServer`, `.pluginCLI`) 정확 일치 목록 |
+| `setup/CodexCompatibility.swift` | 버전별 capability(`.managedAppServer`, `.pluginCLI`, `.serverOwnedWorkspaceRoots`, `.updateLifecycle`) 정확 일치 목록. 지원 버전의 유일한 출처 |
 | `setup/CodexPluginSetup.swift`, `CodexPluginCheckReport.swift` | marketplace 조회·설치·마이그레이션·진단 |
-| `update/UpdateManagedCodex*.swift` | 업데이트 중 세션 lifecycle(`UpdateManagedCodexProfile.supportedVersions`). 승인 권한 없음 |
+| `update/UpdateManagedCodex*.swift` | 업데이트 중 세션 lifecycle(`UpdateManagedCodexProfile.supportedVersions` = `.updateLifecycle` capability). 승인 권한 없음 |
 
 Plugin: `plugin/.codex-plugin/plugin.json`, `plugin/.mcp.json`, `plugin/hooks/hooks.json`, `plugin/scripts/blabee-launcher`, `plugin/skills/`.
 앱 번들 내부 경로는 `Contents/Resources/Plugin/blabee`, marketplace 상대 경로는 `./Plugin/blabee`. 소스 위치와 번들 경로를 혼동하지 않는다.

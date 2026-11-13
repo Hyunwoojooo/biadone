@@ -202,23 +202,9 @@ struct ManagedCodexLauncherArguments: Equatable {
         // Older qualified TUIs send their own runtimeWorkspaceRoots. Moving
         // their overrides would let that client list overwrite the server's
         // roots. Only the audited server-owned versions use this routing.
-        let serverOwnsWorkspaceRoots = qualifiedVersion == "0.156.0"
-            || qualifiedVersion == "0.156.1"
-            || qualifiedVersion == "0.157.0"
-            || qualifiedVersion == "0.157.1"
-            || qualifiedVersion == "0.158.0"
-            || qualifiedVersion == "0.159.0"
-            || qualifiedVersion == "0.159.1"
-            || qualifiedVersion == "0.159.2"
-            || qualifiedVersion == "0.159.3"
-            || qualifiedVersion == "0.160.0"
-            || qualifiedVersion == "0.160.1"
-            || qualifiedVersion == "0.161.0"
-            || qualifiedVersion == "0.162.0"
-            || qualifiedVersion == "0.162.1"
-            || qualifiedVersion == "0.163.0"
-            || qualifiedVersion == "0.164.0"
-            || qualifiedVersion == "0.166.0"
+        let serverOwnsWorkspaceRoots = qualifiedVersion.map {
+            CodexCompatibility.supportedVersions(for: .serverOwnedWorkspaceRoots).contains($0)
+        } ?? false
         var tui: [String] = []
         var server: [String] = []
         var hasProfile = false

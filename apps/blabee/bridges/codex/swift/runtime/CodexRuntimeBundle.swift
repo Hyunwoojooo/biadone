@@ -42,12 +42,20 @@ struct ManagedCodexRuntimeBundleManifest: Codable, Equatable, Sendable {
     let resourcesDir: String?
     let pathDir: String
 
+    /// Structural rule only: the exec server, when present, has its one fixed
+    /// path. Whether a release has it is decided by its catalog record, whose
+    /// digests must cover exactly these files (`hasExecServer`), never by a
+    /// version comparison here.
     fileprivate var hasSupportedExecServerLayout: Bool {
-        if version == "0.166.0" {
-            return target == "aarch64-apple-darwin"
-                && execServer == "bin/codex-exec-server"
-        }
-        return execServer == nil
+        guard execServer == nil
+            || (target == "aarch64-apple-darwin" && execServer == "bin/codex-exec-server")
+        else { return false }
+        // A reviewed release must keep its recorded layout. An unreviewed one
+        // passes this structural check and is refused later by the catalog as
+        // unqualified, rather than being reported as a malformed package.
+        guard let recorded = ManagedCodexRuntimeBundleQualificationCatalog
+            .recordedExecServerLayout(version: version, target: target) else { return true }
+        return recorded == (execServer != nil)
     }
 }
 
@@ -3646,6 +3654,18 @@ enum ManagedCodexRuntimeBundleQualificationCatalog {
             if inspection.executableVerification != .production { return }
         #endif
         try requireProductionQualification(inspection)
+    }
+
+    /// nil when the release has no catalog record.
+    static func recordedExecServerLayout(version: String, target: String) -> Bool? {
+        production[Key(version: version, target: target)].map { $0.fileDigests["bin/codex-exec-server"] != nil }
+    }
+
+    /// Whether the qualified release ships `bin/codex-exec-server`, read from
+    /// its catalog record (the layout is data, not a version comparison).
+    static func releaseHasExecServer(version: String,
+                                     target: String = ManagedCodexRuntimeBundleInspector.expectedTarget) -> Bool {
+        production[Key(version: version, target: target)]?.fileDigests["bin/codex-exec-server"] != nil
     }
 
     static func isQualifiedDataResource(path: String, digest: String) -> Bool {

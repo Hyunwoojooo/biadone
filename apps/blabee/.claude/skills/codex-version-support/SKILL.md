@@ -30,7 +30,12 @@ Codex Bridge 영역 작업이다. 버전은 **정확한 문자열**로만 등록
 7. `scripts/qualify-codex-compatibility.mjs`: `includesVoice`, 셸 제거 버전, 레이아웃 목록.
 8. 필요하면 `bridges/codex/plugin/`의 Plugin 버전·Hook matcher와 `app/service/DoctorApplication.swift`의 고정 진단 계약.
 
-### 1-1. 버전 목록 단일화 (다음 버전 등록 때 한 번, 2026-11-06 결정)
+### 1-1. 버전 목록 단일화 (2026-11-13 완료)
+
+2026-11-13에 정리했다. 아래는 당시 배경이다. 지금은 `CodexCompatibility.capabilityMatrix` 한 곳에 버전과 기능
+(`.managedAppServer`, `.pluginCLI`, `.serverOwnedWorkspaceRoots`, `.updateLifecycle`)을 적으면 3·4번이 따라온다.
+exec-server 레이아웃은 catalog record의 파일 목록이 정한다(`recordedExecServerLayout`). 테스트는 정확한 목록을 `CodexCompatibilityTests`에서만 확인한다.
+
 
 지원 버전 문자열이 위 2~5번에 따로 적혀 있어 하나를 빠뜨리면 테스트가 깨진다(0.166.0 때 `DoctorApplicationTests`). 다음 버전을 등록할 때 함께 정리한다.
 

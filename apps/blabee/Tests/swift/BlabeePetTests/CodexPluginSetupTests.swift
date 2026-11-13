@@ -2311,11 +2311,9 @@ func codexPluginSetupFallsThroughUnsupportedCandidate() throws {
 
 @Test("Production Plugin CLI allowlist is explicit", .petLanguage(.korean))
 func codexPluginSetupProductionAllowlistIsExplicit() {
-    #expect(CodexPluginSetupProductionTrust.supportedPluginCLIVersions == [
-        "0.151.0", "0.152.0", "0.152.1", "0.153.0", "0.153.1", "0.153.2",
-        "0.153.3", "0.153.4", "0.154.0", "0.155.0", "0.155.1", "0.156.0", "0.156.1",
-        "0.157.0", "0.157.1", "0.158.0", "0.159.0", "0.159.1", "0.159.2", "0.159.3", "0.160.0", "0.160.1", "0.161.0", "0.162.0", "0.162.1", "0.163.0", "0.164.0", "0.166.0",
-    ])
+    // The exact list is asserted once, in CodexCompatibilityTests.
+    #expect(CodexPluginSetupProductionTrust.supportedPluginCLIVersions
+        == CodexCompatibility.pluginCLISupportedVersions)
 }
 
 @Test("Production pinned executable catalog is exact for Codex 0.153.2 arm64", .petLanguage(.korean))

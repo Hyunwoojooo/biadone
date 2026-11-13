@@ -11,6 +11,11 @@ enum CodexCompatibility {
     enum CapabilityProfile: Hashable, Sendable {
         case managedAppServer
         case pluginCLI
+        /// The App Server owns runtime workspace roots, so managed TUI overrides
+        /// are routed to it (`ManagedCodexLauncher`). Audited from 0.156.0.
+        case serverOwnedWorkspaceRoots
+        /// Update-time managed session lifecycle (`UpdateManagedCodexProfile`).
+        case updateLifecycle
     }
 
     /// One version-to-capability matrix keeps feature-specific qualification
@@ -27,26 +32,26 @@ enum CodexCompatibility {
         "0.153.2": [.pluginCLI],
         "0.153.3": [.pluginCLI],
         "0.153.4": [.pluginCLI],
-        "0.154.0": [.pluginCLI],
-        "0.155.0": [.managedAppServer, .pluginCLI],
-        "0.155.1": [.managedAppServer, .pluginCLI],
-        "0.156.0": [.managedAppServer, .pluginCLI],
-        "0.156.1": [.managedAppServer, .pluginCLI],
-        "0.157.0": [.managedAppServer, .pluginCLI],
-        "0.157.1": [.managedAppServer, .pluginCLI],
-        "0.158.0": [.managedAppServer, .pluginCLI],
-        "0.159.0": [.managedAppServer, .pluginCLI],
-        "0.159.1": [.managedAppServer, .pluginCLI],
-        "0.159.2": [.managedAppServer, .pluginCLI],
-        "0.159.3": [.managedAppServer, .pluginCLI],
-        "0.160.0": [.managedAppServer, .pluginCLI],
-        "0.160.1": [.managedAppServer, .pluginCLI],
-        "0.161.0": [.managedAppServer, .pluginCLI],
-        "0.162.0": [.managedAppServer, .pluginCLI],
-        "0.162.1": [.managedAppServer, .pluginCLI],
-        "0.163.0": [.managedAppServer, .pluginCLI],
-        "0.164.0": [.managedAppServer, .pluginCLI],
-        "0.166.0": [.managedAppServer, .pluginCLI],
+        "0.154.0": [.pluginCLI, .updateLifecycle],
+        "0.155.0": [.managedAppServer, .pluginCLI, .updateLifecycle],
+        "0.155.1": [.managedAppServer, .pluginCLI, .updateLifecycle],
+        "0.156.0": [.managedAppServer, .pluginCLI, .serverOwnedWorkspaceRoots, .updateLifecycle],
+        "0.156.1": [.managedAppServer, .pluginCLI, .serverOwnedWorkspaceRoots, .updateLifecycle],
+        "0.157.0": [.managedAppServer, .pluginCLI, .serverOwnedWorkspaceRoots, .updateLifecycle],
+        "0.157.1": [.managedAppServer, .pluginCLI, .serverOwnedWorkspaceRoots, .updateLifecycle],
+        "0.158.0": [.managedAppServer, .pluginCLI, .serverOwnedWorkspaceRoots, .updateLifecycle],
+        "0.159.0": [.managedAppServer, .pluginCLI, .serverOwnedWorkspaceRoots, .updateLifecycle],
+        "0.159.1": [.managedAppServer, .pluginCLI, .serverOwnedWorkspaceRoots, .updateLifecycle],
+        "0.159.2": [.managedAppServer, .pluginCLI, .serverOwnedWorkspaceRoots, .updateLifecycle],
+        "0.159.3": [.managedAppServer, .pluginCLI, .serverOwnedWorkspaceRoots, .updateLifecycle],
+        "0.160.0": [.managedAppServer, .pluginCLI, .serverOwnedWorkspaceRoots, .updateLifecycle],
+        "0.160.1": [.managedAppServer, .pluginCLI, .serverOwnedWorkspaceRoots, .updateLifecycle],
+        "0.161.0": [.managedAppServer, .pluginCLI, .serverOwnedWorkspaceRoots, .updateLifecycle],
+        "0.162.0": [.managedAppServer, .pluginCLI, .serverOwnedWorkspaceRoots, .updateLifecycle],
+        "0.162.1": [.managedAppServer, .pluginCLI, .serverOwnedWorkspaceRoots, .updateLifecycle],
+        "0.163.0": [.managedAppServer, .pluginCLI, .serverOwnedWorkspaceRoots, .updateLifecycle],
+        "0.164.0": [.managedAppServer, .pluginCLI, .serverOwnedWorkspaceRoots, .updateLifecycle],
+        "0.166.0": [.managedAppServer, .pluginCLI, .serverOwnedWorkspaceRoots, .updateLifecycle],
     ]
 
     static let supportedVersions = supportedVersions(for: .managedAppServer)

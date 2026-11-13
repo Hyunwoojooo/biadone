@@ -1939,6 +1939,19 @@ struct CodexRuntimeTrustTests {
                     }
                 }
             }
+            if scenario == "unreviewed-version" {
+                // Audit CDX-7: an unreviewed release with the exec-server layout is
+                // structurally valid and refused only as unqualified by the catalog.
+                let inspection = try ManagedCodexRuntimeBundleInspector.inspect(
+                    executableURL: fixture.target,
+                    executableVerification: .trustedTestFixture
+                )
+                #expect(throws: ManagedCodexRuntimeBundleQualificationError.self) {
+                    try ManagedCodexRuntimeBundleQualificationCatalog
+                        .requireProductionQualificationForTesting(inspection)
+                }
+                return
+            }
             #expect(throws: ManagedCodexRuntimeBundleError.self) {
                 _ = try ManagedCodexRuntimeBundleInspector.inspect(
                     executableURL: fixture.target,
