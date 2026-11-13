@@ -20,6 +20,14 @@ See the [README](README.md) for the current download and setup instructions.
 
 ## App updates
 
+### r92 (Unreleased)
+
+Draft. The release date, download link and the full list of changes are added when r92 is published.
+
+#### Changed
+
+- **Codex 0.167.0 and 0.167.1 support.** Both exact versions join the supported list for the plugin CLI, the managed App Server, workspace routing, and the update lifecycle, with the same package layout as 0.166.0. Only each version's primary `codex` executable is trusted for one-shot Hook approvals. From 0.167.0, commands that an administrator policy marks as requiring a human decision ignore a Hook approval, so for those Codex asks in its own window even after a Pet approval.
+
 ### r91
 
 **Released:** 2026-11-06. **App version:** 0.1.0 (build 91, arm64).

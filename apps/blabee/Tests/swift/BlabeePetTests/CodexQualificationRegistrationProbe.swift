@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 import Testing
 @testable import BlabeeCoordinator
@@ -12,6 +13,14 @@ func codexQualificationRegistrationProbe() throws {
     let environment = ProcessInfo.processInfo.environment
     let package = URL(fileURLWithPath: try #require(environment["BLABEE_CODEX_REGISTER_PACKAGE"]))
     let output = URL(fileURLWithPath: try #require(environment["BLABEE_CODEX_REGISTER_OUTPUT"]))
+    // The official package marks voice/runtime.json executable; the inspector
+    // admits only catalog-pinned copies, and this release is not pinned yet.
+    let runtime = package.appendingPathComponent("codex-resources/voice/runtime.json")
+    if let data = try? Data(contentsOf: runtime) {
+        let digest = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+        ManagedCodexRuntimeBundleQualificationCatalog.registrationCandidateDataDigests.withLock { $0 = [digest] }
+    }
+    defer { ManagedCodexRuntimeBundleQualificationCatalog.registrationCandidateDataDigests.withLock { $0 = [] } }
     let inspection = try ManagedCodexRuntimeBundleInspector.inspect(
         executableURL: package.appendingPathComponent("bin/codex"),
         executableVerification: .production

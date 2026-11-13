@@ -1,0 +1,23 @@
+{
+  "schema": "blabee.codex-qualification-evidence.v1",
+  "version": "0.167.1",
+  "measured_on": "2026-11-13",
+  "archive": {
+    "name": "codex-package-aarch64-apple-darwin.tar.gz",
+    "sha256": "5bcbc5866cbca19f9299f7884e9b39b9ccb5469969c170b1f2d2cd6fc4b1ee72",
+    "bytes": 166615534,
+    "url": "https://github.com/openai/codex/releases/download/rust-v0.167.1/codex-package-aarch64-apple-darwin.tar.gz",
+    "published_at": "2026-11-10T21:32:01Z",
+    "source": "github-release"
+  },
+  "bin_codex": {
+    "cdhash": "14779c932d6736950666761116049886f2322b7e",
+    "team": "2DC432GLL2",
+    "sha256": "ebabe5f0d79145a9e61274ce9ecf7c02c9021b7b04bfa59b7e61ad4461c32b0b"
+  },
+  "exec_server": "bin/codex-exec-server",
+  "file_count": 42,
+  "fingerprint": "a49377734d7e7f4e97d89aa41c801aaf6b801ad0b93b39deb524f5e1f04475c2",
+  "notarization_checked": true,
+  "notarized_native_files": 30
+}

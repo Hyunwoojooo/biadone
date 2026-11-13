@@ -18,7 +18,11 @@ Swift는 생성된 `core/HookPermissionProfiles.generated.swift`와 `setup/Codex
    (네트워크로 공식 GitHub asset을 받으므로 사용자 승인 후 실행. 로컬 archive는 `--archive <path>`.)
    archive SHA-256·크기를 GitHub 메타데이터와 대조 → 새 빈 폴더에 전개 → opt-in Swift probe(`codexQualificationRegistrationProbe`, production 검사)로
    파일 해시·Team ID·fingerprint 측정 → codesign으로 CDHash → JSON·증거(`docs/features/codex-evidence/<ver>.json`)·fixture 작성 → Swift 재생성.
-   기능은 기본값으로 직전 버전과 같다. 다르면 `--capabilities`.
+   기능 기본값은 catalog가 있는 가장 최근 기록(다시 등록하는 버전 자신 제외)과 같다. 다르면 `--capabilities`.
+   공증은 모든 Mach-O 파일을 1초 간격으로 조회하고 실패하면 5초 뒤 두 번 더 확인한다. Apple 조회는 몰아서 보내면
+   "공증 없음"과 같은 exit 3으로 실패한다(2026-11-13 0.167.x 첫 측정에서 오판).
+   실제 패키지 Swift 검증의 `BLABEE_CODEX_RUNTIME_ARTIFACT`에는 archive가 아니라 전개한 `bin/codex` 경로를 준다.
+   native lifecycle의 `--catalog`는 공식 `codex-rs/models-manager/models.json`(해당 태그)을 쓴다.
 2. 아래 0절의 "이전 버전과 공식 소스 비교"는 여전히 사람이 한다(queue 인자, Hook 형식, App Server 승인 schema, 패키지 레이아웃).
 3. 3절 검증과 4절 문서. 생성 파일을 손으로 고치지 않는다(`npm run codex:qualification -- check`가 t005에서 확인).
 

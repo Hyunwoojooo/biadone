@@ -1,5 +1,13 @@
 # Codex 버전별 지원·검증 기록
 
+## 2026-11-14: 0.167.0·0.167.1 지원(새 등록 흐름 첫 적용)
+
+`npm run codex:register`로 공식 패키지를 측정해 두 버전을 0.166.0과 같은 기능으로 등록했다.
+패키지 구성(42파일, exec-server)과 Hook·queue 소스는 0.166.0과 같고, 0.167.0부터 관리자 정책의
+"사람 승인 필수" 명령은 Hook Allow를 무시한다. [공식 근거·검증·남은 경계](CODEX_0167_QUALIFICATION.md).
+qualify smoke 72개(두 버전), native lifecycle, 실제 패키지 catalog 일치, Swift Codex 묶음 608개를 통과했다.
+설치 앱에는 아직 반영하지 않았다.
+
 ## 2026-11-04: 0.166.0 지원과 새 executor 패키지 검사
 
 설치 r89에서 0.166.0이 지원 목록에 없어 Plugin 검사 전에 거부되는 원인을 확인했다.

@@ -503,3 +503,27 @@ test("an ordinary exit 137 is a command failure without claiming signal terminat
   assert.equal(f.calls.filter((call) => call.command.endsWith("/bin/codex")).length, 1);
   assert.doesNotMatch(report.failure.detail, /OS blocking|terminated/);
 });
+
+test("a notarization lookup that fails once is retried, and a persistent failure still stops", async (t) => {
+  for (const failures of [1, 3]) {
+    const f = await fixture(t, { voice: true, version: "0.166.0" });
+    const target = join(f.runtimeDir, voiceRoot, "bin/codex-voice-host");
+    let remaining = failures;
+    const sleeps = [];
+    const report = await qualifyCodexCompatibility(f.options, { ...f.dependencies,
+      sleep: async (ms) => { sleeps.push(ms); },
+      run: async (...args) => {
+        const result = await f.run(...args);
+        if (args[1].at(-1) === target && args[1].includes("-R=notarized") && remaining > 0) { remaining--; return { ...result, code: 3 }; }
+        return result;
+      } });
+    if (failures === 1) {
+      assert.equal(report.failure, null);
+      assert.ok(sleeps.includes(5000), "retried after a pause");
+      assert.equal(report.checks.filter((check) => check.capability === "notarization:codex-resources/voice/bin/codex-voice-host").length, 1);
+    } else {
+      assert.equal(report.failure.code, "notarization_unverified");
+      assert.equal(f.calls.some((call) => call.command.endsWith("/bin/codex")), false);
+    }
+  }
+});

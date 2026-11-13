@@ -5,11 +5,14 @@ import { cp, lstat, mkdir, mkdtemp, readFile, readdir, realpath, rm, writeFile }
 import { arch, platform, release, tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { loadRecords } from "./codex/qualification.mjs";
 
 const projectRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const versionPattern = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
 const legacyFiles = ["bin/codex", "bin/codex-code-mode-host", "codex-package.json", "codex-path/rg", "codex-resources/zsh/bin/zsh"];
 const execServer = "bin/codex-exec-server";
+const notarizationPaceMs = 1000;
+const notarizationRetryMs = 5000;
 const voiceRoot = "codex-resources/voice";
 const voiceHost = `${voiceRoot}/bin/codex-voice-host`;
 // Exact layout reviewed for the arm64 versions listed by includesVoice below.
@@ -168,6 +171,8 @@ function objectOutput(result, capability) {
 export async function qualifyCodexCompatibility(options, dependencies = {}) {
   const evidenceMode = ["run", "platform", "arch"].some((key) => dependencies[key] !== undefined) ? "fixture" : "runtime";
   const run = dependencies.run ?? runBounded;
+  // Only real Apple lookups are paced; fixture runners answer immediately.
+  const sleep = dependencies.sleep ?? (dependencies.run ? async () => {} : (ms) => new Promise((done) => setTimeout(done, ms)));
   const hostPlatform = dependencies.platform ?? platform();
   const hostArch = dependencies.arch ?? arch();
   const expectedTarget = `${hostArch === "arm64" ? "aarch64" : hostArch === "x64" ? "x86_64" : "unsupported"}-apple-darwin`;
@@ -188,14 +193,18 @@ export async function qualifyCodexCompatibility(options, dependencies = {}) {
     if (!versionPattern.test(options.expectedVersion ?? "")) fail("invalid_input", "An exact stable --expected-version is required");
     if (!options.runtimeDir || !isAbsolute(options.runtimeDir)) fail("invalid_input", "An explicit absolute --runtime-dir is required");
     if (hostPlatform !== "darwin" || !["arm64", "x64"].includes(hostArch)) fail("unsupported_host", "Qualification requires a native macOS runner");
-    if (options.expectedVersion === "0.166.0" && expectedTarget !== "aarch64-apple-darwin") fail("package_layout_invalid", "Codex 0.166.0 is reviewed only for aarch64-apple-darwin");
+    // Layout comes from the reviewed qualification record (audit CDX-7), not
+    // from version lists here. Releases without a catalog keep the legacy layout.
+    const record = (await loadRecords()).find((entry) => entry.version === options.expectedVersion);
+    const recorded = record?.catalog && record.target === expectedTarget ? Object.keys(record.catalog.file_digests) : null;
+    if (record?.catalog && record.target !== expectedTarget) fail("package_layout_invalid", `Codex ${options.expectedVersion} is reviewed only for ${record.target}`);
     const runtimeRoot = resolve(options.runtimeDir);
     if (await realpath(runtimeRoot) !== runtimeRoot) fail("package_layout_invalid", "Runtime root or ancestor is a symlink; provide its canonical path");
-    const includesExecServer = options.expectedVersion === "0.166.0" && expectedTarget === "aarch64-apple-darwin";
-    const includesVoice = includesExecServer || (["0.155.0", "0.155.1", "0.156.0", "0.156.1", "0.157.0", "0.157.1", "0.158.0", "0.159.0", "0.159.1", "0.159.2", "0.159.3", "0.160.0", "0.160.1", "0.161.0", "0.162.0", "0.162.1", "0.163.0", "0.164.0"].includes(options.expectedVersion) && expectedTarget === "aarch64-apple-darwin");
-    // Only these exact reviewed arm64 packages retire the bundled shell.
-    const baseFiles = includesVoice && ["0.163.0", "0.164.0", "0.166.0"].includes(options.expectedVersion)
-      ? legacyFiles.filter((name) => name !== "codex-resources/zsh/bin/zsh") : legacyFiles;
+    const includesExecServer = Boolean(recorded?.includes(execServer));
+    const includesVoice = Boolean(recorded?.includes(voiceHost));
+    // Reviewed packages that no longer bundle the patched shell say so by omission.
+    const baseFiles = recorded && !recorded.includes("codex-resources/zsh/bin/zsh")
+      ? legacyFiles.filter((name) => name !== "codex-resources/zsh/bin/zsh") : [...legacyFiles];
     if (includesExecServer) baseFiles.push(execServer);
     const baseExecutables = baseFiles.filter((name) => name !== "codex-package.json");
     const requiredFiles = includesVoice ? [...baseFiles, ...voiceFiles] : baseFiles;
@@ -274,8 +283,17 @@ export async function qualifyCodexCompatibility(options, dependencies = {}) {
       const requirement = `anchor apple generic and certificate leaf[subject.OU] = "${expectedTeam}"${identifier ? ` and identifier "${identifier}"` : ""}`;
       try { await probe(`signature:${file}`, "/usr/bin/codesign", ["--verify", "--strict", "--verbose=4", `-R=${requirement}`, executable]); }
       catch (error) { if (error.qualificationCode === "command_failed") error.qualificationCode = "signature_invalid"; throw error; }
-      try { await probe(`notarization:${file}`, "/usr/bin/codesign", ["--verify", "--strict", "--verbose=4", "-R=notarized", "--check-notarization", executable]); }
-      catch (error) { if (error.qualificationCode === "command_failed") error.qualificationCode = "notarization_unverified"; throw error; }
+      // Apple's online lookup also fails (exit 3) when queried in a burst, the
+      // same code as a missing ticket. Pace lookups and retry before failing.
+      for (let attempt = 1; ; attempt++) {
+        await sleep(attempt === 1 ? notarizationPaceMs : notarizationRetryMs);
+        try { await probe(`notarization:${file}`, "/usr/bin/codesign", ["--verify", "--strict", "--verbose=4", "-R=notarized", "--check-notarization", executable]); break; }
+        catch (error) {
+          if (error.qualificationCode === "command_failed") error.qualificationCode = "notarization_unverified";
+          if (error.qualificationCode !== "notarization_unverified" || attempt >= 3) throw error;
+          report.checks.pop();
+        }
+      }
     }
     report.testedCapabilities.push("official-signature", "notarization");
     const codex = join(runtimeRoot, "bin/codex");

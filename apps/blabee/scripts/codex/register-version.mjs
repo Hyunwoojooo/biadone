@@ -72,7 +72,7 @@ export function buildRecord({ version, capabilities, probe, codesign, archive, n
     notes: [
       `Official rust-v${version} ${ASSET} sha256:${archive.sha256} (${archive.bytes} bytes${archive.publishedAt ? `, published ${archive.publishedAt}` : ''}).`,
       `Registered ${date} by scripts/codex/register-version.mjs: ${files} file digests from production inspection, Team ID ${OFFICIAL_TEAM}`
-        + `${notarization ? ', bin/codex notarization checked' : ''}${probe.exec_server ? `, declares ${probe.exec_server}` : ''}.`,
+        + `${notarization ? ', every native file notarized (paced online lookup)' : ''}${probe.exec_server ? `, declares ${probe.exec_server}` : ''}.`,
     ],
   }, `${version}.json`);
 }
@@ -117,6 +117,26 @@ export function parseCodesign(text) {
   return { cdhash: text.match(/^CDHash=([0-9a-f]{40})$/m)?.[1], team: text.match(/^TeamIdentifier=(\S+)$/m)?.[1] };
 }
 
+const pause = ms => new Promise(resolveDelay => setTimeout(resolveDelay, ms));
+
+/** Every Mach-O file, one paced online lookup each. Apple's lookup fails with
+ * the same exit code when queried in a burst, so retry before concluding. */
+async function checkNotarization(packageDirectory, paths) {
+  const results = {};
+  for (const path of [...paths].sort()) {
+    const full = join(packageDirectory, path);
+    const { stdout } = await execFile('/usr/bin/file', ['-b', full]);
+    if (!stdout.includes('Mach-O')) continue;
+    results[path] = false;
+    for (let attempt = 1; attempt <= 3 && !results[path]; attempt++) {
+      await pause(attempt === 1 ? 1000 : 5000);
+      results[path] = await execFile('/usr/bin/codesign', ['--verify', '--strict', '-R=notarized', '--check-notarization', full])
+        .then(() => true, () => false);
+    }
+  }
+  return results;
+}
+
 function runProbe(packageDirectory, output) {
   return new Promise((resolveRun, reject) => {
     const child = spawn('npm', ['run', 'test:swift', '--', '--filter', 'codexQualificationRegistrationProbe'], {
@@ -133,7 +153,9 @@ export async function register(options) {
   if (existing.some(r => r.version === options.version) && !options.replace && !options.dryRun) {
     throw new Error(`${options.version} is already registered; pass --replace to re-measure it`);
   }
-  const latest = existing.at(-1);
+  // Default to the newest fully reviewed release (with a catalog), never the
+  // record being replaced, so a restricted record cannot narrow the next one.
+  const latest = existing.filter(r => r.version !== options.version && r.catalog).at(-1);
   const capabilities = options.capabilities ?? latest.capabilities;
   const work = await mkdtemp(join(tmpdir(), `blabee-codex-register-${options.version}-`));
   const downloads = join(work, 'download'), extracted = join(work, 'package');
@@ -149,8 +171,11 @@ export async function register(options) {
   const { stderr } = await execFile('/usr/bin/codesign', ['-dvvv', binary]);
   const codesign = parseCodesign(stderr);
   let notarization = false;
+  let notarizedFiles = null;
   if (options.checkNotarization) {
-    await execFile('/usr/bin/codesign', ['--verify', '--strict', '-R=notarized', '--check-notarization', binary]);
+    notarizedFiles = await checkNotarization(packageDirectory, Object.keys(probe.file_digests));
+    const missing = Object.entries(notarizedFiles).filter(([, ok]) => !ok).map(([path]) => path);
+    if (missing.length) throw new Error(`not notarized after retries: ${missing.join(', ')}`);
     notarization = true;
   }
   const date = new Date().toISOString().slice(0, 10);
@@ -160,7 +185,8 @@ export async function register(options) {
       source: options.download ? 'github-release' : 'local-archive' },
     bin_codex: { cdhash: codesign.cdhash, team: codesign.team, sha256: probe.file_digests['bin/codex'] },
     exec_server: probe.exec_server, file_count: Object.keys(probe.file_digests).length,
-    fingerprint: probe.fingerprint, notarization_checked: notarization, work_directory: work };
+    fingerprint: probe.fingerprint, notarization_checked: notarization,
+    notarized_native_files: notarizedFiles ? Object.keys(notarizedFiles).length : null };
   if (options.dryRun) { console.log(JSON.stringify({ record, evidence }, null, 2)); return { record, evidence }; }
   await writeFile(join(QUALIFICATION_DIRECTORY, `${options.version}.json`), JSON.stringify(record, null, 2) + '\n');
   await mkdir(join(root, 'docs/features/codex-evidence'), { recursive: true });

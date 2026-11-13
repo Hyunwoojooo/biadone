@@ -1,6 +1,7 @@
 import CryptoKit
 import Darwin
 import Foundation
+import os
 import Security
 
 /// Stable, fail-closed reasons returned by the shared managed-runtime validator.
@@ -1907,8 +1908,17 @@ enum ManagedCodexRuntimeBundleQualificationCatalog {
 
     static func isQualifiedDataResource(path: String, digest: String) -> Bool {
         guard path == "codex-resources/voice/runtime.json" else { return false }
+        #if DEBUG
+            if registrationCandidateDataDigests.withLock({ $0.contains(digest) }) { return true }
+        #endif
         return production.values.contains { $0.fileDigests[path] == digest }
     }
+
+    #if DEBUG
+        /// Registration probe only (debug builds): the not-yet-recorded
+        /// runtime.json digest of the package being measured. Never in release.
+        static let registrationCandidateDataDigests = OSAllocatedUnfairLock(initialState: Set<String>())
+    #endif
 
     #if DEBUG
         static func requireProductionQualificationForTesting(

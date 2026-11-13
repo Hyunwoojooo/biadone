@@ -2404,49 +2404,28 @@ struct CodexRuntimeTrustTests {
             executableVerification: .production
         )
 
-        let expectedFingerprints = [
-            "0.151.0": "3519a4614dbea34f15941b0886e29aa4c9a961b5b40bab942a3f38f61cc8eef9",
-            "0.155.0": "115a008c1ab06a4070b7078954189b192c8e1278cf8b49ba5d80920ec5dc6095",
-            "0.155.1": "91948415ab606b4e7272b60b8f7d53cc10b5eef2d931591ae93e3a27c969856a",
-            "0.156.0": "d0306e399bfd8310d8b8b07006c5ba3ec05c81491ebd510177d3676ddf1d2b52",
-            "0.156.1": "f38f13051ab45aa8d4d58b4e05d642dd29522e071d605d14778271004f3354bc",
-            "0.157.0": "888c03595317eb339c789e91f658a55046cbbf3688bb6b78f7c5e7f85c241c90",
-            "0.157.1": "3b555cccb72141df5e2cd847dba0f97a2bf28fda54b7c4347a00a6ba1e96ab2a",
-            "0.158.0": "c1d34a32761e1c6e6548c009a8af242ce91b60695e9a6f347db3ae61b87d490c",
-            "0.159.0": "ee1402b1cd2d00c734557bb02422fe0c80518a978bee481e9313ea5faa5ca77c",
-            "0.159.1": "2daa378b3bbe94aeaf45c389d4ec68328b3793502689c2702cf9e6c4de0df4d2",
-            "0.159.2": "5ceec30c6abdef67db6df3faca91915574fccb89f6569e37afecb33289a1a05d",
-            "0.159.3": "6decf4a44bcdc6affc04398edcfc778605d3264dea29f4f387a06fb2b7b0b4f2",
-            "0.160.0": "4f6a4a3db956806862596c026345284181337cf60e3168ce549cf864f1c596bf",
-            "0.160.1": "0230997d8fc2c3950e2fe28f07548942b4662666958dd5079eb581922c35f8ee",
-            "0.161.0": "26d0cccbb01790e6646f836c0c53afb73e6081626d254984b280a41c06d04652",
-            "0.162.0": "5b0eedbe2ec32aa0e61e6ed4956b0a1c42db696613bdf004c55d3050581f4993",
-            "0.162.1": "37d07b6af6cd84ff0953704fcd1b8c933b79c360a94d4ceeef5eb07ef77c6961",
-            "0.163.0": "8455dbc0e6ca06359af0b7bf675767273c063ed92fa7a881380efc34771836b8",
-            "0.164.0": "d517a3752fe11e23aae487b07d6a9699b55031bc118253159c8d23bd26c01fb3",
-            "0.166.0": "e34cede97a151936ae1e2ec7af1ae38cc145857d6571981ddbab0723d7f86214",
-        ]
+        // The reviewed record (bridges/codex/qualification/<version>.json) is the
+        // expected value; requireQualified below also checks every file digest.
+        let expectedFingerprint = CodexQualificationData.releases
+            .first { $0.version == inspection.manifest.version }?.catalog?.fingerprint
+        #expect(expectedFingerprint != nil)
         #expect(ManagedCodexRuntimeBundleQualificationCatalog
-            .fingerprintForTesting(inspection)
-            == expectedFingerprints[inspection.manifest.version])
+            .fingerprintForTesting(inspection) == expectedFingerprint)
         try ManagedCodexRuntimeBundleQualificationCatalog.requireQualified(
             inspection
         )
     }
 
     @Test("catalog-pinned voice JSON loses executable permission only in the private copy",
-          arguments: [
-              "0.155.1", "0.156.0", "0.156.1", "0.157.0", "0.157.1",
-              "0.158.0", "0.159.0", "0.159.1", "0.159.2", "0.159.3", "0.160.0", "0.160.1", "0.161.0", "0.162.0", "0.162.1", "0.163.0", "0.164.0", "0.166.0",
-          ])
+          arguments: codexVoiceFixtureVersions)
     func pinnedVoiceJSONIsDataDuringPrivateCustody(version: String) throws {
-        guard version != "0.166.0"
+        guard !ManagedCodexRuntimeBundleQualificationCatalog.releaseHasExecServer(version: version)
             || ManagedCodexRuntimeBundleInspector.expectedTarget == "aarch64-apple-darwin"
         else { return }
         let fixture = try RuntimeTrustFixture(groupWritableAncestors: false)
         defer { fixture.remove() }
         try fixture.replaceTargetWithNativeExecutable()
-        if version == "0.166.0" { try fixture.installExecServerBundle() }
+        if ManagedCodexRuntimeBundleQualificationCatalog.releaseHasExecServer(version: version) { try fixture.installExecServerBundle() }
         let source = fixture.runtimeRoot.appendingPathComponent("codex-resources/voice/runtime.json")
         try FileManager.default.createDirectory(
             at: source.deletingLastPathComponent(), withIntermediateDirectories: true,
@@ -2461,7 +2440,7 @@ struct CodexRuntimeTrustTests {
         try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: source.path)
         try fixture.writeManifest(
             version: version,
-            execServer: version == "0.166.0" ? "bin/codex-exec-server" : nil,
+            execServer: ManagedCodexRuntimeBundleQualificationCatalog.releaseHasExecServer(version: version) ? "bin/codex-exec-server" : nil,
             resourcesDir: "codex-resources"
         )
         let inspection = try ManagedCodexRuntimeBundleInspector.inspect(
@@ -2484,12 +2463,9 @@ struct CodexRuntimeTrustTests {
     }
 
     @Test("unreviewed executable JSON remains rejected even at the voice resource path",
-          arguments: [
-              "0.155.1", "0.156.0", "0.156.1", "0.157.0", "0.157.1",
-              "0.158.0", "0.159.0", "0.159.1", "0.159.2", "0.159.3", "0.160.0", "0.160.1", "0.161.0", "0.162.0", "0.162.1", "0.163.0", "0.164.0", "0.166.0",
-          ])
+          arguments: codexVoiceFixtureVersions)
     func executableDataExceptionRequiresExactPathAndDigest(version: String) throws {
-        guard version != "0.166.0"
+        guard !ManagedCodexRuntimeBundleQualificationCatalog.releaseHasExecServer(version: version)
             || ManagedCodexRuntimeBundleInspector.expectedTarget == "aarch64-apple-darwin"
         else { return }
         let artifact = URL(fileURLWithPath: #filePath)
@@ -2505,7 +2481,7 @@ struct CodexRuntimeTrustTests {
             let fixture = try RuntimeTrustFixture(groupWritableAncestors: false)
             defer { fixture.remove() }
             try fixture.replaceTargetWithNativeExecutable()
-            if version == "0.166.0" { try fixture.installExecServerBundle() }
+            if ManagedCodexRuntimeBundleQualificationCatalog.releaseHasExecServer(version: version) { try fixture.installExecServerBundle() }
             let path = fixture.runtimeRoot.appendingPathComponent("codex-resources/voice/" + name)
             try FileManager.default.createDirectory(
                 at: path.deletingLastPathComponent(), withIntermediateDirectories: true,
@@ -2515,7 +2491,7 @@ struct CodexRuntimeTrustTests {
             try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: path.path)
             try fixture.writeManifest(
                 version: version,
-                execServer: version == "0.166.0" ? "bin/codex-exec-server" : nil,
+                execServer: ManagedCodexRuntimeBundleQualificationCatalog.releaseHasExecServer(version: version) ? "bin/codex-exec-server" : nil,
                 resourcesDir: "codex-resources"
             )
             #expect(throws: ManagedCodexRuntimeBundleError.self) {
@@ -3508,3 +3484,15 @@ private func changeRuntimeTrustACL(
 private enum RuntimeTrustFixtureError: Error {
     case aclSetup(String)
 }
+
+/// Versions with a reviewed voice runtime fixture (Fixtures/codex/<version>).
+/// t005 checks every fixture against its catalog record.
+private let codexVoiceFixtureVersions: [String] = {
+    let directory = URL(fileURLWithPath: #filePath)
+        .deletingLastPathComponent().deletingLastPathComponent()
+        .deletingLastPathComponent().deletingLastPathComponent()
+        .appendingPathComponent("Fixtures/codex")
+    return ((try? FileManager.default.contentsOfDirectory(atPath: directory.path)) ?? [])
+        .filter { $0.range(of: "^[0-9]+\\.[0-9]+\\.[0-9]+$", options: .regularExpression) != nil }
+        .sorted { $0.compare($1, options: .numeric) == .orderedAscending }
+}()
