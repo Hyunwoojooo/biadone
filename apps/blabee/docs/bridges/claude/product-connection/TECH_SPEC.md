@@ -95,7 +95,7 @@ readiness는 시작 시 1회와 사용자의 **연결 확인** 요청으로만 �
 | bridge 프로세스 종료·교체 | 옛 MCP의 재개방 경쟁을 허용하지 않고 해당 등록 폐기. 새 Claude 시작 안내 | owner 승인·새 역할 자격을 사용하는 hot reconnect는 후속; 옛 token으로 새 epoch 발급 금지 |
 | 수면 후 복귀, lease 유효 | owner 생존 확인·선행 renewal 후 위 재확인 절차 | 수면 전 선택 자동 전달 금지 |
 | lease 만료, owner control EOF, 자식 종료, SessionEnd, 사용자의 연결 해제 | 해당 scope 즉시 폐기, stale 요청 거부 | 작업이 실제 취소/완료됐다고 추정하지 않음. 폐기 후 completion도 거부 |
-| 공통 서비스/앱 재시작 | 새 service incarnation; 옛 권한은 모두 무효. 첫 제품은 `Claude에서 새로 시작` 안내 | 옛 Claude는 계속 사용할 수 있어도 Blabee는 분리됨. 이력만 보존, claim/전달/보고 권한 복구 없음 |
+| 공통 서비스/앱 재시작 | 새 service incarnation; 옛 권한은 모두 무효. 자동 연결 창은 실행기가 같은 native 세션으로 새 owner를 등록해 다시 붙는다(2026-11-13, [AUTO_CONNECT](AUTO_CONNECT.md) Owner reconnect). 앱 버튼 실행은 `Claude에서 새로 시작` 안내 | 이력만 보존, claim/전달/보고 권한 복구 없음. 재연결 뒤에는 새 프롬프트가 새 boundary를 연다 |
 | 같은 native ID/cwd/owner의 `SessionStart(compact)` | session incarnation·유효 authority 유지; 미claim 카드·readiness·현재 입력 경계 무효화 | 아래 규칙으로 새 내부 경계 생성. 이미 claimed 작업은 원본 결과 보고 권한 유지 |
 | `/clear`·resume·fork 또는 native ID/cwd 불일치 | 미지원 수명 전환으로 해당 Blabee 연결 폐기/안내 | 새 incarnation 등록 없이 옛 자격 승계 금지 |
 | Stop / StopFailure / interrupt로 Stop 누락 | 응답 정지·API 실패·관측 불명확을 구분. background 필드 부재와 빈 배열도 구분 | Stop만으로 완료/취소/모든 background 작업 종료 처리 금지 |

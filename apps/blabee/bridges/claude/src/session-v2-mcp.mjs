@@ -240,7 +240,8 @@ export function createSessionV2BridgeServer({ handler } = {}) {
 
 export async function runSessionV2MCP({ env = process.env, args = process.argv.slice(2), input = process.stdin,
   output = process.stdout, errorOutput = process.stderr, createClient = createSessionV2Client, pollIntervalMs = 500,
-  resolveContext, contextErrorCode = safeSessionV2ErrorCode } = {}) {
+  resolveContext, contextErrorCode = safeSessionV2ErrorCode,
+  reconnectPollMs = 1000, reconnectStaleLimitMs = 60_000 } = {}) {
   const writeDiagnostic = createSessionV2DiagnosticWriter(errorOutput);
   const diagnostic = code => writeDiagnostic(`[blabee-claude] 제품 MCP 연결을 확인하지 못했습니다 (${code}).\n`);
   // App-button sessions are already enrolled. Automatic CLI sessions can only
@@ -258,7 +259,13 @@ export async function runSessionV2MCP({ env = process.env, args = process.argv.s
   const closed = new Promise(resolveClosed => { finishClosed = resolveClosed; });
   const makeSession = (context, client) => createSessionV2BridgeSession({ client, authority: context.configuration.authority,
       channelSource: context.channelSource, pollIntervalMs,
-      onError: code => { diagnostic(code); void cleanup(); },
+      onError: code => {
+        diagnostic(code);
+        // Automatic sessions wait for the launcher's new owner enrollment
+        // instead of exiting. Nothing from the lost bridge is reopened.
+        if (resolveContext && !closing) reconnect(context.configuration.authority.scope_id);
+        else void cleanup();
+      },
       closeRegistration: async bridgeID => {
         let closer;
         try {
@@ -330,9 +337,23 @@ export async function runSessionV2MCP({ env = process.env, args = process.argv.s
   process.once('SIGINT', cleanup); process.once('SIGTERM', cleanup);
   try { await server.connect(transport); }
   catch (error) { await cleanup(); throw error; }
-  if (resolveContext && !closing) {
-    void Promise.resolve().then(() => resolveContext({ signal: admission.signal })).then(async context => {
-      if (closing) return;
+  if (resolveContext && !closing) admit();
+  return { server, get session() { return session; }, close: cleanup, closed };
+
+  /** Resolves one grant. After a lost bridge, a grant for the same scope is the
+   * retired owner the launcher has not replaced yet; it is never reused. */
+  function admit(retiredScope) {
+    void Promise.resolve().then(async () => {
+      const staleUntil = Date.now() + reconnectStaleLimitMs;
+      let context;
+      while (true) {
+        context = await resolveContext({ signal: admission.signal });
+        if (closing) return;
+        if (retiredScope === undefined || context.configuration.authority.scope_id !== retiredScope) break;
+        if (Date.now() >= staleUntil) throw new SessionV2ClientError('session_v2_revoked');
+        await pause(reconnectPollMs, admission.signal);
+        if (closing) return;
+      }
       const client = await createClient(context.configuration);
       if (closing) { await client.close(); return; }
       session = makeSession(context, client);
@@ -342,7 +363,22 @@ export async function runSessionV2MCP({ env = process.env, args = process.argv.s
       if (!closing) { diagnostic(contextErrorCode(error)); void cleanup(); }
     });
   }
-  return { server, get session() { return session; }, close: cleanup, closed };
+
+  function reconnect(retiredScope) {
+    // Tools fail fast with session_v2_bridge_not_registered while waiting; the
+    // model may try again on a later turn.
+    session = undefined;
+    admit(retiredScope);
+  }
+}
+
+function pause(ms, signal) {
+  return new Promise(resolve => {
+    if (signal?.aborted) return resolve();
+    const timer = setTimeout(() => { signal?.removeEventListener('abort', done); resolve(); }, ms);
+    const done = () => { clearTimeout(timer); resolve(); };
+    signal?.addEventListener('abort', done, { once: true });
+  });
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

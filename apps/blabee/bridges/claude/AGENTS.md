@@ -11,6 +11,8 @@
 - 제품 연결은 설치된 Blabee의 자동 연결 shim(`shell/claude-v1/bin/claude`)이 실행마다 임시 Hook·MCP 설정을 주입하는 구조다.
   `launchers/claude-shared.mjs`(`claude:shared`, `claude:live`)는 레거시 개발 경로다.
 - Hook 주입은 boundary 한 줄뿐이고 규칙은 MCP instructions에만 둔다. 성공한 `emit_decision_v1`이 readiness를 5분 갱신한다(2026-11-06).
+- 자동 연결 Hook은 관측 cwd를 실행 폴더로 고정한다(세션 안 `cd`로 끊기지 않음). 서비스 종료·전송 실패·lease 만료로 owner를 잃으면 실행기가
+  같은 native 세션으로 새 owner를 등록하고 MCP는 새 bridge를 연다. `revoked`·`rejected`는 재연결하지 않는다(2026-11-13).
 - `dev/claude-standalone/`은 이전 독립 앱 보존용이다. 제품 코드를 그곳에 복사하거나 자동 승격하지 않는다.
 
 ## 명령 (이 폴더에서 실행)

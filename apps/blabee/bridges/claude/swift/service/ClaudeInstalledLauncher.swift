@@ -127,8 +127,11 @@ enum ClaudeInstalledLauncher {
                           : ClaudeRuntimePayload.supportsNodeVersion, failure: "node_version_unsupported")
         if let signal = signals.pendingTermination { return 128 + signal }
         let state = ClaudeInstalledDisconnectState()
-        let lifetime = ClaudeInstalledOwnerLifetime(disconnected: { state.markDisconnected() })
-        defer { lifetime.stop() }
+        let reconnector = ClaudeInstalledReconnector(sessionSocketPath: options.sessionSocketPath,
+            connect: { observed in try connect(options, observed) }, disconnected: { state.markDisconnected() })
+        let lifetime = ClaudeInstalledOwnerLifetime(lost: { recoverable in reconnector.ownerLost(recoverable: recoverable) })
+        reconnector.lifetime = lifetime
+        defer { reconnector.close(); lifetime.stop() }
         var bootstrap: ClaudeAutoConnectBootstrap?
         defer { bootstrap?.close() }
         var nativeSessionID: UUID?
@@ -141,6 +144,7 @@ enum ClaudeInstalledLauncher {
                     return try owner.childEnvironment(sessionSocketPath: options.sessionSocketPath)
                 }, available: { lifetime.isActive }, invalidated: { lifetime.stop(); state.markDisconnected() })
             bootstrap = pending
+            reconnector.bootstrap = pending
             environment.merge(pending.childEnvironment) { _, value in value }
         } else {
             let owner = try connect(options, nil)
@@ -410,17 +414,106 @@ private final class ClaudeInstalledDisconnectState: @unchecked Sendable {
     }
 }
 
+/// Re-enrolls a new owner for the same native session after a recoverable
+/// owner loss. Each attempt is a new enrollment with new scope, role
+/// credentials and lease; no boundary, card, selection or request is carried
+/// over or replayed. Only automatic (observed-session) launches reconnect.
+private final class ClaudeInstalledReconnector: @unchecked Sendable {
+    static let initialDelaySeconds: Double = 1
+    static let maximumDelaySeconds: Double = 30
+    /// Consecutive failures other than an unavailable service end the launch.
+    static let maximumRejectedAttempts = 5
+
+    weak var lifetime: ClaudeInstalledOwnerLifetime?
+    weak var bootstrap: ClaudeAutoConnectBootstrap?
+    private let sessionSocketPath: String
+    private let connect: @Sendable (ClaudeInstalledOwnerConnection.ObservedSession) throws -> ClaudeInstalledOwnerConnection
+    private let disconnected: @Sendable () -> Void
+    private let queue = DispatchQueue(label: "com.biadone.blabee.claude-installed-reconnect")
+    private let lock = NSLock()
+    private var closed = false
+    private var active = false
+
+    init(sessionSocketPath: String,
+         connect: @escaping @Sendable (ClaudeInstalledOwnerConnection.ObservedSession) throws -> ClaudeInstalledOwnerConnection,
+         disconnected: @escaping @Sendable () -> Void) {
+        self.sessionSocketPath = sessionSocketPath
+        self.connect = connect
+        self.disconnected = disconnected
+    }
+
+    func close() { lock.withLock { closed = true } }
+
+    func ownerLost(recoverable: Bool) {
+        guard let bootstrap, recoverable, !lock.withLock({ closed }),
+              let native = bootstrap.beginReconnect() else {
+            bootstrap?.endConnection()
+            disconnected()
+            return
+        }
+        let start = lock.withLock { () -> Bool in
+            guard !active else { return false }
+            active = true
+            return true
+        }
+        guard start else { return }
+        schedule(native: native, delay: Self.initialDelaySeconds, rejected: 0)
+    }
+
+    private func schedule(native: UUID, delay: Double, rejected: Int) {
+        queue.asyncAfter(deadline: .now() + delay) { [weak self] in
+            self?.attempt(native: native, delay: delay, rejected: rejected)
+        }
+    }
+
+    private func attempt(native: UUID, delay: Double, rejected: Int) {
+        guard !lock.withLock({ closed }), let lifetime, !lifetime.isClosed, let bootstrap else { return finish() }
+        do {
+            let owner = try connect(.init(nativeSessionID: native, source: "resume"))
+            let environment: [String: String]
+            do { environment = try owner.childEnvironment(sessionSocketPath: sessionSocketPath) }
+            catch { owner.close(); throw error }
+            try lifetime.install(owner)
+            lock.withLock { active = false }
+            do { try bootstrap.finishReconnect(nativeSessionID: native, environment: environment) }
+            catch { lifetime.stop(); disconnected() }
+        } catch {
+            let unavailable = (error as? CoordinatorError)?.code == ClaudeInstalledLaunchConfiguration.failure("owner_transport_unavailable").code
+            let count = unavailable ? 0 : rejected + 1
+            guard count < Self.maximumRejectedAttempts else {
+                bootstrap.endConnection()
+                lifetime.stop()
+                disconnected()
+                return finish()
+            }
+            schedule(native: native, delay: min(delay * 2, Self.maximumDelaySeconds), rejected: count)
+        }
+    }
+
+    private func finish() { lock.withLock { active = false } }
+}
+
 /// A resumed conversation is not known until a Hook is observed. This holder
 /// lets the supervisor close its lifetime immediately even while enrollment is
 /// in flight; a late grant can never resurrect a stopped launch.
 private final class ClaudeInstalledOwnerLifetime: @unchecked Sendable {
+    /// `recoverable` is true only for service exit (EOF), transport failure and
+    /// lease expiry. Revocation (Pet disconnect, SessionEnd), rejection and
+    /// protocol errors are final and are never answered by a new enrollment.
+    typealias Lost = @Sendable (_ recoverable: Bool) -> Void
     private let lock = NSLock()
-    private let disconnected: @Sendable () -> Void
+    private let lost: Lost
     private var owner: ClaudeInstalledOwnerConnection?
     private var renewal: ClaudeOwnerRenewalController?
     private var closed = false
 
-    init(disconnected: @escaping @Sendable () -> Void) { self.disconnected = disconnected }
+    init(lost: @escaping Lost) { self.lost = lost }
+
+    var isClosed: Bool { lock.withLock { closed } }
+
+    static func recoverable(_ reason: ClaudeOwnerRenewalController.StopReason) -> Bool {
+        reason == .transportFailed || reason == .expired
+    }
 
     var isActive: Bool {
         let controller = lock.withLock { closed ? nil : renewal }
@@ -432,7 +525,9 @@ private final class ClaudeInstalledOwnerLifetime: @unchecked Sendable {
             initialDeadlineNanoseconds: connection.initialDeadlineNanoseconds, secretCorpus: connection.secretCorpus,
             exchange: { try connection.exchange($0) }, disconnected: { [weak self] reason in
                 connection.close()
-                if reason != .ended && reason != .stopped { self?.disconnected() }
+                if reason != .ended && reason != .stopped {
+                    self?.release(connection, recoverable: Self.recoverable(reason))
+                }
             })
         do {
             try lock.withLock {
@@ -441,8 +536,10 @@ private final class ClaudeInstalledOwnerLifetime: @unchecked Sendable {
                 renewal = controller
             }
             try connection.startEOFMonitor { [weak self, weak controller] in
+                // EOF is the service closing this owner socket (exit/restart).
+                // Release first so the controller's .stopped is not reported.
+                self?.release(connection, recoverable: true)
                 controller?.stop()
-                self?.disconnected()
             }
             try controller.start()
             guard isActive else { throw ClaudeInstalledLaunchConfiguration.failure("owner_closed") }
@@ -463,6 +560,21 @@ private final class ClaudeInstalledOwnerLifetime: @unchecked Sendable {
         let values = take()
         values.1?.end(reason: reason)
         values.0?.close()
+    }
+
+    /// Forgets only the connection that was lost, so a later install of a new
+    /// owner is possible. Reports at most once per connection, never after close.
+    private func release(_ connection: ClaudeInstalledOwnerConnection, recoverable: Bool) {
+        let current: ClaudeOwnerRenewalController?? = lock.withLock {
+            guard !closed, owner === connection else { return nil }
+            let controller = renewal
+            owner = nil; renewal = nil
+            return .some(controller)
+        }
+        guard let controller = current else { return }
+        controller?.stop()
+        connection.close()
+        lost(recoverable)
     }
 
     private func take() -> (ClaudeInstalledOwnerConnection?, ClaudeOwnerRenewalController?) {

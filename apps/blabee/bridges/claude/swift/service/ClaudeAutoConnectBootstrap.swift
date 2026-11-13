@@ -22,6 +22,10 @@ final class ClaudeAutoConnectBootstrap: @unchecked Sendable {
         case pending
         case starting(UUID)
         case ready(UUID, [String: String])
+        /// The owner connection was lost for a recoverable reason (service
+        /// exit, transport failure, lease expiry). Grants are pending until the
+        /// launcher enrolls a new owner for the same native session.
+        case reconnecting(UUID)
         case ended
     }
     private struct Request {
@@ -111,6 +115,34 @@ final class ClaudeAutoConnectBootstrap: @unchecked Sendable {
     }
 
     deinit { close() }
+
+    /// Moves a ready launch to `.reconnecting` and returns its native session.
+    /// Previously granted role environments stay retired: the next grant is
+    /// pending until `finishReconnect` publishes the new owner's environment.
+    func beginReconnect() -> UUID? {
+        lock.withLock {
+            guard !closed, case .ready(let native, _) = state else { return nil }
+            state = .reconnecting(native)
+            return native
+        }
+    }
+
+    /// Publishes a newly enrolled owner's environment for the same native
+    /// session. Never revives an ended, changed or closed launch.
+    func finishReconnect(nativeSessionID: UUID, environment: [String: String]) throws {
+        try Self.requireEnvironment(environment, nativeSessionID: nativeSessionID, cwd: cwd)
+        try lock.withLock {
+            guard !closed, case .reconnecting(let native) = state, native == nativeSessionID else {
+                throw Failure.unavailable
+            }
+            state = .ready(native, environment)
+        }
+    }
+
+    /// Ends the launch after an owner loss that must not be recovered.
+    func endConnection() {
+        lock.withLock { if !closed { state = .ended } }
+    }
 
     var childEnvironment: [String: String] {
         ["BLABEE_CLAUDE_BOOTSTRAP_SOCKET": socketPath, "BLABEE_CLAUDE_BOOTSTRAP_CWD": cwd,
@@ -227,7 +259,7 @@ final class ClaudeAutoConnectBootstrap: @unchecked Sendable {
             case .pending:
                 if request.operation == "start" { state = .starting(request.nativeSessionID) }
                 return nil
-            case .starting(let native), .ready(let native, _):
+            case .starting(let native), .ready(let native, _), .reconnecting(let native):
                 guard native == request.nativeSessionID else { throw Failure.sessionChanged }
                 guard request.operation != "start" else { throw Failure.alreadyStarted }
                 if case .ready(_, let environment) = state { return environment }
@@ -251,7 +283,9 @@ final class ClaudeAutoConnectBootstrap: @unchecked Sendable {
                 throw Failure.unavailable
             }
         }
-        if initial != nil, !available() { invalidate(); throw Failure.unavailable }
+        // A lost owner is classified by the launcher, which either begins a
+        // reconnect or ends this launch. Until then the old grant is withheld.
+        if initial != nil, !available() { return try response(request, environment: nil) }
         return try response(request, environment: initial)
     }
 

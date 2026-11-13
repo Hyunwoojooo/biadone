@@ -164,6 +164,19 @@ It adds no model context and is shown once; later Hooks in that window stay quie
 The new process may resume Claude history, but requires a new prompt boundary and fresh
 readiness. An old proposal, selection or completion cannot acquire the new authority.
 
+Owner reconnect (2026-11-13, automatic launches only). When the owner connection is lost because the
+service closed it (EOF: service exit or restart), renewal transport failed, or the lease expired while
+awake, the launcher moves the bootstrap to `reconnecting` and enrolls a new owner for the same native
+session with `enroll_observed` source `resume` (1s, doubling to 30s; a missing service retries
+indefinitely, five other consecutive failures end the launch). Each reconnect is a fresh scope,
+incarnation, epoch and role credentials; no boundary, card, selection or request is carried over.
+`revoked` (Pet disconnect, SessionEnd), `rejected` and protocol errors are final. While reconnecting,
+`grant` returns `pending`; the Hook exits 0 silently and the MCP server, instead of exiting after a
+terminal bridge error, resolves a new grant and opens a new bridge. A grant for the retired scope is
+never reused (the MCP skips it and gives up after 60s if no new scope appears). Tool calls in the gap
+fail with `session_v2_bridge_not_registered`. App updates still wait for open launchers
+(`ClaudeRuntimePayloadUse`), and in-window `/resume`·`/clear` still retire the launch.
+
 ## Bootstrap wire (local launcher socket only)
 
 One bounded JSON line per connection, schema `blabee.claude-launch-bootstrap.v1`.

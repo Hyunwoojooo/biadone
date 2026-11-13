@@ -58,6 +58,54 @@ struct ClaudeAutoConnectBootstrapTests {
         #expect((later["error"] as? [String: String])?["code"] == "claude_bootstrap_unavailable")
     }
 
+    @Test("A lost owner withholds the old grant; reconnect publishes only a new owner's environment")
+    func reconnectPublishesNewEnvironment() throws {
+        let fixture = try BootstrapFixture()
+        defer { fixture.close() }
+        _ = try #require(fixture.request(operation: "start", source: "startup")["environment"] as? [String: String])
+        fixture.state.loseOwner()
+        // Before the launcher classifies the loss, the retired grant is withheld.
+        let withheld = try fixture.request(operation: "grant", role: "bridge")
+        #expect(withheld["status"] as? String == "pending")
+        #expect(withheld["environment"] == nil)
+        #expect(fixture.state.invalidations == 0)
+        #expect(fixture.bootstrap.beginReconnect() == fixture.native)
+        #expect(fixture.bootstrap.beginReconnect() == nil)
+        #expect(try fixture.request(operation: "grant")["status"] as? String == "pending")
+        // A start replay and another native session still retire the launch.
+        let replay = try fixture.request(operation: "start", source: "resume")
+        #expect((replay["error"] as? [String: String])?["code"] == "claude_bootstrap_already_started")
+        let next = try fixture.state.enroll(.init(nativeSessionID: fixture.native, source: "resume"), cwd: fixture.root.path)
+        #expect(throws: (any Error).self) {
+            try fixture.bootstrap.finishReconnect(nativeSessionID: fixture.native, environment: next)
+        }
+    }
+
+    @Test("Reconnect for the same native session returns the new role environment")
+    func reconnectSameSession() throws {
+        let fixture = try BootstrapFixture()
+        defer { fixture.close() }
+        let first = try #require(fixture.request(operation: "start", source: "startup")["environment"] as? [String: String])
+        fixture.state.loseOwner()
+        let native = try #require(fixture.bootstrap.beginReconnect())
+        #expect(throws: (any Error).self) {
+            try fixture.bootstrap.finishReconnect(nativeSessionID: UUID(), environment: first)
+        }
+        let next = try fixture.state.enroll(.init(nativeSessionID: native, source: "resume"), cwd: fixture.root.path)
+        try fixture.bootstrap.finishReconnect(nativeSessionID: native, environment: next)
+        let hook = try #require(fixture.request(operation: "grant")["environment"] as? [String: String])
+        let prefix = ClaudeInstalledLaunchConfiguration.prefix
+        #expect(hook[prefix + "SCOPE_ID"] == next[prefix + "SCOPE_ID"])
+        #expect(hook[prefix + "SCOPE_ID"] != first[prefix + "SCOPE_ID"])
+        #expect(fixture.state.invalidations == 0)
+        // Ending after an unrecoverable loss is final.
+        fixture.state.loseOwner()
+        fixture.bootstrap.endConnection()
+        #expect(fixture.bootstrap.beginReconnect() == nil)
+        let ended = try fixture.request(operation: "grant")
+        #expect((ended["error"] as? [String: String])?["code"] == "claude_bootstrap_unavailable")
+    }
+
     @Test("Wrong role and another launch's token cannot enroll or revoke this launch")
     func roleAndLaunchIsolation() throws {
         let fixture = try BootstrapFixture(), other = try BootstrapFixture()
@@ -147,6 +195,7 @@ private final class BootstrapState: @unchecked Sendable {
     var observed: ClaudeInstalledOwnerConnection.ObservedSession? { lock.withLock { observation } }
     var available: Bool { lock.withLock { active } }
     func invalidate() { lock.withLock { revoked += 1; active = false } }
+    func loseOwner() { lock.withLock { active = false } }
     func enroll(_ value: ClaudeInstalledOwnerConnection.ObservedSession, cwd: String) throws -> [String: String] {
         lock.withLock { enrollments += 1; observation = value }
         started.signal()

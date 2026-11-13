@@ -22,6 +22,8 @@ shim은 `blabee-coordinator claude-auto-launch --claude-bin <원본> -- "$@"`를
   SessionStart source는 경로마다 다르다: `session-v2-lifecycle.mjs`는 `startup`과 `compact`만 받고 나머지는 `unsupported_source`,
   자동 연결 `auto-connect-hook.mjs`는 `startup`/`resume`/`fork`를 native enrollment로 소비한다.
   자동 연결 Hook은 모든 관측의 `cwd`를 실행 시 폴더로 고정한다(`anchorHookInputToLaunch`). 세션 안 `cd`로 연결이 끊기지 않는다.
+  자동 연결 실행기는 서비스 종료(EOF)·전송 실패·lease 만료로 owner를 잃으면 같은 native 세션으로 새 owner를 등록한다(`ClaudeInstalledReconnector`, bootstrap `.reconnecting`).
+  그동안 Hook은 조용히 exit 0, MCP는 새 grant로 새 bridge를 연다(옛 scope 재사용 금지). `revoked`·`rejected`는 재연결하지 않는다.
 - 우회: 비TTY, `CLAUDECODE` 설정됨, `-p`/`--help`/`mcp`/`doctor` 등 direct 호출, 사용자가 `--settings`/`--setting-sources`/`--mcp-config`/`--strict-mcp-config`/`--bare`를 준 경우는 원래 Claude를 그대로 실행한다.
 - `cleanEnvironment`는 `BLABEE_*`, `DYLD_*`, `__XPC_DYLD_*`, `LD_*`, `NODE_OPTIONS`, `NODE_PATH`, `BASH_ENV`, `ENV`, `CLAUDECODE`를 지우고 `MCP_PROTOCOL_NEGOTIATION=legacy`를 강제한다.
 - `requireNoMCPCollision`: `/Library/Application Support/ClaudeCode/managed-mcp.json`이 존재해 파싱되면 이름과 무관하게 `managed_mcp_configuration_active`로 거부한다.

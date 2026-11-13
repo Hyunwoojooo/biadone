@@ -1,6 +1,8 @@
 # Claude 연결 재수립 설계 (초안, 2026-11-12)
 
-상태: 설계만. 구현하지 않았다. [1순위 해결 방안](../../../development/BLABEE_P1_SOLUTIONS_20261112.md) 4·5번의 단계 3이다.
+상태: 2026-11-13 1·2·3·5번 일부 구현(자동 연결 실행 한정). 4번(창 안 `/resume`·`/clear`)과 사용자 표시(5번의 Pet 상태·systemMessage)는 구현하지 않았다. 동작 요약은 [AUTO_CONNECT](AUTO_CONNECT.md)의 Owner reconnect.
+
+원래 상태: 설계만. [1순위 해결 방안](../../../development/BLABEE_P1_SOLUTIONS_20261112.md) 4·5번의 단계 3이다.
 단계 1(보내지 못한 heartbeat 허용)과 단계 2(잠자기 시간을 lease 만료에서 제외)는 2026-11-12에 구현했다.
 
 ## 문제

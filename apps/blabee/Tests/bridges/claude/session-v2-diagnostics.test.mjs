@@ -104,7 +104,9 @@ async function mcpFixture(t, { errorOutput = sink(), failOpen = false, failClose
   const commands = [];
   const clientCloses = [];
   let clients = 0;
+  // The fixture's grant never changes scope, so a lost bridge gives up at once.
   const runtime = await runSessionV2MCP({ args: [], env: {}, input, output, errorOutput, pollIntervalMs: 1000,
+    reconnectStaleLimitMs: 0,
     resolveContext: async () => ({ configuration: { authority }, channelSource: 'blabee-claude' }),
     createClient: async () => {
       const index = clients++;
@@ -338,3 +340,54 @@ for (const [name, entrypoint, args, diagnostic] of [
     assert.equal(result.stderr, '');
   });
 }
+
+test('automatic MCP waits for a new owner scope after a lost bridge and never reuses the retired grant', async t => {
+  const input = new PassThrough(); const output = new PassThrough(); const errorOutput = sink();
+  const messages = []; let buffer = '';
+  output.on('data', chunk => {
+    buffer += chunk; let newline;
+    while ((newline = buffer.indexOf('\n')) >= 0) { messages.push(JSON.parse(buffer.slice(0, newline))); buffer = buffer.slice(newline + 1); }
+  });
+  const scopes = [randomUUID(), randomUUID()];
+  const authority = scope => Object.fromEntries(SESSION_V2_AUTHORITY_KEYS.map(key => [key, key === 'scope_id' ? scope : randomUUID()]));
+  const grants = [authority(scopes[0]), authority(scopes[0]), authority(scopes[0]), authority(scopes[1])];
+  let resolutions = 0;
+  const opened = [];
+  let failPolls = false;
+  const runtime = await runSessionV2MCP({ args: [], env: {}, input, output, errorOutput, pollIntervalMs: 20,
+    reconnectPollMs: 5,
+    resolveContext: async () => ({ configuration: { authority: grants[Math.min(resolutions++, grants.length - 1)] },
+      channelSource: 'blabee-claude' }),
+    createClient: async configuration => ({
+      request: async command => {
+        if (command.operation === 'bridge.open') { opened.push(configuration.authority.scope_id); return { bridge_id: randomUUID() }; }
+        if (command.operation === 'bridge.close') return { closed: true };
+        assert.fail(`Unexpected fixture command ${command.operation}`);
+      },
+      exchange: async request => {
+        if (failPolls && configuration.authority.scope_id === scopes[0]) throw new SessionV2ClientError('session_v2_revoked');
+        const { payload, ...common } = request;
+        return { ...common, kind: 'response', ok: true, result: { event: null } };
+      },
+      close: async () => {},
+    }),
+  });
+  t.after(async () => { await runtime.close(); input.destroy(); output.destroy(); });
+  const send = value => input.write(JSON.stringify({ jsonrpc: '2.0', ...value }) + '\n');
+  send({ id: 1, method: 'initialize', params: { protocolVersion: '2025-03-26', capabilities: {},
+    clientInfo: { name: 'reconnect-fixture', version: '1' } } });
+  await until(() => messages.some(value => value.id === 1));
+  send({ method: 'notifications/initialized' });
+  await until(() => runtime.session?.snapshot().registered);
+  assert.deepEqual(opened, [scopes[0]]);
+  failPolls = true;
+  await until(() => opened.length === 2);
+  await until(() => runtime.session?.snapshot().registered);
+  // The retired scope was offered twice more and skipped; only the new one opened.
+  assert.deepEqual(opened, [scopes[0], scopes[1]]);
+  assert.equal(resolutions, 4);
+  let settled = false;
+  void runtime.closed.then(() => { settled = true; });
+  await turn();
+  assert.equal(settled, false);
+});

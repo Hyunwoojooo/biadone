@@ -86,6 +86,9 @@ export async function runAutoConnectHook({ args = process.argv.slice(2), env = p
     return 0;
   } catch (error) {
     const code = controller.signal.aborted ? 'auto_connect_closed' : safeAutoConnectErrorCode(error);
+    // Pending means the launcher is (re)enrolling its owner. Stay silent: no
+    // context is injected, nothing is retried, and Claude is not interrupted.
+    if (code === 'auto_connect_pending') return 0;
     if (error?.code !== 'session_v2_hook_output_unknown') {
       try { await writeSessionV2HookOutput(errorOutput,
         `[blabee-claude] 자동 연결 Hook을 확인하지 못했습니다 (${code}).\n`, { timeoutMs: 250 }); }
