@@ -142,3 +142,11 @@
 - **14번(CLD-9, REPO-3).** `ClaudeSessionMetadataStore.withMutation`의 체인 전체 검증을 4회에서 1회로 줄였다. 시작 때 한 번 전체 검증한 뒤, 같은 잠금 안에서 자기가 쓴 기록은 `confirmOwnAppend`로 확인한다(파일 동일성·키 연속성·sidecar·schema·freshness anchor·마지막 기록 MAC). 오래된 기록 변조는 다음 공개 호출이나 다시 열기의 전체 검증이 잡는다. 레지스트리의 "core 커밋 없음" 확인은 core journal 전체 읽기 대신 anchor 기록 비교로 바꿨다. 측정: `thousandReplayIDs` 409.7초 → 82.7초, BlabeePetTests 전체 525.7초 → 201.0초.
 - **11번(ENG-7).** `SQLiteJournal.loadReusingHead`는 anchor가 committed이고 DB head가 이전 검증 시점과 같을 때만 전체 스캔을 건너뛴다. routing은 잠금 구간마다 `RoutingRequestJournal`을 열어, 같은 요청 안의 반복 load와 replay를 head가 같은 동안 한 번으로 줄인다. 요청마다 전체 검증 최소 1회는 유지하고, 잠금 밖·다른 스레드·요청 종료 뒤에는 재사용하지 않는다. Claude 어댑터의 `ClaudeProductAuthorityJournal`도 이를 전달한다.
 - 하지 않은 것: `select`의 연속 append 2회 병합(커밋 경계가 바뀌어 별도 설계 필요), append 내부의 사전·사후 전체 검증(12번 ENG-1에서), ENG-8 Keychain 호출 축소(read-back 검증 제거는 무결성 설계 변경이고, `LAContext` 공유는 스레드 안전성이 문서화되지 않아 보류).
+
+## 2순위 작은 묶음 17·18·19·21·25번 (2026-11-13 구현)
+
+- **17번(DB-2, DB-7).** 401·403 외의 200이 아닌 응답은 일시 실패로 다뤄 받은 허가를 원래 만료까지 유지한다. 허가가 유효하면 남은 90초에 갱신(약 3.5분 간격), 실패는 30초→300초 backoff, 만료 30초 전에는 반드시 재시도한다(`ProductAccessController.refreshDelay`). Auth 토큰은 만료 5분 전에 갱신한다. 서버의 읽기 경로 insert는 바꾸지 않았다.
+- **18번(DB-1, DB-3).** `202611130001_blabee_usage_quota.sql`(운영 미적용): `record_blabee_usage` 일일 1,000건 한도, 사용 영수증 정리 cron, 관리자 점검 쿼리(cron 4개 상태, 한도 도달 사용자). `npm run test:usage-sql`이 전체 migration을 PGlite에서 실행한다.
+- **19번(DB-4, DB-11).** 같은 migration의 `delete_my_blabee_usage()`와 설정의 "서버의 내 사용 통계 삭제" 버튼. 동의 문구를 실제 동작(직접 삭제, 계정 삭제는 피드백 요청)에 맞췄다. 오류 진단 문구도 같은 방식으로 고쳤다. 온보딩이 끝나지 않았으면 사용 통계 전송도 끈다.
+- **21번(CLD-8).** 선택 안내가 든 프롬프트가 검증된 형식과 다르면 Hook이 `claude_rewake_format_changed` systemMessage로 알린다. 선택은 계속 폐기(fail closed). 2.1.323 실제 확인은 사람이 카드 1회 클릭으로 해야 한다.
+- **25번(REPO-9).** README를 r91로 갱신했다. `finalize`가 `scripts/release/update-readme.mjs`로 README 빌드 번호를 바꾼다.

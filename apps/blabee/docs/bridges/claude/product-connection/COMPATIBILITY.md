@@ -16,6 +16,12 @@
 | 2.1.289 | 현재 로컬 설치 파일과 기존 버전 허용 조건 | 이번 변경의 실제 모델 왕복 |
 | 2.1.296 | 공식 변경사항과 기존 버전 허용 조건 | 해당 CLI의 초기화·실제 Hook 출력·모델 왕복 |
 | MCP SDK 1.30.0 | 실제 제품 Node 서버의 6개 초기화·명시적 ACK fixture | 실제 2.1.296 클라이언트와의 연결 |
+| 2.1.323 | 2026-11-13 이 Mac의 설치 버전(`claude --version`). 버전 허용 조건만 | **카드 선택 전달(asyncRewake 프롬프트 바이트 일치)은 미확인.** 카드 1회 클릭으로 확인 필요 |
+
+선택 전달 형식(감사 CLD-8, 2026-11-13): 서비스는 2.1.282에서 관측한 asyncRewake 프롬프트 바이트(`ClaudeNativeSession.productHookWrapper`,
+Node 대응 `sessionV2NativeRewakeWrapper`)와 정확히 같을 때만 선택으로 인정한다. 다른 형식이면 지금처럼 선택을 폐기하되,
+UserPromptSubmit Hook이 프롬프트에 Blabee 선택 안내가 들어 있는데 형식이 다르면 `claude_rewake_format_changed` systemMessage로
+사람에게 한 번 알린다. 새 형식을 확인하면 두 함수와 `Tests/bridges/claude/session-v2-rewake-format.test.mjs`에 함께 추가한다.
 
 `ClaudeInstalledLaunchConfiguration.supportsVersion`은 2.1.282 이상인 2.x를 허용한다.
 이는 기능 하한 검사이며 이후 버전의 native 동작을 보증하지 않는다. 이번에 허용 범위를 넓히지 않는다.

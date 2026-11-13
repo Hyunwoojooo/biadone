@@ -11,9 +11,9 @@
 
 Next steps from Codex and Claude Code, together in your Mac’s menu bar.<br>Review a card, choose what happens next, and continue in the original session.
 
-[![macOS 13+](https://img.shields.io/badge/macOS-13%2B-253746?style=flat-square)](#requirements) [![Apple Silicon](https://img.shields.io/badge/Apple_Silicon-arm64-456779?style=flat-square)](#requirements) [![Release r85](https://img.shields.io/badge/release-r85-C4A64C?style=flat-square)](https://github.com/Hyunwoojooo/biadone/releases/tag/blabee-v0.1.0%2Bbuild.85)
+[![macOS 13+](https://img.shields.io/badge/macOS-13%2B-253746?style=flat-square)](#requirements) [![Apple Silicon](https://img.shields.io/badge/Apple_Silicon-arm64-456779?style=flat-square)](#requirements) [![Release r91](https://img.shields.io/badge/release-r91-C4A64C?style=flat-square)](https://github.com/Hyunwoojooo/biadone/releases/tag/blabee-v0.1.0%2Bbuild.91)
 
-**[Download for macOS](https://github.com/Hyunwoojooo/biadone/releases/download/blabee-v0.1.0%2Bbuild.85/Blabee-0.1.0-arm64-r85.dmg)** · [Get started](#get-started) · [Website](https://biadone.com/blabee/) · [한국어](README.ko.md)
+**[Download for macOS](https://github.com/Hyunwoojooo/biadone/releases/download/blabee-v0.1.0%2Bbuild.91/Blabee-0.1.0-arm64-r91.dmg)** · [Get started](#get-started) · [Website](https://biadone.com/blabee/) · [한국어](README.ko.md)
 
 </div>
 
@@ -43,9 +43,9 @@ Your Codex and Claude Code accounts and any usage charges remain with those serv
 
 ### 1. Install Blabee
 
-Download **[Blabee 0.1.0 r85](https://github.com/Hyunwoojooo/biadone/releases/tag/blabee-v0.1.0%2Bbuild.85)** and open the DMG. Install **Blabee.app** in **Applications**, then launch it from there.
+Download **[Blabee 0.1.0 r91](https://github.com/Hyunwoojooo/biadone/releases/tag/blabee-v0.1.0%2Bbuild.91)** and open the DMG. Install **Blabee.app** in **Applications**, then launch it from there.
 
-The r85 app and DMG are Developer ID signed and Apple notarized. The release includes a SHA-256 checksum and build provenance.
+The r91 app and DMG are Developer ID signed and Apple notarized. The release includes a SHA-256 checksum and build provenance.
 
 ### 2. Finish the first-run guide
 
@@ -170,6 +170,6 @@ The standalone app needs its build before tests. Follow the [Claude bridge](brid
 
 App assembly uses `build:macos-app`, `build:internal-dmg`, `build:release-dmg`, and `notarize:dmg`. See the [release packaging guide](docs/development/RELEASE_DMG_PACKAGING.md) for required inputs. `build/` contains generated artifacts. Test results, packaging, notarization, and real-session behavior are separate verification steps.
 
-For r85 source reconstruction, follow the release’s provenance and source-patch instructions; the automatically generated tag archive does not include all changes used for that build.
+For r91 source reconstruction, follow the release’s provenance and source-patch instructions; the automatically generated tag archive does not include all changes used for that build.
 
 **Explore:** [Documentation](docs/README.md) · [Architecture](docs/architecture/README.md) · [Directory layout](docs/development/DIRECTORY_MIGRATION.md) · [Dedicated repository review](docs/development/GITHUB_REPOSITORY.md)

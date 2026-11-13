@@ -519,7 +519,8 @@ struct PetAccountControllerTests {
 
         await fixture.controller.restoreIfNeeded()
         await firstSleep.waitUntilEntered()
-        #expect(delays == [3_540])
+        // Tokens refresh five minutes before expiry (audit DB-2).
+        #expect(delays == [3_300])
         currentTime = AccountControllerValues.fresh.expiresAt.addingTimeInterval(-60)
         firstSleep.release()
         await refresh.waitUntilEntered()
@@ -530,7 +531,7 @@ struct PetAccountControllerTests {
         #expect(fixture.controller.phase == .signedIn(AccountControllerValues.user))
         #expect(fixture.store.value == renewed)
         #expect(fixture.service.userInputs == [AccountControllerValues.fresh.accessToken, renewed.accessToken])
-        #expect(delays == [3_540, 3_600])
+        #expect(delays == [3_300, 3_360])
         fixture.controller.stop()
         nextSleep.release()
     }

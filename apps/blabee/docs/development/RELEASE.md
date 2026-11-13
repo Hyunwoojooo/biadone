@@ -37,7 +37,7 @@ npm run release -- test --build 92
 
 1. 태그 `blabee-v0.1.0+build.N`을 provenance의 커밋에 만들고 푸시한다.
 2. GitHub 릴리스(`Hyunwoojooo/biadone`)에 DMG와 `.sha256`을 올린다. r91 폴더의 `github-publication/*.py`를 참고한다.
-3. `README.md`·`README.ko.md`의 다운로드 링크와 공개 문서 저장소(`Biadone/blabee`)를 갱신한다.
+3. `finalize`가 `README.md`·`README.ko.md`의 다운로드 링크를 새 빌드로 바꾼다(`scripts/release/update-readme.mjs`). GitHub 릴리스가 공개된 뒤 별도 커밋한다. 공개 문서 저장소(`Biadone/blabee`)는 손으로 갱신한다.
 4. 이전 빌드에서 앱 안 업데이트로 새 빌드를 설치해 본다. 지금까지 릴리스 검증에서 한 번도 실행되지 않은 경로다.
 
 CI는 없다. `npm run test:release`를 로컬에서 돌리는 것이 유일한 게이트다(`docs/development/CI_CD_DESIGN.md`는 미구현 설계).

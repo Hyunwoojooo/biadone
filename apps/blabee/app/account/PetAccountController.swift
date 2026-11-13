@@ -268,7 +268,11 @@ final class PetAccountController: ObservableObject {
         onVerifiedCredential?(.init(userID: userID, accessToken: verified.accessToken, expiresAt: verified.expiresAt))
         message = ""
         retryDelay = 30
-        scheduleRefresh(after: max(1, candidate.expiresAt.timeIntervalSince(now()) - 60))
+        // Refresh five minutes early so the service's 300s access grace is not
+        // cut short by a token that expires first (audit DB-2). Short-lived
+        // tokens refresh at half their remaining life.
+        let remaining = candidate.expiresAt.timeIntervalSince(now())
+        scheduleRefresh(after: max(1, remaining > 600 ? remaining - 300 : remaining / 2))
     }
 
     private func handle(_ error: any Error, attempt: UInt64) {

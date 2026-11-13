@@ -292,7 +292,12 @@ final class PetApplicationDelegate: NSObject, NSApplicationDelegate {
             firstRunController?.onDiagnosticsConsentChanged = { [weak errorDiagnostics] enabled in
                 errorDiagnostics?.setEnabled(enabled)
             }
-            if firstRunController?.isComplete == false { errorDiagnostics.setEnabled(false) }
+            // An incomplete (or re-shown) onboarding sends neither diagnostics nor
+            // usage statistics; finishFirstRun applies the account's saved choices.
+            if firstRunController?.isComplete == false {
+                errorDiagnostics.setEnabled(false)
+                usageAnalytics.setEnabled(false)
+            }
         }
         let store = PetUserDefaultsShortcutStore()
         let backend = CarbonPetHotKeyBackend()

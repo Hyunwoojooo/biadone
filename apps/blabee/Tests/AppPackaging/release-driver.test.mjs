@@ -21,3 +21,21 @@ for (const step of ['notarize', 'payload', 'build', 'finalize']) {
     assert.deepEqual(await readdir(output), []);
   });
 }
+
+test('README release links move to the new build without touching other text', async () => {
+  const { updateReadmeRelease } = await import('../../scripts/release/update-readme.mjs');
+  const before = [
+    '[![Release r85](https://img.shields.io/badge/release-r85-C4A64C)](https://x/releases/tag/blabee-v0.1.0%2Bbuild.85)',
+    '**[Download](https://x/releases/download/blabee-v0.1.0%2Bbuild.85/Blabee-0.1.0-arm64-r85.dmg)**',
+    'Download **[Blabee 0.1.0 r85](https://x)** and open it.',
+    'The r85 app and DMG are signed. For r85 source reconstruction, see provenance.',
+    'r85 앱과 DMG. r85 소스를 재구성하려면.',
+    'The r63 development-Channel qualification and macOS 13 stay unchanged.',
+  ].join('\n');
+  const after = updateReadmeRelease(before, 92);
+  assert.doesNotMatch(after, /r85|build\.85/);
+  assert.equal((after.match(/r92|build\.92/g) ?? []).length, 10);
+  assert.match(after, /r63 development-Channel qualification and macOS 13 stay unchanged/);
+  assert.equal(updateReadmeRelease(after, 92), after);
+  assert.throws(() => updateReadmeRelease(before, 0));
+});

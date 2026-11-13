@@ -54,6 +54,7 @@ final class ProductAccessController: @unchecked Sendable {
     private var deadline: UInt64?
     private var acceptedAt: UInt64?
     private var lastAttemptAt: UInt64?
+    private var consecutiveFailures = 0
     private var task: Task<Void, Never>?
     private var timer: Task<Void, Never>?
     private var stopped = false
@@ -213,8 +214,10 @@ final class ProductAccessController: @unchecked Sendable {
                         state = .active; acceptedAt = startedAt; deadline = end
                     } else { denyLocked(.expired) }
                 } else { denyLocked(grant.state) }
+                consecutiveFailures = 0
                 onVerifiedToken(requested.token)
             case .failure(let error):
+                consecutiveFailures = min(consecutiveFailures + 1, 16)
                 switch error as? ProductAccessCheckError {
                 case .rejected: denyLocked(.signedOut)
                 case .invalidResponse: denyLocked(.unavailable)
@@ -239,7 +242,9 @@ final class ProductAccessController: @unchecked Sendable {
         guard automaticRefresh, !stopped, credential != nil else { return }
         let sleep = sleep, epoch = epoch, now = clock.nowNanoseconds()
         let elapsed = lastAttemptAt.map { now >= $0 ? Double(now - $0) / 1_000_000_000 : 0 } ?? 0
-        let delay = max(1, 60 - elapsed)
+        let current = snapshotLocked()
+        let delay = Self.refreshDelay(active: current.state == .active,
+            remainingSeconds: Double(current.remainingSeconds), failures: consecutiveFailures, elapsed: elapsed)
         timer?.cancel()
         timer = Task { [weak self] in
             do { try await sleep(delay) } catch { return }
@@ -249,6 +254,19 @@ final class ProductAccessController: @unchecked Sendable {
                 self.timer = nil; self.startCheckLocked()
             }
         }
+    }
+}
+
+extension ProductAccessController {
+    /// Seconds until the next check (audit DB-7). An active grant renews when
+    /// 90s remain (about every 3.5 minutes for a 300s grant) instead of every
+    /// 60s. Failures back off from 30s to 300s, but an active grant is always
+    /// retried at least 30s before it expires. Other states check every 60s.
+    static func refreshDelay(active: Bool, remainingSeconds: Double, failures: Int, elapsed: Double) -> Double {
+        let backoff = failures > 0 ? min(300, 30 * pow(2, Double(min(failures, 8) - 1))) : nil
+        guard active else { return max(1, (backoff ?? 60) - elapsed) }
+        let target = backoff.map { $0 - elapsed } ?? (remainingSeconds - 90)
+        return max(1, min(target, remainingSeconds - 30))
     }
 }
 
@@ -285,10 +303,11 @@ struct SupabaseProductAccessChecker: ProductAccessChecking {
         catch let error as ProductAccessCheckError { throw error }
         catch { throw ProductAccessCheckError.unavailable }
         if [401, 403].contains(response.statusCode) { throw ProductAccessCheckError.rejected }
-        if response.statusCode == 429 || (500...599).contains(response.statusCode) {
-            throw ProductAccessCheckError.unavailable
-        }
-        guard response.statusCode == 200, data.count <= 16_384 else { throw ProductAccessCheckError.invalidResponse }
+        // Any other non-200 (404 missing RPC, 402, 429, 5xx, proxies) is a
+        // temporary failure: the current grant lives to its original expiry,
+        // never longer (audit DB-2). Only 401/403 and a malformed 200 deny.
+        guard response.statusCode == 200 else { throw ProductAccessCheckError.unavailable }
+        guard data.count <= 16_384 else { throw ProductAccessCheckError.invalidResponse }
         do {
             let value = try StrictJSONTransport.object(from: data, limits: .init(maximumBytes: 16_384, maximumDepth: 4))
             guard Set(value.keys) == ["schema_version", "request_nonce", "user_id", "session_id", "status",

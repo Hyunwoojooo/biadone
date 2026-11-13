@@ -3,7 +3,8 @@ import { expectedSessionArgument, ProductBridgeInputError } from './product-cont
 import { createSessionV2Client, parseSessionV2JSON, SessionV2ClientError, validateSessionV2Result } from './session-v2-client.mjs';
 import { SESSION_V2_NO_BOUNDARY_LINE, safeSessionV2ErrorCode, sessionV2BoundaryLine, sessionV2Context } from './session-v2-context.mjs';
 import { normalizeSessionV2Hook } from './session-v2-lifecycle.mjs';
-import { createSessionV2HookWaiter, SESSION_V2_HOOK_REWAKE, writeSessionV2HookOutput } from './session-v2-waiter.mjs';
+import { createSessionV2HookWaiter, SESSION_V2_HOOK_REWAKE, SESSION_V2_REWAKE_FORMAT_CHANGED_NOTICE,
+  sessionV2RewakeFormat, writeSessionV2HookOutput } from './session-v2-waiter.mjs';
 
 export async function handleSessionV2Hook(input, { env = process.env, expectedSessionID, signal,
   createClient = createSessionV2Client, emitSelection, waiterOptions } = {}) {
@@ -84,6 +85,11 @@ export async function handleSessionV2Hook(input, { env = process.env, expectedSe
       const additionalContext = result.observation_status === 'accepted' && result.boundary_id
         ? sessionV2BoundaryLine(result.boundary_id) : SESSION_V2_NO_BOUNDARY_LINE;
       resultContext = { hookSpecificOutput: { hookEventName: payload.event, additionalContext } };
+      // Audit CLD-8: a selection notice in a different native wrapper is lost
+      // (fail closed). Say so once to the person instead of failing silently.
+      if (payload.event === 'UserPromptSubmit' && sessionV2RewakeFormat(input?.prompt) === 'changed') {
+        resultContext.systemMessage = SESSION_V2_REWAKE_FORMAT_CHANGED_NOTICE;
+      }
     }
   } finally {
     try { await closeClient(); }

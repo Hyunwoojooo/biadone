@@ -131,6 +131,26 @@ from matured as cohort
 group by cohort.first_observed_date
 order by cohort.first_observed_date desc;
 
--- Maintenance (run separately as postgres; no client execute permission):
--- select blabee_analytics.prune_usage_event_receipts();
--- Daily aggregates are intentionally retained until the auth account is deleted.
+-- 5. Housekeeping health (2026-11-13): every Blabee retention job must be
+-- active and have succeeded within the last two days. Any row is a problem.
+select expected.jobname, job.active, runs.start_time, runs.status, runs.return_message
+from (values ('blabee-usage-retention-daily'), ('blabee-error-retention-daily'),
+             ('blabee-product-retention-daily'), ('blabee-feedback-retention-daily')) as expected (jobname)
+left join cron.job job on job.jobname = expected.jobname
+left join lateral (
+    select start_time, status, return_message from cron.job_run_details
+    where jobid = job.jobid order by start_time desc limit 1
+) runs on true
+where job.jobid is null or not job.active or runs.status is distinct from 'succeeded'
+    or runs.start_time < now() - interval '2 days';
+
+-- 6. Users at the daily usage quota (1000 new events per UTC receipt day).
+select received_date, count(*) as users_at_quota
+from blabee_analytics.usage_ingest_days
+where accepted_count >= 1000
+group by received_date
+order by received_date desc;
+
+-- Maintenance: 202611130001 schedules prune_usage_event_receipts() daily
+-- (blabee-usage-retention-daily). Users delete their own aggregates with
+-- public.delete_my_blabee_usage(); auth user deletion cascades everything.

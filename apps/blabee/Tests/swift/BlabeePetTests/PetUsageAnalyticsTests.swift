@@ -32,6 +32,47 @@ struct PetUsageAnalyticsTests {
         await settle { fixture.store.events.isEmpty }
     }
 
+    @Test("Server deletion drops queued records first, keeps consent and reports sign-in and failure")
+    func serverDeletion() async {
+        let fixture = UsageFixture()
+        defer { fixture.recorder.stop() }
+        let gate = UsageGate()
+        fixture.service.gates = [gate]
+        fixture.recorder.record(.choiceAccepted)
+        await gate.waitUntilEntered()
+        await fixture.recorder.deleteServerStatistics()
+        #expect(fixture.recorder.serverDeletion == .deleted)
+        #expect(fixture.service.deletions == 1)
+        #expect(fixture.store.events.isEmpty)
+        #expect(fixture.recorder.isEnabled)
+        gate.release()
+
+        fixture.service.deletionError = PetUsageDeletionError.unavailable
+        await fixture.recorder.deleteServerStatistics()
+        #expect(fixture.recorder.serverDeletion == .failed)
+        fixture.state.auth = nil
+        await fixture.recorder.deleteServerStatistics()
+        #expect(fixture.recorder.serverDeletion == .signInRequired)
+        #expect(fixture.service.deletions == 2)
+    }
+
+    @Test("Live deletion posts only to delete_my_blabee_usage and maps 401 to sign-in")
+    func liveServerDeletion() async throws {
+        var paths: [String] = []
+        var status = 200
+        let service = PetSupabaseUsageService(transport: { request in
+            paths.append(request.url?.path ?? "")
+            #expect(request.httpBody == Data("{}".utf8))
+            return (Data("3".utf8), HTTPURLResponse(url: request.url!, statusCode: status, httpVersion: nil, headerFields: nil)!)
+        }, now: { UsageValues.now })
+        try await service.deleteServerStatistics(authorization: UsageValues.authorization())
+        status = 401
+        await #expect(throws: PetUsageDeletionError.unauthenticated) {
+            try await service.deleteServerStatistics(authorization: UsageValues.authorization())
+        }
+        #expect(paths == ["/rest/v1/rpc/delete_my_blabee_usage", "/rest/v1/rpc/delete_my_blabee_usage"])
+    }
+
     @Test("Retries reuse the event ID, serialize sends, and cap the backoff")
     func retryIdentityAndBackoff() async {
         let fixture = UsageFixture()
@@ -535,6 +576,12 @@ private final class UsageService: PetUsageSending {
     var failuresRemaining = 0
     private var concurrentCalls = 0
     var maximumConcurrentCalls = 0
+    var deletions = 0
+    var deletionError: (any Error)?
+    func deleteServerStatistics(authorization: PetUsageAuthorization) async throws {
+        deletions += 1
+        if let deletionError { throw deletionError }
+    }
     func send(_ event: PetUsageEvent, authorization: PetUsageAuthorization) async throws -> PetUsageDelivery {
         calls.append(.init(event: event, authorization: authorization))
         concurrentCalls += 1

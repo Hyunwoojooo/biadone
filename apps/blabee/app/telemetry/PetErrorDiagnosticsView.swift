@@ -14,7 +14,7 @@ struct PetErrorDiagnosticsView: View {
             .accessibilityIdentifier("error-diagnostics-enabled")
             Text(PetL10n.text("Help improve Blabee's stability by sending error diagnostics for the account signed in on this Mac. This is separate from usage statistics.", korean: "이 Mac에서 로그인한 계정의 오류 진단을 보내 Blabee의 안정성 개선에 참여합니다. 사용 통계 설정과 별도로 적용됩니다."))
             Text(PetL10n.text("We send your user ID, predefined error codes, occurrence times, app and macOS versions, provider (Codex or Claude), connection failure stage, cause, and tool version. Conversations, code, commands, file paths, and raw logs are not sent.", korean: "사용자 ID·정해진 오류 코드·발생 시각·앱·macOS 버전과 Codex·Claude 종류·연결 실패 단계·원인·도구 버전을 보냅니다. 대화·코드·명령·파일 경로·로그 원문은 보내지 않습니다."))
-            Text(PetL10n.text("Repeated errors are rate-limited. Diagnostics older than 30 days are cleaned up daily and are also deleted with your account. Turning this off stops resending queued records.", korean: "반복 오류는 전송 횟수를 제한합니다. 30일 지난 진단은 매일 정리하며, 계정 삭제 시에도 함께 삭제됩니다. 전송을 끄면 대기 기록을 다시 보내지 않습니다."))
+            Text(PetL10n.text("Repeated errors are rate-limited. Diagnostics older than 30 days are cleaned up daily and are also deleted when you have your account deleted (request it through Feedback). Turning this off stops resending queued records.", korean: "반복 오류는 전송 횟수를 제한합니다. 30일 지난 진단은 매일 정리하며, 피드백으로 계정 삭제를 요청하면 함께 삭제됩니다. 전송을 끄면 대기 기록을 다시 보내지 않습니다."))
             if diagnostics.isEnabled {
                 Text(PetL10n.text("\(diagnostics.pendingEventCount) pending submissions", korean: "전송 대기 \(diagnostics.pendingEventCount)건"))
                     .accessibilityIdentifier("error-diagnostics-pending")

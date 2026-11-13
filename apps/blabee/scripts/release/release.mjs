@@ -41,6 +41,7 @@ import { promisify } from 'node:util';
 import { fingerprintReleaseInputs } from '../build-fresh-internal-dmg.mjs';
 import { attachAndVerifyDMG } from '../build-internal-dmg.mjs';
 import { CLAUDE_RUNTIME_SOURCE_FILES, prepareClaudeRuntime, verifyPublicClaudeRuntimeDirectory } from '../prepare-claude-runtime.mjs';
+import { updateReadmes } from './update-readme.mjs';
 import { claudeNodeIdentifier, verifyDeveloperIDSignature, verifyEmbeddedSigningEntitlements } from '../release-signing.mjs';
 
 const execFile = promisify(callbackExecFile);
@@ -306,10 +307,13 @@ const steps = {
     await writeFile(join(ctx.folder, `r${ctx.build}-provenance.json`), JSON.stringify(provenance, null, 2) + '\n', { flag: 'wx' });
     const evidence = await record(ctx, 'finalize', { artifact: provenance.artifact, ticket, embedded_app: embedded,
       source_commit: preflight.source_commit });
+    // After the evidence: README edits must not change the recorded source tree.
+    const readmes = await updateReadmes(ctx.build);
     console.log(['', `Release r${ctx.build} is notarized. Publication checklist (manual):`,
       `  1. git tag blabee-v${VERSION}+build.${ctx.build} ${preflight.source_commit} && push the tag`,
       `  2. Create the GitHub release with ${ctx.dmgName} and its .sha256, notes from the CHANGELOG entry`,
-      '  3. Update README.md / README.ko.md download links and the public docs repository (Biadone/blabee)',
+      `  3. ${readmes.length ? `README links now point at r${ctx.build} (${readmes.join(', ')}); commit them after the release is public.`
+        : 'README links already point at this build.'} Update the public docs repository (Biadone/blabee)`,
       '  4. Run an in-app update from the previous build on a test Mac and record the result',
     ].join('\n'));
     return evidence;

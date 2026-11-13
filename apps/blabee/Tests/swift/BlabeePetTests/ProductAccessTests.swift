@@ -175,7 +175,7 @@ struct ProductAccessTests {
     }
 
     @Test("RPC binds user and nonce, caps lease, and treats HTTP 403 as definitive denial",
-          arguments: ["ok", "nonce", "user", "lease", "403", "503"])
+          arguments: ["ok", "nonce", "user", "lease", "403", "503", "404", "402"])
     func rpcValidation(_ variant: String) async throws {
         let checker = SupabaseProductAccessChecker(transport: { request in
             let body = try JSONSerialization.jsonObject(with: request.httpBody!) as! [String: String]
@@ -197,10 +197,24 @@ struct ProductAccessTests {
             #expect(grant.validForSeconds == 300)
         } catch let error as ProductAccessCheckError {
             switch (variant, error) {
-            case ("403", .rejected), ("503", .unavailable),
+            case ("403", .rejected), ("503", .unavailable), ("404", .unavailable), ("402", .unavailable),
                  ("nonce", .invalidResponse), ("user", .invalidResponse), ("lease", .invalidResponse): break
             default: Issue.record("Unexpected RPC error")
             }
         }
+    }
+
+    @Test("Active grants renew 90s before expiry; failures back off but retry before expiry")
+    func refreshCadence() {
+        let delay = ProductAccessController.refreshDelay
+        #expect(delay(true, 300, 0, 0) == 210)
+        #expect(delay(true, 100, 0, 0) == 10)
+        #expect(delay(true, 20, 0, 0) == 1)
+        #expect(delay(true, 299, 1, 1) == 29)
+        #expect(delay(true, 120, 4, 0) == 90)
+        #expect(delay(false, 0, 0, 2) == 58)
+        #expect(delay(false, 0, 1, 0) == 30)
+        #expect(delay(false, 0, 3, 0) == 120)
+        #expect(delay(false, 0, 16, 0) == 300)
     }
 }

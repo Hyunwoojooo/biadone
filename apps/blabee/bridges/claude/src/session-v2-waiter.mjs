@@ -16,6 +16,30 @@ export function sessionV2SelectionNotice(event) {
     + JSON.stringify({ selection_id: event.selection_id, delivery_token: event.delivery_token }) + '\n';
 }
 
+// The native Claude wrapper around an asyncRewake Stop notice, as observed in
+// Claude Code 2.1.282. The service admits a selection only for these exact
+// bytes (ClaudeNativeSession.productHookWrapper); keep both in sync.
+export function sessionV2NativeRewakeWrapper(notice) {
+  return '<task-notification>\n<summary>Stop hook feedback</summary>\n</task-notification>\n<system-reminder>\n'
+    + 'Stop hook blocking error from command "Stop": ' + notice + '\n</system-reminder>';
+}
+
+const NOTICE_HEAD = 'Blabee Stop Hook selection reference.';
+const NOTICE = /Blabee Stop Hook selection reference\. Call claim_selection_v1 with these values; execute only the returned action after a successful claim\.\n\{"selection_id":"[^"\n]{1,256}","delivery_token":"[^"\n]{1,512}"\}\n/;
+
+/** Classifies a prompt that carries a Blabee selection notice. `changed`
+ * means Claude Code wrapped the notice differently from the verified format,
+ * so the service will treat it as new input and the selection is lost. This
+ * only explains that loss to the person; it never admits the selection. */
+export function sessionV2RewakeFormat(prompt) {
+  if (typeof prompt !== 'string' || !prompt.includes(NOTICE_HEAD)) return 'none';
+  const notice = prompt.match(NOTICE)?.[0];
+  return notice && prompt === sessionV2NativeRewakeWrapper(notice) ? 'verified' : 'changed';
+}
+
+export const SESSION_V2_REWAKE_FORMAT_CHANGED_NOTICE = '[Blabee] 이 Claude Code 버전은 카드 선택을 Blabee가 확인한 것과 다른 형식으로 전달해 '
+  + '선택을 적용하지 못했습니다(claude_rewake_format_changed). Blabee 업데이트를 확인하거나 이 현상을 피드백으로 알려 주세요.';
+
 /** One real Stop owns one immutable waiter. Polls and cancellation never overlap.
  * Server timestamps use mach_continuous_time, so they are not compared with
  * Node's potentially different clock. The server enforces its original expiry;

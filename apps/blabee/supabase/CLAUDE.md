@@ -12,7 +12,7 @@ Supabase의 비공개 스키마와 `public.*` RPC, 그 Swift 클라이언트(`ap
 
 | 호출자 | RPC | 조건 |
 | --- | --- | --- |
-| `app/telemetry/PetUsageAnalytics.swift` | `record_blabee_usage`, `record_blabee_product_event`, `record_blabee_insight_event` | 사용 통계 동의(`blabee.usageAnalytics.enabled.v3`) + 로그인 |
+| `app/telemetry/PetUsageAnalytics.swift` | `record_blabee_usage`, `record_blabee_product_event`, `record_blabee_insight_event`, `delete_my_blabee_usage`(사용자가 설정에서 직접) | 사용 통계 동의(`blabee.usageAnalytics.enabled.v3`) + 로그인 |
 | `app/telemetry/PetErrorDiagnostics.swift` | `record_blabee_error`, `record_blabee_connection_error` | 별도 오류 진단 동의(`blabee.errorDiagnostics.enabled`). 첫 실행 온보딩 전엔 강제 off |
 | `app/telemetry/PetFeedback.swift` | `submit_blabee_feedback`, `list_blabee_feedback`, `delete_blabee_feedback` | 사용자 직접 제출. 본문은 `p_content_consent` 참일 때만(SQL CHECK) |
 | `app/account/ProductAccess.swift` | `get_blabee_access(p_nonce)` | 동의와 무관. 제품 사용에 항상 필요 |
@@ -28,6 +28,7 @@ Supabase의 비공개 스키마와 `public.*` RPC, 그 Swift 클라이언트(`ap
 | `202609170006_blabee_feedback`, `202609170007_blabee_feedback_retention` | insight·card·feedback·subscription 테이블과 RPC 5개, 정리 cron |
 | `202609240001_blabee_connection_diagnostics` | `error_events` nullable 컬럼 4개, `record_blabee_connection_error` |
 | `202609270001_blabee_access_control` | `blabee_access` 스키마(테이블 4개, RLS), `get_blabee_access`, 관리자 RPC 2개, 감사 로그 |
+| `202611130001_blabee_usage_quota` | 2026-11-13 운영 적용(SHA-256 `8b9e0916…ffde4`, 기록은 `docs/USAGE_ANALYTICS.md`). `usage_ingest_days`, `record_blabee_usage` 일일 1,000건 한도, 사용 영수증 정리 cron, `delete_my_blabee_usage` |
 
 ## 적용 절차(운영)
 
@@ -40,7 +41,7 @@ Supabase의 비공개 스키마와 `public.*` RPC, 그 Swift 클라이언트(`ap
 
 1. `migrations/<YYYYMMDDNNNN>_blabee_<기능>.sql`. 머리말 주석에 선행 migration·적용 role·노출 스키마 제외를 적고 `begin;`/`commit;`으로 감싼다. 기존 RPC와 append-only 호환.
 2. `tests/<기능>.sql`: 일회용 DB에서 돌리고 끝에 롤백.
-3. `Tests/Cloud/*.test.mjs`(PGlite). 실행기는 `access-control`, `connection-diagnostics` 둘뿐이다. `access-control.test.mjs`는 `docs/features/ACCESS_CONTROL_ADMIN.md`의 sql 코드 블록까지 파싱해 실행하고,
+3. `Tests/Cloud/*.test.mjs`(PGlite). 실행기는 `access-control`, `connection-diagnostics`, `usage-quota`(`npm run test:usage-sql`, 모든 migration을 cron stub으로 순서대로 실행) 셋이다. `access-control.test.mjs`는 `docs/features/ACCESS_CONTROL_ADMIN.md`의 sql 코드 블록까지 파싱해 실행하고,
    `connection-diagnostics.test.mjs`는 Swift 소스와 `connection-error-reports.sql`을 대조한다. 그 문서·소스를 고치면 이 테스트가 깨질 수 있다.
    usage/feedback/product-metrics SQL 테스트는 수동 `psql` 대상.
 4. `*-reports.sql`: 관리자가 postgres 권한으로 SQL Editor에서 돌리는 쿼리. 공개 view나 클라이언트 API로 만들지 않는다.
@@ -60,5 +61,6 @@ Supabase의 비공개 스키마와 `public.*` RPC, 그 Swift 클라이언트(`ap
 | --- | --- |
 | `npm run test:access-sql` | `Tests/Cloud/access-control.test.mjs` (PGlite, 운영 접속 없음) |
 | `npm run test:connection-sql` | `Tests/Cloud/connection-diagnostics.test.mjs` |
+| `npm run test:usage-sql` | `Tests/Cloud/usage-quota.test.mjs` (전체 migration, 사용 통계 한도·삭제·정리) |
 | `npm --prefix account-web test` | 계정 웹 |
 | `npm run test:swift -- --filter 'ProductAccess\|PetAccess\|PetAccount\|PetUsage\|PetError\|PetFeedback\|PetProductMetrics\|PetInsightMetrics'` | Swift 클라이언트 suite(`Tests/swift/BlabeePetTests/`) |

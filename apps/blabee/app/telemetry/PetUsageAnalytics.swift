@@ -56,7 +56,19 @@ enum PetUsageDelivery: Sendable { case accepted, discard, retry, waitForAuthoriz
 @MainActor
 protocol PetUsageSending {
     func send(_ event: PetUsageEvent, authorization: PetUsageAuthorization) async throws -> PetUsageDelivery
+    /// Deletes the signed-in user's server aggregates (`delete_my_blabee_usage`).
+    func deleteServerStatistics(authorization: PetUsageAuthorization) async throws
 }
+
+enum PetUsageDeletionError: Error, Sendable { case unauthenticated, unavailable, unsupported }
+
+extension PetUsageSending {
+    func deleteServerStatistics(authorization: PetUsageAuthorization) async throws {
+        throw PetUsageDeletionError.unsupported
+    }
+}
+
+enum PetUsageServerDeletion: Equatable, Sendable { case idle, deleting, deleted, signInRequired, failed }
 
 @MainActor
 protocol PetUsageEventStoring {
@@ -85,6 +97,7 @@ final class PetUsageAnalytics: ObservableObject {
     static let maximumEventAge: TimeInterval = 7 * 24 * 60 * 60
 
     @Published private(set) var isEnabled: Bool
+    @Published private(set) var serverDeletion: PetUsageServerDeletion = .idle
     var onConsentChanged: (() -> Void)?
     private let productEnvironmentOverride: PetProductEnvironment?
     var productEnvironment: PetProductEnvironment { productEnvironmentOverride ?? .current }
@@ -387,6 +400,27 @@ final class PetUsageAnalytics: ObservableObject {
         try? store.invalidate()
     }
 
+    /// Drops queued records first so nothing is resent after the deletion,
+    /// then asks the server to delete this account's usage aggregates. Works
+    /// whether or not sending is currently enabled; it never changes consent.
+    func deleteServerStatistics() async {
+        guard serverDeletion != .deleting, !isStopped else { return }
+        guard let authorization = currentAuthorization() else { serverDeletion = .signInRequired; return }
+        contextEpoch &+= 1
+        cancelFlush()
+        events.removeAll()
+        try? store.invalidate()
+        serverDeletion = .deleting
+        do {
+            try await service.deleteServerStatistics(authorization: authorization)
+            serverDeletion = .deleted
+        } catch PetUsageDeletionError.unauthenticated {
+            serverDeletion = .signInRequired
+        } catch {
+            serverDeletion = .failed
+        }
+    }
+
     func stop() {
         isStopped = true
         contextEpoch &+= 1
@@ -631,6 +665,43 @@ final class PetSupabaseUsageService: PetUsageSending {
         case 401, 403: return .waitForAuthorization
         case 408, 425, 429, 500...599: return .retry
         default: return .discard
+        }
+    }
+}
+
+extension PetSupabaseUsageService {
+    func deleteServerStatistics(authorization: PetUsageAuthorization) async throws {
+        guard authorization.expiresAt > now(), PetUsageValidation.isHeaderValue(authorization.accessToken) else {
+            throw PetUsageDeletionError.unauthenticated
+        }
+        guard var parts = URLComponents(url: configuration.supabaseURL, resolvingAgainstBaseURL: false),
+              parts.scheme == "https", let host = parts.host, !host.isEmpty,
+              parts.user == nil, parts.password == nil, parts.port == nil,
+              parts.query == nil, parts.fragment == nil, parts.path.isEmpty || parts.path == "/",
+              PetUsageValidation.isHeaderValue(configuration.publishableKey) else {
+            throw PetUsageDeletionError.unavailable
+        }
+        parts.path = "/rest/v1/rpc/delete_my_blabee_usage"
+        guard let url = parts.url else { throw PetUsageDeletionError.unavailable }
+        var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 20)
+        request.httpMethod = "POST"
+        request.httpShouldHandleCookies = false
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.setValue(configuration.publishableKey, forHTTPHeaderField: "apikey")
+        request.setValue("Bearer \(authorization.accessToken)", forHTTPHeaderField: "Authorization")
+        request.httpBody = Data("{}".utf8)
+        let data: Data, response: HTTPURLResponse
+        do { (data, response) = try await transport(request) }
+        catch { throw PetUsageDeletionError.unavailable }
+        guard response.url == url, data.count <= 4_096 else { throw PetUsageDeletionError.unavailable }
+        switch response.statusCode {
+        case 200:
+            guard (try? JSONDecoder().decode(Int64.self, from: data)).map({ $0 >= 0 }) == true else {
+                throw PetUsageDeletionError.unavailable
+            }
+        case 401, 403: throw PetUsageDeletionError.unauthenticated
+        default: throw PetUsageDeletionError.unavailable
         }
     }
 }
