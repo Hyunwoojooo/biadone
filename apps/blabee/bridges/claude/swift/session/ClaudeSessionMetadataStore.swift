@@ -233,18 +233,15 @@ final class ClaudeSessionMetadataStore: @unchecked Sendable {
                     try crash(.beforePrepare, selected: crashPoint)
                     let prepared = try append(phase: "prepared", operationID: operationID,
                         replayKey: replayKey, binding: binding, core: state.core, previous: state.checkpoint, crashPoint: crashPoint)
-                    let preparedState = try verify(allowPrepared: true)
-                    guard preparedState.checkpoint == prepared, preparedState.preparedOperationID == operationID else {
-                        throw Self.failure("operation_order_invalid")
-                    }
+                    try confirmOwnAppend(prepared)
                     try crash(.afterPrepare, selected: crashPoint)
                     let result = try mutation()
                     try crash(.afterCoreCommit, selected: crashPoint)
                     guard let after = try readCoreCheckpoint() else { throw Self.failure("core_missing") }
                     try Self.validateProgress(from: state.core, to: after)
-                    _ = try append(phase: "finalized", operationID: operationID,
+                    let finalized = try append(phase: "finalized", operationID: operationID,
                         replayKey: replayKey, binding: binding, core: after, previous: prepared, crashPoint: crashPoint)
-                    _ = try verify()
+                    try confirmOwnAppend(finalized)
                     try crash(.afterFinalize, selected: crashPoint)
                     return result
                 } catch { quarantined = true; throw error }
@@ -390,16 +387,40 @@ final class ClaudeSessionMetadataStore: @unchecked Sendable {
                         preparedOperationID: pending?.id)
     }
 
+    /// Confirms that this instance's own last append is still the head, without
+    /// re-verifying the whole chain. Both locks have been held since the full
+    /// verify at the start of withMutation, so only this store wrote since.
+    /// File identity, key continuity, sidecars, schema, the freshness anchor and
+    /// the stored head record are checked on every call; tampering with older
+    /// records is caught by the full verify of the next public call or reopen.
+    private func confirmOwnAppend(_ expected: FreshnessCheckpoint) throws {
+        try verifyFileIdentity()
+        try verifyKeyFile()
+        try rejectSidecars()
+        guard try verifySchema() == .v2 else { throw Self.failure("schema_invalid") }
+        guard let stored = try freshnessStore.load(), stored.record.state == .committed,
+              stored.record.checkpoint == expected else { throw Self.failure("freshness_unconfirmed") }
+        if expected.sequence == 0 {
+            guard try scalar("SELECT COUNT(*) FROM metadata_operations") == 0,
+                  try singleRow("SELECT singleton, json, mac FROM metadata_header").mac == expected.headMAC else {
+                throw Self.failure("rollback_or_fork")
+            }
+            return
+        }
+        let head = try singleRow("SELECT sequence, json, mac FROM metadata_operations ORDER BY sequence DESC LIMIT 1")
+        guard head.sequence == expected.sequence, head.mac == expected.headMAC,
+              authenticator.verify(head.mac, domain: Format.v2.recordDomain,
+                identity: expected.databaseID, canonicalJSON: head.bytes) else {
+            throw Self.failure("rollback_or_fork")
+        }
+    }
+
     private func append(phase: String, operationID: UUID, replayKey: ClaudeReplayKey?, binding: CoordinatorBinding?,
                         core: CoreCheckpoint?, previous: FreshnessCheckpoint,
                         crashPoint: CrashPoint?) throws -> FreshnessCheckpoint {
-        try verifyFileIdentity()
-        if phase == "finalized" {
-            let prepared = try verify(allowPrepared: true)
-            guard prepared.checkpoint == previous, prepared.preparedOperationID == operationID else {
-                throw Self.failure("operation_order_invalid")
-            }
-        }
+        // Only withMutation appends, after a full verify under both locks and,
+        // for "finalized", after confirmOwnAppend of the prepared record.
+        try confirmOwnAppend(previous)
         guard let stored = try freshnessStore.load(), stored.record.state == .committed,
               stored.record.checkpoint == previous else { throw Self.failure("freshness_unconfirmed") }
         let sequence = try Self.nextSequence(previous.sequence)

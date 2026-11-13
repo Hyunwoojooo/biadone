@@ -136,3 +136,9 @@
   기록 형식 schema 2에 기록 시각·경로·정책을 더했고, 32칸이 차면 경로가 사라졌거나 정책이 바뀌었거나 만료된 기록부터 재사용한다. 공증 온라인 조회는 같은 파일에 대해 서비스 수명 동안 한 번만 한다.
 - **10번 서비스 정지.** 앱이 띄운 서비스가 예기치 않게 끝나면 5초 뒤 한 번 다시 띄운다. 그 뒤 10분 안에 또 끝나면 멈춘 채로 둔다. 사람이 처리해야 하는 원인(다른 서비스 실행 중, 앱 확인 실패, Keychain·저장소 문제)은 다시 띄우지 않는다.
   서비스가 멈추거나 막혀 있는 동안 메뉴바 아이콘을 흐리게 표시하고 도움말에 "서비스 멈춤"을 보여준다. 다시 띄운 서비스는 저장 기록으로만 복원하며 선택·전달·승인을 다시 보내지 않는다.
+
+## 2순위 11·14번 (2026-11-12 구현)
+
+- **14번(CLD-9, REPO-3).** `ClaudeSessionMetadataStore.withMutation`의 체인 전체 검증을 4회에서 1회로 줄였다. 시작 때 한 번 전체 검증한 뒤, 같은 잠금 안에서 자기가 쓴 기록은 `confirmOwnAppend`로 확인한다(파일 동일성·키 연속성·sidecar·schema·freshness anchor·마지막 기록 MAC). 오래된 기록 변조는 다음 공개 호출이나 다시 열기의 전체 검증이 잡는다. 레지스트리의 "core 커밋 없음" 확인은 core journal 전체 읽기 대신 anchor 기록 비교로 바꿨다. 측정: `thousandReplayIDs` 409.7초 → 82.7초, BlabeePetTests 전체 525.7초 → 201.0초.
+- **11번(ENG-7).** `SQLiteJournal.loadReusingHead`는 anchor가 committed이고 DB head가 이전 검증 시점과 같을 때만 전체 스캔을 건너뛴다. routing은 잠금 구간마다 `RoutingRequestJournal`을 열어, 같은 요청 안의 반복 load와 replay를 head가 같은 동안 한 번으로 줄인다. 요청마다 전체 검증 최소 1회는 유지하고, 잠금 밖·다른 스레드·요청 종료 뒤에는 재사용하지 않는다. Claude 어댑터의 `ClaudeProductAuthorityJournal`도 이를 전달한다.
+- 하지 않은 것: `select`의 연속 append 2회 병합(커밋 경계가 바뀌어 별도 설계 필요), append 내부의 사전·사후 전체 검증(12번 ENG-1에서), ENG-8 Keychain 호출 축소(read-back 검증 제거는 무결성 설계 변경이고, `LAContext` 공유는 스레드 안전성이 문서화되지 않아 보류).

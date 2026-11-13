@@ -19,6 +19,11 @@ final class ClaudeProductAuthorityJournal: CoordinatorSemanticJournalPort, @unch
         return try journal.load()
     }
 
+    func reusableLoad(_ previous: JournalHeadSnapshot?) throws -> JournalHeadSnapshot? {
+        try authorize()
+        return try journal.reusableLoad(previous)
+    }
+
     func append(expectedSequence: Int64, events: [Data], documents: [Data],
                 verificationRecords: [Data]) throws -> JournalAppendResult {
         try authorize()

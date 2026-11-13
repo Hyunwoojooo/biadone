@@ -18,6 +18,13 @@ public struct JournalSnapshot: Sendable, Equatable {
     public let journalSequence: Int64
 }
 
+/// A verified snapshot paired with the authenticated head it was read at.
+/// Only `SQLiteJournal.loadReusingHead` creates or accepts one.
+public struct JournalHeadSnapshot: Sendable, Equatable {
+    public let snapshot: JournalSnapshot
+    let checkpoint: FreshnessCheckpoint
+}
+
 public struct JournalAppendResult: Sendable, Equatable {
     public let firstSequence: Int64
     public let lastSequence: Int64
@@ -257,6 +264,32 @@ public final class SQLiteJournal: @unchecked Sendable {
                 let snapshot = try loadUnlocked().snapshot
                 try requireFreshnessReady(after: precheck)
                 return snapshot
+            }
+        }
+    }
+
+    /// Returns `previous` without a full validation scan only when the trusted
+    /// anchor is committed and the database head still equals the checkpoint
+    /// `previous` was fully verified at. Anything else is an ordinary `load()`.
+    /// Callers must scope `previous` to one request (see routing) so every
+    /// request still authenticates complete history at least once.
+    public func loadReusingHead(_ previous: JournalHeadSnapshot?) throws -> JournalHeadSnapshot {
+        try synchronizedWithStorageLock {
+            try withImmediateTransaction {
+                let databaseCheckpoint = try currentCheckpoint()
+                let precheck = try precheckFreshness(
+                    stored: try requiredFreshnessRecord(),
+                    databaseCheckpoint: databaseCheckpoint,
+                    allowPendingSource: false
+                )
+                if case .committed = precheck, let previous,
+                   previous.checkpoint == databaseCheckpoint,
+                   previous.snapshot.journalSequence == databaseCheckpoint.sequence {
+                    return previous
+                }
+                let snapshot = try loadUnlocked().snapshot
+                try requireFreshnessReady(after: precheck)
+                return JournalHeadSnapshot(snapshot: snapshot, checkpoint: databaseCheckpoint)
             }
         }
     }

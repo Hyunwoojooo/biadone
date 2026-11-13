@@ -857,14 +857,17 @@ final class ClaudeSessionRegistry: @unchecked Sendable {
                 do {
                     return try metadata.withMutation(operationID: operationID, binding: binding,
                         readCoreCheckpoint: { try Self.checkpoint(journal: journal, freshness: freshness) }) {
-                            let before = try Self.checkpoint(journal: journal, freshness: freshness)
+                            // readCoreCheckpoint has just fully verified the core
+                            // journal under the metadata lock. The anchor record
+                            // alone shows whether body() committed or left pending.
+                            let before = try Self.anchorRecord(freshness)
                             let result = try body()
                             let response = try StrictJSONTransport.object(from: result)
                             if response["ok"] as? Bool == false {
                                 // Invalid opaque DTOs may return a normal error
                                 // only when no core commit occurred. A partial or
                                 // unreadable commit must quarantine the scope.
-                                guard try Self.checkpoint(journal: journal, freshness: freshness) == before else {
+                                guard try Self.anchorRecord(freshness) == before else {
                                     throw CoordinatorError("claude_core_mutation_uncertain")
                                 }
                             }
@@ -923,6 +926,13 @@ final class ClaudeSessionRegistry: @unchecked Sendable {
         }
         guard Set(result.values).count == 4 else { throw CoordinatorError("claude_capability_unavailable") }
         return result
+    }
+
+    private static func anchorRecord(_ freshness: any FreshnessAnchorStore) throws -> FreshnessCheckpoint {
+        guard let stored = try freshness.load(), stored.record.state == .committed else {
+            throw CoordinatorError("claude_core_mutation_uncertain")
+        }
+        return stored.record.checkpoint
     }
 
     private static func checkpoint(journal: SQLiteJournal, freshness: any FreshnessAnchorStore) throws -> FreshnessCheckpoint {

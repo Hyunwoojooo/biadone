@@ -26,7 +26,7 @@ AppKit·SwiftUI·브릿지 모듈을 import하지 않는다. `Tests/support/refe
 | `semantic/CoordinatorSemanticApplication.swift` | command → event 결정(`CoordinatorSemanticDecision.decide`), CAS append 재시도, transport completion/not-submitted/queued delivery |
 | `semantic/CoordinatorSemanticState.swift` | replay로만 상태를 만드는 reducer(`CoordinatorSemanticReplay.applying`), `CoordinatorTransportStatus` |
 | `semantic/BlabeeSuggestionMode.swift` | 제안 모드 |
-| `routing/CoordinatorRoutingApplication.swift` | 락, in-flight/deadline/clock, `routeSelection`, `routeConsumePetAction`, `routeQueuedActionContextClaim`, `completeTransportAndCloseBoundary`, `failTransportBeforeSubmission`, 재시작 복구 quarantine |
+| `routing/CoordinatorRoutingApplication.swift` | 락(잠금 구간마다 `RoutingRequestJournal`이 head가 같은 동안 검증된 snapshot·replay를 재사용, 요청 밖으로 남기지 않음), in-flight/deadline/clock, `routeSelection`, `routeConsumePetAction`, `routeQueuedActionContextClaim`, `completeTransportAndCloseBoundary`, `failTransportBeforeSubmission`, 재시작 복구 quarantine |
 | `routing/CoordinatorNextTurnDispatcher.swift` | dispatcher 포트와 실패 증거(`commandInvocationAttempted`). 실제 구현 `CodexQueueNextTurnDispatcher`는 Codex 브릿지에서 `app/entrypoints/main.swift`가 주입 |
 | `routing/CoordinatorBinding.swift`, `routing/ContinuationToken.swift` | binding 키, token 생성·fingerprint |
 | `persistence/SQLiteJournal.swift` | WAL/FULL, `BEGIN IMMEDIATE`, CAS append, HMAC chain, `schemaVersion = 1`, 테이블 4개 정확 일치 검사. append 시 event·packet을 validator로 재검증 |

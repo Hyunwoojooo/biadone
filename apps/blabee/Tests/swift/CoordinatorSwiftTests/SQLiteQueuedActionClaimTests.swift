@@ -1485,3 +1485,80 @@ func sqliteDismissalJournalBudgetWithAuthenticatedHistory(packetHistoryCount: In
         )
     }
 }
+
+@Test("A head-reusing load skips the full scan only while the authenticated head is unchanged")
+func sqliteHeadReusingLoadRequiresUnchangedHead() throws {
+    let fixture = try makeSQLiteClaimFixture("head_reuse", closedHistoryPairs: 3)
+    defer { fixture.remove() }
+    let meter = fixture.meter
+
+    meter.start()
+    let first = try fixture.journalA.loadReusingHead(nil)
+    _ = meter.stop()
+    #expect(meter.measuredWork().fullValidationScans == 1)
+    #expect(first.snapshot == (try fixture.journalA.load()))
+
+    meter.start()
+    let reused = try fixture.journalA.loadReusingHead(first)
+    _ = meter.stop()
+    #expect(meter.measuredWork().fullValidationScans == 0)
+    #expect(reused == first)
+
+    // A write through another instance moves the head; the stale snapshot is
+    // never returned and complete history is authenticated again.
+    let command = try sqliteClaimCommand(
+        fixture: fixture, eventID: "event_head_reuse_claim", turnID: "turn_head_reuse"
+    )
+    _ = try CoordinatorSemanticApplication(journal: fixture.journalB).execute(command: command)
+    meter.start()
+    let moved = try fixture.journalA.loadReusingHead(first)
+    _ = meter.stop()
+    #expect(meter.measuredWork().fullValidationScans == 1)
+    #expect(moved.snapshot.journalSequence == first.snapshot.journalSequence + 1)
+    #expect(moved.snapshot == (try fixture.journalA.load()))
+}
+
+@Test("Routing request journal reuses one verified snapshot per request and owner thread only")
+func routingRequestJournalScopesReuse() throws {
+    let fixture = try makeSQLiteClaimFixture("request_scope", closedHistoryPairs: 3)
+    defer { fixture.remove() }
+    let meter = fixture.meter
+    let journal = RoutingRequestJournal(base: fixture.journalA)
+
+    journal.begin()
+    meter.start()
+    let snapshot = try journal.load()
+    let replayed = try journal.replayedState()
+    _ = try journal.load()
+    _ = meter.stop()
+    #expect(meter.measuredWork().fullValidationScans == 1)
+    #expect(replayed.snapshot == snapshot)
+    #expect(replayed.state == (try CoordinatorSemanticReplay.replay(snapshot)))
+
+    // Another thread inside the same scope never sees the request memo.
+    meter.start()
+    let done = DispatchSemaphore(value: 0)
+    DispatchQueue.global().async {
+        _ = try? journal.load()
+        done.signal()
+    }
+    #expect(done.wait(timeout: .now() + 10) == .success)
+    _ = meter.stop()
+    #expect(meter.measuredWork().fullValidationScans == 1)
+    journal.end()
+
+    // Nothing survives the end of a request.
+    journal.begin()
+    meter.start()
+    _ = try journal.load()
+    _ = meter.stop()
+    journal.end()
+    #expect(meter.measuredWork().fullValidationScans == 1)
+
+    // Outside a request every load is a plain full load.
+    meter.start()
+    _ = try journal.load()
+    _ = try journal.load()
+    _ = meter.stop()
+    #expect(meter.measuredWork().fullValidationScans == 2)
+}

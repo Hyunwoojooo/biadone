@@ -122,6 +122,7 @@ public final class CoordinatorRoutingApplication: @unchecked Sendable {
     public typealias EventIDGenerator = @Sendable (_ purpose: String) -> String
 
     private let journal: any CoordinatorSemanticJournalPort
+    private let requestJournal: RoutingRequestJournal
     private let semantic: CoordinatorSemanticApplication
     private let clock: any CoordinatorContinuousClock
     private let eventIDGenerator: EventIDGenerator
@@ -148,9 +149,11 @@ public final class CoordinatorRoutingApplication: @unchecked Sendable {
         tokenGenerator: CoordinatorSemanticApplication.TokenGenerator? = nil,
         eventIDGenerator: EventIDGenerator? = nil
     ) throws {
-        self.journal = journal
+        let requestJournal = RoutingRequestJournal(base: journal)
+        self.requestJournal = requestJournal
+        self.journal = requestJournal
         self.semantic = CoordinatorSemanticApplication(
-            journal: journal,
+            journal: requestJournal,
             tokenHMACKey: tokenHMACKey,
             tokenGenerator: tokenGenerator
         )
@@ -168,7 +171,8 @@ public final class CoordinatorRoutingApplication: @unchecked Sendable {
     /// points so the product adapter cannot bypass B2 routing checks.
     public func executeCommand(_ commandData: Data) throws -> CoordinatorSemanticExecutionResult {
         lock.lock()
-        defer { lock.unlock() }
+        requestJournal.begin()
+        defer { requestJournal.end(); lock.unlock() }
         try requireRestartRecoveryWritableLocked()
         var command = try StrictJSONTransport.object(from: commandData)
         let commandType = try requiredCommandType(command)
@@ -278,7 +282,8 @@ public final class CoordinatorRoutingApplication: @unchecked Sendable {
         _ commandData: Data
     ) throws -> CoordinatorSemanticExecutionResult {
         lock.lock()
-        defer { lock.unlock() }
+        requestJournal.begin()
+        defer { requestJournal.end(); lock.unlock() }
         try requireRestartRecoveryWritableLocked()
         try processDueLocked()
 
@@ -342,7 +347,8 @@ public final class CoordinatorRoutingApplication: @unchecked Sendable {
     /// consulted so an exact same-turn retry can recover after daemon restart.
     func routeQueuedActionContextClaim(_ commandData: Data) throws -> Data {
         lock.lock()
-        defer { lock.unlock() }
+        requestJournal.begin()
+        defer { requestJournal.end(); lock.unlock() }
         try requireRestartRecoveryWritableLocked()
 
         let command = try StrictJSONTransport.object(from: commandData)
@@ -373,7 +379,8 @@ public final class CoordinatorRoutingApplication: @unchecked Sendable {
         close closeData: Data
     ) throws {
         lock.lock()
-        defer { lock.unlock() }
+        requestJournal.begin()
+        defer { requestJournal.end(); lock.unlock() }
         try requireRestartRecoveryWritableLocked()
         var completion = try StrictJSONTransport.object(from: completionData)
         let close = try StrictJSONTransport.object(from: closeData)
@@ -440,7 +447,8 @@ public final class CoordinatorRoutingApplication: @unchecked Sendable {
         failure: CoordinatorNextTurnDispatchFailure
     ) throws -> CoordinatorTransportStatus {
         lock.lock()
-        defer { lock.unlock() }
+        requestJournal.begin()
+        defer { requestJournal.end(); lock.unlock() }
         try requireRestartRecoveryWritableLocked()
         try require(!failure.commandInvocationAttempted, "transport_not_submitted_evidence_required")
         let authority = try semantic.authorityProjection()
@@ -543,7 +551,8 @@ public final class CoordinatorRoutingApplication: @unchecked Sendable {
         validatePending: () throws -> Void
     ) throws {
         lock.lock()
-        defer { lock.unlock() }
+        requestJournal.begin()
+        defer { requestJournal.end(); lock.unlock() }
         try requireRestartRecoveryWritableLocked()
         let request = try StrictJSONTransport.object(from: requestData)
         let binding = try CoordinatorBinding(jsonObject: request)
@@ -668,7 +677,8 @@ public final class CoordinatorRoutingApplication: @unchecked Sendable {
     /// projection must be passed back to the claim overload below.
     func queuedActionAuthorityProjection() throws -> CoordinatorSemanticAuthorityProjection {
         lock.lock()
-        defer { lock.unlock() }
+        requestJournal.begin()
+        defer { requestJournal.end(); lock.unlock() }
         try requireRestartRecoveryWritableLocked()
         return try semantic.authorityProjection()
     }
@@ -682,7 +692,8 @@ public final class CoordinatorRoutingApplication: @unchecked Sendable {
         expectedActionJSON: Data
     ) throws -> Data {
         lock.lock()
-        defer { lock.unlock() }
+        requestJournal.begin()
+        defer { requestJournal.end(); lock.unlock() }
         try requireRestartRecoveryWritableLocked()
 
         let command = try StrictJSONTransport.object(from: commandData)
@@ -721,7 +732,8 @@ public final class CoordinatorRoutingApplication: @unchecked Sendable {
         expectedActionJSON: Data
     ) throws -> Data {
         lock.lock()
-        defer { lock.unlock() }
+        requestJournal.begin()
+        defer { requestJournal.end(); lock.unlock() }
         try requireRestartRecoveryWritableLocked()
 
         let command = try StrictJSONTransport.object(from: commandData)
@@ -914,7 +926,8 @@ public final class CoordinatorRoutingApplication: @unchecked Sendable {
     /// state; passing a session or packet prefix is never sufficient.
     public func setForeground(_ targetData: Data) throws -> CoordinatorRoutingSnapshot {
         lock.lock()
-        defer { lock.unlock() }
+        requestJournal.begin()
+        defer { requestJournal.end(); lock.unlock() }
         try requireRestartRecoveryWritableLocked()
         try processDueLocked()
         // The verified journal read above may outlast a pending card. Check
@@ -948,7 +961,8 @@ public final class CoordinatorRoutingApplication: @unchecked Sendable {
 
     public func clearForeground() throws -> CoordinatorRoutingSnapshot {
         lock.lock()
-        defer { lock.unlock() }
+        requestJournal.begin()
+        defer { requestJournal.end(); lock.unlock() }
         try requireRestartRecoveryWritableLocked()
         try processDueLocked()
         foreground = nil
@@ -960,7 +974,8 @@ public final class CoordinatorRoutingApplication: @unchecked Sendable {
     /// derived from seal audit time plus continuous monotonic elapsed time.
     public func routeSelection(_ commandData: Data) throws -> CoordinatorSemanticExecutionResult {
         lock.lock()
-        defer { lock.unlock() }
+        requestJournal.begin()
+        defer { requestJournal.end(); lock.unlock() }
         try requireRestartRecoveryWritableLocked()
         try processDueLocked()
 
@@ -1065,7 +1080,8 @@ public final class CoordinatorRoutingApplication: @unchecked Sendable {
     /// continuous clock and returns notices accumulated since the last drain.
     public func processTime() throws -> [Data] {
         lock.lock()
-        defer { lock.unlock() }
+        requestJournal.begin()
+        defer { requestJournal.end(); lock.unlock() }
         try requireRestartRecoveryWritableLocked()
         try reconcileAmbiguousSelectionsLocked()
         try processDueLocked(reconcileTerminalRuntime: false)
@@ -1076,7 +1092,8 @@ public final class CoordinatorRoutingApplication: @unchecked Sendable {
     /// intentionally preserves notices until the Pet asks for them.
     public func processTimeKeepingNotices() throws {
         lock.lock()
-        defer { lock.unlock() }
+        requestJournal.begin()
+        defer { requestJournal.end(); lock.unlock() }
         try requireRestartRecoveryWritableLocked()
         try reconcileAmbiguousSelectionsLocked()
         try processDueLocked(reconcileTerminalRuntime: false)
@@ -1084,7 +1101,8 @@ public final class CoordinatorRoutingApplication: @unchecked Sendable {
 
     public func snapshot() throws -> CoordinatorRoutingSnapshot {
         lock.lock()
-        defer { lock.unlock() }
+        requestJournal.begin()
+        defer { requestJournal.end(); lock.unlock() }
         try requireRestartRecoveryWritableLocked()
         try processDueLocked()
         return try snapshotLocked()
@@ -1095,7 +1113,8 @@ public final class CoordinatorRoutingApplication: @unchecked Sendable {
     /// pass while preserving the existing notice reconciliation order.
     func snapshotWithoutProcessingTime() throws -> CoordinatorRoutingSnapshot {
         lock.lock()
-        defer { lock.unlock() }
+        requestJournal.begin()
+        defer { requestJournal.end(); lock.unlock() }
         return try snapshotLocked()
     }
 
@@ -1104,13 +1123,15 @@ public final class CoordinatorRoutingApplication: @unchecked Sendable {
     /// UDS and never returns token material outside this Swift module.
     func authoritativeState() throws -> CoordinatorSemanticState {
         lock.lock()
-        defer { lock.unlock() }
+        requestJournal.begin()
+        defer { requestJournal.end(); lock.unlock() }
         return try authoritativeStateLocked()
     }
 
     func recoveryStatus() -> CoordinatorRoutingRecoveryStatus {
         lock.lock()
-        defer { lock.unlock() }
+        requestJournal.begin()
+        defer { requestJournal.end(); lock.unlock() }
         return CoordinatorRoutingRecoveryStatus(
             unsealedBoundaryCount: restartUnsealedBoundaryCount
         )
@@ -1118,7 +1139,8 @@ public final class CoordinatorRoutingApplication: @unchecked Sendable {
 
     public func drainNotices() -> [Data] {
         lock.lock()
-        defer { lock.unlock() }
+        requestJournal.begin()
+        defer { requestJournal.end(); lock.unlock() }
         return drainNoticesLocked()
     }
 
@@ -1126,7 +1148,8 @@ public final class CoordinatorRoutingApplication: @unchecked Sendable {
     /// delay suitable for `poll(2)`. Zero means work is already due.
     public func millisecondsUntilNextDeadline() -> Int32? {
         lock.lock()
-        defer { lock.unlock() }
+        requestJournal.begin()
+        defer { requestJournal.end(); lock.unlock() }
         guard restartUnsealedBoundaryCount == 0 else { return nil }
         // Ambiguity reconciliation runs before every other due transition. If
         // its authority read keeps failing, no other zero-deadline work can
@@ -1176,7 +1199,7 @@ public final class CoordinatorRoutingApplication: @unchecked Sendable {
 
 private extension CoordinatorRoutingApplication {
     func authoritativeStateLocked() throws -> CoordinatorSemanticState {
-        try CoordinatorSemanticReplay.replay(journal.load())
+        try requestJournal.replayedState().state
     }
 
     func recoverCommittedNoEffectLifecycleLocked(
@@ -1189,8 +1212,7 @@ private extension CoordinatorRoutingApplication {
         guard ["open_boundary", "seal_packet"].contains(commandType),
               let eventID = command["event_id"] as? String
         else { return nil }
-        let snapshot = try journal.load()
-        let state = try CoordinatorSemanticReplay.replay(snapshot)
+        let (snapshot, state) = try requestJournal.replayedState()
         guard state.eventIDs.contains(eventID),
               let eventData = snapshot.events.first(where: { data in
                   guard let event = try? StrictJSONTransport.object(from: data)
@@ -1268,8 +1290,7 @@ private extension CoordinatorRoutingApplication {
               let packetTemplate = command["packet"] as? [String: Any]
         else { return nil }
         let binding = try commandBinding(command)
-        let snapshot = try journal.load()
-        let state = try CoordinatorSemanticReplay.replay(snapshot)
+        let (snapshot, state) = try requestJournal.replayedState()
 
         func authorityEvent(
             id: String,
@@ -1361,8 +1382,7 @@ private extension CoordinatorRoutingApplication {
               let claimEventID = eventIDs["selection_claimed"] as? String,
               let occurredAt = command["occurred_at"] as? String
         else { return nil }
-        let snapshot = try journal.load()
-        let state = try CoordinatorSemanticReplay.replay(snapshot)
+        let (snapshot, state) = try requestJournal.replayedState()
 
         func authorityEvent(
             id: String,
@@ -1581,8 +1601,7 @@ private extension CoordinatorRoutingApplication {
 
     func recoverPersistedAmbiguity() throws {
         foreground = nil
-        let snapshot = try journal.load()
-        let state = try CoordinatorSemanticReplay.replay(snapshot)
+        let (snapshot, state) = try requestJournal.replayedState()
         let unsealed = state.boundaries.values.filter {
             !$0.closed && $0.packet == nil && $0.repair == nil
         }
@@ -1620,7 +1639,7 @@ private extension CoordinatorRoutingApplication {
 
         // A lost process-local deadline anchor cannot prove that dispatch is
         // still within its window. Mark it unknown once; never retry it.
-        let recovered = try CoordinatorSemanticReplay.replay(journal.load())
+        let recovered = try requestJournal.replayedState().state
         for continuation in recovered.unterminatedContinuations.sorted(by: {
             $0.continuationID.utf8.lexicographicallyPrecedes($1.continuationID.utf8)
         }) {
@@ -1868,7 +1887,7 @@ private extension CoordinatorRoutingApplication {
         let packet = try CoordinatorPacketDocument.parse(
             StrictJSONTransport.data(forJSONObject: packetObject)
         )
-        let state = try CoordinatorSemanticReplay.replay(journal.load())
+        let state = try requestJournal.replayedState().state
         // The same binding can have been resealed by a different writer after
         // our commit. Only the exact committed document owns this local clock
         // anchor; never combine the replacement identity with the old times.
@@ -1953,7 +1972,7 @@ private extension CoordinatorRoutingApplication {
             reservedAtText,
             code: "format_repair_time_invalid"
         )
-        let state = try CoordinatorSemanticReplay.replay(journal.load())
+        let state = try requestJournal.replayedState().state
         guard let repair = state.boundary(for: binding)?.repair,
               repair.continuationID == continuationID,
               repair.claimedAt == nil
@@ -2045,7 +2064,7 @@ private extension CoordinatorRoutingApplication {
     }
 
     func removeTerminalRuntimeEntriesLocked() throws {
-        let state = try CoordinatorSemanticReplay.replay(journal.load())
+        let state = try requestJournal.replayedState().state
         removeTerminalRuntimeEntriesLocked(using: state)
     }
 
@@ -2223,5 +2242,80 @@ private extension CoordinatorRoutingApplication {
             return leftValue.utf8.lexicographicallyPrecedes(rightValue.utf8)
         }
         return left.boundarySequence < right.boundarySequence
+    }
+}
+
+/// One routing request's view of the journal (audit ENG-7).
+///
+/// Between `begin()` and `end()` (the routing lock), repeated loads on the
+/// lock-holding thread reuse the snapshot that was fully verified earlier in
+/// the same request while the authenticated head is unchanged, and replay it
+/// once. Every request still authenticates complete history at least once,
+/// any append or foreign write moves the head and forces a full load, and
+/// nothing survives `end()`. Other threads always see the plain journal.
+final class RoutingRequestJournal: CoordinatorSemanticJournalPort, @unchecked Sendable {
+    private let base: any CoordinatorSemanticJournalPort
+    private let lock = NSLock()
+    private var owner: pthread_t?
+    private var head: JournalHeadSnapshot?
+    private var replayed: (head: JournalHeadSnapshot, state: CoordinatorSemanticState)?
+
+    init(base: any CoordinatorSemanticJournalPort) {
+        self.base = base
+    }
+
+    func begin() {
+        lock.withLock { owner = pthread_self(); head = nil; replayed = nil }
+    }
+
+    func end() {
+        lock.withLock { owner = nil; head = nil; replayed = nil }
+    }
+
+    func load() throws -> JournalSnapshot {
+        try loadHead()?.snapshot ?? base.load()
+    }
+
+    /// The replayed state of the current snapshot; replays once per head.
+    func replayedState() throws -> (snapshot: JournalSnapshot, state: CoordinatorSemanticState) {
+        guard let current = try loadHead() else {
+            let snapshot = try base.load()
+            return (snapshot, try CoordinatorSemanticReplay.replay(snapshot))
+        }
+        if let replayed = lock.withLock({ self.replayed }), replayed.head.checkpoint == current.checkpoint {
+            return (current.snapshot, replayed.state)
+        }
+        let state = try CoordinatorSemanticReplay.replay(current.snapshot)
+        lock.withLock { if isOwner { replayed = (current, state) } }
+        return (current.snapshot, state)
+    }
+
+    func reusableLoad(_ previous: JournalHeadSnapshot?) throws -> JournalHeadSnapshot? {
+        try base.reusableLoad(previous)
+    }
+
+    func append(expectedSequence: Int64, events: [Data], documents: [Data],
+                verificationRecords: [Data]) throws -> JournalAppendResult {
+        try base.append(expectedSequence: expectedSequence, events: events,
+            documents: documents, verificationRecords: verificationRecords)
+    }
+
+    func append(expectedSequence: Int64, events: [Data], documents: [Data],
+                verificationRecords: [Data], validateAdmission: () throws -> Void) throws -> JournalAppendResult {
+        try base.append(expectedSequence: expectedSequence, events: events,
+            documents: documents, verificationRecords: verificationRecords,
+            validateAdmission: validateAdmission)
+    }
+
+    private var isOwner: Bool {
+        guard let owner else { return false }
+        return pthread_equal(owner, pthread_self()) != 0
+    }
+
+    private func loadHead() throws -> JournalHeadSnapshot? {
+        guard let previous = lock.withLock({ isOwner ? Optional(head) : nil }) else { return nil }
+        guard let next = try base.reusableLoad(previous) else { return nil }
+        lock.withLock { if isOwner { head = next } }
+        return next
     }
 }

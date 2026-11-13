@@ -22,9 +22,16 @@ public protocol CoordinatorSemanticJournalPort: Sendable {
         verificationRecords: [Data],
         validateAdmission: () throws -> Void
     ) throws -> JournalAppendResult
+
+    /// Request-scoped reuse of a fully verified snapshot while the authenticated
+    /// head is unchanged. `nil` means the port cannot prove that, and callers
+    /// fall back to `load()`.
+    func reusableLoad(_ previous: JournalHeadSnapshot?) throws -> JournalHeadSnapshot?
 }
 
 extension CoordinatorSemanticJournalPort {
+    public func reusableLoad(_ previous: JournalHeadSnapshot?) throws -> JournalHeadSnapshot? { nil }
+
     /// Compatibility for immediate in-memory ports. Storage-owning ports must
     /// override at their final transactional admission point; wrappers must
     /// forward the callback so slow validation cannot move it ahead of storage.
@@ -42,6 +49,10 @@ extension CoordinatorSemanticJournalPort {
 }
 
 extension SQLiteJournal: CoordinatorSemanticJournalPort {
+    public func reusableLoad(_ previous: JournalHeadSnapshot?) throws -> JournalHeadSnapshot? {
+        try loadReusingHead(previous)
+    }
+
     public func append(
         expectedSequence: Int64,
         events: [Data],
