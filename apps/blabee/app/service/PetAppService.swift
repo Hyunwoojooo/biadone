@@ -2,6 +2,14 @@ import CoordinatorSwift
 import Foundation
 
 enum PetAppServiceState: Equatable, Sendable {
+    /// No cards or approvals can arrive until this is resolved.
+    var stopsCardsAndApprovals: Bool {
+        switch self {
+        case .failed, .blocked: true
+        default: false
+        }
+    }
+
     case disabled
     case stopped
     case starting
@@ -45,7 +53,7 @@ enum PetAppServiceState: Equatable, Sendable {
         case .blocked:
             PetL10n.text("Finish active Blabee selections, unregister the Previous Auto-Start Service, then choose Restart Service.", korean: "진행 중인 Blabee 선택을 마친 뒤 ‘이전 자동 시작 서비스’의 등록을 해제하고 ‘서비스 다시 시작’을 선택하세요.")
         case .failed(let code):
-            PetL10n.text("\(Self.recovery(for: code)) Automatic restart is disabled. Diagnostic: \(code)", korean: "\(Self.recovery(for: code)) 자동 재시작하지 않습니다. 진단: \(code)")
+            PetL10n.text("\(Self.recovery(for: code)) Blabee restarts a stopped service automatically only once; it is stopped now. Diagnostic: \(code)", korean: "\(Self.recovery(for: code)) 멈춘 서비스는 한 번만 자동으로 다시 시작하며, 지금은 멈춰 있습니다. 진단: \(code)")
         }
     }
 
@@ -114,6 +122,23 @@ final class PetAppServiceController {
     private var shuttingDown = false
     private let errorDiagnostics: PetErrorDiagnostics?
 
+    /// One automatic restart after an unexpected exit; a second exit within
+    /// `automaticRestartWindowNanoseconds` of it stays stopped and visible.
+    /// Codes that need the person (another owner, an unverifiable app,
+    /// storage or Keychain problems) are never restarted automatically.
+    static let manualRecoveryCodes: Set<String> = [
+        "operational_owner_active", "app_service_identity_mismatch", "app_service_bundle_unverified",
+        "operational_runtime_identity_unverified", "operational_runtime_identity_invalid",
+        "freshness_anchor_unavailable", "freshness_storage_missing", "freshness_transition_pending",
+        "freshness_anchor_missing", "freshness_anchor_corrupt", "freshness_transition_mismatch",
+        "database_integrity_failed", "app_service_stop_incomplete", "service_registration_unknown",
+    ]
+    static let automaticRestartWindowNanoseconds: UInt64 = 600_000_000_000
+    private let automaticRestartDelayNanoseconds: UInt64
+    private let monotonicNow: () -> UInt64
+    private var lastAutomaticRestartNanoseconds: UInt64?
+    private var automaticRestartTask: Task<Void, Never>?
+
     private(set) var enabled: Bool
     private(set) var state: PetAppServiceState
     private(set) var generation: UInt64 = 0
@@ -125,8 +150,12 @@ final class PetAppServiceController {
         registration: @escaping @MainActor () -> PetServiceRegistrationState,
         readinessTimeoutNanoseconds: UInt64 = 12_000_000_000,
         startupTimeoutNanoseconds: UInt64 = 120_000_000_000,
-        errorDiagnostics: PetErrorDiagnostics? = nil
+        errorDiagnostics: PetErrorDiagnostics? = nil,
+        automaticRestartDelayNanoseconds: UInt64 = 5_000_000_000,
+        monotonicNow: @escaping () -> UInt64 = { DispatchTime.now().uptimeNanoseconds }
     ) {
+        self.automaticRestartDelayNanoseconds = automaticRestartDelayNanoseconds
+        self.monotonicNow = monotonicNow
         self.launcher = launcher
         self.preference = preference
         self.registration = registration
@@ -139,7 +168,7 @@ final class PetAppServiceController {
         PetStartupDiagnostics.serviceState(state)
     }
 
-    deinit { deadline?.cancel() }
+    deinit { deadline?.cancel(); automaticRestartTask?.cancel() }
 
     var hasOwnedChild: Bool { child != nil }
     var isTransitioning: Bool { transitionInProgress }
@@ -176,6 +205,7 @@ final class PetAppServiceController {
     /// and deadline callbacks from an earlier instance.
     func restart() async {
         guard enabled, !shuttingDown, !transitionInProgress else { return }
+        automaticRestartTask?.cancel(); automaticRestartTask = nil
         await stopOwnedChild()
         guard !shuttingDown, child == nil else { return }
         launchIfAllowed()
@@ -194,6 +224,7 @@ final class PetAppServiceController {
     func shutdown() async {
         PetStartupDiagnostics.record(.serviceShutdownRequested)
         shuttingDown = true
+        automaticRestartTask?.cancel(); automaticRestartTask = nil
         // Closing the app is not opting out: remember the user's mode for the
         // next launch. Join an ongoing stop without spinning, even if the
         // caller's task was cancelled.
@@ -211,6 +242,26 @@ final class PetAppServiceController {
         deadline = nil
         self.child = nil
         update(.failed(summary))
+        scheduleAutomaticRestart(after: summary)
+    }
+
+    /// Relaunches the same app-owned service once. The new service restores
+    /// only from its journal: no selection, delivery or approval is resent.
+    private func scheduleAutomaticRestart(after code: String) {
+        guard enabled, !shuttingDown, automaticRestartTask == nil,
+              !Self.manualRecoveryCodes.contains(code) else { return }
+        let now = monotonicNow()
+        if let last = lastAutomaticRestartNanoseconds, now &- last < Self.automaticRestartWindowNanoseconds { return }
+        let expectedGeneration = generation
+        automaticRestartTask = Task { [weak self, automaticRestartDelayNanoseconds] in
+            try? await Task.sleep(nanoseconds: automaticRestartDelayNanoseconds)
+            guard let self else { return }
+            self.automaticRestartTask = nil
+            guard !Task.isCancelled, self.enabled, !self.shuttingDown, self.child == nil,
+                  self.generation == expectedGeneration, self.state == .failed(code) else { return }
+            self.lastAutomaticRestartNanoseconds = self.monotonicNow()
+            self.launchIfAllowed()
+        }
     }
 
     func acceptsSnapshot(generation requestGeneration: UInt64) -> Bool {

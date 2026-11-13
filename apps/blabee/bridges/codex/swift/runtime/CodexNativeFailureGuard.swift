@@ -21,7 +21,8 @@ final class CodexNativeFailureGuard: @unchecked Sendable {
         case synchronizeDirectory
     }
     private static let maximumRecords = 32
-    private static let maximumRecordBytes = 1_024
+    // Schema 2 records carry the canonical executable path (up to 4 KiB).
+    private static let maximumRecordBytes = 8_192
     private static let uncertainCode = "codex_native_execution_uncertain"
     private static let storedCodes: Set<String> = [
         "codex_native_version_unqualified",
@@ -33,23 +34,45 @@ final class CodexNativeFailureGuard: @unchecked Sendable {
         "codex_native_probe_output_invalid",
         uncertainCode,
     ]
+    /// Failures that describe the environment, not the executable: Apple's
+    /// notarization lookup, a timeout, a launch or termination problem, or an
+    /// interrupted attempt. They block only for `environmentalLifetime`; the
+    /// next NEW selection may qualify again. Nothing is ever resent.
+    /// Signature, version and output failures stay until explicit recheck.
+    static let environmentalCodes: Set<String> = [
+        "codex_native_notarization_unavailable",
+        "codex_native_execution_terminated",
+        "codex_native_launch_unavailable",
+        "codex_native_probe_timeout",
+        uncertainCode,
+    ]
+    static let environmentalLifetime: TimeInterval = 600
 
     private struct Identity: Equatable {
         let key: String
         let digest: String
+        let path: String
     }
 
+    /// Schema 2 adds when, where and under which policy a record was written,
+    /// so environmental records can expire and stale slots can be reclaimed.
+    /// Schema 1 records have none of these and count as already expired when
+    /// environmental, and as reclaimable when the store is full.
     private struct Record: Codable {
         let schemaVersion: Int
         let key: String
         let identity: String
         let code: String
+        var recordedAt: Double?
+        var path: String?
+        var policy: String?
     }
 
     private let directoryURL: URL
     private let policyRevision: String
     private let memoryNamespace: String
     private let storageFault: @Sendable (StorageEvent) throws -> Void
+    private let now: @Sendable () -> Date
 
     static func live(policyRevision: String = "native-v1") -> CodexNativeFailureGuard {
         // Resolve the OS account directly; HOME and CODEX_HOME are untrusted
@@ -84,7 +107,8 @@ final class CodexNativeFailureGuard: @unchecked Sendable {
     init(
         directoryURL: URL,
         policyRevision: String = "native-v1",
-        storageFault: @escaping @Sendable (StorageEvent) throws -> Void = { _ in }
+        storageFault: @escaping @Sendable (StorageEvent) throws -> Void = { _ in },
+        now: @escaping @Sendable () -> Date = { Date() }
     ) {
         self.directoryURL = directoryURL.standardizedFileURL
         self.policyRevision = policyRevision
@@ -92,6 +116,30 @@ final class CodexNativeFailureGuard: @unchecked Sendable {
         // Use exactly the stable path normalization enforced by traversal.
         memoryNamespace = Self.digest(Self.storagePath(self.directoryURL))
         self.storageFault = storageFault
+        self.now = now
+    }
+
+    private func record(_ identity: Identity, code: String) -> Record {
+        Record(schemaVersion: 2, key: identity.key, identity: identity.digest, code: code,
+               recordedAt: now().timeIntervalSince1970, path: identity.path, policy: policyRevision)
+    }
+
+    private func isExpiredEnvironmental(_ record: Record) -> Bool {
+        guard Self.environmentalCodes.contains(record.code) else { return false }
+        guard let recordedAt = record.recordedAt else { return true }
+        let age = now().timeIntervalSince1970 - recordedAt
+        return age < 0 || age >= Self.environmentalLifetime
+    }
+
+    /// A slot no longer protects anything: its executable path is gone, it was
+    /// written under another policy (an older supported-version list), it is an
+    /// expired environmental failure, or it is an unattributed schema 1 record.
+    private func isReclaimable(_ record: Record) -> Bool {
+        if isExpiredEnvironmental(record) { return true }
+        guard let path = record.path, let policy = record.policy else { return true }
+        if policy != policyRevision { return true }
+        var info = stat()
+        return stat(path, &info) != 0 && (errno == ENOENT || errno == ENOTDIR)
     }
 
     func withAttempt<T>(
@@ -116,10 +164,10 @@ final class CodexNativeFailureGuard: @unchecked Sendable {
                     Self.uncertainIdentities.removeValue(forKey: memoryKey)
                 }
             }
-            let slot = try findSlot(directory: directory, key: identity.key)
+            let slot = try findSlot(directory: directory, key: identity.key, reclaimIfFull: true)
             guard !slot.name.isEmpty else { throw Self.unavailable() }
             if let existing = slot.record,
-               existing.identity == identity.digest, !retry
+               existing.identity == identity.digest, !retry, !isExpiredEnvironmental(existing)
             {
                 onCachedFailure()
                 throw CoordinatorError(existing.code)
@@ -128,8 +176,7 @@ final class CodexNativeFailureGuard: @unchecked Sendable {
             // fsync precedes the callback: termination anywhere after this
             // point cannot silently reopen the executable on the next launch.
             try writeRecord(
-                Record(schemaVersion: 1, key: identity.key,
-                       identity: identity.digest, code: Self.uncertainCode),
+                record(identity, code: Self.uncertainCode),
                 directory: directory, name: slot.name
             )
             // Explicit retry may release memory only after uncertainty is
@@ -150,8 +197,7 @@ final class CodexNativeFailureGuard: @unchecked Sendable {
                    Self.storedCodes.contains(failure.code)
                 {
                     try writeRecord(
-                        Record(schemaVersion: 1, key: identity.key,
-                               identity: identity.digest, code: failure.code),
+                        record(identity, code: failure.code),
                         directory: directory, name: slot.name
                     )
                 } else {
@@ -165,8 +211,7 @@ final class CodexNativeFailureGuard: @unchecked Sendable {
                         // durable. Preserve uncertainty even if unlink succeeded.
                         rememberUncertain(identity, key: memoryKey)
                         try? writeRecord(
-                            Record(schemaVersion: 1, key: identity.key,
-                                   identity: identity.digest, code: Self.uncertainCode),
+                            record(identity, code: Self.uncertainCode),
                             directory: directory, name: slot.name
                         )
                         throw error
@@ -185,8 +230,7 @@ final class CodexNativeFailureGuard: @unchecked Sendable {
                 // Restore the durable block when possible, without calling the
                 // operation again or changing its known successful result.
                 try? writeRecord(
-                    Record(schemaVersion: 1, key: identity.key,
-                           identity: identity.digest, code: Self.uncertainCode),
+                    record(identity, code: Self.uncertainCode),
                     directory: directory, name: slot.name
                 )
             }
@@ -328,7 +372,7 @@ final class CodexNativeFailureGuard: @unchecked Sendable {
         let material = fields.map { "\($0.utf8.count):\($0)" }.joined()
         let keyMaterial = [canonical, policyRevision]
             .map { "\($0.utf8.count):\($0)" }.joined()
-        return Identity(key: Self.digest(keyMaterial), digest: Self.digest(material))
+        return Identity(key: Self.digest(keyMaterial), digest: Self.digest(material), path: canonical)
     }
 
     private func sourceIdentityFailure(
@@ -343,9 +387,10 @@ final class CodexNativeFailureGuard: @unchecked Sendable {
     }
 
     private func findSlot(
-        directory: Int32, key: String
+        directory: Int32, key: String, reclaimIfFull: Bool = false
     ) throws -> (name: String, record: Record?) {
         var firstEmpty: String?
+        var firstReclaimable: String?
         var matched: (String, Record)?
         for index in 0..<Self.maximumRecords {
             let name = String(format: "failure-%02d.json", index)
@@ -353,12 +398,20 @@ final class CodexNativeFailureGuard: @unchecked Sendable {
                 if record.key == key {
                     guard matched == nil else { throw Self.unavailable() }
                     matched = (name, record)
+                } else if firstReclaimable == nil, isReclaimable(record) {
+                    firstReclaimable = name
                 }
             } else if firstEmpty == nil {
                 firstEmpty = name
             }
         }
         if let matched { return (matched.0, matched.1) }
+        // A full store must not block every native operation forever: reuse a
+        // slot that no longer protects anything (see isReclaimable).
+        if firstEmpty == nil, reclaimIfFull, let firstReclaimable {
+            try removeRecord(directory: directory, name: firstReclaimable)
+            return (firstReclaimable, nil)
+        }
         // A clear of a missing entry remains a no-op even at capacity. Only
         // withAttempt requires a free slot before it may invoke a callback.
         return (firstEmpty ?? "", nil)
@@ -385,7 +438,9 @@ final class CodexNativeFailureGuard: @unchecked Sendable {
         }
         try Self.requireNamedFile(directory: directory, name: name, identity: before)
         guard let record = try? JSONDecoder().decode(Record.self, from: Data(bytes)),
-              record.schemaVersion == 1,
+              [1, 2].contains(record.schemaVersion),
+              record.schemaVersion == 1 || (record.recordedAt != nil && record.path?.hasPrefix("/") == true
+                  && record.policy != nil),
               Self.isDigest(record.key), Self.isDigest(record.identity),
               Self.storedCodes.contains(record.code)
         else { throw Self.unavailable() }

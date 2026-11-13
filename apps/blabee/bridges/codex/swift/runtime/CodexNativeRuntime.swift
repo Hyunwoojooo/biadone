@@ -316,6 +316,11 @@ struct CodexNativeRuntime: Sendable {
             revalidator: CodexPluginSetupProductionTrust.revalidate,
             processRunner: runner,
             preflight: { executable, timeout in
+                // One online notarization lookup per exact file for the life of
+                // the service, instead of two per delivery. Any change to the
+                // file (path, inode, size, mtime, ctime) asks Apple again.
+                let fileKey = CodexNotarizationCache.key(for: executable)
+                if let fileKey, CodexNotarizationCache.contains(fileKey) { return }
                 // `spctl --assess -t execute` is app-oriented and rejects valid
                 // standalone CLIs as "not an app". Use the CLI notarization
                 // requirement instead. This does not clear Gatekeeper denials.
@@ -326,6 +331,9 @@ struct CodexNativeRuntime: Sendable {
                 )
                 guard result.exitCode == 0 else {
                     throw CodexNativeDiagnostic.notarizationUnavailable.error
+                }
+                if let fileKey, CodexNotarizationCache.key(for: executable) == fileKey {
+                    CodexNotarizationCache.insert(fileKey)
                 }
             },
             failureGuard: .live(policyRevision: "native-v1-notarized:" + CodexCompatibility.pluginCLISupportedVersions.sorted().joined(separator: ","))
@@ -582,5 +590,29 @@ struct CodexNativeRuntime: Sendable {
         let now = DispatchTime.now().uptimeNanoseconds
         guard now < end else { throw CodexNativeDiagnostic.probeTimeout.error }
         return min(max(1, maximum), Int((end - now - 1) / 1_000_000 + 1))
+    }
+}
+
+/// Process-local record of files that already passed the online notarization
+/// check. Only success is cached, never a failure, and the signature itself is
+/// still revalidated on every run by the caller.
+enum CodexNotarizationCache {
+    private static let lock = NSLock()
+    private nonisolated(unsafe) static var verified: Set<String> = []
+
+    static func key(for executable: URL) -> String? {
+        let path = executable.resolvingSymlinksInPath().standardizedFileURL.path
+        var info = stat()
+        guard stat(path, &info) == 0, info.st_mode & mode_t(S_IFMT) == mode_t(S_IFREG) else { return nil }
+        return [path, String(info.st_dev), String(info.st_ino), String(info.st_size),
+                String(info.st_mtimespec.tv_sec), String(info.st_mtimespec.tv_nsec),
+                String(info.st_ctimespec.tv_sec), String(info.st_ctimespec.tv_nsec)].joined(separator: "\u{0}")
+    }
+    static func contains(_ key: String) -> Bool { lock.withLock { verified.contains(key) } }
+    static func insert(_ key: String) {
+        lock.withLock {
+            if verified.count >= 64 { verified.removeAll() }
+            verified.insert(key)
+        }
     }
 }

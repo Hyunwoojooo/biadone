@@ -69,13 +69,16 @@ private struct AppServiceHarness {
 
     func controller(
         timeout: UInt64 = 12_000_000_000,
-        startupTimeout: UInt64? = nil
+        startupTimeout: UInt64? = nil,
+        automaticRestartDelay: UInt64 = 5_000_000_000,
+        now: @escaping () -> UInt64 = { DispatchTime.now().uptimeNanoseconds }
     ) -> PetAppServiceController {
         PetAppServiceController(
             launcher: launcher, preference: preference,
             registration: { registration.state },
             readinessTimeoutNanoseconds: timeout,
-            startupTimeoutNanoseconds: startupTimeout ?? timeout
+            startupTimeoutNanoseconds: startupTimeout ?? timeout,
+            automaticRestartDelayNanoseconds: automaticRestartDelay, monotonicNow: now
         )
     }
 }
@@ -1110,4 +1113,43 @@ func petAppServiceConnectionLossClearsActions() async throws {
     #expect(await transport.requestCount(type: "select") == 0)
     #expect(await transport.requestCount(type: "dismiss_interaction") == 0)
     await vm.shutdownAppOwnedService()
+}
+
+@Test("An unexpected service exit is restarted once; a repeat within ten minutes or a manual-recovery code stays stopped")
+@MainActor
+func petAppServiceAutomaticRestartOnce() async throws {
+    var clock: UInt64 = 1_000_000_000
+    let h = AppServiceHarness()
+    let c = h.controller(automaticRestartDelay: 10_000_000, now: { clock })
+    c.enable()
+    #expect(h.launcher.launches == 1)
+    #expect(!c.state.stopsCardsAndApprovals)
+
+    h.launcher.children[0].isRunning = false
+    h.launcher.children[0].terminationSummary = "app_service_exited"
+    c.checkChildBeforePolling()
+    #expect(c.state == .failed("app_service_exited"))
+    #expect(c.state.stopsCardsAndApprovals)
+    try await waitForAppService { h.launcher.launches == 2 }
+    #expect(c.state == .starting)
+
+    // The restarted service exits again within ten minutes: stay stopped.
+    clock += 300_000_000_000
+    h.launcher.children[1].isRunning = false
+    h.launcher.children[1].terminationSummary = "app_service_exited"
+    c.checkChildBeforePolling()
+    try await Task.sleep(nanoseconds: 60_000_000)
+    #expect(h.launcher.launches == 2)
+    #expect(c.state == .failed("app_service_exited"))
+
+    // A manual restart works as before; a later exit needing the person is not restarted.
+    await c.restart()
+    #expect(h.launcher.launches == 3)
+    clock += 900_000_000_000
+    h.launcher.children[2].isRunning = false
+    h.launcher.children[2].terminationSummary = "freshness_anchor_unavailable"
+    c.checkChildBeforePolling()
+    try await Task.sleep(nanoseconds: 60_000_000)
+    #expect(h.launcher.launches == 3)
+    await c.shutdown()
 }

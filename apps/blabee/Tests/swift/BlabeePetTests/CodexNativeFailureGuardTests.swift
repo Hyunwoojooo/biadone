@@ -26,8 +26,9 @@ private final class NativeFailureFixture {
 
     deinit { try? FileManager.default.removeItem(at: root) }
 
-    func makeGuard(revision: String = "native-v1") -> CodexNativeFailureGuard {
-        CodexNativeFailureGuard(directoryURL: directory, policyRevision: revision)
+    func makeGuard(revision: String = "native-v1",
+                   now: @escaping @Sendable () -> Date = { Date() }) -> CodexNativeFailureGuard {
+        CodexNativeFailureGuard(directoryURL: directory, policyRevision: revision, now: now)
     }
 
     func recordURLs() throws -> [URL] {
@@ -42,6 +43,13 @@ private final class NativeFailureFixture {
             }
         }
     }
+}
+
+private final class NativeFailureClock: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value = Date(timeIntervalSince1970: 1_800_000_000)
+    var now: @Sendable () -> Date { { [self] in lock.withLock { value } } }
+    func advance(_ seconds: TimeInterval) { lock.withLock { value = value.addingTimeInterval(seconds) } }
 }
 
 private final class NativeFailureCounter: @unchecked Sendable {
@@ -186,7 +194,10 @@ struct CodexNativeFailureGuardTests {
         #expect(attempts == 1)
         #expect(try Data(contentsOf: record) == bytes)
         let object = try #require(try JSONSerialization.jsonObject(with: bytes) as? [String: Any])
-        #expect(object["schemaVersion"] as? Int == 1)
+        #expect(object["schemaVersion"] as? Int == 2)
+        #expect(object["path"] as? String == fixture.executable.resolvingSymlinksInPath().standardizedFileURL.path)
+        #expect(object["policy"] as? String == "native-v1")
+        #expect(object["recordedAt"] is Double)
     }
 
     @Test("An unsuccessful guard record write never enters the operation or reports a cached block")
@@ -412,7 +423,7 @@ struct CodexNativeFailureGuardTests {
             try fixture.recordFailure()
             let record = try #require(try fixture.recordURLs().first)
             if variant == 0 { try Data("{broken".utf8).write(to: record) }
-            if variant == 1 { try Data(repeating: 0x41, count: 1_025).write(to: record) }
+            if variant == 1 { try Data(repeating: 0x41, count: 8_193).write(to: record) }
             if variant == 2 { #expect(chmod(record.path, mode_t(0o644)) == 0) }
             var attempted = false
             #expect(throws: CoordinatorError("codex_native_guard_unavailable")) {
@@ -576,20 +587,70 @@ struct CodexNativeFailureGuardTests {
         #expect(try fixture.recordURLs().isEmpty)
     }
 
-    @Test("An exhausted store of vanished paths recovers only through explicit reset")
-    func explicitResetRecoversVanishedPathsAndOldPolicies() throws {
+    @Test("An exhausted store of vanished paths and old policies reclaims a stale slot by itself")
+    func exhaustedStaleStoreReclaimsSlot() throws {
         let fixture = try NativeFailureFixture()
         var callbacks = 0
         for index in 0..<32 {
             let executable = fixture.root.appendingPathComponent("vanished-\(index)")
             try Data("fake".utf8).write(to: executable)
-            #expect(throws: CoordinatorError("codex_native_execution_terminated")) {
+            #expect(throws: CoordinatorError("codex_native_signature_invalid")) {
                 try fixture.makeGuard(revision: "old-policy").withAttempt(executable: executable) {
                     callbacks += 1
-                    throw CoordinatorError("codex_native_execution_terminated")
+                    throw CoordinatorError("codex_native_signature_invalid")
                 }
             }
             try FileManager.default.removeItem(at: executable)
+        }
+        try fixture.makeGuard().withAttempt(executable: fixture.executable) { callbacks += 1 }
+        #expect(callbacks == 33)
+        #expect(try fixture.recordURLs().count == 31)
+    }
+
+    @Test("Environmental failures expire after ten minutes; executable failures stay until recheck",
+          arguments: ["codex_native_notarization_unavailable", "codex_native_probe_timeout",
+                      "codex_native_signature_invalid", "codex_native_version_unqualified"])
+    func environmentalFailuresExpire(code: String) throws {
+        let fixture = try NativeFailureFixture()
+        let clock = NativeFailureClock()
+        #expect(throws: CoordinatorError(code)) {
+            try fixture.makeGuard(now: clock.now).withAttempt(executable: fixture.executable) {
+                throw CoordinatorError(code)
+            }
+        }
+        var attempts = 0
+        clock.advance(599)
+        #expect(throws: CoordinatorError(code)) {
+            try fixture.makeGuard(now: clock.now).withAttempt(executable: fixture.executable) { attempts += 1 }
+        }
+        clock.advance(1)
+        if CodexNativeFailureGuard.environmentalCodes.contains(code) {
+            try fixture.makeGuard(now: clock.now).withAttempt(executable: fixture.executable) { attempts += 1 }
+            #expect(attempts == 1)
+            #expect(try fixture.recordURLs().isEmpty)
+        } else {
+            #expect(throws: CoordinatorError(code)) {
+                try fixture.makeGuard(now: clock.now).withAttempt(executable: fixture.executable) { attempts += 1 }
+            }
+            #expect(attempts == 0)
+        }
+    }
+
+    @Test("An exhausted store of vanished paths recovers through explicit reset")
+    func explicitResetRecoversVanishedPathsAndOldPolicies() throws {
+        // Live paths, current policy and executable failures: nothing is stale,
+        // so the full store blocks until the person resets it.
+        let fixture = try NativeFailureFixture()
+        var callbacks = 0
+        for index in 0..<32 {
+            let executable = fixture.root.appendingPathComponent("blocked-\(index)")
+            try Data("fake \(index)".utf8).write(to: executable)
+            #expect(throws: CoordinatorError("codex_native_signature_invalid")) {
+                try fixture.makeGuard().withAttempt(executable: executable) {
+                    callbacks += 1
+                    throw CoordinatorError("codex_native_signature_invalid")
+                }
+            }
         }
         #expect(throws: CoordinatorError("codex_native_guard_unavailable")) {
             try fixture.makeGuard().withAttempt(executable: fixture.executable) { callbacks += 1 }

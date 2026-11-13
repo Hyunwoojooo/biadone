@@ -791,10 +791,26 @@ final class PetStatusItemPresenter {
         }
     }
 
+    private var serviceProblem = false
+
+    /// A stopped or blocked service dims the icon without using the attention
+    /// mark, which also opens the panel. Cards and approvals cannot arrive then.
+    func setServiceProblem(_ problem: Bool) {
+        guard !stopped, problem != serviceProblem else { return }
+        serviceProblem = problem
+        (button as? NSStatusBarButton)?.appearsDisabled = problem
+        refreshAccessibilityText()
+    }
+
     private func refreshAccessibilityText() {
         guard !stopped else { return }
         let attention = renderedAttention == true
         let name = BlabeeProductProfile.current.displayName
+        if serviceProblem {
+            button.toolTip = name + PetL10n.text(" · Service stopped", korean: " · 서비스 멈춤")
+            button.setAccessibilityLabel(name + PetL10n.text(", service stopped", korean: ", 서비스 멈춤"))
+            return
+        }
         button.toolTip = attention ? name + PetL10n.text(" · Decision needed", korean: " · 결정 필요") : name
         button.setAccessibilityLabel(attention ? name + PetL10n.text(", decision needed", korean: ", 결정 필요") : name + PetL10n.text(" menu", korean: " 메뉴"))
     }
@@ -826,6 +842,7 @@ final class PetMenuBarController: NSObject {
     private let panelController: PetPanelController
     private let statusItem: NSStatusItem
     private var statusItemPresenter: PetStatusItemPresenter?
+    private var serviceStateObservation: AnyCancellable?
     private var automaticPresentationOwner: PetAutomaticPresentationOwner?
 
     init(viewModel: PetViewModel) {
@@ -846,6 +863,9 @@ final class PetMenuBarController: NSObject {
             )
         }
         statusItemPresenter?.update(attention: viewModel.hasAttention)
+        serviceStateObservation = viewModel.$appOwnedServiceState.sink { [weak self] state in
+            self?.statusItemPresenter?.setServiceProblem(state.stopsCardsAndApprovals)
+        }
 
         viewModel.onPanelToggleRequested = { [weak self] in
             self?.togglePanel(nil)

@@ -53,6 +53,7 @@ Plugin: `plugin/.codex-plugin/plugin.json`, `plugin/.mcp.json`, `plugin/hooks/ho
 - `BLABEE_MANAGED_CODEX_AUTH_TOKEN`이 App Server 환경으로 새면 안 된다(`ManagedCodexBrokerTests`, `CodexPluginSetupTests`의 must-not-leak 테스트).
   Hook 출력·MCP 응답은 `RuntimeSecretCorpus`를 거친다. delivery_token·토큰은 해시만 기록한다.
 - 실패 캐시 정책 revision은 지원 목록에서 계산된다. 사용자 DB·실패 기록을 수동 초기화하지 않는다.
+- 실패 기록(2026-11-12, schema 2): 실행 파일 자체의 실패(서명·버전·출력)는 수동 재검사까지 유지하고, 환경 실패(공증 조회·시간 초과·실행 불가·도중 종료·결과 불명)는 10분 뒤 풀린다. 풀린 뒤에도 실패한 전달은 다시 보내지 않고 새 선택만 검사받는다. 32칸이 차면 경로가 사라졌거나 정책이 바뀐 기록부터 재사용한다. 공증 온라인 조회는 같은 파일에 대해 서비스 수명 동안 한 번만 한다(`CodexNotarizationCache`).
 - Logger subsystem `com.biadone.blabee`.
 - 알려진 경계: 0.166.0에서 PermissionRequest `cwd`(실제 명령 폴더)와 Hook 실행 폴더(`tool_hook_cwd`)가 다르면 Blabee의 세션 경로 동일성 검사 때문에
   Codex 기본 승인으로 돌아갈 수 있다(`docs/features/CODEX_0166_QUALIFICATION.md` 남은 경계). Swift 소스에 `tool_hook_cwd` 처리는 아직 없다. 동일성 조건을 임의로 풀지 않는다.
