@@ -14,6 +14,7 @@ Codex Bridge 영역 작업이다. 버전은 **정확한 문자열**로만 등록
 버전 데이터는 `bridges/codex/qualification/<ver>.json` 하나에 있다(기능, `bin/codex` CDHash, 파일별 해시 catalog, fingerprint, 출처 메모).
 Swift는 생성된 `core/HookPermissionProfiles.generated.swift`와 `setup/CodexQualificationData.generated.swift`만 읽는다(앱 서명에 포함, 실행 중 JSON 로드 없음).
 
+0. 새 버전은 `npm run codex:check-latest`로 찾는다. 관리자 Mac에서는 LaunchAgent가 매일 09:00 `scripts/codex/check-latest-notify.sh`를 돌려 macOS 알림을 띄운다.
 1. `npm run codex:register -- --version <ver> --download --check-notarization`
    (네트워크로 공식 GitHub asset을 받으므로 사용자 승인 후 실행. 로컬 archive는 `--archive <path>`.)
    archive SHA-256·크기를 GitHub 메타데이터와 대조 → 새 빈 폴더에 전개 → opt-in Swift probe(`codexQualificationRegistrationProbe`, production 검사)로

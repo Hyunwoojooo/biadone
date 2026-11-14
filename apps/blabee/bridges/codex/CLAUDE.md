@@ -67,6 +67,7 @@ Plugin: `plugin/.codex-plugin/plugin.json`, `plugin/.mcp.json`, `plugin/hooks/ho
 | `npm run test:codex-compatibility` | 패키지 검사기 회귀. 계정·네트워크 불필요 |
 | `npm run test:t005` | `Tests/RuntimeQualification/*` 전체(qualification JSON·생성 Swift 일치 포함) |
 | `npm run codex:check-latest` | 등록되지 않은 새 Codex 안정판 목록(GitHub 공개 API 조회만). `--fail-on-new`면 있을 때 exit 2 |
+| `scripts/codex/check-latest-notify.sh [node]` | 위 검사를 돌려 새 버전·실패 시 macOS 알림. 관리자 Mac의 LaunchAgent `com.joo.blabee-codex-check-latest`가 매일 09:00 실행(로그 `~/Library/Logs/blabee-codex-check-latest.log`, 끄기: `launchctl bootout gui/$(id -u)/com.joo.blabee-codex-check-latest`) |
 | `npm run codex:register -- --version X --download` | 새 버전 등록(공식 asset 다운로드라 사용자 승인 후). `/codex-version-support` 참고 |
 | `npm run test:codex-live` | 설치된 `codex`로 Plugin 설치·제거 왕복(opt-in, `BLABEE_LIVE_CODEX_EXECUTABLE`로 경로 지정). 기본 `npm test`에서는 건너뛴다(REPO-17) |
 | `npm run qualify:codex-compatibility -- --expected-version X --runtime-dir <절대경로> --evidence <절대경로.json> [--release-evidence …] [--source-revision …] [--hook-tests] [--plugin-lifecycle]` | 공식 런타임 smoke. darwin, 정확한 stable 버전 필요. 서명·공증은 항상 검사하고 결과는 `--evidence` JSON에 쓴다(2026-11-13 전 안내의 `--check-notarization`·`--json`은 없는 인자) |
