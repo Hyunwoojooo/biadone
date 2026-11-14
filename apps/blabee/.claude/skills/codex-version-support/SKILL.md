@@ -25,7 +25,8 @@ Swift는 생성된 `core/HookPermissionProfiles.generated.swift`와 `setup/Codex
    실제 패키지 Swift 검증의 `BLABEE_CODEX_RUNTIME_ARTIFACT`에는 archive가 아니라 전개한 `bin/codex` 경로를 준다.
    native lifecycle의 `--catalog`는 공식 `codex-rs/models-manager/models.json`(해당 태그)을 쓴다.
 2. 아래 0절의 "이전 버전과 공식 소스 비교"는 여전히 사람이 한다(queue 인자, Hook 형식, App Server 승인 schema, 패키지 레이아웃).
-3. 3절 검증과 4절 문서. 생성 파일을 손으로 고치지 않는다(`npm run codex:qualification -- check`가 t005에서 확인).
+3. `Tests/swift/BlabeePetTests/CodexCompatibilityTests.swift`의 정확한 버전 목록 세 곳에 새 버전을 직접 추가한다(의도된 검토 지점, 자동 생성 안 함).
+4. 3절 검증과 4절 문서. 생성 파일을 손으로 고치지 않는다(`npm run codex:qualification -- check`가 t005에서 확인).
 
 아래 0~1절은 스크립트가 하는 일의 근거와, 스크립트가 다루지 않는 변경(레이아웃·Plugin)이 있을 때의 수동 절차다.
 

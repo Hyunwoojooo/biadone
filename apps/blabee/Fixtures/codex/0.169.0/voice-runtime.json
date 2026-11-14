@@ -1,0 +1,354 @@
+{
+  "schemaVersion": 1,
+  "developmentOnly": false,
+  "target": "aarch64-apple-darwin",
+  "sourceCommit": "d32063f96c2dff1dc96af839b3952abb6acfeda4",
+  "sourceManifestSha256": "5613f37012effc3e28cdad52a7c88b9098aaaf7aae43f3cb7199f55ffbb15908",
+  "inventorySha256": "eaf354a3901f88b5cc89600715ca0c59e5c18bb86ff7efc44533e186d8283658",
+  "libraries": [
+    {
+      "path": "plugins/libgstapp.dylib",
+      "sourcePath": "lib/gstreamer-1.0/libgstapp.dylib",
+      "sourceSha256": "d6713f3c2a432735e9912dba2f709738a8e6de5fed04b188809a33582101d3a5",
+      "sha256": "17a675734988c9e9ef2ab302d224e88377ebaacecfd030f5e6a6bd66888c95f7",
+      "imports": [
+        "/usr/lib/libSystem.B.dylib",
+        "@loader_path/../lib/libgstapp-1.0.0.dylib",
+        "@loader_path/../lib/libgstreamer-1.0.0.dylib"
+      ]
+    },
+    {
+      "path": "plugins/libgstaudioconvert.dylib",
+      "sourcePath": "lib/gstreamer-1.0/libgstaudioconvert.dylib",
+      "sourceSha256": "0a69cd72a7e3db6a159df4a547d5c73e234ede63a6a9be79ffe20fb827cadacd",
+      "sha256": "eda25a99dcad6e55e658ff80fbd1549da88599da52aa044d53455686f69d92bd",
+      "imports": [
+        "/usr/lib/libSystem.B.dylib",
+        "@loader_path/../lib/libgstaudio-1.0.0.dylib",
+        "@loader_path/../lib/libgstbase-1.0.0.dylib",
+        "@loader_path/../lib/libgstreamer-1.0.0.dylib",
+        "@loader_path/../lib/libgobject-2.0.0.dylib",
+        "@loader_path/../lib/libglib-2.0.0.dylib"
+      ]
+    },
+    {
+      "path": "plugins/libgstaudioresample.dylib",
+      "sourcePath": "lib/gstreamer-1.0/libgstaudioresample.dylib",
+      "sourceSha256": "57cb5a3d522c1815f2df4b81a68e9f2939408d588384a6282f0be7f44af7af9d",
+      "sha256": "22255b2f1d3d3454eb0b6a6e6d164a36718541ade4d754360349653dcac18897",
+      "imports": [
+        "/usr/lib/libSystem.B.dylib",
+        "@loader_path/../lib/libgstaudio-1.0.0.dylib",
+        "@loader_path/../lib/libgstbase-1.0.0.dylib",
+        "@loader_path/../lib/libgstreamer-1.0.0.dylib",
+        "@loader_path/../lib/libgobject-2.0.0.dylib",
+        "@loader_path/../lib/libglib-2.0.0.dylib"
+      ]
+    },
+    {
+      "path": "plugins/libgstcoreelements.dylib",
+      "sourcePath": "lib/gstreamer-1.0/libgstcoreelements.dylib",
+      "sourceSha256": "2ac8aa7ca948cb184bd1282e14092c3717199bc7d02e189e33926b2762a9dcb5",
+      "sha256": "b3f4fa41813cead8efdb868d6041d93a6dd836093a021d49946fb542a6f59e7e",
+      "imports": [
+        "/usr/lib/libSystem.B.dylib",
+        "@loader_path/../lib/libgstreamer-1.0.0.dylib",
+        "@loader_path/../lib/libgstbase-1.0.0.dylib",
+        "@loader_path/../lib/libglib-2.0.0.dylib",
+        "@loader_path/../lib/libgobject-2.0.0.dylib"
+      ]
+    },
+    {
+      "path": "plugins/libgstopus.dylib",
+      "sourcePath": "lib/gstreamer-1.0/libgstopus.dylib",
+      "sourceSha256": "90ea1946161cc85aa3fbb809c2428c4a5700450e9d650de63b908fcee041e233",
+      "sha256": "811090a156458a6f785e9ed8af177474f8c2ff0eef94ebd314bf868936e622f3",
+      "imports": [
+        "/usr/lib/libSystem.B.dylib",
+        "@loader_path/../lib/libgstpbutils-1.0.0.dylib",
+        "@loader_path/../lib/libgstaudio-1.0.0.dylib",
+        "@loader_path/../lib/libgsttag-1.0.0.dylib",
+        "@loader_path/../lib/libgstreamer-1.0.0.dylib",
+        "@loader_path/../lib/libgobject-2.0.0.dylib",
+        "@loader_path/../lib/libglib-2.0.0.dylib",
+        "@loader_path/../lib/libopus.0.dylib"
+      ]
+    },
+    {
+      "path": "plugins/libgstrtp.dylib",
+      "sourcePath": "lib/gstreamer-1.0/libgstrtp.dylib",
+      "sourceSha256": "d5cb5285ca4ef1f80da70b4b37178fa72854e1686d3daf15b57380500116f225",
+      "sha256": "59cb4fbee05d95ff65a5bfa1c987dcf527302af9614a78140fd6fcbf3f514bcc",
+      "imports": [
+        "/usr/lib/libSystem.B.dylib",
+        "@loader_path/../lib/libgstbase-1.0.0.dylib",
+        "@loader_path/../lib/libgstreamer-1.0.0.dylib",
+        "@loader_path/../lib/libgobject-2.0.0.dylib",
+        "@loader_path/../lib/libglib-2.0.0.dylib",
+        "@loader_path/../lib/libgstaudio-1.0.0.dylib",
+        "@loader_path/../lib/libgstvideo-1.0.0.dylib",
+        "@loader_path/../lib/libgsttag-1.0.0.dylib",
+        "@loader_path/../lib/libgstrtp-1.0.0.dylib",
+        "@loader_path/../lib/libgstpbutils-1.0.0.dylib"
+      ]
+    },
+    {
+      "path": "plugins/libgstrtpmanager.dylib",
+      "sourcePath": "lib/gstreamer-1.0/libgstrtpmanager.dylib",
+      "sourceSha256": "f35e54801cc46f58be371eb8bc3e8ac1ac16914e8e7c8f7ce25d53c3691d7e51",
+      "sha256": "6c37e475550f75f738a17fe658313240575036ef851ef7a49ca15d3665cfa743",
+      "imports": [
+        "/usr/lib/libSystem.B.dylib",
+        "@loader_path/../lib/libgstbase-1.0.0.dylib",
+        "@loader_path/../lib/libgstreamer-1.0.0.dylib",
+        "@loader_path/../lib/libgobject-2.0.0.dylib",
+        "@loader_path/../lib/libglib-2.0.0.dylib",
+        "@loader_path/../lib/libgstnet-1.0.0.dylib",
+        "@loader_path/../lib/libgstrtp-1.0.0.dylib",
+        "@loader_path/../lib/libgstaudio-1.0.0.dylib",
+        "@loader_path/../lib/libgio-2.0.0.dylib"
+      ]
+    },
+    {
+      "path": "lib/libffi.8.dylib",
+      "sourcePath": "lib/libffi.8.dylib",
+      "sourceSha256": "0356080464099da4158e80408c6d4fc4622b71b54b1bf22aff21f2736201289a",
+      "sha256": "2ab52271c2826e256754936fe2479511cd56c052e7ad151b78d744f8089a794e",
+      "imports": [
+        "/System/Library/Frameworks/Foundation.framework/Versions/C/Foundation",
+        "/usr/lib/libc++.1.dylib",
+        "/usr/lib/libSystem.B.dylib"
+      ]
+    },
+    {
+      "path": "lib/libgio-2.0.0.dylib",
+      "sourcePath": "lib/libgio-2.0.0.dylib",
+      "sourceSha256": "121b879d9a722341a6f24aa7be7eb2c849b7f896d32de263dafe5431d2f341f2",
+      "sha256": "4f976ee37b12a75db9a5f0aa12d608fa4100533cf85b71b619651cbafb90472c",
+      "imports": [
+        "/System/Library/Frameworks/Foundation.framework/Versions/C/Foundation",
+        "/System/Library/Frameworks/CoreFoundation.framework/Versions/A/CoreFoundation",
+        "/usr/lib/libobjc.A.dylib",
+        "/usr/lib/libSystem.B.dylib",
+        "@loader_path/libglib-2.0.0.dylib",
+        "@loader_path/libgobject-2.0.0.dylib",
+        "@loader_path/libgmodule-2.0.0.dylib",
+        "@loader_path/libz.1.dylib",
+        "@loader_path/libintl.8.dylib",
+        "/System/Library/Frameworks/AppKit.framework/Versions/C/AppKit",
+        "/System/Library/Frameworks/CoreServices.framework/Versions/A/CoreServices",
+        "/usr/lib/libresolv.9.dylib"
+      ]
+    },
+    {
+      "path": "lib/libglib-2.0.0.dylib",
+      "sourcePath": "lib/libglib-2.0.0.dylib",
+      "sourceSha256": "ea96f707c86e6651da3f754fa3a2c2d1a30881eb01b1fe1cf3e75383e4e918a4",
+      "sha256": "3552e5dddc6afc2bbbb5000b15eccdd3b9518f6371b481543d7aa0e1017f5a42",
+      "imports": [
+        "/System/Library/Frameworks/Foundation.framework/Versions/C/Foundation",
+        "/usr/lib/libobjc.A.dylib",
+        "/usr/lib/libSystem.B.dylib",
+        "/usr/lib/libiconv.2.dylib",
+        "@loader_path/libintl.8.dylib",
+        "@loader_path/libpcre2-8.0.dylib"
+      ]
+    },
+    {
+      "path": "lib/libgmodule-2.0.0.dylib",
+      "sourcePath": "lib/libgmodule-2.0.0.dylib",
+      "sourceSha256": "8b827b662c5cb1fc5030c42ba8b474c3903fb37cbba46b6607d47fee591ae883",
+      "sha256": "fe3616bda97af2cc4f37aacc073daefaed0935e9bec22caa194510b2f4ed2863",
+      "imports": [
+        "/usr/lib/libSystem.B.dylib",
+        "@loader_path/libglib-2.0.0.dylib"
+      ]
+    },
+    {
+      "path": "lib/libgobject-2.0.0.dylib",
+      "sourcePath": "lib/libgobject-2.0.0.dylib",
+      "sourceSha256": "ffaa634019859582b2e265b718f3a444ef3bc2ae5d3034072ecbbc4dcfa7391c",
+      "sha256": "696b25cad9b6d899aa550be9ab0b2d3f0711e9cf13aff9d6c5ca7a6092bdb727",
+      "imports": [
+        "/usr/lib/libSystem.B.dylib",
+        "@loader_path/libglib-2.0.0.dylib",
+        "@loader_path/libffi.8.dylib"
+      ]
+    },
+    {
+      "path": "lib/libgstapp-1.0.0.dylib",
+      "sourcePath": "lib/libgstapp-1.0.0.dylib",
+      "sourceSha256": "195b0f8713535ea8175b7353bb5caecba60e296dac947133c3f25887f19842e9",
+      "sha256": "4a950388fca25b938cd69357d3fc86f60e9923cbb89c5b90ecd816fa03d88310",
+      "imports": [
+        "/usr/lib/libSystem.B.dylib",
+        "@loader_path/libgstbase-1.0.0.dylib",
+        "@loader_path/libgstreamer-1.0.0.dylib",
+        "@loader_path/libgobject-2.0.0.dylib",
+        "@loader_path/libglib-2.0.0.dylib"
+      ]
+    },
+    {
+      "path": "lib/libgstaudio-1.0.0.dylib",
+      "sourcePath": "lib/libgstaudio-1.0.0.dylib",
+      "sourceSha256": "30552336ef59ed44c1e6907d0a8943a2f3899c63b779894be3e953d8127730ef",
+      "sha256": "8f8a27c208c7361c62368530d1906c200c70fbafaa127f7d1444fbac6489d9dc",
+      "imports": [
+        "/usr/lib/libSystem.B.dylib",
+        "@loader_path/libgsttag-1.0.0.dylib",
+        "@loader_path/libgstreamer-1.0.0.dylib",
+        "@loader_path/libgobject-2.0.0.dylib",
+        "@loader_path/libglib-2.0.0.dylib",
+        "@loader_path/libgstbase-1.0.0.dylib"
+      ]
+    },
+    {
+      "path": "lib/libgstbase-1.0.0.dylib",
+      "sourcePath": "lib/libgstbase-1.0.0.dylib",
+      "sourceSha256": "1244c161f3feea56c02f08511eb3a55e3e2a5415ea06631be82658d29a48d190",
+      "sha256": "6c33491f03b6d1dfa9848847a3434ef08f35f7a7fe296f4b36b8f214541a5d4e",
+      "imports": [
+        "/usr/lib/libSystem.B.dylib",
+        "@loader_path/libgstreamer-1.0.0.dylib",
+        "@loader_path/libglib-2.0.0.dylib",
+        "@loader_path/libgobject-2.0.0.dylib"
+      ]
+    },
+    {
+      "path": "lib/libgstnet-1.0.0.dylib",
+      "sourcePath": "lib/libgstnet-1.0.0.dylib",
+      "sourceSha256": "4eb7b72c7474611f79ca5cc6a06b3531656956e56fc217c93321f86c258d26d8",
+      "sha256": "08b3faee5e02158f0a64937713c1711687635bb11beb695e02c9af5d1b10376c",
+      "imports": [
+        "/usr/lib/libSystem.B.dylib",
+        "@loader_path/libgstreamer-1.0.0.dylib",
+        "@loader_path/libgio-2.0.0.dylib",
+        "@loader_path/libgobject-2.0.0.dylib",
+        "@loader_path/libglib-2.0.0.dylib"
+      ]
+    },
+    {
+      "path": "lib/libgstpbutils-1.0.0.dylib",
+      "sourcePath": "lib/libgstpbutils-1.0.0.dylib",
+      "sourceSha256": "c69a06f04c21ad816cc7b157a7f0ad8f697f543e1ea1ab2d041ef3e3909ce731",
+      "sha256": "4f0e07a5cd48b75f03115191afc0dd304a411c762d26b06ec2dbd9ec9a9c3be1",
+      "imports": [
+        "/usr/lib/libSystem.B.dylib",
+        "@loader_path/libgstvideo-1.0.0.dylib",
+        "@loader_path/libgstaudio-1.0.0.dylib",
+        "@loader_path/libgsttag-1.0.0.dylib",
+        "@loader_path/libgstreamer-1.0.0.dylib",
+        "@loader_path/libgobject-2.0.0.dylib",
+        "@loader_path/libglib-2.0.0.dylib",
+        "@loader_path/libgstbase-1.0.0.dylib"
+      ]
+    },
+    {
+      "path": "lib/libgstreamer-1.0.0.dylib",
+      "sourcePath": "lib/libgstreamer-1.0.0.dylib",
+      "sourceSha256": "8645829ce55612fb7e2ce06257852e6ae8ca732fc1ba212fd2e643f865ceba4f",
+      "sha256": "a536ba764b3bc4efa788092e833b4d2a0fe3d266087eac94d18fe9c564e83b8d",
+      "imports": [
+        "/System/Library/Frameworks/Foundation.framework/Versions/C/Foundation",
+        "/usr/lib/libobjc.A.dylib",
+        "/usr/lib/libSystem.B.dylib",
+        "@loader_path/libgobject-2.0.0.dylib",
+        "@loader_path/libglib-2.0.0.dylib",
+        "@loader_path/libgmodule-2.0.0.dylib",
+        "/System/Library/Frameworks/AppKit.framework/Versions/C/AppKit"
+      ]
+    },
+    {
+      "path": "lib/libgstrtp-1.0.0.dylib",
+      "sourcePath": "lib/libgstrtp-1.0.0.dylib",
+      "sourceSha256": "16afe3f735e03ae0ef68f984e41579faf53e5451d28dbfaa0a5cd77e09b78d5e",
+      "sha256": "d6e7d328bcefeab0247e93dbc99ffacb61ee675e0263a58de34d0c6926724f40",
+      "imports": [
+        "/usr/lib/libSystem.B.dylib",
+        "@loader_path/libgstbase-1.0.0.dylib",
+        "@loader_path/libgstreamer-1.0.0.dylib",
+        "@loader_path/libgobject-2.0.0.dylib",
+        "@loader_path/libglib-2.0.0.dylib"
+      ]
+    },
+    {
+      "path": "lib/libgsttag-1.0.0.dylib",
+      "sourcePath": "lib/libgsttag-1.0.0.dylib",
+      "sourceSha256": "f659afca521f2dd1dbe100b99cf5f4204e84e7a2876e70318588f5e2dd713fba",
+      "sha256": "dfef74604fa0b2aceb3123264dbe7fbe08174ff6444d06b507ce95eb4f2f5ad8",
+      "imports": [
+        "/usr/lib/libSystem.B.dylib",
+        "@loader_path/libgstbase-1.0.0.dylib",
+        "@loader_path/libgstreamer-1.0.0.dylib",
+        "@loader_path/libgobject-2.0.0.dylib",
+        "@loader_path/libglib-2.0.0.dylib",
+        "@loader_path/libz.1.dylib"
+      ]
+    },
+    {
+      "path": "lib/libgstvideo-1.0.0.dylib",
+      "sourcePath": "lib/libgstvideo-1.0.0.dylib",
+      "sourceSha256": "b52b7c7d97ac9c9a1914ef6b629d848e71d1922279cac729a399c5fe5c4c3153",
+      "sha256": "b36c553f4e0b617ce3bbe899ea364e8933a5989d6e8e8023cbb0084f58b36468",
+      "imports": [
+        "/usr/lib/libSystem.B.dylib",
+        "@loader_path/libgstreamer-1.0.0.dylib",
+        "@loader_path/libgobject-2.0.0.dylib",
+        "@loader_path/libglib-2.0.0.dylib",
+        "@loader_path/libgstbase-1.0.0.dylib"
+      ]
+    },
+    {
+      "path": "lib/libintl.8.dylib",
+      "sourcePath": "lib/libintl.8.dylib",
+      "sourceSha256": "27440917642b622c969207e3a28769c819a0807f1057efbda7f7c1299446c405",
+      "sha256": "3968aa5cf61ca4faffc06c2f1c87b7e865081f30187642f8e357b261b3683c1e",
+      "imports": [
+        "/usr/lib/libSystem.B.dylib"
+      ]
+    },
+    {
+      "path": "lib/libopus.0.dylib",
+      "sourcePath": "lib/libopus.0.11.1.dylib",
+      "sourceSha256": "e882d6095386fb196652f2c58268f9b1034765ba338c3598c54aab46a9755aba",
+      "sha256": "0e180129087bf3c4aa525826f5de674819b12089799b80a720b1d4e429568386",
+      "imports": [
+        "/System/Library/Frameworks/Foundation.framework/Versions/C/Foundation",
+        "/usr/lib/libc++.1.dylib",
+        "/usr/lib/libSystem.B.dylib"
+      ]
+    },
+    {
+      "path": "lib/libpcre2-8.0.dylib",
+      "sourcePath": "lib/libpcre2-8.0.16.0.dylib",
+      "sourceSha256": "f5ea43c9720b75c1a631a0ca9a805876ba82f92f89e38193ff656308b4d61d02",
+      "sha256": "276883a87bae2b24066a0a8506d5a8eb1e5b24637b4518179a2e1a18efeb2dfd",
+      "imports": [
+        "/System/Library/Frameworks/Foundation.framework/Versions/C/Foundation",
+        "/usr/lib/libc++.1.dylib",
+        "/usr/lib/libSystem.B.dylib"
+      ]
+    },
+    {
+      "path": "lib/libz.1.dylib",
+      "sourcePath": "lib/libz.1.3.2.dylib",
+      "sourceSha256": "cd8b6f08f5c578e764213b8b637ec96aeba4d919060b23cda7046ba1ea0ddf4d",
+      "sha256": "855c3792a7745d354edffabe4262282f440a9a0b763f96720e1cad9124b2d131",
+      "imports": [
+        "/System/Library/Frameworks/Foundation.framework/Versions/C/Foundation",
+        "/usr/lib/libc++.1.dylib",
+        "/usr/lib/libSystem.B.dylib"
+      ]
+    }
+  ],
+  "plugins": [
+    "plugins/libgstapp.dylib",
+    "plugins/libgstaudioconvert.dylib",
+    "plugins/libgstaudioresample.dylib",
+    "plugins/libgstcoreelements.dylib",
+    "plugins/libgstopus.dylib",
+    "plugins/libgstrtp.dylib",
+    "plugins/libgstrtpmanager.dylib"
+  ],
+  "distribution": "publicRelease"
+}

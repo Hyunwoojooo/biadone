@@ -201,6 +201,7 @@ export async function register(options) {
   console.log([``, `Registered Codex ${options.version} (${record.capabilities.join(', ')}). Review before committing:`,
     `  - git diff: qualification JSON, generated Swift, evidence, fixture`,
     `  - Compare with ${previous ?? 'the previous release'}: \`codex queue\` arguments, Hook payloads, App Server approval schema`,
+    `  - Add ${options.version} to the exact reviewed lists in Tests/swift/BlabeePetTests/CodexCompatibilityTests.swift`,
     `  - npm run test:t005 && npm run test:codex-compatibility && npm run test:swift -- --filter 'Codex|ManagedCodex|UpdateManagedCodex|Hook|DoctorApplication'`,
     `  - docs/features/CODEX_LATEST_SUPPORT.md (top) and CHANGELOG entries`].join('\n'));
   return { record, evidence };
