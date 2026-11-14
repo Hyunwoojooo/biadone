@@ -62,6 +62,28 @@ test('registration builds a record only from measured official facts', async () 
   }
 });
 
+test('registration refuses a release whose PermissionRequest schema differs from what the coordinator accepts', async () => {
+  const { checkPermissionRequestSchema, PERMISSION_REQUEST_KEYS } = await import('../../scripts/codex/register-version.mjs');
+  const official = JSON.parse(await readFile(new URL('../../Fixtures/codex/0.169.0/permission-request.command.input.schema.json', import.meta.url), 'utf8'));
+  assert.doesNotThrow(() => checkPermissionRequestSchema(official));
+  const withKey = structuredClone(official); withKey.properties.tool_hook_cwd = { type: 'string' };
+  assert.throws(() => checkPermissionRequestSchema(withKey), /new keys: tool_hook_cwd/);
+  const open = structuredClone(official); open.additionalProperties = true;
+  assert.throws(() => checkPermissionRequestSchema(open), /additionalProperties/);
+  const optionalTurn = structuredClone(official); optionalTurn.required = optionalTurn.required.filter(k => k !== 'turn_id');
+  assert.throws(() => checkPermissionRequestSchema(optionalTurn), /no longer required: turn_id/);
+
+  // The list mirrors the Swift validator: required + optional keys minus Blabee's qualification marker.
+  const swift = await readFile(new URL('../../app/coordination/CoordinatorOperationalApplication.swift', import.meta.url), 'utf8');
+  const start = swift.indexOf('private func admitPermissionRequest(_ data: Data)');
+  assert.ok(start >= 0, 'admitPermissionRequest moved: update this test');
+  const body = swift.slice(start, swift.indexOf('let sessionID = try identifier', start));
+  const quoted = text => [...text.matchAll(/"([a-z_]+)"/g)].map(m => m[1]);
+  const required = quoted(body.slice(body.indexOf('let requiredKeys'), body.indexOf('let allowedKeys')));
+  const optional = quoted(body.slice(body.indexOf('let allowedKeys'), body.indexOf('HookPermissionPolicy.qualificationKey')));
+  assert.deepEqual([...required, ...optional].sort(), [...PERMISSION_REQUEST_KEYS].sort());
+});
+
 test('check-latest reports only stable releases newer than every registered version', async () => {
   const { unregisteredReleases } = await import('../../scripts/codex/check-latest.mjs');
   const releases = [

@@ -999,7 +999,11 @@ final class PetViewModel: ObservableObject {
     var providerDiagnostic: String? {
         if let diagnostic = snapshot?.providerDiagnostic { return diagnostic }
         if snapshot?.codexRuntimeUnqualified == true { return Self.codexRuntimeUnsupportedMessage }
+        if snapshot?.permissionCardSkipped == true { return Self.permissionCardSkippedMessage }
         return nil
+    }
+    static var permissionCardSkippedMessage: String {
+        PetL10n.text("Blabee couldn't show a Codex approval request here. Choose allow or deny in the Codex window.", korean: "Codex 승인 요청 하나를 Pet에 띄우지 못했어요. Codex 창에서 승인 여부를 선택해 주세요.")
     }
     static var codexRuntimeUnsupportedMessage: String {
         PetL10n.text("This Codex version is not supported yet, so Blabee stays off in its sessions. Check for a Blabee update.", korean: "이 Codex 버전은 아직 지원되지 않아 해당 세션에서는 Blabee가 꺼져 있어요. Blabee 업데이트를 확인해 주세요.")

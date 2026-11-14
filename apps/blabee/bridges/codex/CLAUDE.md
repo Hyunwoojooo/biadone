@@ -57,8 +57,12 @@ Plugin: `plugin/.codex-plugin/plugin.json`, `plugin/.mcp.json`, `plugin/hooks/ho
 - 실패 캐시 정책 revision은 지원 목록에서 계산된다. 사용자 DB·실패 기록을 수동 초기화하지 않는다.
 - 실패 기록(2026-11-12, schema 2): 실행 파일 자체의 실패(서명·버전·출력)는 수동 재검사까지 유지하고, 환경 실패(공증 조회·시간 초과·실행 불가·도중 종료·결과 불명)는 10분 뒤 풀린다. 풀린 뒤에도 실패한 전달은 다시 보내지 않고 새 선택만 검사받는다. 32칸이 차면 경로가 사라졌거나 정책이 바뀐 기록부터 재사용한다. 공증 온라인 조회는 같은 파일에 대해 서비스 수명 동안 한 번만 한다(`CodexNotarizationCache`).
 - Logger subsystem `com.biadone.blabee`.
-- 알려진 경계: 0.166.0에서 PermissionRequest `cwd`(실제 명령 폴더)와 Hook 실행 폴더(`tool_hook_cwd`)가 다르면 Blabee의 세션 경로 동일성 검사 때문에
-  Codex 기본 승인으로 돌아갈 수 있다(`docs/features/CODEX_0166_QUALIFICATION.md` 남은 경계). Swift 소스에 `tool_hook_cwd` 처리는 아직 없다. 동일성 조건을 임의로 풀지 않는다.
+- 승인 요청의 폴더 조건(2026-11-14 사용자 승인): `cwd`가 세션의 활성 프로젝트 안이면 받는다(`permissionPath(_:belongsTo:)`). 세션·turn 바이트 일치와
+  호출 Codex 서명 확인은 승인 권한의 근거이므로 더 풀지 않는다. PermissionRequest 키 목록은 `scripts/codex/register-version.mjs`의 `PERMISSION_REQUEST_KEYS`와 같아야 한다.
+- Plugin 0.1.4(hooks.json의 SessionStart 한도 없음, PermissionRequest `matcher: "Bash"`)는 Doctor 고정 계약(`DoctorApplication.validatePluginHooks`, manifest SHA-256)과 함께 바꾼다.
+  Hook 정의를 바꾸면 Plugin 버전을 올린다. 같은 버전이면 설치된 Plugin이 갱신되지 않는다.
+- 전달 실행 파일: 세션 Hook이 서명을 확인한 Codex 경로(`CodexSessionRuntimeHints`)를 먼저 시도한다. 없거나 일반 검증에서 거부되면 고정 후보 목록으로 넘어가지만,
+  시간 초과·실행 중·실패 기록 잠금 같은 오류는 기존 `qualifyFirst` 규칙대로 그 자리에서 실패한다. `CODEX_HOME`은 Hook 환경의 값을 확인 없이 넘긴다(같은 사용자가 이미 고칠 수 있는 설정 선택).
 
 ## 테스트
 

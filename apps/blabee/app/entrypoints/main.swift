@@ -900,12 +900,15 @@ private func runDaemon(
         appBuild: Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "unknown",
         runtimeIdentity: try? OperationalRuntimeIdentity.requireCurrent()
     )
+    let codexSessionRuntimeHints = CodexSessionRuntimeHints()
     let operational = CoordinatorOperationalApplication(
         routing: routing,
         enabledProjectPaths: arguments.enabledProjectPaths,
         suggestionMode: arguments.suggestionMode,
         secretCorpus: journal.secretCorpus,
-        nextTurnDispatcher: CodexQueueNextTurnDispatcher.live(productAccessCheck: accessCheck).coordinatorDispatcher,
+        nextTurnDispatcher: CodexQueueNextTurnDispatcher.live(
+            productAccessCheck: accessCheck, sessionHints: codexSessionRuntimeHints
+        ).coordinatorDispatcher,
         permissionLifecycleObserver: { event in HookPermissionDiagnostics.record(event) },
         petArrivalLedger: petArrivalLedger,
         requestTimingObserver: serviceDiagnostics.recordRequestTiming,
@@ -914,6 +917,11 @@ private func runDaemon(
         dispatchDiagnosticFailureObserver: {
             Logger(subsystem: "com.biadone.blabee", category: "dispatch")
                 .error("next_turn_dispatch_diagnostics_unavailable")
+        },
+        codexSessionRuntimeObserver: { sessionID, executable, codexHome in
+            guard let hint = CodexSessionRuntimeHint(executablePath: executable, codexHome: codexHome)
+            else { return }
+            codexSessionRuntimeHints.record(sessionID: sessionID, hint: hint)
         }
     )
     let legacyApplication = try ClaudeBridgeCoordinator(

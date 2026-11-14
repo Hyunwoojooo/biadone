@@ -27,6 +27,8 @@ Draft. The release date, download link and the full list of changes are added wh
 #### Changed
 
 - **Codex 0.167.2, 0.168.0 and 0.169.0 support.** The three exact versions join the supported list with the same capabilities and package layout as 0.167.1.
+- **Codex delivery uses the session's own Codex.** A selected card is sent through the `codex` that started the session, with its `CODEX_HOME`, instead of the first `codex` found on a fixed list. Codex installed with bun, pnpm, mise or asdf is now found.
+- **Codex approval cards.** A command run in a subfolder of the project now gets a Pet card showing its real folder. When an approval request cannot become a card, the Pet says to answer it in the Codex window instead of staying silent. The Plugin (0.1.4) no longer cuts the session guidance short and only runs its approval Hook for shell commands; Codex asks you to review the updated Hooks once.
 - **Codex 0.167.0 and 0.167.1 support.** Both exact versions join the supported list for the plugin CLI, the managed App Server, workspace routing, and the update lifecycle, with the same package layout as 0.166.0. Only each version's primary `codex` executable is trusted for one-shot Hook approvals. From 0.167.0, commands that an administrator policy marks as requiring a human decision ignore a Hook approval, so for those Codex asks in its own window even after a Pet approval.
 
 ### r91

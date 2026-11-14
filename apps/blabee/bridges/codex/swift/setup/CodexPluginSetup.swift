@@ -229,6 +229,21 @@ enum CodexPluginSetupExecutableResolver {
                 home.appendingPathComponent(".volta/bin/codex", isDirectory: false)
             )
             candidates.append(contentsOf: nvmCandidates(home: home, fileManager: fileManager))
+            // Audit CDX-6: package-manager installs that the service's fixed
+            // PATH cannot see. Each is still qualified like any other source;
+            // asdf/mise shims stay rejected, so only their real installs are listed.
+            candidates.append(
+                home.appendingPathComponent(".bun/bin/codex", isDirectory: false)
+            )
+            candidates.append(
+                home.appendingPathComponent("Library/pnpm/codex", isDirectory: false)
+            )
+            for root in [".local/share/mise/installs/node", ".asdf/installs/nodejs"] {
+                candidates.append(contentsOf: versionedNodeCandidates(
+                    root: home.appendingPathComponent(root, isDirectory: true),
+                    fileManager: fileManager, requiresVPrefix: false
+                ))
+            }
         }
 
         var visited: Set<String> = []
@@ -307,8 +322,17 @@ enum CodexPluginSetupExecutableResolver {
     }
 
     private static func nvmCandidates(home: URL, fileManager: FileManager) -> [URL] {
-        let versionsRoot = home
-            .appendingPathComponent(".nvm/versions/node", isDirectory: true)
+        versionedNodeCandidates(
+            root: home.appendingPathComponent(".nvm/versions/node", isDirectory: true),
+            fileManager: fileManager, requiresVPrefix: true
+        )
+    }
+
+    /// `<root>/<x.y.z>/bin/codex`, newest first. nvm names versions `vX.Y.Z`;
+    /// mise and asdf use `X.Y.Z` (their alias links such as `22` or `lts` are skipped).
+    private static func versionedNodeCandidates(
+        root versionsRoot: URL, fileManager: FileManager, requiresVPrefix: Bool
+    ) -> [URL] {
         var enumerationFailed = false
         guard let enumerator = fileManager.enumerator(
             at: versionsRoot,
@@ -330,7 +354,8 @@ enum CodexPluginSetupExecutableResolver {
                 // discovery. Fail closed instead of loading or sorting it all.
                 return []
             }
-            guard let version = safeNVMVersion(entry.lastPathComponent) else {
+            let name = entry.lastPathComponent
+            guard let version = safeNVMVersion(requiresVPrefix ? name : "v" + name) else {
                 continue
             }
             entries.append((entry, version))

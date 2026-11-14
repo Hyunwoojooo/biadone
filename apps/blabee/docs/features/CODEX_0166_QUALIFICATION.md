@@ -98,3 +98,6 @@ voice `runtime.json`은 이전과 동일하게 정확한 catalog digest에 한�
 동일성 조건을 제거하거나 명령 폴더를 덮어쓰지 않았다. 이를 지원하려면 검증한
 Hook에서 별도 routing cwd를 전달하는 내부 계약과 회귀 검사가 필요하다.
 [공식 cwd 처리](https://github.com/openai/codex/blob/rust-v0.166.0/codex-rs/hooks/src/events/permission_request.rs).
+
+
+> 2026-11-14 갱신: 승인 요청 폴더는 이제 세션의 활성 프로젝트 안이면 받는다(사용자 승인, 감사 CDX-5). 세션·turn 일치와 호출 Codex 확인은 그대로다. 위 문단은 당시 기록이다. 현재 규칙은 `bridges/codex/CLAUDE.md`.

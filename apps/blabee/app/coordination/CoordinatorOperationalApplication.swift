@@ -499,6 +499,9 @@ public actor CoordinatorOperationalApplication {
     private let dispatchDiagnosticFailureObserver: @Sendable () -> Void
     private let permissionRequestTimeoutNanoseconds: UInt64
     private let permissionLifecycleObserver: @Sendable (HookPermissionLifecycleEvent) -> Void
+    /// Audit CDX-6: the session's own Codex executable (registered, attested by
+    /// the Hook) and CODEX_HOME, for queue delivery. Never an approval input.
+    private let codexSessionRuntimeObserver: @Sendable (_ sessionID: String, _ executablePath: String?, _ codexHome: String?) -> Void
     private let permissionRequestDeliveryTimeoutNanoseconds: UInt64
     private let maximumPendingPermissionRequests: Int
     private let petConsumerLeaseDurationNanoseconds: UInt64
@@ -523,6 +526,15 @@ public actor CoordinatorOperationalApplication {
     private var unqualifiedCodexSessions: Set<String> = []
     /// Last attested Codex runtime result, shown once in the Pet. Process-local.
     private var lastCodexRuntimeObservation: String?
+    /// Audit CDX-5: a Bash approval from a session in an enabled project that
+    /// could not become a Pet card. Codex still asks in its own window; the Pet
+    /// says so instead of staying silent. Cleared by that session's next prompt
+    /// or its next admitted card.
+    private var skippedPermissionCardSessionID: String?
+    private var skippedPermissionCardInstant: UInt64 = 0
+    /// The notice is about one recent request; it never outlives this window
+    /// even if the session is closed or abandoned.
+    static let skippedPermissionCardNoticeNanoseconds: UInt64 = 10 * 60 * 1_000_000_000
     private var unsubmittedTransportFailureCounts: [CoordinatorBindingKey: Int] = [:]
     private var pendingInitialActivations: Set<CoordinatorBindingKey> = []
     private var initialActivationFailures: [
@@ -587,8 +599,10 @@ public actor CoordinatorOperationalApplication {
         requestTimingObserver: (@Sendable (CoordinatorOperationalRequestTiming) -> Void)? = nil,
         productAccessCheck: (@Sendable () throws -> UInt64)? = nil,
         nextTurnDispatchRecorder: CoordinatorNextTurnDispatchRecording? = nil,
-        dispatchDiagnosticFailureObserver: @escaping @Sendable () -> Void = {}
+        dispatchDiagnosticFailureObserver: @escaping @Sendable () -> Void = {},
+        codexSessionRuntimeObserver: @escaping @Sendable (_ sessionID: String, _ executablePath: String?, _ codexHome: String?) -> Void = { _, _, _ in }
     ) {
+        self.codexSessionRuntimeObserver = codexSessionRuntimeObserver
         let ids: IDGenerator = idGenerator ?? { purpose in
             "\(purpose)_\(UUID().uuidString.lowercased())"
         }
@@ -1609,11 +1623,21 @@ private extension CoordinatorOperationalApplication {
             cwd: cwd,
             project: project
         )
+        observeCodexSessionRuntime(sessionID: sessionID, payload: payload)
         return try publicData([
             "enabled": true,
             "additionalContext": "Blabee is enabled for this project. "
                 + BlabeeSuggestionContext.instructions(for: suggestionMode),
         ])
+    }
+
+    /// Only a Hook-attested registered Codex supplies `codex_executable`; the
+    /// value is a delivery preference that is qualified again before use.
+    private func observeCodexSessionRuntime(sessionID: String, payload: [String: Any]) {
+        let executable = payload["codex_executable"] as? String
+        let codexHome = payload["codex_home"] as? String
+        guard executable != nil || codexHome != nil else { return }
+        codexSessionRuntimeObserver(sessionID, executable, codexHome)
     }
 
     func userPromptSubmit(_ data: Data) throws -> Data {
@@ -1636,6 +1660,11 @@ private extension CoordinatorOperationalApplication {
             cwd: cwd,
             project: project
         )
+        observeCodexSessionRuntime(sessionID: sessionID, payload: payload)
+        if skippedPermissionCardSessionID.map({ Self.byteExact($0, sessionID) }) == true,
+           case .human = QueuedPromptEnvelope.classify(prompt) {
+            skippedPermissionCardSessionID = nil
+        }
 
         let promptDigest = Data(SHA256.hash(data: Data(prompt.utf8)))
         if Self.byteExact(session.latestTurnID, turnID) {
@@ -1953,6 +1982,42 @@ private extension CoordinatorOperationalApplication {
     }
 
     func permissionRequest(_ data: Data) async throws -> Data {
+        do {
+            return try await admitPermissionRequest(data)
+        } catch let error as CoordinatorError where error.code.hasPrefix("permission_request_") {
+            recordSkippedPermissionCard(data)
+            throw error
+        }
+    }
+
+    /// Only for Bash requests whose folder is in an enabled project, so other
+    /// projects and other tools (older Plugin without a matcher) stay quiet.
+    private func recordSkippedPermissionCard(_ data: Data) {
+        guard let payload = try? StrictJSONTransport.object(from: data),
+              payload["tool_name"] as? String == "Bash",
+              let sessionID = payload["session_id"] as? String,
+              let sessionID = try? identifier(sessionID, "session_id"),
+              let cwd = payload["cwd"] as? String,
+              let path = try? Self.normalizedPermissionPath(cwd),
+              let project = project(containing: path), project.enabled
+        else { return }
+        skippedPermissionCardSessionID = sessionID
+        skippedPermissionCardInstant = monotonicInstantGenerator()
+    }
+
+    private var permissionCardSkippedIsRecent: Bool {
+        guard skippedPermissionCardSessionID != nil else { return false }
+        let now = monotonicInstantGenerator()
+        guard now >= skippedPermissionCardInstant,
+              now - skippedPermissionCardInstant < Self.skippedPermissionCardNoticeNanoseconds
+        else {
+            skippedPermissionCardSessionID = nil
+            return false
+        }
+        return true
+    }
+
+    private func admitPermissionRequest(_ data: Data) async throws -> Data {
         let payload = try StrictJSONTransport.object(from: data)
         let requiredKeys: Set<String> = [
             "session_id", "turn_id", "cwd", "hook_event_name",
@@ -2021,10 +2086,7 @@ private extension CoordinatorOperationalApplication {
         if let session = sessions[sessionID] {
             try require(
                 Self.byteExact(session.latestTurnID, turnID)
-                    && Self.byteExact(session.path, sessionPath)
-                    && projects.values.contains(where: {
-                        $0.enabled && Self.byteExact($0.projectID, session.projectID)
-                    }),
+                    && permissionPath(sessionPath, belongsTo: session.projectID),
                 "permission_request_binding_invalid"
             )
             projectID = session.projectID
@@ -2113,6 +2175,9 @@ private extension CoordinatorOperationalApplication {
                     productAccessGeneration: accessGeneration
                 ))
                 registerPendingPetEvent(.init(kind: .permission, eventID: requestID))
+                if skippedPermissionCardSessionID.map({ Self.byteExact($0, sessionID) }) == true {
+                    skippedPermissionCardSessionID = nil
+                }
                 permissionLifecycleObserver(isNativeSubagent ? .admittedSubagent : .admittedRoot)
             }
         } onCancel: {
@@ -2438,7 +2503,17 @@ private extension CoordinatorOperationalApplication {
         guard let session = sessions[request.sessionID] else { return false }
         return Self.byteExact(session.projectID, request.projectID)
             && Self.byteExact(session.latestTurnID, request.turnID)
-            && Self.byteExact(session.path, request.sessionPath)
+            && permissionPath(request.sessionPath, belongsTo: session.projectID)
+    }
+
+    /// Audit CDX-5 (approved 2026-11-14): a command may run in any folder of the
+    /// session's own enabled project, not only the folder of the last prompt.
+    /// Approval authority still comes from the exact session/turn binding and
+    /// the attested caller; the card shows the command's real `cwd`. A folder
+    /// outside the project, or in a nested enabled project, stays with Codex.
+    private func permissionPath(_ path: String, belongsTo projectID: String) -> Bool {
+        guard let project = project(containing: path), project.enabled else { return false }
+        return Self.byteExact(project.projectID, projectID)
     }
 
     func cancelPermissionRequest(requestID: String) {
@@ -4416,7 +4491,9 @@ private extension CoordinatorOperationalApplication {
             "managed_command_approval_notice_count": managedCommandApprovalNoticeCount,
             "event_navigation": try petEventNavigationSnapshot(interactions: interactionObjects),
         ].merging(lastCodexRuntimeObservation == "unqualified"
-            ? ["codex_runtime_status": "unqualified"] : [:]) { current, _ in current })
+            ? ["codex_runtime_status": "unqualified"] : [:]) { current, _ in current }
+         .merging(permissionCardSkippedIsRecent
+            ? ["permission_card_status": "skipped"] : [:]) { current, _ in current })
         if recordsPetConsumerHeartbeat {
             // Record presence only after a complete snapshot was produced.
             // Failed/malformed state responses therefore cannot make a Hook

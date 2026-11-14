@@ -371,11 +371,24 @@ func runHookCommand(arguments: [String]) {
         // Once per session: an OpenAI-signed Codex that is not registered cannot
         // receive a card, so the coordinator turns Blabee off for this session.
         // An unreadable lineage reports nothing and keeps the current behavior.
-        if eventName == "SessionStart" {
-            switch CodexHookApprovalQualification.currentCaller() {
-            case .qualified: payload["codex_runtime"] = "qualified"
-            case .unqualified: payload["codex_runtime"] = "unqualified"
-            case .unknown: payload.removeValue(forKey: "codex_runtime")
+        if eventName == "SessionStart" || eventName == "UserPromptSubmit" {
+            let attested = CodexHookApprovalQualification.currentAttestedCaller()
+            if eventName == "SessionStart" {
+                switch attested.caller {
+                case .qualified: payload["codex_runtime"] = "qualified"
+                case .unqualified: payload["codex_runtime"] = "unqualified"
+                case .unknown: payload.removeValue(forKey: "codex_runtime")
+                }
+            }
+            // Audit CDX-6: deliver later turns through this session's own Codex
+            // and CODEX_HOME. Only an attested registered Codex supplies a path;
+            // CODEX_HOME is passed as the session's (unverified) configuration.
+            payload.removeValue(forKey: "codex_executable")
+            payload.removeValue(forKey: "codex_home")
+            if let executable = attested.executablePath { payload["codex_executable"] = executable }
+            if let home = ProcessInfo.processInfo.environment["CODEX_HOME"],
+               home.hasPrefix("/"), home.utf8.count <= 4_096, !home.contains("\0") {
+                payload["codex_home"] = home
             }
         }
         if eventName == "PermissionRequest" {

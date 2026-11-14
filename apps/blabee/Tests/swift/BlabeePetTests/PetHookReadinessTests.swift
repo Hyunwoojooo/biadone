@@ -78,7 +78,7 @@ private final class HookReadinessFixture: @unchecked Sendable {
                     "pluginId": scenario == .pluginIdentityMismatch ? "blabee@other" : "blabee@blabee-app",
                     "name": "blabee", "installed": true,
                     "enabled": scenario != .pluginDisabled,
-                    "version": "0.1.3",
+                    "version": "0.1.4",
                     "source": ["source": "local", "path": path],
                 ]]
                 return CodexPluginSetupProcessResult(

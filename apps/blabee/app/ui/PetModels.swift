@@ -1097,6 +1097,9 @@ struct PetSnapshot: Sendable, Equatable {
     /// The coordinator saw a session started by an OpenAI-signed Codex that
     /// this Blabee build does not support yet.
     var codexRuntimeUnqualified = false
+    /// A Codex Bash approval in an enabled project could not become a card
+    /// (format or binding mismatch); Codex asks in its own window (CDX-5).
+    var permissionCardSkipped = false
 
     /// The product router can retain a disabled Claude card after its directory
     /// read fails. Such a local fallback is not a fresh service response.
@@ -1147,9 +1150,13 @@ struct PetSnapshot: Sendable, Equatable {
         var allowedKeys = snapshotKeys
         if object["event_navigation"] != nil { allowedKeys.insert("event_navigation") }
         if object["codex_runtime_status"] != nil { allowedKeys.insert("codex_runtime_status") }
+        if object["permission_card_status"] != nil { allowedKeys.insert("permission_card_status") }
         try petExactKeys(object, allowedKeys, "snapshot")
         if object["codex_runtime_status"] != nil {
             try petRequire(object["codex_runtime_status"] as? String == "unqualified", "snapshot.codex_runtime_status")
+        }
+        if object["permission_card_status"] != nil {
+            try petRequire(object["permission_card_status"] as? String == "skipped", "snapshot.permission_card_status")
         }
         let schemaVersion = try petString(object, "schema_version", maximum: 16)
         let kind = try petString(object, "kind", maximum: 64)
@@ -1333,7 +1340,8 @@ struct PetSnapshot: Sendable, Equatable {
                 minimum: 0
             ),
             eventNavigation: eventNavigation,
-            codexRuntimeUnqualified: object["codex_runtime_status"] != nil
+            codexRuntimeUnqualified: object["codex_runtime_status"] != nil,
+            permissionCardSkipped: object["permission_card_status"] != nil
         )
     }
 

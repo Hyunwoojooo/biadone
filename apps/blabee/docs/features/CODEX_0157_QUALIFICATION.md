@@ -80,6 +80,8 @@ plain `.jsonl`로 materialize하므로 Blabee의 plain 파일 검사를 완화�
   Unix stdio-only FD 상속도 socket을 새로 여는 Blabee 구조와 맞는다. 실제 MCP
   초기화·요청·종료와 비표준 socket override를 포함한 통합 회귀는 별도로 남는다.
 
+> 2026-11-14 갱신: 승인 요청 폴더는 이제 세션의 활성 프로젝트 안이면 받는다(사용자 승인, 감사 CDX-5). 세션·turn 일치와 호출 Codex 확인은 그대로다. 위 문단은 당시 기록이다. 현재 규칙은 `bridges/codex/CLAUDE.md`.
+
 근거: [tool Hook cwd](https://github.com/openai/codex/blob/rust-v0.157.1/codex-rs/core/src/hook_runtime.rs#L247),
 [MCP FD 경계](https://github.com/openai/codex/blob/rust-v0.157.1/codex-rs/rmcp-client/src/stdio_server_launcher.rs#L286).
 

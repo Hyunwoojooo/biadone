@@ -293,8 +293,15 @@ struct CodexNativeRuntime: Sendable {
 
     static func live(
         explicitExecutableURL: URL? = nil,
-        environment: [String: String] = ProcessInfo.processInfo.environment
+        environment: [String: String] = ProcessInfo.processInfo.environment,
+        session: CodexSessionRuntimeHint? = nil
     ) -> Self {
+        // Audit CDX-6: the Codex that started the session is tried first and
+        // its CODEX_HOME is kept. Both pass the same qualification as any other
+        // candidate; the fixed list remains the fallback for unknown sessions.
+        var sessionEnvironment = environment
+        if let codexHome = session?.codexHome { sessionEnvironment["CODEX_HOME"] = codexHome }
+        let environment = sessionEnvironment
         let runner: CodexPluginSetupProcessRunning = { executable, arguments, timeout in
             try CodexPluginSetupProcessRunner.run(
                 executable: executable, arguments: arguments,
@@ -304,7 +311,9 @@ struct CodexNativeRuntime: Sendable {
         return Self(
             candidates: {
                 if let explicitExecutableURL { return [explicitExecutableURL] }
-                return CodexPluginSetupExecutableResolver.candidateURLs(environment: environment)
+                let preferred = (session?.executablePath).map { URL(fileURLWithPath: $0, isDirectory: false) }
+                return (preferred.map { [$0] } ?? [])
+                    + CodexPluginSetupExecutableResolver.candidateURLs(environment: environment)
             },
             qualifier: { sourceURL, guardedRunner, preflight, timeout in
                 try CodexPluginSetupProductionTrust.qualify(

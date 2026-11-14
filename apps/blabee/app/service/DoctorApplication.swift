@@ -360,7 +360,7 @@ struct DoctorDependencies {
 struct DoctorApplication {
     static var alphaBaselineVersion: String { CodexCompatibility.alphaBaselineVersion }
     static var supportedVersions: Set<String> { CodexCompatibility.supportedVersions }
-    static let pluginManifestSHA256 = "3809bb68bfd1627ae893cafd39d5d046ffdd9df30d1d600c1f98078647e635c3"
+    static let pluginManifestSHA256 = "bfc74d6cc667865a10ef474e919e0f8633de39979067e23f16af7eba82ca126b"
     static let skillSHA256 = "91b7d0d876a753e3c807cd3e78d56146e978d3112c5acb736ef93eb1afa1d5b5"
     static let skillAgentSHA256 = "6a57a7eea07b13f0053208de1075dbdaf8ee708f83357d5029498ff2e0a7b1a6"
     static let launcherSHA256 = "f50318516b52b9e099669fdc1cf9c0bd82891be0da5253c50a941f1f1c1f2ec2"
@@ -1084,7 +1084,7 @@ private extension DoctorApplication {
                 summary: "Codex의 Blabee 플러그인이 비활성화되어 있습니다."
             ), sourceURL: sourceURL)
         }
-        guard entry["version"] as? String == "0.1.3" else {
+        guard entry["version"] as? String == "0.1.4" else {
             return PluginInspection(check: DoctorCheck(
                 id: "plugin_installation", status: .fail,
                 code: "plugin_version_mismatch",
@@ -1384,7 +1384,7 @@ private extension DoctorApplication {
             "name", "version", "description", "author", "skills", "interface", "mcpServers",
         ]),
         manifest["name"] as? String == "blabee",
-        manifest["version"] as? String == "0.1.3",
+        manifest["version"] as? String == "0.1.4",
         (manifest["description"] as? String)?.isEmpty == false,
         manifest["skills"] as? String == "./skills/",
         manifest["mcpServers"] as? String == "./.mcp.json",
@@ -1456,7 +1456,9 @@ private extension DoctorApplication {
         return validateHook(
             hooks["SessionStart"], event: "SessionStart",
             matcher: "startup|resume|clear|compact|fork", timeout: 8,
-            statusMessage: "Blabee 프로젝트 연결 확인 중", additionalContextLimit: 600
+            // No explicit limit: Codex's default (2,500 tokens) keeps the
+            // whole session guidance; 600 tokens truncated it (audit CDX-8).
+            statusMessage: "Blabee 프로젝트 연결 확인 중", additionalContextLimit: nil
         ) && validateHook(
             hooks["UserPromptSubmit"], event: "UserPromptSubmit",
             matcher: nil, timeout: 8,
@@ -1466,8 +1468,9 @@ private extension DoctorApplication {
             matcher: nil, timeout: 8,
             statusMessage: "Blabee 결정 저장 중", additionalContextLimit: nil
         ) && validateHook(
+            // Blabee only owns Bash approvals (audit CDX-5).
             hooks["PermissionRequest"], event: "PermissionRequest",
-            matcher: nil, timeout: 320,
+            matcher: "Bash", timeout: 320,
             statusMessage: "Blabee에서 권한 요청 확인 중", additionalContextLimit: nil
         )
     }

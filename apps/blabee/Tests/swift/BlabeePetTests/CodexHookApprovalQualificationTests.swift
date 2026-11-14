@@ -263,6 +263,27 @@ struct CodexHookApprovalQualificationTests {
         #expect(wrapped.caller() == .unknown)
     }
 
+    @Test("only a registered caller reports its executable path for delivery (CDX-6)")
+    func attestedCallerExecutablePath() {
+        let registered = HookQualificationFixture()
+        let attested = registered.attestedCaller()
+        #expect(attested.caller == .qualified(HookPermissionPolicy.qualifiedRuntime))
+        #expect(attested.executablePath == "/official/standalone/current/bin/codex")
+
+        let unregistered = HookQualificationFixture()
+        unregistered.signatures[unregistered.codexID] = .init(
+            identifier: "codex", teamIdentifier: Gate.codexTeamIdentifier,
+            cdHash: String(repeating: "e", count: 40), requirementSatisfied: true
+        )
+        #expect(unregistered.attestedCaller().caller == .unqualified)
+        #expect(unregistered.attestedCaller().executablePath == nil)
+
+        let wrapped = HookQualificationFixture()
+        wrapped.replaceProcess(90, path: "/usr/local/bin/process-broker")
+        #expect(wrapped.attestedCaller().caller == .unknown)
+        #expect(wrapped.attestedCaller().executablePath == nil)
+    }
+
     @Test("all processes must have the current effective UID")
     func rejectsDifferentOwner() {
         for processID: Int32 in [100, 90, 80] {
@@ -434,6 +455,14 @@ private final class HookQualificationFixture {
         guard let process = processes[pid] else { return }
         processes[pid] = replacing(
             process, parentID: parentID, userID: userID, start: start, path: path
+        )
+    }
+
+    func attestedCaller() -> (caller: HookGate.CallerCodex, executablePath: String?) {
+        HookGate.attestedCaller(
+            processID: 100, effectiveUserID: 501,
+            processEvidence: { self.processes[$0] },
+            signatureEvidence: { pid, _ in self.signatures[pid] }
         )
     }
 

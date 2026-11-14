@@ -206,7 +206,7 @@ struct CodexQueueNextTurnDispatcher: Sendable {
             processRunner: CodexQueueProcessRunning
         )
         case command(CodexQueueCommandRunning)
-        case native(CodexNativeRuntime, @Sendable () throws -> UInt64)
+        case native(@Sendable (String) -> CodexNativeRuntime, @Sendable () throws -> UInt64)
     }
 
     private let execution: Execution
@@ -236,12 +236,16 @@ struct CodexQueueNextTurnDispatcher: Sendable {
         explicitExecutableURL: URL? = nil,
         environment: [String: String] = ProcessInfo.processInfo.environment,
         timeoutMilliseconds: Int = nativeOperationTimeoutMilliseconds,
-        productAccessCheck: @escaping @Sendable () throws -> UInt64 = { 0 }
+        productAccessCheck: @escaping @Sendable () throws -> UInt64 = { 0 },
+        sessionHints: CodexSessionRuntimeHints? = nil
     ) -> CodexQueueNextTurnDispatcher {
         CodexQueueNextTurnDispatcher(
-            nativeRuntime: .live(
-                explicitExecutableURL: explicitExecutableURL, environment: environment
-            ),
+            nativeRuntimeForSession: { sessionID in
+                .live(
+                    explicitExecutableURL: explicitExecutableURL, environment: environment,
+                    session: sessionHints?.hint(for: sessionID)
+                )
+            },
             timeoutMilliseconds: timeoutMilliseconds,
             productAccessCheck: productAccessCheck
         )
@@ -252,7 +256,19 @@ struct CodexQueueNextTurnDispatcher: Sendable {
         timeoutMilliseconds: Int = nativeOperationTimeoutMilliseconds,
         productAccessCheck: @escaping @Sendable () throws -> UInt64 = { 0 }
     ) {
-        execution = .native(nativeRuntime, productAccessCheck)
+        self.init(
+            nativeRuntimeForSession: { _ in nativeRuntime },
+            timeoutMilliseconds: timeoutMilliseconds,
+            productAccessCheck: productAccessCheck
+        )
+    }
+
+    init(
+        nativeRuntimeForSession: @escaping @Sendable (String) -> CodexNativeRuntime,
+        timeoutMilliseconds: Int = nativeOperationTimeoutMilliseconds,
+        productAccessCheck: @escaping @Sendable () throws -> UInt64 = { 0 }
+    ) {
+        execution = .native(nativeRuntimeForSession, productAccessCheck)
         self.timeoutMilliseconds = timeoutMilliseconds
     }
 
@@ -294,7 +310,8 @@ struct CodexQueueNextTurnDispatcher: Sendable {
         let timeout = timeoutMilliseconds
         let result: CodexQueueProcessResult
         switch execution {
-        case let .native(runtime, accessCheck):
+        case let .native(runtimeForSession, accessCheck):
+            let runtime = runtimeForSession(request.sessionID)
             let generation = try accessCheck()
             do {
                 result = try await Task.detached(priority: .utility) {

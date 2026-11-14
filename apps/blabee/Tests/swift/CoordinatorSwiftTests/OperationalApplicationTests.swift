@@ -425,7 +425,8 @@ private func operationalFixture(
     requestTimingObserver: (@Sendable (CoordinatorOperationalRequestTiming) -> Void)? = nil,
     productAccessCheck: (@Sendable () throws -> UInt64)? = nil,
     nextTurnDispatchRecorder: CoordinatorNextTurnDispatchRecording? = nil,
-    dispatchDiagnosticFailureObserver: @escaping @Sendable () -> Void = {}
+    dispatchDiagnosticFailureObserver: @escaping @Sendable () -> Void = {},
+    codexSessionRuntimeObserver: @escaping @Sendable (String, String?, String?) -> Void = { _, _, _ in }
 ) throws -> OperationalFixture {
     let journal = try OperationalMemoryJournal(closedHistoryCount: closedHistoryCount)
     let clock = OperationalClock()
@@ -467,7 +468,8 @@ private func operationalFixture(
         requestTimingObserver: requestTimingObserver,
         productAccessCheck: productAccessCheck,
         nextTurnDispatchRecorder: nextTurnDispatchRecorder,
-        dispatchDiagnosticFailureObserver: dispatchDiagnosticFailureObserver
+        dispatchDiagnosticFailureObserver: dispatchDiagnosticFailureObserver,
+        codexSessionRuntimeObserver: codexSessionRuntimeObserver
     )
     return OperationalFixture(
         app: app,
@@ -6622,8 +6624,9 @@ func operationalPermissionRequestPreservesCallerCWD(
     #expect(approvedCWD.utf8.elementsEqual(callerCWD.utf8))
     #expect(roundTrip.hookOutcome["decision"] as? String == "allow_once")
 
+    // Outside the enabled project (a sibling folder) stays with Codex.
     var wrongCWD = hookIDs
-    wrongCWD["cwd"] = directoryPath + "/other-project"
+    wrongCWD["cwd"] = directoryPath + "-other-project"
     let wrongIDs = wrongCWD
     await expectOperationalError("permission_request_binding_invalid") {
         _ = try await fixture.app.handle(
@@ -6633,6 +6636,39 @@ func operationalPermissionRequestPreservesCallerCWD(
             )
         )
     }
+}
+
+@Test("A command in a subfolder of the session's project gets a card showing its real folder (CDX-5)")
+func operationalPermissionRequestAcceptsProjectSubfolder() async throws {
+    let fixture = try operationalFixture()
+    var ids = try await operationalBegin(
+        fixture, suffix: "permission_subfolder_\(UUID().uuidString.lowercased())"
+    )
+    let sessionPath = try #require(ids["cwd"])
+    let subfolder = sessionPath + "/packages/app"
+    try FileManager.default.createDirectory(atPath: subfolder, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(atPath: sessionPath) }
+    ids["cwd"] = subfolder
+    let hookIDs = ids
+    let waiter = Task {
+        try await fixture.app.handle(
+            type: "permission_request",
+            payload: operationalPermissionPayload(
+                hookIDs, command: "printf subfolder", qualification: HookPermissionPolicy.qualifiedRuntime
+            )
+        )
+    }
+    defer { waiter.cancel() }
+    let request = try #require(
+        try await waitForOperationalPermissionRequests(fixture.app, count: 1).first
+    )
+    #expect((request["cwd"] as? String) == subfolder)
+    let roundTrip = try await operationalResolvePermissionRequest(
+        app: fixture.app, request: request, decision: "allow_once",
+        responseID: "permission_response_subfolder", hookWaiter: waiter
+    )
+    #expect(roundTrip.hookOutcome["decision"] as? String == "allow_once")
+    #expect((roundTrip.hookOutcome["cwd"] as? String) == subfolder)
 }
 
 @Test("Operational Hook allow_once rejects absent and unknown runtime qualifications")
@@ -9642,4 +9678,96 @@ func operationalUnqualifiedCodexSessionStaysOff() async throws {
     #expect(qualified["enabled"] as? Bool == true)
     let cleared = try operationalObject(await fixture.app.handle(type: "get_state", payload: operationalData([:])))
     #expect(cleared["codex_runtime_status"] == nil)
+}
+
+
+private final class OperationalRuntimeObservations: @unchecked Sendable {
+    private let lock = NSLock()
+    private var recorded: [[String?]] = []
+    func append(_ value: [String?]) { lock.lock(); recorded.append(value); lock.unlock() }
+    var values: [[String?]] { lock.lock(); defer { lock.unlock() }; return recorded }
+}
+
+@Test("SessionStart and prompts report the session's own Codex for delivery only in enabled projects (CDX-6)")
+func operationalReportsCodexSessionRuntime() async throws {
+    let observations = OperationalRuntimeObservations()
+    let fixture = try operationalFixture(codexSessionRuntimeObserver: { session, executable, home in
+        observations.append([session, executable, home])
+    })
+    let cwd = "/tmp/blabee-operational-runtime"
+    _ = try await fixture.app.handle(type: "session_start", payload: operationalData([
+        "session_id": "session_runtime_disabled", "cwd": cwd, "hook_event_name": "SessionStart",
+        "codex_executable": "/opt/codex/bin/codex",
+    ]))
+    #expect(observations.values.isEmpty)
+    _ = try await fixture.app.handle(type: "enable_project", payload: operationalData([
+        "cwd": cwd, "project_id": "project_operational_runtime",
+    ]))
+    _ = try await fixture.app.handle(type: "session_start", payload: operationalData([
+        "session_id": "session_runtime", "cwd": cwd, "hook_event_name": "SessionStart",
+        "codex_executable": "/opt/codex/bin/codex", "codex_home": "/Users/test/.codex-alt",
+    ]))
+    _ = try await fixture.app.handle(type: "user_prompt_submit", payload: operationalData([
+        "session_id": "session_runtime", "turn_id": "turn_runtime", "cwd": cwd,
+        "prompt": "Implement the runtime test", "hook_event_name": "UserPromptSubmit",
+        "codex_executable": "/opt/codex/bin/codex",
+    ]))
+    _ = try await fixture.app.handle(type: "user_prompt_submit", payload: operationalData([
+        "session_id": "session_runtime", "turn_id": "turn_runtime_2", "cwd": cwd,
+        "prompt": "No attested runtime", "hook_event_name": "UserPromptSubmit",
+    ]))
+    #expect(observations.values == [
+        ["session_runtime", "/opt/codex/bin/codex", "/Users/test/.codex-alt"],
+        ["session_runtime", "/opt/codex/bin/codex", nil],
+    ])
+}
+
+@Test("A Bash approval that cannot become a card tells the Pet until the session's next prompt (CDX-5)")
+func operationalSkippedPermissionCardIsReported() async throws {
+    let fixture = try operationalFixture()
+    let ids = try await operationalBegin(fixture, suffix: "permission_skipped")
+    func status() async throws -> Any? {
+        try operationalObject(await fixture.app.handle(type: "get_state", payload: operationalData([:])))["permission_card_status"]
+    }
+    #expect(try await status() == nil)
+
+    // Another tool, or a folder outside every enabled project, stays quiet.
+    var otherTool = try JSONSerialization.jsonObject(with: operationalPermissionPayload(ids, command: "echo a")) as! [String: Any]
+    otherTool["tool_name"] = "Read"
+    await expectOperationalError("permission_request_invalid") {
+        _ = try await fixture.app.handle(type: "permission_request", payload: operationalData(otherTool))
+    }
+    var outside = ids
+    outside["cwd"] = "/tmp/blabee-not-enabled-anywhere"
+    let outsideIDs = outside
+    await expectOperationalError("permission_request_binding_invalid") {
+        _ = try await fixture.app.handle(type: "permission_request",
+            payload: operationalPermissionPayload(outsideIDs, command: "echo b"))
+    }
+    #expect(try await status() == nil)
+
+    // A new unknown key in an enabled project is reported.
+    var unknownKey = try JSONSerialization.jsonObject(with: operationalPermissionPayload(ids, command: "echo c")) as! [String: Any]
+    unknownKey["tool_hook_cwd"] = ids["cwd"]!
+    await expectOperationalError("permission_request_invalid") {
+        _ = try await fixture.app.handle(type: "permission_request", payload: operationalData(unknownKey))
+    }
+    #expect(try await status() as? String == "skipped")
+
+    _ = try await fixture.app.handle(type: "user_prompt_submit", payload: operationalData([
+        "session_id": ids["session_id"]!, "turn_id": "turn_after_skip", "cwd": ids["cwd"]!,
+        "prompt": "Next human prompt", "hook_event_name": "UserPromptSubmit",
+    ]))
+    #expect(try await status() == nil)
+
+    // An abandoned session's notice expires on its own.
+    let again = try operationalData(unknownKey)
+    await expectOperationalError("permission_request_invalid") {
+        _ = try await fixture.app.handle(type: "permission_request", payload: again)
+    }
+    #expect(try await status() as? String == "skipped")
+    fixture.cooldownClock.advance(seconds: 9 * 60)
+    #expect(try await status() as? String == "skipped")
+    fixture.cooldownClock.advance(seconds: 61)
+    #expect(try await status() == nil)
 }

@@ -102,8 +102,15 @@ enum CodexHookApprovalQualification {
     }
 
     static func currentCaller() -> CallerCodex {
-        caller(processID: getpid(), effectiveUserID: geteuid(),
-               processEvidence: runningProcessEvidence, signatureEvidence: runningSignatureEvidence)
+        currentAttestedCaller().caller
+    }
+
+    /// Also returns the kernel-reported path of the registered Codex that ran
+    /// this Hook (audit CDX-6: delivery prefers the session's own Codex). The
+    /// path is present only for `.qualified`.
+    static func currentAttestedCaller() -> (caller: CallerCodex, executablePath: String?) {
+        attestedCaller(processID: getpid(), effectiveUserID: geteuid(),
+                       processEvidence: runningProcessEvidence, signatureEvidence: runningSignatureEvidence)
     }
 
     /// Both readers are bounded local observations. There is deliberately no
@@ -126,9 +133,20 @@ enum CodexHookApprovalQualification {
         processEvidence: (Int32) -> ProcessEvidence?,
         signatureEvidence: (Int32, CodeRequirement) -> SignatureEvidence?
     ) -> CallerCodex {
+        attestedCaller(processID: processID, effectiveUserID: effectiveUserID,
+                       processEvidence: processEvidence, signatureEvidence: signatureEvidence).caller
+    }
+
+    static func attestedCaller(
+        processID: Int32,
+        effectiveUserID: UInt32,
+        processEvidence: (Int32) -> ProcessEvidence?,
+        signatureEvidence: (Int32, CodeRequirement) -> SignatureEvidence?
+    ) -> (caller: CallerCodex, executablePath: String?) {
+        let unknown: (caller: CallerCodex, executablePath: String?) = (.unknown, nil)
         guard let current = processEvidence(processID),
               current.isValid(processID: processID, effectiveUserID: effectiveUserID)
-        else { return .unknown }
+        else { return unknown }
 
         var chain = [current]
         var signatures: [(CodeRequirement, SignatureEvidence)] = []
@@ -143,7 +161,7 @@ enum CodexHookApprovalQualification {
                   let parent = processEvidence(parentID),
                   parent.isValid(processID: parentID, effectiveUserID: effectiveUserID),
                   parent.existedBefore(child)
-            else { return .unknown }
+            else { return unknown }
 
             var requirement: CodeRequirement
             switch parent.executablePath {
@@ -160,7 +178,7 @@ enum CodexHookApprovalQualification {
                 evidence = signatureEvidence(parentID, requirement)
             }
             guard let signature = evidence, requirement.accepts(signature)
-            else { return .unknown }
+            else { return unknown }
             chain.append(parent)
             signatures.append((requirement, signature))
             if requirement == .qualifiedCodex || requirement == .signedCodex {
@@ -170,7 +188,7 @@ enum CodexHookApprovalQualification {
                 break
             }
         }
-        guard signedCodexSeen else { return .unknown }
+        guard signedCodexSeen else { return unknown }
 
         // Fail closed on missing/reparented/recycled processes or exec changes
         // during qualification. Re-check the dynamic signature as well as the
@@ -180,12 +198,13 @@ enum CodexHookApprovalQualification {
             let (requirement, signature) = signatures[index - 1]
             guard processEvidence(process.processID) == process,
                   signatureEvidence(process.processID, requirement) == signature
-            else { return .unknown }
+            else { return unknown }
         }
         guard chain.allSatisfy({ processEvidence($0.processID) == $0 }) else {
-            return .unknown
+            return unknown
         }
-        return qualifiedRuntime.map(CallerCodex.qualified) ?? .unqualified
+        guard let qualifiedRuntime else { return (.unqualified, nil) }
+        return (.qualified(qualifiedRuntime), chain[chain.count - 1].executablePath)
     }
 
     private static func runningProcessEvidence(_ processID: Int32) -> ProcessEvidence? {

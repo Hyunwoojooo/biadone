@@ -1446,3 +1446,76 @@ struct CodexNativeRuntimeTests {
         #expect(probe.processInvocations.count == 1)
     }
 }
+
+@Suite("Codex session runtime hints (CDX-6)", .serialized)
+struct CodexSessionRuntimeHintTests {
+    @Test("Only absolute, canonical paths are kept")
+    func hintValidation() {
+        #expect(CodexSessionRuntimeHint(executablePath: nil, codexHome: nil) == nil)
+        #expect(CodexSessionRuntimeHint(executablePath: "codex", codexHome: "relative") == nil)
+        #expect(CodexSessionRuntimeHint(executablePath: "/a/../b/codex", codexHome: "/x/./y") == nil)
+        let hint = CodexSessionRuntimeHint(executablePath: "/opt/codex/bin/codex", codexHome: "bad\0")
+        #expect(hint?.executablePath == "/opt/codex/bin/codex")
+        #expect(hint?.codexHome == nil)
+    }
+
+    @Test("The store is bounded and keeps the newest sessions")
+    func storeIsBounded() throws {
+        let store = CodexSessionRuntimeHints()
+        let hint = try #require(CodexSessionRuntimeHint(executablePath: "/x/codex", codexHome: nil))
+        for index in 0...CodexSessionRuntimeHints.maximumSessions {
+            store.record(sessionID: "s\(index)", hint: hint)
+        }
+        #expect(store.hint(for: "s0") == nil)
+        #expect(store.hint(for: "s1") == hint)
+        #expect(store.hint(for: "s\(CodexSessionRuntimeHints.maximumSessions)") == hint)
+    }
+
+    @Test("A later report without an attested executable keeps the recorded one")
+    func storeMergesFields() throws {
+        let store = CodexSessionRuntimeHints()
+        store.record(sessionID: "s", hint: try #require(.init(executablePath: "/x/codex", codexHome: nil)))
+        store.record(sessionID: "s", hint: try #require(.init(executablePath: nil, codexHome: "/h")))
+        #expect(store.hint(for: "s") == CodexSessionRuntimeHint(executablePath: "/x/codex", codexHome: "/h"))
+        store.record(sessionID: "s", hint: try #require(.init(executablePath: "/y/codex", codexHome: nil)))
+        #expect(store.hint(for: "s") == CodexSessionRuntimeHint(executablePath: "/y/codex", codexHome: "/h"))
+    }
+
+    @Test("The session's own Codex is tried before the fixed list")
+    func preferredCandidateComesFirst() throws {
+        let environment = ["HOME": "/private/tmp/blabee-no-home", "PATH": "/does/not/exist"]
+        let hint = try #require(CodexSessionRuntimeHint(
+            executablePath: "/opt/session/bin/codex", codexHome: "/private/tmp/blabee-codex-home"))
+        let preferred = CodexNativeRuntime.live(environment: environment, session: hint).candidates()
+        let plain = CodexNativeRuntime.live(environment: environment).candidates()
+        #expect(preferred.first?.path == "/opt/session/bin/codex")
+        #expect(Array(preferred.dropFirst()) == plain)
+    }
+
+    @Test("Delivery builds the runtime for the request's session")
+    func dispatcherUsesRequestSession() async throws {
+        let fixture = try NativeRuntimeFixture(), probe = NativeRuntimeProbe()
+        let runtime = makeNativeRuntime(fixture: fixture, probe: probe,
+            processBehavior: { _, arguments, _ in
+                .init(exitCode: 0, stdout: Data((arguments == ["--version"]
+                    ? "codex-cli 0.153.4\n"
+                    : "Queued message sub-1 for thread session-hint.\n").utf8))
+            })
+        let sessions = SessionRecorder()
+        let dispatcher = CodexQueueNextTurnDispatcher(nativeRuntimeForSession: { sessionID in
+            sessions.append(sessionID)
+            return runtime
+        })
+        let receipt = try await dispatcher.dispatch(.init(
+            sessionID: "session-hint", message: "selected", continuationID: "c"))
+        #expect(receipt.queuedSubmissionID == "sub-1")
+        #expect(sessions.values == ["session-hint"])
+    }
+}
+
+private final class SessionRecorder: @unchecked Sendable {
+    private let lock = NSLock()
+    private var recorded: [String] = []
+    func append(_ value: String) { lock.lock(); recorded.append(value); lock.unlock() }
+    var values: [String] { lock.lock(); defer { lock.unlock() }; return recorded }
+}

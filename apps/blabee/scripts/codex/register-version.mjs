@@ -3,7 +3,7 @@
 // (audit CDX-7/CDX-14, 2026-11-13). It replaces hand-editing ~21 files.
 //
 //   npm run codex:register -- --version 0.167.1 --download [--check-notarization]
-//   npm run codex:register -- --version 0.167.1 --archive /path/codex-package-aarch64-apple-darwin.tar.gz
+//   npm run codex:register -- --version 0.167.1 --archive /path/codex-package-aarch64-apple-darwin.tar.gz [--hook-schema <file>]
 //
 // Steps: fetch (or take) the official arm64 package, check its SHA-256 and
 // size against GitHub's asset metadata, extract it into a new empty folder,
@@ -47,6 +47,7 @@ export function parseArguments(argv) {
     else if (argument === '--check-notarization') options.checkNotarization = true;
     else if (argument === '--replace') options.replace = true;
     else if (argument === '--dry-run') options.dryRun = true;
+    else if (argument === '--hook-schema') options.hookSchema = resolve(value());
     else throw new Error(`unknown argument ${argument}`);
   }
   if (!/^\d+\.\d+\.\d+$/.test(options.version ?? '')) throw new Error('--version must be an exact stable version, e.g. 0.167.1');
@@ -75,6 +76,41 @@ export function buildRecord({ version, capabilities, probe, codesign, archive, n
         + `${notarization ? ', every native file notarized (paced online lookup)' : ''}${probe.exec_server ? `, declares ${probe.exec_server}` : ''}.`,
     ],
   }, `${version}.json`);
+}
+
+/** Top-level PermissionRequest keys the coordinator accepts
+ * (`permissionRequest` in app/coordination/CoordinatorOperationalApplication.swift,
+ * minus Blabee's own qualification marker). Any other key makes the Pet card
+ * skip, so a release that changes the official schema must not be registered
+ * silently (audit CDX-5). Codex-qualification-data.test.mjs keeps this list and
+ * the Swift source in step. */
+export const PERMISSION_REQUEST_KEYS = ['agent_id', 'agent_type', 'cwd', 'hook_event_name', 'model', 'permission_mode',
+  'session_id', 'tool_input', 'tool_name', 'transcript_path', 'turn_id'];
+const PERMISSION_REQUEST_REQUIRED = ['cwd', 'hook_event_name', 'permission_mode', 'session_id', 'tool_input', 'tool_name', 'turn_id'];
+export const PERMISSION_REQUEST_SCHEMA_PATH = 'codex-rs/hooks/schema/generated/permission-request.command.input.schema.json';
+
+/** The official input schema must allow exactly the keys Blabee accepts, no others. */
+export function checkPermissionRequestSchema(schema) {
+  const properties = Object.keys(schema?.properties ?? {}).sort();
+  const problems = [];
+  if (schema?.additionalProperties !== false) problems.push('additionalProperties is not false');
+  const added = properties.filter(key => !PERMISSION_REQUEST_KEYS.includes(key));
+  const removed = PERMISSION_REQUEST_KEYS.filter(key => !properties.includes(key));
+  if (added.length) problems.push(`new keys: ${added.join(', ')}`);
+  if (removed.length) problems.push(`removed keys: ${removed.join(', ')}`);
+  const missingRequired = PERMISSION_REQUEST_REQUIRED.filter(key => !(schema?.required ?? []).includes(key));
+  if (missingRequired.length) problems.push(`no longer required: ${missingRequired.join(', ')}`);
+  if (problems.length) throw new Error(`PermissionRequest Hook schema changed (${problems.join('; ')}). `
+    + 'Update permissionRequest in CoordinatorOperationalApplication.swift and PERMISSION_REQUEST_KEYS after review.');
+}
+
+async function permissionRequestSchema(options) {
+  if (options.hookSchema) return { schema: JSON.parse(await readFile(options.hookSchema, 'utf8')), source: 'local-file' };
+  if (!options.download) return null;
+  const url = `https://raw.githubusercontent.com/openai/codex/rust-v${options.version}/${PERMISSION_REQUEST_SCHEMA_PATH}`;
+  const response = await fetch(url, { headers: { 'User-Agent': 'blabee-codex-register' } });
+  if (!response.ok) throw new Error(`${url}: HTTP ${response.status}`);
+  return { schema: await response.json(), source: 'github-tag' };
 }
 
 async function sha256File(path) {
@@ -157,6 +193,10 @@ export async function register(options) {
   // record being replaced, so a restricted record cannot narrow the next one.
   const latest = existing.filter(r => r.version !== options.version && r.catalog).at(-1);
   const capabilities = options.capabilities ?? latest.capabilities;
+  // Source contract first: cheaper than downloading and measuring a package.
+  const hookSchema = await permissionRequestSchema(options);
+  if (hookSchema) checkPermissionRequestSchema(hookSchema.schema);
+  else console.warn('PermissionRequest schema not checked (use --download or --hook-schema <file>).');
   const work = await mkdtemp(join(tmpdir(), `blabee-codex-register-${options.version}-`));
   const downloads = join(work, 'download'), extracted = join(work, 'package');
   await mkdir(downloads); await mkdir(extracted);
@@ -186,7 +226,8 @@ export async function register(options) {
     bin_codex: { cdhash: codesign.cdhash, team: codesign.team, sha256: probe.file_digests['bin/codex'] },
     exec_server: probe.exec_server, file_count: Object.keys(probe.file_digests).length,
     fingerprint: probe.fingerprint, notarization_checked: notarization,
-    notarized_native_files: notarizedFiles ? Object.keys(notarizedFiles).length : null };
+    notarized_native_files: notarizedFiles ? Object.keys(notarizedFiles).length : null,
+    permission_request_schema: hookSchema ? { source: hookSchema.source, keys: PERMISSION_REQUEST_KEYS } : null };
   if (options.dryRun) { console.log(JSON.stringify({ record, evidence }, null, 2)); return { record, evidence }; }
   await writeFile(join(QUALIFICATION_DIRECTORY, `${options.version}.json`), JSON.stringify(record, null, 2) + '\n');
   await mkdir(join(root, 'docs/features/codex-evidence'), { recursive: true });

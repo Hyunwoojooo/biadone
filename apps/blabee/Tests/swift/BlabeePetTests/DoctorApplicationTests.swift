@@ -18,7 +18,7 @@ private final class DoctorFakeProcesses {
     var versionOutput = "codex-cli 0.148.0\n"
     var pluginInstalled: Any = true
     var pluginEnabled: Any = true
-    var pluginVersion = "0.1.3"
+    var pluginVersion = "0.1.4"
     var pluginSourceKind = "local"
     var pluginPresent = true
     var duplicatePlugin = false
@@ -412,7 +412,6 @@ private final class DoctorFixture {
                         "command": DoctorApplication.expectedHookCommand(event: "SessionStart"),
                         "timeout": 8,
                         "statusMessage": "Blabee 프로젝트 연결 확인 중",
-                        "additionalContextLimit": 600,
                     ]],
                 ]],
                 "UserPromptSubmit": [[
@@ -433,6 +432,7 @@ private final class DoctorFixture {
                     ]],
                 ]],
                 "PermissionRequest": [[
+                    "matcher": "Bash",
                     "hooks": [[
                         "type": "command",
                         "command": DoctorApplication.expectedHookCommand(event: "PermissionRequest"),
@@ -1067,7 +1067,7 @@ func doctorPluginExactContractRejectsDrift() throws {
     #expect(try doctorCheck(execution, id: "plugin_layout").code == "plugin_layout_invalid")
 }
 
-@Test("Doctor Hook contract matches the bundled version 0.1.3 Plugin")
+@Test("Doctor Hook contract matches the bundled version 0.1.4 Plugin")
 func doctorHookContractMatchesBundledPlugin() throws {
     let data = try Data(contentsOf: doctorBundledPluginRoot()
         .appendingPathComponent("hooks/hooks.json"))
@@ -1086,7 +1086,7 @@ func doctorHookContractMatchesBundledPlugin() throws {
     }
 }
 
-@Test("Doctor launcher digest matches the bundled version 0.1.3 contract")
+@Test("Doctor launcher digest matches the bundled version 0.1.4 contract")
 func doctorLauncherDigestMatchesBundledContract() throws {
     let launcher = doctorBundledPluginRoot().appendingPathComponent("scripts/blabee-launcher")
     let digest = SHA256.hash(data: try Data(contentsOf: launcher))
@@ -1095,7 +1095,7 @@ func doctorLauncherDigestMatchesBundledContract() throws {
     #expect(digest == DoctorApplication.launcherSHA256)
 }
 
-@Test("Doctor manifest digest matches the bundled version 0.1.3 bytes")
+@Test("Doctor manifest digest matches the bundled version 0.1.4 bytes")
 func doctorManifestDigestMatchesBundledContract() throws {
     let manifest = doctorBundledPluginRoot().appendingPathComponent(".codex-plugin/plugin.json")
     let data = try Data(contentsOf: manifest)
@@ -1161,7 +1161,7 @@ func doctorPluginSkillPayloadFailsClosed() throws {
     #expect(try doctorCheck(execution, id: "plugin_layout").code == "plugin_layout_invalid")
 }
 
-@Test("Doctor skill digests match the bundled version 0.1.3 files")
+@Test("Doctor skill digests match the bundled version 0.1.4 files")
 func doctorSkillDigestsMatchBundledContract() throws {
     let bundledPlugin = doctorBundledPluginRoot()
     let cases = [

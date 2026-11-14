@@ -150,3 +150,14 @@
 - **19번(DB-4, DB-11).** 같은 migration의 `delete_my_blabee_usage()`와 설정의 "서버의 내 사용 통계 삭제" 버튼. 동의 문구를 실제 동작(직접 삭제, 계정 삭제는 피드백 요청)에 맞췄다. 오류 진단 문구도 같은 방식으로 고쳤다. 온보딩이 끝나지 않았으면 사용 통계 전송도 끈다.
 - **21번(CLD-8).** 선택 안내가 든 프롬프트가 검증된 형식과 다르면 Hook이 `claude_rewake_format_changed` systemMessage로 알린다. 선택은 계속 폐기(fail closed). 2.1.323 실제 확인은 사람이 카드 1회 클릭으로 해야 한다.
 - **25번(REPO-9).** README를 r91로 갱신했다. `finalize`가 `scripts/release/update-readme.mjs`로 README 빌드 번호를 바꾼다.
+
+## 2순위 22·23번 (2026-11-14 구현)
+
+- **23번(CDX-6) 세션의 `codex`로 전달.** Hook은 SessionStart·UserPromptSubmit마다 자기를 실행한 Codex의 서명·CDHash를 확인한다. 등록된 Codex면 그 실행 파일 경로를 coordinator에 넘기고, Hook 환경의 `CODEX_HOME`도 함께 넘긴다. 서비스는 세션별로 메모리에만 기록한다(최대 1,024개).
+  `codex queue`는 그 경로를 먼저 시도하고 `CODEX_HOME`을 넘긴다. 경로도 다른 후보와 같은 검증(경로 안전성·OpenAI 서명·공증·버전·실패 기록)을 거친다. 일반 검증에서 거부되면 기존 고정 목록으로 넘어가고, 시간 초과·실행 중 오류는 기존 규칙대로 바로 실패한다. `CODEX_HOME`은 확인하지 않은 설정값이다(wrapper 실행도 필요하므로). 나중 보고에 실행 파일이 없으면 기록된 경로를 유지한다. 서비스를 다시 시작하면 다음 프롬프트까지는 기존 목록을 쓴다.
+  세션 전에 쓰는 Plugin 설치·Doctor 후보 목록에 `~/.bun/bin`, `~/Library/pnpm`, mise·asdf의 Node 설치 경로를 더했다. 두 도구의 shim은 계속 거부한다.
+- **22번(CDX-5, CDX-8) 승인 카드.**
+  - 명령 폴더가 세션의 마지막 프롬프트 폴더와 달라도 같은 활성 프로젝트 안이면 카드를 띄운다(사용자 승인 2026-11-14). 카드에는 실제 명령 폴더를 보여 준다. 세션·turn 일치와 호출 Codex 서명 확인은 그대로다. 프로젝트 밖이나 중첩된 다른 활성 프로젝트는 Codex에 맡긴다.
+  - 활성 프로젝트의 Bash 승인이 형식·세션 불일치로 카드가 되지 못하면 Pet에 "Codex 창에서 승인 여부를 선택해 주세요"를 띄운다(스냅샷 `permission_card_status: "skipped"`). 그 세션의 다음 사람 프롬프트나 다음 카드가 뜨면, 아니면 10분 뒤 사라진다. 프롬프트마다 Hook의 호출 Codex 확인을 한 번 더 하게 됐다(지연 미측정).
+  - `codex:register`는 해당 태그의 공식 PermissionRequest 입력 schema를 받아 coordinator가 받는 키 목록과 비교한다. 다르면 등록을 멈춘다. Node 테스트가 이 목록과 Swift 검증 코드의 일치를 확인한다.
+  - Plugin 0.1.4: SessionStart의 `additionalContextLimit: 600`(토큰 기준이라 약 810토큰 안내가 잘렸다)을 없애 Codex 기본값 2,500토큰을 쓴다. PermissionRequest에 `matcher: "Bash"`를 더해 다른 도구 승인에는 Hook을 실행하지 않는다. Hook 정의가 바뀌었으므로 업데이트 뒤 Codex가 Hook 검토를 다시 요청한다(기존 `installedNeedsHookReview` 흐름).

@@ -177,6 +177,7 @@ let blabeeCoordinatorSources: [String] = [
     "bridges/claude/swift/session/ClaudeSessionRegistry.swift",
     "bridges/codex/swift/approval/CodexAppServerApprovalAdapter.swift",
     "bridges/codex/swift/delivery/CodexQueueNextTurnDispatcher.swift",
+    "bridges/codex/swift/delivery/CodexSessionRuntimeHints.swift",
     "bridges/codex/swift/hooks/CodexHookApprovalQualification.swift",
     "bridges/codex/swift/hooks/DoctorHookTrustInspector.swift",
     "bridges/codex/swift/hooks/HookPermissionDiagnostics.swift",

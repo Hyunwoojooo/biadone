@@ -1763,7 +1763,7 @@ func codexPluginSetupUpdatesWithoutDestructivePreRemoval() async throws {
     ])
 }
 
-@Test("Bundled language policy revision updates the prior 0.1.2 Plugin cache", .petLanguage(.korean))
+@Test("Bundled Hook contract revision updates the prior 0.1.3 Plugin cache", .petLanguage(.korean))
 func codexPluginSetupUpdatesPriorLanguagePolicyVersion() async throws {
     let fixture = try CodexPluginSetupFixture()
     let sourceManifest = URL(fileURLWithPath: #filePath)
@@ -1774,16 +1774,16 @@ func codexPluginSetupUpdatesPriorLanguagePolicyVersion() async throws {
     let manifestObject = try JSONSerialization.jsonObject(with: manifestData)
     let manifest = try #require(manifestObject as? [String: Any])
     let bundledVersion = try #require(manifest["version"] as? String)
-    #expect(bundledVersion == "0.1.3")
+    #expect(bundledVersion == "0.1.4")
     try manifestData.write(
         to: fixture.pluginRoot.appendingPathComponent(".codex-plugin/plugin.json")
     )
     fixture.fake.bundledVersion = bundledVersion
-    fixture.fake.installOwned(version: "0.1.2", enabled: true)
+    fixture.fake.installOwned(version: "0.1.3", enabled: true)
     let manager = fixture.manager()
 
     #expect(await manager.inspect() == .updateAvailable(
-        installedVersion: "0.1.2",
+        installedVersion: "0.1.3",
         bundledVersion: bundledVersion
     ))
     #expect(pluginSetupMutationArguments(fixture).isEmpty)
@@ -2279,6 +2279,44 @@ func codexPluginSetupSortsNVMVersionsNumerically() throws {
     ], fixedCandidates: [])
     let nvmCandidates = candidates.filter { $0.path.contains("/.nvm/versions/node/") }
     #expect(nvmCandidates.map(\.path) == [v22Executable.path, v9Executable.path])
+}
+
+@Test("Codex discovery includes bun, pnpm, mise and asdf installs but not their shims", .petLanguage(.korean))
+func codexPluginSetupListsPackageManagerInstalls() throws {
+    let root = FileManager.default.temporaryDirectory
+        .appendingPathComponent("blabee-plugin-pm-\(UUID().uuidString)", isDirectory: true)
+    let paths = [
+        ".local/share/mise/installs/node/20.11.1/bin/codex",
+        ".local/share/mise/installs/node/22.3.0/bin/codex",
+        ".asdf/installs/nodejs/21.0.0/bin/codex",
+    ]
+    for path in paths {
+        let url = root.appendingPathComponent(path, isDirectory: false)
+        try FileManager.default.createDirectory(
+            at: url.deletingLastPathComponent(), withIntermediateDirectories: true
+        )
+        try Data("#!/bin/sh\nexit 0\n".utf8).write(to: url)
+    }
+    // Alias links such as `22` or `lts` are not versions and are skipped.
+    try FileManager.default.createDirectory(
+        at: root.appendingPathComponent(".local/share/mise/installs/node/lts/bin"),
+        withIntermediateDirectories: true
+    )
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    let candidates = CodexPluginSetupExecutableResolver.candidateURLs(environment: [
+        "HOME": root.path, "PATH": "/does/not/exist",
+    ], fixedCandidates: []).map(\.path)
+    let home = root.standardizedFileURL.path
+    #expect(candidates.contains(home + "/.bun/bin/codex"))
+    #expect(candidates.contains(home + "/Library/pnpm/codex"))
+    let mise = candidates.filter { $0.contains("/mise/installs/") }
+    #expect(mise == [
+        home + "/.local/share/mise/installs/node/22.3.0/bin/codex",
+        home + "/.local/share/mise/installs/node/20.11.1/bin/codex",
+    ])
+    #expect(candidates.contains(home + "/.asdf/installs/nodejs/21.0.0/bin/codex"))
+    #expect(!candidates.contains { $0.contains("/shims/") || $0.contains("/lts/") })
 }
 
 @Test("Unsupported preferred Codex candidate falls through to supported candidate", .petLanguage(.korean))

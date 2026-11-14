@@ -2181,6 +2181,16 @@ struct PetCodexRuntimeNoticeTests {
         #expect(throws: (any Error).self) { try PetSnapshot.parse(petTestData(object)) }
     }
 
+    @Test("A skipped Codex approval card is an optional, exact snapshot flag (CDX-5)")
+    func permissionCardSkippedFlag() throws {
+        var object = petTestSnapshotObject(cards: [])
+        #expect(try PetSnapshot.parse(petTestData(object)).permissionCardSkipped == false)
+        object["permission_card_status"] = "skipped"
+        #expect(try PetSnapshot.parse(petTestData(object)).permissionCardSkipped)
+        object["permission_card_status"] = "shown"
+        #expect(throws: (any Error).self) { try PetSnapshot.parse(petTestData(object)) }
+    }
+
     @Test("An unsupported Codex version points to an update, not to another recheck")
     func deliveryNotice() throws {
         let identity = try PetSnapshot.parse(petTestSnapshotData(cards: [PetTestCard(suffix: "notice")]))
