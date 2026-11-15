@@ -161,3 +161,12 @@
   - 활성 프로젝트의 Bash 승인이 형식·세션 불일치로 카드가 되지 못하면 Pet에 "Codex 창에서 승인 여부를 선택해 주세요"를 띄운다(스냅샷 `permission_card_status: "skipped"`). 그 세션의 다음 사람 프롬프트나 다음 카드가 뜨면, 아니면 10분 뒤 사라진다. 프롬프트마다 Hook의 호출 Codex 확인을 한 번 더 하게 됐다(지연 미측정).
   - `codex:register`는 해당 태그의 공식 PermissionRequest 입력 schema를 받아 coordinator가 받는 키 목록과 비교한다. 다르면 등록을 멈춘다. Node 테스트가 이 목록과 Swift 검증 코드의 일치를 확인한다.
   - Plugin 0.1.4: SessionStart의 `additionalContextLimit: 600`(토큰 기준이라 약 810토큰 안내가 잘렸다)을 없애 Codex 기본값 2,500토큰을 쓴다. PermissionRequest에 `matcher: "Bash"`를 더해 다른 도구 승인에는 Hook을 실행하지 않는다. Hook 정의가 바뀌었으므로 업데이트 뒤 Codex가 Hook 검토를 다시 요청한다(기존 `installedNeedsHookReview` 흐름).
+
+## 2순위 20번 (2026-11-14 구현)
+
+- **CLD-6 선택 시간.** 제안 저장(`emit_decision_v1` 성공)이 readiness를 5분이 아니라 그 카드의 만료(10분)까지 갱신한다. 그래서 5~10분 사이 클릭도 받는다.
+  선택에는 여전히 살아 있는 연결 heartbeat(5초)와 Stop waiter가 필요하므로, 끝난 세션은 늦은 클릭을 받지 않는다. `check_connection` ACK의 5분은 그대로다.
+- **CLD-7 proposal_id 재사용.** 재생 방지를 위해 거절된 emit도 proposal_id를 소모하는 규칙은 유지한다(활성화가 이미 일어났을 수 있음). 대신 `emit_decision_v1` 설명에 "호출마다 새 UUID, 거절 뒤 재제출도 새 값"을 적었다.
+- **CLD-5 같은 prompt_id 재관측.** Claude Code가 작업 알림 같은 턴에 기존 prompt_id를 다시 쓰면, 지금까지는 boundary를 폐기하고 Hook이 실패했다.
+  이제 미claim 카드를 내리고(claim한 보고는 보존) `new_prompt_required`로 답한다. Hook은 "boundary 없음" 한 줄을 넣고 정상 종료한다.
+  재사용된 id에는 새 boundary를 주지 않는다(fail closed). 다음 실제 프롬프트부터 다시 제안할 수 있다.

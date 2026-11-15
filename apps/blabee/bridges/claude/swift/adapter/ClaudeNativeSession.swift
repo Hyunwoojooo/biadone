@@ -459,12 +459,14 @@ public final class ClaudeNativeSession: @unchecked Sendable {
             if ["proposal.emit", "selection.claim"].contains(checked.operation) {
                 _ = try productAccessCheck()
             }
-            try admitProductReplay(inner, operation: checked.operation)
+            let promptRetired = try admitProductReplay(inner, operation: checked.operation)
             let instant = now()
             if !["bridge.poll", "hook.poll", "hook.cancel"].contains(checked.operation) {
                 try expireObservations(at: instant)
             }
-            let result = try dispatch(checked.operation, request: inner, at: instant)
+            // A reused native prompt id never gets new authority; it is answered
+            // as "no boundary" instead of failing the Hook (audit CLD-5).
+            let result = promptRetired ? hookResult() : try dispatch(checked.operation, request: inner, at: instant)
             ended = checked.operation == "hook" && payload["event"] as? String == "SessionEnd"
             let projected = try projectProductResult(result, operation: checked.operation, payload: payload)
             try assertPublic(projected, includeReferences: !["readiness.begin", "hook.poll"].contains(checked.operation))
@@ -687,7 +689,12 @@ public final class ClaudeNativeSession: @unchecked Sendable {
         }
     }
 
-    private func admitProductReplay(_ request: [String: Any], operation: String) throws {
+    /// Returns true when a UserPromptSubmit reused an already observed native
+    /// prompt id (Claude Code reuses it for task notifications and similar
+    /// injected turns). The current unclaimed card is retired and no new
+    /// boundary is created; claimed reports are preserved (audit CLD-5).
+    @discardableResult
+    private func admitProductReplay(_ request: [String: Any], operation: String) throws -> Bool {
         if operation == "proposal.emit" {
             guard let proposal = request["proposal"] as? [String: Any], let id = proposal["proposal_id"] as? String else {
                 throw Self.error("invalid_request")
@@ -700,21 +707,26 @@ public final class ClaudeNativeSession: @unchecked Sendable {
                     guard request["prompt_sha256"] as? String == current.value.digest else {
                         // An authenticated conflicting observation cannot leave
                         // the earlier card selectable. Preserve claimed reports,
-                        // but retire the uncertain current input before refusing.
+                        // but retire the uncertain current input.
                         try retireUnusableObservation()
-                        throw Self.error("prompt_replay")
+                        return true
                     }
                     if !productObservationRetirementPending,
                        !(heartbeat != nil && !isConnected(at: now())),
                        latestPromptID == id,
-                       promptReferenceIsActive(current.value, promptID: id) { return }
+                       promptReferenceIsActive(current.value, promptID: id) { return false }
                 }
-                try consumeReplay(.prompt, id: id, request: request)
+                do { try consumeReplay(.prompt, id: id, request: request) }
+                catch let error as CoordinatorError where error.code == "claude_metadata_replay" {
+                    try retireUnusableObservation()
+                    return true
+                }
             } else if event == "Stop" || event == "StopFailure"
                 || (event == "SessionStart" && request["source"] as? String == "compact") {
                 try consumeReplay(.hookRequest, id: try Self.uuid(request, "request_id"), request: request)
             }
         }
+        return false
     }
 
     private func promptReferenceIsActive(_ prompt: Prompt, promptID: String) -> Bool {
@@ -1193,24 +1205,27 @@ public final class ClaudeNativeSession: @unchecked Sendable {
         value.card = Card(accessGeneration: accessGeneration, interactionID: interactionID, packetID: packetID, revision: revision,
                           optionIDs: optionIDs, expiresNanoseconds: cardDeadline)
         boundary = value
-        try refreshReadinessAfterEmit(at: instant)
+        try refreshReadinessAfterEmit(at: instant, cardDeadline: cardDeadline)
         return ["packet_id": packetID, "revision": revision]
     }
 
     /// A stored proposal for the latest Hook boundary is a model round trip
     /// through this bridge, at least as strong as a model-initiated
     /// check_connection ACK (whose nonce also returns over MCP). It refreshes
-    /// readiness for the same 5-minute lifetime so the model need not probe
-    /// before every proposal. Never moves an existing expiry earlier (every
+    /// readiness until the new card expires (audit CLD-6: the card lives 10
+    /// minutes, and a 5-minute readiness rejected clicks in the second half).
+    /// Selection still needs a live connection heartbeat and Stop waiter, so a
+    /// dead session cannot accept a late click. Never moves an existing expiry earlier (every
     /// readiness lasts at most one lifetime, so this only matters for an ACK
     /// at the same instant), never extends card TTL, and leaves an open
     /// Pet/startup Channel probe untouched. Applies to both the product and
     /// the legacy handle() path; a later model-initiated readiness.begin
     /// still replaces it until that probe's nonce is acknowledged.
-    private func refreshReadinessAfterEmit(at instant: Date) throws {
+    private func refreshReadinessAfterEmit(at instant: Date, cardDeadline: UInt64?) throws {
         guard isConnected(at: instant), !productObservationRetirementPending else { return }
-        let expires = instant.addingTimeInterval(Self.readinessLifetime)
-        let expiresNanoseconds = try productDeadline(after: 300_000_000_000)
+        let cardLifetime = CoordinatorRoutingApplication.expiryAfterNanoseconds
+        let expires = instant.addingTimeInterval(TimeInterval(cardLifetime / 1_000_000_000))
+        let expiresNanoseconds = try cardDeadline ?? productDeadline(after: cardLifetime)
         if isReady(at: instant), let current = readyUntil {
             let longer = productClock == nil ? current >= expires
                 : (readyUntilNanoseconds ?? 0) >= (expiresNanoseconds ?? .max)

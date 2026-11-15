@@ -22,6 +22,14 @@ private func lifecycleStop(_ f: ProductAuthorityFixture, background: [String]? =
     try f.hook("Stop", fields)
 }
 
+/// Audit CLD-5: a reused native prompt id is answered without a boundary
+/// (fail closed) instead of failing the Hook.
+private func lifecycleReusedPrompt(_ body: () throws -> [String: Any]) throws {
+    let result = try body()
+    #expect(result["observation_status"] as? String == "new_prompt_required")
+    #expect(result["boundary_id"] is NSNull)
+}
+
 private func lifecycleRenew(_ f: ProductAuthorityFixture, sequence: inout UInt64, next: inout UInt64) throws {
     if f.clock.nowNanoseconds() >= next {
         sequence += 1
@@ -32,6 +40,63 @@ private func lifecycleRenew(_ f: ProductAuthorityFixture, sequence: inout UInt64
 
 @Suite("Product native lifecycle")
 struct ProductLifecycleTests {
+    @Test("A card can be selected for its whole 10-minute life, not only the first 5 minutes (CLD-6)")
+    func selectionLastsAsLongAsTheCard() throws {
+        let f = try ProductAuthorityFixture()
+        try f.prepare()
+        var sequence: UInt64 = 0, next: UInt64 = 300_000_000_000
+        for _ in 0..<100 {   // 400 seconds with a live bridge and Stop waiter
+            f.clock.advance(4)
+            try lifecycleRenew(f, sequence: &sequence, next: &next)
+            _ = try f.poll()
+            #expect(try f.waiterRequest("hook.poll")["status"] as? String == "waiting")
+        }
+        let snapshot = try f.snapshot()
+        #expect(snapshot["ready"] as? Bool == true)
+        #expect((snapshot["cards"] as? [[String: Any]])?.count == 1)
+        try f.select()
+        let delivered = try f.waiterRequest("hook.poll")
+        #expect(delivered["status"] as? String == "delivered")
+    }
+
+    @Test("Readiness after a proposal still ends with the card (CLD-6)")
+    func selectionEndsWithTheCard() throws {
+        let f = try ProductAuthorityFixture()
+        try f.prepare()
+        var sequence: UInt64 = 0, next: UInt64 = 300_000_000_000
+        for _ in 0..<151 {   // 604 seconds
+            f.clock.advance(4)
+            try lifecycleRenew(f, sequence: &sequence, next: &next)
+            _ = try f.poll()
+        }
+        let snapshot = try f.snapshot()
+        #expect(snapshot["ready"] as? Bool == false)
+        #expect(snapshot["selection_enabled"] as? Bool == false)
+        productRejected { try f.select() }
+    }
+
+    @Test("A reused native prompt id retires the card without failing the Hook (CLD-5)")
+    func reusedPromptIDAnswersWithoutBoundary() throws {
+        let f = try ProductAuthorityFixture()
+        try f.startup(); try f.prompt(); try f.open(); try f.ready(); try f.emit()
+        #expect((try f.snapshot()["cards"] as? [[String: Any]])?.count == 1)
+        let reused = try f.hook("UserPromptSubmit", ["prompt_id": f.promptID!,
+            "prompt_sha256": productDigest("A task notification that reuses the prompt id.")])
+        #expect(reused["observation_status"] as? String == "new_prompt_required")
+        #expect(reused["boundary_id"] is NSNull)
+        #expect((try f.snapshot()["cards"] as? [[String: Any]])?.isEmpty == true)
+        // A third sighting of the same id is also answered quietly, with no authority.
+        let again = try f.hook("UserPromptSubmit", ["prompt_id": f.promptID!,
+            "prompt_sha256": productDigest("Prepare fixture choices.")])
+        #expect(again["observation_status"] as? String == "new_prompt_required")
+        #expect(again["boundary_id"] is NSNull)
+        // The next real prompt gets a fresh boundary and can propose again.
+        try f.prompt()
+        #expect(f.boundaryID != nil)
+        try f.emit()
+        #expect((try f.snapshot()["cards"] as? [[String: Any]])?.count == 1)
+    }
+
     @Test("Automatic and Pet probes expose the same nonce only through the authenticated MCP check")
     func automaticProbeIsRetrievedDirectly() throws {
         let f = try ProductAuthorityFixture()
@@ -70,6 +135,9 @@ struct ProductLifecycleTests {
         #expect(check["probe_id"] as? String == pending["probe_id"] as? String)
         #expect(check["nonce"] is String)
         #expect(try f.snapshot()["selection_enabled"] as? Bool == true)
+        // The proposal's readiness lasts until its card expires (CLD-6).
+        for _ in 0..<75 { f.clock.advance(4); _ = try f.poll(); _ = try f.waiterRequest("hook.poll") }
+        #expect(try f.snapshot()["ready"] as? Bool == true)
         for _ in 0..<75 { f.clock.advance(4); _ = try f.poll(); _ = try f.waiterRequest("hook.poll") }
         #expect(try f.snapshot()["ready"] as? Bool == false)
         #expect(try f.snapshot()["selection_enabled"] as? Bool == false)
@@ -380,9 +448,9 @@ struct ProductLifecycleTests {
         let retained = f.native.productRetainedStateCounts()
         #expect(retained.prompts == 1 && retained.selections == 0 && retained.references == 0 && retained.claims == 0)
         #expect(f.replay.count == 1_000)
-        productWireRejected("binding_mismatch") { try f.call(first) }
+        try lifecycleReusedPrompt { try f.call(first) }
         let repackaged = try lifecycleHook(f, "UserPromptSubmit", ["prompt_id": firstID, "prompt_sha256": productDigest("First")])
-        productWireRejected("binding_mismatch") { try f.call(repackaged) }
+        try lifecycleReusedPrompt { try f.call(repackaged) }
         let currentID = f.promptID!
         let replayCount = f.replay.count
         try f.hook("UserPromptSubmit", ["prompt_id": currentID, "prompt_sha256": productDigest("Prepare fixture choices.")])
@@ -406,7 +474,7 @@ struct ProductLifecycleTests {
         try f.hook("UserPromptSubmit", ["prompt_id": promptID,
             "prompt_sha256": productDigest("Prepare fixture choices.")])
         #expect(try f.snapshot()["selection_enabled"] as? Bool == true)
-        productWireRejected("binding_mismatch") {
+        try lifecycleReusedPrompt {
             try f.hook("UserPromptSubmit", ["prompt_id": promptID,
                 "prompt_sha256": productDigest("Different current input.")])
         }
@@ -437,7 +505,7 @@ struct ProductLifecycleTests {
         #expect(initialHook["boundary_id"] is String)
         // Claude can absorb busy input under the current native prompt ID.
         // The conflicting text still invalidates that observation and probe.
-        productWireRejected("binding_mismatch") {
+        try lifecycleReusedPrompt {
             try f.hook("UserPromptSubmit", ["prompt_id": retiredPromptID,
                 "prompt_sha256": productDigest("Check the Blabee connection.")])
         }
@@ -496,7 +564,7 @@ struct ProductLifecycleTests {
         let oldBoundaryID = try #require(f.boundaryID)
         let retiredPromptID = try #require(f.promptID)
         let authority = f.authority.snapshot()
-        productWireRejected("binding_mismatch") {
+        try lifecycleReusedPrompt {
             try f.hook("UserPromptSubmit", ["prompt_id": retiredPromptID,
                 "prompt_sha256": productDigest("Changed current input.")])
         }
@@ -530,7 +598,7 @@ struct ProductLifecycleTests {
         try f.prepare()
         let promptID = try #require(f.promptID)
         if variant != "current_task" {
-            productWireRejected("binding_mismatch") {
+            try lifecycleReusedPrompt {
                 try f.hook("UserPromptSubmit", ["prompt_id": promptID,
                     "prompt_sha256": productDigest("Conflicting native input.")])
             }

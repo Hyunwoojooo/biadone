@@ -208,22 +208,20 @@ struct ClaudePetTransportTests {
         #expect(alive.providerStatus?.bridgeConnected == true && alive.providerStatus?.ready == false)
     }
 
-    @Test("Emit-granted readiness lasts the same 5 minutes as an ACK and never extends the card")
+    @Test("Emit-granted readiness lasts until its card expires and never extends the card (CLD-6)")
     func emitReadinessLifetime() async throws {
         let f = try ClaudePetFixture()
         try f.prompt(); try f.open(); try f.emit(); try f.stop()
         let request = try claudePetSelection(try await f.snapshot())
+        for _ in 0..<76 { f.clock.advance(4); _ = try f.poll() }
+        let pastFive = try await f.snapshot()
+        #expect(pastFive.providerStatus?.ready == true && pastFive.routing.selectionEnabled)
+        #expect(pastFive.interactions.count == 1 && pastFive.interactions[0].millisecondsUntilExpiry == 296_000)
         for _ in 0..<74 { f.clock.advance(4); _ = try f.poll() }
-        let live = try await f.snapshot()
-        #expect(live.providerStatus?.ready == true && live.routing.selectionEnabled)
-        f.clock.advance(4); _ = try f.poll()
         let expired = try await f.snapshot()
         #expect(expired.providerStatus?.bridgeConnected == true && expired.providerStatus?.ready == false)
-        #expect(expired.interactions.count == 1 && expired.interactions[0].millisecondsUntilExpiry == 300_000)
         #expect(!expired.routing.selectionEnabled)
         await claudePetExpectRejected { _ = try await f.transport.request(type: "select", payload: request.data()) }
-        try f.ready()
-        #expect(try await f.snapshot().routing.selectionEnabled)
     }
 
     @Test("A rejected emit grants no readiness")
@@ -281,19 +279,15 @@ struct ClaudePetTransportTests {
         #expect(try f.poll() == nil)
     }
 
-    @Test("A valid heartbeat cannot extend the readiness ACK lifetime")
+    @Test("A valid heartbeat cannot extend readiness past the card")
     func readinessLeaseExpiry() async throws {
         let f = try ClaudePetFixture(); try f.prepare()
         let request = try claudePetSelection(try await f.snapshot())
-        for _ in 0..<75 { f.clock.advance(4); _ = try f.poll() }
+        for _ in 0..<150 { f.clock.advance(4); _ = try f.poll() }
         let expired = try await f.snapshot()
         #expect(expired.providerStatus?.bridgeConnected == true && expired.providerStatus?.ready == false)
-        #expect(expired.interactions.count == 1 && expired.interactions[0].millisecondsUntilExpiry == 300_000)
-        #expect(!expired.routing.selectionEnabled && expired.interactions[0].state == .sealed)
+        #expect(!expired.routing.selectionEnabled)
         await claudePetExpectRejected { _ = try await f.transport.request(type: "select", payload: request.data()) }
-        try f.ready()
-        let renewed = try await f.snapshot()
-        #expect(renewed.routing.selectionEnabled && renewed.interactions[0].identity == request.identity)
     }
 
     @Test("New Hook input and any forged full identity reject old focus or selection")

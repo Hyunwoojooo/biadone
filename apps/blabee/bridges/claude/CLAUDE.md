@@ -12,7 +12,8 @@ shim은 `blabee-coordinator claude-auto-launch --claude-bin <원본> -- "$@"`를
 
 - Hook: SessionStart, UserPromptSubmit, Stop(`asyncRewake`, timeout 660), StopFailure, SessionEnd → `src/session-v2-hook.mjs`(자동 연결은 `src/auto-connect-hook.mjs`).
   SessionStart·UserPromptSubmit의 additionalContext는 boundary 한 줄뿐이다. 작업 규칙은 MCP instructions(`SESSION_V2_WORKFLOW_INSTRUCTIONS`)와 도구 description에만 둔다.
-  성공한 `emit_decision_v1`이 readiness를 5분 갱신하므로 모델은 제안 전에 연결 확인을 하지 않는다(2026-11-06).
+  성공한 `emit_decision_v1`이 readiness를 카드 만료(10분)까지 갱신하므로 모델은 제안 전에 연결 확인을 하지 않는다(2026-11-06, 10분은 2026-11-14 CLD-6).
+  이미 본 native `prompt_id`가 다시 오면(작업 알림 등) 미claim 카드를 내리고 `new_prompt_required`로 답한다. Hook을 실패시키지 않는다(CLD-5).
 - MCP 서버 `blabee-claude` → `src/session-v2-mcp.mjs`(자동 연결은 `src/auto-connect-mcp.mjs`). 도구는 `_v1` 다섯 개:
   `check_connection_v1`→`readiness.begin`, `ack_readiness_probe_v1`→`readiness.ack`, `emit_decision_v1`→`proposal.emit`,
   `claim_selection_v1`→`selection.claim`, `complete_selection_v1`→`selection.complete`(`src/session-v2-tools.mjs`).

@@ -50,9 +50,10 @@ struct ProductChannelSourceTests {
             let action = try f.claim(event)
             #expect(action["prompt_id"] as? String == promptID)
             #expect(action["boundary_id"] as? String != originalBoundary)
-            productWireRejected("binding_mismatch") {
-                try f.hook("UserPromptSubmit", ["prompt_id": promptID, "prompt_sha256": productDigest(text)])
-            }
+            // CLD-5: a reused prompt id is answered without a boundary, not as a Hook failure.
+            let reused = try f.hook("UserPromptSubmit", ["prompt_id": promptID, "prompt_sha256": productDigest(text)])
+            #expect(reused["observation_status"] as? String == "new_prompt_required")
+            #expect(reused["boundary_id"] is NSNull)
             productWireRejected("binding_mismatch") { try f.claim(event) }
             try f.complete(event["selection_id"] as! String)
         } else {

@@ -22,15 +22,13 @@ struct ClaudePetPresentationTests {
         // A successful emit is the model's readiness; only Stop is missing.
         #expect(model.snapshot?.providerStatus?.ready == true)
         #expect(model.presentationTitle == "Claude 응답 대기")
-        // Emit-granted readiness expires like an ACK; the card then asks for a connection check.
+        // Emit-granted readiness lasts as long as the card (CLD-6): past five
+        // minutes the card still waits only for Stop, not a connection check.
         for _ in 0..<76 { fixture.clock.advance(4); _ = try fixture.poll() }
         await model.refresh()
         #expect(model.snapshot?.providerStatus?.bridgeConnected == true)
-        #expect(model.presentationTitle == "연결 확인 필요")
-        #expect(!model.canRequestPanelSelection(original.identity))
-        try fixture.ready()
-        await model.refresh()
         #expect(model.presentationTitle == "Claude 응답 대기")
+        #expect(!model.canRequestPanelSelection(original.identity))
         #expect(!model.supportsProductSettings && model.supportsDecisionDismissal)
         #expect(!model.canSkipDecision(original.identity))
         await model.focusAndRequestPanelSelection(1, interaction: original.identity)

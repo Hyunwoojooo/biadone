@@ -9,7 +9,7 @@ r91은 Swift 고정 목록을 번들과 맞추고 `Tests/AppPackaging/claude-run
 2026-11-06 안내문 경량화: 같은 안내문(약 1,170자)이 MCP instructions, SessionStart Hook, 매 UserPromptSubmit Hook에
 세 번 들어가던 것을 줄였다. 이제 Hook에는 `blabee-claude boundary_id=<uuid>` 또는 boundary 없음 한 줄만 들어간다.
 규칙은 짧게 다시 쓴 MCP instructions(500자)에만 둔다. emit·complete 세부 규칙은 도구 description으로 옮겼다.
-`ClaudeNativeSession.emit`이 성공하면 readiness를 5분 갱신한다. 그래서 모델이 제안할 때마다
+`ClaudeNativeSession.emit`이 성공하면 readiness를 카드 만료(10분, 2026-11-14 전에는 5분)까지 갱신한다. 그래서 모델이 제안할 때마다
 check_connection/ack를 호출하던 2회를 없앴다(카드 TTL 불변, 실패 시 readiness 불변). 도구 이름·입력 스키마·
 wire 스키마·Contracts/v1은 바꾸지 않았다. Node·Swift 테스트를 새 규칙에 맞게 고치고 추가했다. 설치 앱 반영과 실사용 왕복은 후속이다.
 

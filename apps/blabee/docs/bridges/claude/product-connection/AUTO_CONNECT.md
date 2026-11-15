@@ -118,7 +118,7 @@ are not changed. A failed Blabee bootstrap does not replay work or restart Claud
 Automatic configuration does not acknowledge readiness on the model's behalf. When asked to check
 the connection, the model calls `check_connection_v1` and passes that successful response's
 `probe_id` and `nonce` to `ack_readiness_probe_v1` once. A successful `emit_decision_v1` for the
-latest Hook boundary also refreshes readiness for 5 minutes, so the model does not probe before
+latest Hook boundary also refreshes readiness until the card expires (10 minutes), so the model does not probe before
 every proposal. Workflow rules are MCP server instructions only; each SessionStart/UserPromptSubmit
 Hook adds a single line (`blabee-claude boundary_id=<uuid>` or the no-boundary line). No Channel notification is expected in the current product path.
 The historical r63 development-Channel qualification below does not qualify this new path.

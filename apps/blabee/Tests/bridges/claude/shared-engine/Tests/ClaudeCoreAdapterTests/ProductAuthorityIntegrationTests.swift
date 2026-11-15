@@ -722,7 +722,7 @@ struct ProductAuthorityIntegrationTests {
         try f.select()
     }
 
-    @Test("Readiness expiry with uninterrupted heartbeat preserves the current card")
+    @Test("Past five minutes the card stays selectable without a new probe (CLD-6)")
     func readinessOnlyExpiryPreservesCard() throws {
         let f = try ProductAuthorityFixture()
         try f.prepare()
@@ -730,11 +730,10 @@ struct ProductAuthorityIntegrationTests {
         let card = try #require((before["cards"] as? [[String: Any]])?.first)
         let authority = f.authority.snapshot()
         for _ in 0..<76 { f.clock.advance(4); _ = try f.poll(); _ = try f.waiterRequest("hook.poll") }
-        let expired = try f.snapshot()
-        #expect(expired["ready"] as? Bool == false)
-        #expect(expired["boundary_id"] as? String == before["boundary_id"] as? String)
-        #expect((expired["cards"] as? [[String: Any]])?.count == 1)
-        try f.ready()
+        let later = try f.snapshot()
+        #expect(later["ready"] as? Bool == true)
+        #expect(later["boundary_id"] as? String == before["boundary_id"] as? String)
+        #expect((later["cards"] as? [[String: Any]])?.count == 1)
         try f.select(card: card)
         #expect(f.authority.snapshot() == authority)
     }
@@ -747,13 +746,16 @@ struct ProductAuthorityIntegrationTests {
         #expect(ready["ready"] as? Bool == true)
         #expect(ready["selection_enabled"] as? Bool == false)
         let card = try #require((ready["cards"] as? [[String: Any]])?.first)
-        for _ in 0..<74 { f.clock.advance(4); _ = try f.poll() }
-        #expect(try f.snapshot()["ready"] as? Bool == true)
+        // CLD-6: readiness from a proposal lasts as long as its card (600s).
+        for _ in 0..<149 { f.clock.advance(4); _ = try f.poll() }
+        let lastSecond = try f.snapshot()
+        #expect(lastSecond["ready"] as? Bool == true)
+        #expect((lastSecond["cards"] as? [[String: Any]])?.first?["packet_id"] as? String == card["packet_id"] as? String)
         f.clock.advance(4); _ = try f.poll()
         let expired = try f.snapshot()
         #expect(expired["ready"] as? Bool == false)
         #expect(expired["bridge_connected"] as? Bool == true)
-        #expect((expired["cards"] as? [[String: Any]])?.first?["packet_id"] as? String == card["packet_id"] as? String)
+        #expect(expired["selection_enabled"] as? Bool == false)
         try f.ready()
         #expect(try f.snapshot()["ready"] as? Bool == true)
     }

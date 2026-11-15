@@ -434,7 +434,11 @@ struct ClaudeSessionRegistryTests {
             "prompt_id": UUID().uuidString.lowercased(), "prompt_sha256": String(repeating: "b", count: 64)])
         let replay = try f.hook(issued, grant: grant, event: "UserPromptSubmit", fields: [
             "prompt_id": prompt, "prompt_sha256": String(repeating: "a", count: 64)])
-        #expect(replay["ok"] as? Bool == false)
+        // CLD-5: a replayed native prompt id is answered without a boundary, not as an error.
+        #expect(replay["ok"] as? Bool == true)
+        let replayed = try #require(replay["result"] as? [String: Any])
+        #expect(replayed["observation_status"] as? String == "new_prompt_required")
+        #expect(replayed["boundary_id"] is NSNull)
         #expect(f.registry?.activeScopeCount == 1)
         #expect(try f.metadataSequences().values.allSatisfy { $0 > 2 })
     }
