@@ -3028,8 +3028,21 @@ final class PetViewModel: ObservableObject {
         }
     }
 
+    /// Audit APP-13: Codex shows a Pet approval card only while the Pet
+    /// fetched a snapshot within the last 3 seconds. A hidden menu bar app can
+    /// be App Napped and its 0.5-second polling delayed past that, so cards
+    /// fell back to Codex. Polling holds a user-initiated activity (idle
+    /// system sleep stays allowed) and releases it when polling stops.
+    private var pollingActivity: NSObjectProtocol?
+
     func startPolling(intervalNanoseconds: UInt64 = 500_000_000) {
         guard pollingTask == nil, !isShuttingDown else { return }
+        if pollingActivity == nil {
+            pollingActivity = ProcessInfo.processInfo.beginActivity(
+                options: [.userInitiatedAllowingIdleSystemSleep],
+                reason: "Blabee keeps approval cards available while Codex or Claude waits"
+            )
+        }
         appService?.startAtAppLaunch()
         pollingTask = Task { [weak self] in
             while !Task.isCancelled {
@@ -3047,9 +3060,15 @@ final class PetViewModel: ObservableObject {
         }
     }
 
+    var holdsPollingActivity: Bool { pollingActivity != nil }
+
     func stopPolling() {
         pollingTask?.cancel()
         pollingTask = nil
+        if let pollingActivity {
+            ProcessInfo.processInfo.endActivity(pollingActivity)
+            self.pollingActivity = nil
+        }
         stopAutomaticUpdateChecks()
         endChoicePreview()
         choicePreviewHoldMonitor.stop()
@@ -3895,6 +3914,9 @@ final class PetViewModel: ObservableObject {
             }
             await focusFIFOHeadIfNeeded()
         } catch {
+            // Replaced by a newer overlapping request: keep every displayed and
+            // connection state and let that request apply (audit APP-5).
+            if (error as? CoordinatorError)?.code == PetProviderTransport.snapshotSupersededCode { return }
             guard acceptsProviderObservation(observationContext),
                   requestIsCurrent?() != false,
                   requestNumber >= lastAppliedSnapshotRequest,

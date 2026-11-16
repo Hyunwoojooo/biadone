@@ -1495,18 +1495,18 @@ func operationalRuntimeRetentionSessionCapacity() async throws {
     #expect(snapshotData.count < 98_304)
     #expect(fixture.journal.loadCount() == loads)
     #expect(!visible.contains { $0["session_id"] as? String == "\(sessionPrefix)_0" })
-    await expectOperationalError("session_capacity_exceeded") {
-        _ = try await fixture.app.handle(type: "session_start", payload: operationalData([
-            "session_id": "session_capacity_overflow", "cwd": cwd,
-        ]))
-    }
-    await expectOperationalError("session_capacity_exceeded") {
-        _ = try await fixture.app.handle(type: "user_prompt_submit", payload: operationalData([
-            "session_id": "session_capacity_overflow", "turn_id": "turn_overflow",
-            "cwd": cwd, "prompt": "No new authority at capacity",
-        ]))
-    }
-    // Hidden history still fences cross-project reuse and native-child
+    // ENG-13: a full table drops its least recently used idle session
+    // (session 0) instead of refusing new sessions until a restart.
+    let overflowStart = try operationalObject(await fixture.app.handle(type: "session_start", payload: operationalData([
+        "session_id": "session_capacity_overflow", "cwd": cwd,
+    ])))
+    #expect(overflowStart["enabled"] as? Bool == true)
+    let overflowPrompt = try operationalObject(await fixture.app.handle(type: "user_prompt_submit", payload: operationalData([
+        "session_id": "session_capacity_overflow", "turn_id": "turn_overflow",
+        "cwd": cwd, "prompt": "A new session is admitted at capacity",
+    ])))
+    #expect(overflowPrompt["enabled"] as? Bool == true)
+    // Hidden or evicted history still fences cross-project reuse and native-child
     // fallback. Neither the snapshot window nor capacity may erase that fact.
     let firstID = "\(sessionPrefix)_0"
     let otherCwd = "/tmp/blabee-retention-other-project"
@@ -9770,4 +9770,31 @@ func operationalSkippedPermissionCardIsReported() async throws {
     #expect(try await status() as? String == "skipped")
     fixture.cooldownClock.advance(seconds: 61)
     #expect(try await status() == nil)
+}
+
+
+@Test("A full session table refuses new sessions only while every session is live (ENG-13)")
+func operationalSessionCapacityFailsClosedWhenAllLive() async throws {
+    let fixture = try operationalFixture()
+    let cwd = "/tmp/blabee-capacity-live"
+    _ = try await fixture.app.handle(type: "enable_project", payload: operationalData([
+        "cwd": cwd, "project_id": "project_capacity_live",
+    ]))
+    // A running prompt (no Stop yet) keeps its session's prompt authority live.
+    for index in 0..<1_024 {
+        _ = try await fixture.app.handle(type: "user_prompt_submit", payload: operationalData([
+            "session_id": "session_live_\(index)", "turn_id": "turn_live_\(index)", "cwd": cwd,
+            "prompt": "Running prompt \(index)", "hook_event_name": "UserPromptSubmit",
+        ]))
+    }
+    await expectOperationalError("session_capacity_exceeded") {
+        _ = try await fixture.app.handle(type: "session_start", payload: operationalData([
+            "session_id": "session_live_overflow", "cwd": cwd, "hook_event_name": "SessionStart",
+        ]))
+    }
+    // An existing live session keeps working.
+    let continued = try operationalObject(await fixture.app.handle(type: "session_start", payload: operationalData([
+        "session_id": "session_live_0", "cwd": cwd, "hook_event_name": "SessionStart",
+    ])))
+    #expect(continued["enabled"] as? Bool == true)
 }

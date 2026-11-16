@@ -524,6 +524,19 @@ public actor CoordinatorOperationalApplication {
     /// with an unregistered CDHash. Blabee stays off for them: a card could not
     /// be delivered, so injecting instructions would only waste the model's work.
     private var unqualifiedCodexSessions: Set<String> = []
+    /// Insertion order for `unqualifiedCodexSessions`, oldest first, so a full
+    /// set drops its oldest marker instead of refusing new ones (ENG-13).
+    private var unqualifiedCodexSessionOrder: [String] = []
+    /// Last-use sequence per registered session, for evicting the least
+    /// recently used idle session when the table is full (ENG-13).
+    private var sessionLastUse: [String: UInt64] = [:]
+    private var sessionUseSequence: UInt64 = 0
+    /// An evicted session keeps only its project as a fence: it cannot move to
+    /// another project or use the native-child approval fallback, exactly as
+    /// while it was registered. Oldest fences are dropped past this bound.
+    private var evictedSessionProjects: [String: String] = [:]
+    private var evictedSessionOrder: [String] = []
+    private static let maximumEvictedSessionFences = 8_192
     /// Last attested Codex runtime result, shown once in the Pet. Process-local.
     private var lastCodexRuntimeObservation: String?
     /// Audit CDX-5: a Bash approval from a session in an enabled project that
@@ -1190,6 +1203,8 @@ public actor CoordinatorOperationalApplication {
     }
 
     private func recordRecentSnapshotSession(_ sessionID: String) {
+        sessionUseSequence &+= 1
+        sessionLastUse[sessionID] = sessionUseSequence
         recentSnapshotSessionIDs.removeAll { Self.byteExact($0, sessionID) }
         recentSnapshotSessionIDs.append(sessionID)
         if recentSnapshotSessionIDs.count > Self.maximumRecentSnapshotSessions {
@@ -1199,12 +1214,9 @@ public actor CoordinatorOperationalApplication {
         }
     }
 
-    private func snapshotSessions() -> [Session] {
-        // The session list is a presentation join, not the authority store.
-        // Preserve every live decision/approval join even if its session is
-        // older than the recent history window; never evict its authority.
-        var sessionIDs = Set(recentSnapshotSessionIDs)
-        sessionIDs.formUnion(activeByTurn.keys.map(\.sessionID))
+    /// Session IDs that some live decision, approval or delivery still joins.
+    private func liveAuthoritySessionIDs() -> Set<String> {
+        var sessionIDs = Set(activeByTurn.keys.map(\.sessionID))
         sessionIDs.formUnion(stagedByTurn.keys.map(\.sessionID))
         sessionIDs.formUnion(pendingInitialActivations.map { $0.binding.sessionID })
         sessionIDs.formUnion(pendingCompletionClosures.map { $0.binding.sessionID })
@@ -1213,6 +1225,40 @@ public actor CoordinatorOperationalApplication {
         sessionIDs.formUnion(pendingPermissionRequestDeliveries.map(\.sessionID))
         sessionIDs.formUnion(pendingManagedCommandApprovals.map { $0.binding.threadID })
         sessionIDs.formUnion(pendingManagedCommandApprovalDeliveries.map { $0.binding.threadID })
+        return sessionIDs
+    }
+
+    /// Audit ENG-13: a full table used to refuse every new session until the
+    /// service restarted. Only a session with no live decision, approval,
+    /// delivery, running prompt or queued action is dropped; it registers
+    /// afresh if it returns (prompt authority is per prompt anyway). When
+    /// every session is live, registration still fails closed.
+    private func evictLeastRecentlyUsedIdleSession() {
+        let live = liveAuthoritySessionIDs()
+        let candidate = sessions.values
+            .filter { !live.contains($0.sessionID) && !$0.hasActivePromptContext && $0.queuedActionContext == nil }
+            .min { (sessionLastUse[$0.sessionID] ?? 0, $0.sessionID) < (sessionLastUse[$1.sessionID] ?? 0, $1.sessionID) }
+        guard let evicted = candidate?.sessionID, let projectID = candidate?.projectID else { return }
+        sessions.removeValue(forKey: evicted)
+        if evictedSessionProjects.updateValue(projectID, forKey: evicted) == nil {
+            evictedSessionOrder.append(evicted)
+            if evictedSessionOrder.count > Self.maximumEvictedSessionFences {
+                evictedSessionProjects.removeValue(forKey: evictedSessionOrder.removeFirst())
+            }
+        }
+        sessionLastUse.removeValue(forKey: evicted)
+        recentSnapshotSessionIDs.removeAll { Self.byteExact($0, evicted) }
+        if skippedPermissionCardSessionID.map({ Self.byteExact($0, evicted) }) == true {
+            skippedPermissionCardSessionID = nil
+        }
+    }
+
+    private func snapshotSessions() -> [Session] {
+        // The session list is a presentation join, not the authority store.
+        // Preserve every live decision/approval join even if its session is
+        // older than the recent history window; never evict its authority.
+        var sessionIDs = Set(recentSnapshotSessionIDs)
+        sessionIDs.formUnion(liveAuthoritySessionIDs())
         return sessionIDs.compactMap { sessions[$0] }.sorted { $0.sessionID < $1.sessionID }
     }
 
@@ -1607,13 +1653,18 @@ private extension CoordinatorOperationalApplication {
         // Set only by the Hook's own ancestry attestation; absent when unknown.
         switch payload["codex_runtime"] as? String {
         case "unqualified":
-            if unqualifiedCodexSessions.count < Self.maximumRegisteredSessions {
-                unqualifiedCodexSessions.insert(sessionID)
+            if unqualifiedCodexSessions.insert(sessionID).inserted {
+                unqualifiedCodexSessionOrder.append(sessionID)
+                if unqualifiedCodexSessionOrder.count > Self.maximumRegisteredSessions {
+                    unqualifiedCodexSessions.remove(unqualifiedCodexSessionOrder.removeFirst())
+                }
             }
             lastCodexRuntimeObservation = "unqualified"
             return try publicData(["enabled": false])
         case "qualified":
-            unqualifiedCodexSessions.remove(sessionID)
+            if unqualifiedCodexSessions.remove(sessionID) != nil {
+                unqualifiedCodexSessionOrder.removeAll { Self.byteExact($0, sessionID) }
+            }
             lastCodexRuntimeObservation = "qualified"
         default:
             break
@@ -1783,10 +1834,17 @@ private extension CoordinatorOperationalApplication {
             recordRecentSnapshotSession(sessionID)
             return current
         }
+        if let fencedProject = evictedSessionProjects[sessionID] {
+            try require(Self.byteExact(fencedProject, project.projectID), "session_project_conflict")
+        }
+        if sessions.count >= Self.maximumRegisteredSessions { evictLeastRecentlyUsedIdleSession() }
         try require(
             sessions.count < Self.maximumRegisteredSessions,
             "session_capacity_exceeded"
         )
+        if evictedSessionProjects.removeValue(forKey: sessionID) != nil {
+            evictedSessionOrder.removeAll { Self.byteExact($0, sessionID) }
+        }
         let registered = Session(
             sessionID: sessionID,
             projectID: project.projectID,
@@ -2097,6 +2155,7 @@ private extension CoordinatorOperationalApplication {
             // can own this suspended request without inventing prompt/episode
             // authority. Never use this fallback for a known but stale session.
             guard allowOnceQualification != nil,
+                  evictedSessionProjects[sessionID] == nil,
                   let agentID = payload["agent_id"] as? String,
                   Self.byteExact(agentID, sessionID),
                   let project = project(containing: sessionPath), project.enabled
@@ -2494,7 +2553,7 @@ private extension CoordinatorOperationalApplication {
         if request.isNativeSubagent {
             // The live Hook peer and exact pending request own this approval.
             // A later real prompt registration must never inherit that authority.
-            guard sessions[request.sessionID] == nil,
+            guard sessions[request.sessionID] == nil, evictedSessionProjects[request.sessionID] == nil,
                   request.allowOnceAvailable,
                   let project = project(containing: request.sessionPath), project.enabled
             else { return false }

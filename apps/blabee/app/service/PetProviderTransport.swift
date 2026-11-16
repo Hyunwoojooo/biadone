@@ -491,8 +491,13 @@ actor PetProviderTransport: PetProviderControlling {
     }
 
     private func requireSnapshot(_ generation: UInt64, selection: UInt64) throws {
-        guard selection == selectionGeneration, generation == snapshotGeneration else { throw failure("stale_context") }
+        guard selection == selectionGeneration else { throw failure("stale_context") }
+        // A newer snapshot request started; this one is simply replaced, not a
+        // connection failure (audit APP-5).
+        guard generation == snapshotGeneration else { throw failure(Self.snapshotSupersededSuffix) }
     }
+    static let snapshotSupersededSuffix = "snapshot_superseded"
+    static let snapshotSupersededCode = "pet_provider_snapshot_superseded"
 
     private func directory(access owned: PetProviderServiceAccess, deadline: UInt64) async throws -> [PetProviderSession] {
         var result: [PetProviderSession] = [], cursor: String?, service: String?

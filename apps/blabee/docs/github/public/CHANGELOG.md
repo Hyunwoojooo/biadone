@@ -27,6 +27,7 @@ Draft. The release date, download link and the full list of changes are added wh
 #### Changed
 
 - **Codex 0.167.2, 0.168.0 and 0.169.0 support.** The three exact versions join the supported list with the same capabilities and package layout as 0.167.1.
+- **Steadier Pet connection.** The Pet no longer shows a brief false disconnect when two status requests overlap, keeps approval cards available while its panel is hidden, and accepts new Codex sessions after very long uptimes instead of stopping at 1,024.
 - **Claude cards stay selectable for their whole life.** A Claude card can now be chosen for its full 10 minutes instead of only the first 5. When Claude Code reuses a prompt for a task notification, Blabee withdraws the open card quietly instead of reporting a Hook error.
 - **Codex delivery uses the session's own Codex.** A selected card is sent through the `codex` that started the session, with its `CODEX_HOME`, instead of the first `codex` found on a fixed list. Codex installed with bun, pnpm, mise or asdf is now found.
 - **Codex approval cards.** A command run in a subfolder of the project now gets a Pet card showing its real folder. When an approval request cannot become a card, the Pet says to answer it in the Codex window instead of staying silent. The Plugin (0.1.4) no longer cuts the session guidance short and only runs its approval Hook for shell commands; Codex asks you to review the updated Hooks once.

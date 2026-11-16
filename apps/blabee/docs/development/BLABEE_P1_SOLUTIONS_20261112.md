@@ -170,3 +170,11 @@
 - **CLD-5 같은 prompt_id 재관측.** Claude Code가 작업 알림 같은 턴에 기존 prompt_id를 다시 쓰면, 지금까지는 boundary를 폐기하고 Hook이 실패했다.
   이제 미claim 카드를 내리고(claim한 보고는 보존) `new_prompt_required`로 답한다. Hook은 "boundary 없음" 한 줄을 넣고 정상 종료한다.
   재사용된 id에는 새 boundary를 주지 않는다(fail closed). 다음 실제 프롬프트부터 다시 제안할 수 있다.
+
+## 2순위 26번 (2026-11-15 구현)
+
+- **APP-5 가짜 끊김.** 겹친 스냅샷 요청에서 밀려난 쪽은 `pet_provider_snapshot_superseded`로 끝난다(계정·세션 변경의 `stale_context`와 구분). Pet은 이 경우 화면·연결 상태·오류 통계·적용 번호를 그대로 두고 뒤의 요청 결과만 적용한다.
+- **ENG-13 세션 1,024개 상한.** 표가 차면 가장 오래 쓰지 않은 쉬는 세션 하나를 지운다. 쉬는 세션은 살아 있는 boundary·승인·전달·관리형 승인(`liveAuthoritySessionIDs`), 진행 중 프롬프트, queue 작업이 없는 세션이다. 모두 살아 있으면 지금처럼 거부한다.
+  지운 세션은 프로젝트만 울타리로 남긴다(최대 8,192개, 오래된 것부터 버림). 그래서 다른 프로젝트로 옮기거나 하위 에이전트 승인 경로를 쓰는 것은 등록돼 있을 때처럼 막힌다. 같은 프로젝트로 돌아오면 새로 등록된다.
+  `unqualifiedCodexSessions`도 꽉 차면 가장 오래된 표시를 버린다. `boundaries`·`registrations`의 빈 항목 정리는 13번과 함께 한다.
+- **APP-13 App Nap.** Pet 폴링이 도는 동안 `ProcessInfo.beginActivity(.userInitiatedAllowingIdleSystemSleep)`를 유지하고 폴링이 멈추면 해제한다. 시스템 잠자기는 막지 않는다. 숨긴 패널에서 승인 카드가 뜨는지는 설치 앱에서 확인해야 하고, 배터리 영향은 측정하지 않았다.

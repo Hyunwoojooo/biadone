@@ -147,6 +147,36 @@ struct PetErrorIntegrationTests {
         #expect(f.delivery.events.map(\.code) == [expected, expected])
     }
 
+    @Test("A snapshot replaced by a newer overlapping request is not an outage (APP-5)")
+    func supersededSnapshotIsNotAnOutage() async throws {
+        let f = ErrorIntegrationFixture()
+        defer { f.stop() }
+        await f.start()
+        try await f.enqueueEmptySnapshot()
+        await f.vm.refresh()
+        let shown = try #require(f.vm.snapshot)
+        await f.transport.fail(type: "get_state",
+            error: CoordinatorError(PetProviderTransport.snapshotSupersededCode))
+        await f.vm.refresh()
+        for _ in 0..<20 { await Task.yield() }
+        #expect(f.vm.snapshot == shown)
+        #expect(f.vm.coordinatorTransportError == nil)
+        await f.expectNoDiagnostic()
+    }
+
+    @Test("Polling holds an App Nap-preventing activity only while it runs (APP-13)")
+    func pollingActivityLifetime() async throws {
+        let f = ErrorIntegrationFixture()
+        defer { f.stop() }
+        await f.start()
+        #expect(!f.vm.holdsPollingActivity)
+        f.vm.startPolling(intervalNanoseconds: 60_000_000_000)
+        #expect(f.vm.holdsPollingActivity)
+        f.vm.startPolling(intervalNanoseconds: 60_000_000_000)
+        f.vm.stopPolling()
+        #expect(!f.vm.holdsPollingActivity)
+    }
+
     @Test("A new polling failure becomes eligible after opt-in or verified login",
           arguments: [false, true])
     func pollingStartsRecordingOnlyNewEligibleFailures(initiallySignedIn: Bool) async throws {
