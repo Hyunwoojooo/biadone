@@ -1062,7 +1062,13 @@ final class UnixDomainSocketServer: @unchecked Sendable {
                 stateLock.lock()
                 let wasStopped = stopped
                 stateLock.unlock()
-                if wasStopped { return }
+                if wasStopped {
+                    // ENG-6: let requests already in progress (and any journal
+                    // append inside them) finish before the process exits.
+                    // Long-lived waits such as approvals only delay exit.
+                    admissionGate.waitUntilIdle(timeoutMilliseconds: 3_000)
+                    return
+                }
                 if acceptError == EMFILE || acceptError == ENFILE
                     || acceptError == ENOBUFS || acceptError == ENOMEM
                 {
@@ -1815,6 +1821,19 @@ private final class ConnectionAdmissionGate: @unchecked Sendable {
         lock.lock()
         active = max(0, active - 1)
         lock.unlock()
+    }
+
+    /// Bounded wait for in-flight connections during shutdown.
+    func waitUntilIdle(timeoutMilliseconds: Int) {
+        let deadline = DispatchTime.now().uptimeNanoseconds
+            + UInt64(max(0, timeoutMilliseconds)) * 1_000_000
+        while true {
+            lock.lock()
+            let idle = active == 0
+            lock.unlock()
+            if idle || DispatchTime.now().uptimeNanoseconds >= deadline { return }
+            usleep(10_000)
+        }
     }
 }
 

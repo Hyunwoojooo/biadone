@@ -11,6 +11,16 @@ public enum JournalCrashPoint: String, Sendable {
     case afterCommitBeforeResponse = "after_commit_before_response"
 }
 
+/// A pending freshness transition this instance abandoned while opening the
+/// journal (P1 solutions item 15-B, ENG-6), only when constructed with
+/// `abandonsInterruptedPendingWrite`. The batch never reached SQLite:
+/// the database was exactly at `fromSequence` and passed integrity_check and a
+/// complete authenticated scan before the anchor moved back to that checkpoint.
+public struct JournalStartupRecovery: Sendable, Equatable {
+    public let fromSequence: Int64
+    public let abandonedToSequence: Int64
+}
+
 public struct JournalSnapshot: Sendable, Equatable {
     public let events: [Data]
     public let documents: [Data]
@@ -173,6 +183,8 @@ public final class SQLiteJournal: @unchecked Sendable {
         let fullyVerifiedAt: UInt64
     }
     private var verifiedProjection: VerifiedProjection?
+    /// Set once by `init` when it abandoned an interrupted pending write.
+    public private(set) var startupRecovery: JournalStartupRecovery?
     /// One hour by default. Tests shorten it; production does not change it.
     var fullRevalidationIntervalNanoseconds: UInt64 = 3_600 * 1_000_000_000
     var monotonicNanoseconds: @Sendable () -> UInt64 = { DispatchTime.now().uptimeNanoseconds }
@@ -184,7 +196,8 @@ public final class SQLiteJournal: @unchecked Sendable {
         busyTimeoutMilliseconds: Int32 = 5_000,
         validator: V1IngressValidator = V1IngressValidator(),
         secretCorpus: RuntimeSecretCorpus = RuntimeSecretCorpus(),
-        appendCommitGate: AppendCommitGate? = nil
+        appendCommitGate: AppendCommitGate? = nil,
+        abandonsInterruptedPendingWrite: Bool = false
     ) throws {
         self.databaseURL = databaseURL.standardizedFileURL
         self.keyURL = keyURL.standardizedFileURL
@@ -222,13 +235,43 @@ public final class SQLiteJournal: @unchecked Sendable {
                 )
                 try execute("BEGIN IMMEDIATE")
                 do {
+                    let databaseCheckpoint = try currentCheckpoint()
                     let precheck = try precheckFreshness(
                         stored: try requiredFreshnessRecord(),
-                        databaseCheckpoint: try currentCheckpoint(),
+                        databaseCheckpoint: databaseCheckpoint,
                         allowPendingSource: true
                     )
-                    _ = try integrityUnlocked(includeQuickCheck: false)
-                    _ = try finishFreshnessAfterReplay(precheck)
+                    let scannedAt = monotonicNanoseconds()
+                    let verified = try integrityAndLoadUnlocked(includeQuickCheck: false)
+                    if abandonsInterruptedPendingWrite,
+                       case let .pendingSource(stored, transition) = precheck
+                    {
+                        // ENG-6 (product daemon only; raw-append callers keep
+                        // the explicit exact-batch retry contract): a write that set the anchor pending and then
+                        // stopped before SQLite COMMIT. Its batch lived only
+                        // in the interrupted call, never reached SQLite and
+                        // returned no effects, so nothing can retry it. The
+                        // database is exactly at `transition.from` and was
+                        // just verified completely; move the anchor back.
+                        _ = try freshnessStore.compareAndSwap(
+                            expectedRevision: stored.revision,
+                            replacement: try FreshnessRecord.committed(
+                                storageSlot: freshnessStore.storageSlot,
+                                checkpoint: transition.from
+                            )
+                        )
+                        startupRecovery = JournalStartupRecovery(
+                            fromSequence: transition.from.sequence,
+                            abandonedToSequence: transition.to.sequence
+                        )
+                    } else {
+                        _ = try finishFreshnessAfterReplay(precheck)
+                    }
+                    verifiedProjection = VerifiedProjection(
+                        checkpoint: databaseCheckpoint,
+                        load: verified.load,
+                        fullyVerifiedAt: scannedAt
+                    )
                     try execute("COMMIT")
                 } catch {
                     try? execute("ROLLBACK")
@@ -896,6 +939,19 @@ public final class SQLiteJournal: @unchecked Sendable {
             "database_integrity_failed",
             "SQLite synchronous is not FULL"
         )
+        // ENG-6: on macOS plain fsync does not flush the drive cache, so a
+        // power loss can drop a commit whose freshness anchor was already
+        // finalized and then fail closed as a rollback. F_FULLFSYNC for both
+        // WAL commits and checkpoints makes FULL durability hold on Apple disks.
+        try execute("PRAGMA fullfsync=ON")
+        try execute("PRAGMA checkpoint_fullfsync=ON")
+        let fullFSync = try integerPragma("PRAGMA fullfsync")
+        let checkpointFullFSync = try integerPragma("PRAGMA checkpoint_fullfsync")
+        try require(
+            fullFSync == 1 && checkpointFullFSync == 1,
+            "database_integrity_failed",
+            "SQLite fullfsync was not enabled"
+        )
         try execute("PRAGMA foreign_keys=ON")
         let foreignKeys = try integerPragma("PRAGMA foreign_keys")
         try require(
@@ -1485,6 +1541,12 @@ public final class SQLiteJournal: @unchecked Sendable {
     }
 
     private func integrityUnlocked(includeQuickCheck: Bool) throws -> JournalIntegrityResult {
+        try integrityAndLoadUnlocked(includeQuickCheck: includeQuickCheck).result
+    }
+
+    private func integrityAndLoadUnlocked(
+        includeQuickCheck: Bool
+    ) throws -> (result: JournalIntegrityResult, load: ValidatedLoad) {
         let integrity = try textPragma("PRAGMA integrity_check")
         try require(integrity == "ok", "database_integrity_failed", "SQLite integrity_check failed")
         let quick = includeQuickCheck ? try textPragma("PRAGMA quick_check") : "ok"
@@ -1492,12 +1554,13 @@ public final class SQLiteJournal: @unchecked Sendable {
         var foreignKeyViolation = false
         try query("PRAGMA foreign_key_check") { _ in foreignKeyViolation = true }
         try require(!foreignKeyViolation, "database_integrity_failed", "SQLite foreign key check failed")
-        let snapshot = try loadUnlocked().snapshot
-        return JournalIntegrityResult(
+        let load = try loadUnlocked()
+        let snapshot = load.snapshot
+        return (JournalIntegrityResult(
             integrityCheck: integrity,
             quickCheck: quick,
             sidecarsVerified: snapshot.documents.count + snapshot.verificationRecords.count
-        )
+        ), load)
     }
 
     private struct PreparedEvent {

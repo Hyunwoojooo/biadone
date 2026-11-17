@@ -153,6 +153,10 @@ freshness CAS도 독립적으로 유지된다. 이를 중복 실행이나 데이
   자동 복구하지 않는다.** 해당 상태에는 원본 저장 내용과 권한의 확인이 필요하다는 안내를 추가했다.
   DB/Keychain anchor 삭제나 검증 우회로 복구하지 않는다.
 
+> **2026-11-16 변경(P1 해결 문서 15-B).** 제품 데몬은 이제 시작할 때 이 상태를 정해진 조건에서 복구한다.
+> DB가 pending 전환의 출발점과 정확히 같고 `integrity_check`와 전체 인증 검사를 통과하면 anchor를 그 출발점으로 되돌린다.
+> 버려지는 batch는 SQLite에 반영되지 않았고 effect를 반환하지 않았으므로 다시 실행되지 않는다. raw append를 쓰는 테스트 하네스는 위의 명시적 exact retry 계약을 유지한다.
+
 ## 4. 입력 validator와 semantic timestamp 파서가 불일치함
 
 **우선순위: 낮음.** `V1IngressValidator.matches`는 정규식 일치 구간이 존재하는지만 검사한다.

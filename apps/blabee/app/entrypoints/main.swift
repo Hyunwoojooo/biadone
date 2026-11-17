@@ -881,11 +881,22 @@ private func runDaemon(
         try freshness.store.deleteForTesting()
         exit(0)
     }
+    // The product daemon has no raw exact-batch retry, so an interrupted
+    // pending write would otherwise block every start (ENG-6).
     let journal = try SQLiteJournal(
         databaseURL: arguments.database,
         keyURL: arguments.key,
-        freshnessStore: freshness.store
+        freshnessStore: freshness.store,
+        abandonsInterruptedPendingWrite: true
     )
+    if let recovery = journal.startupRecovery {
+        // Sequences only; no event, token or key material.
+        try? FileHandle.standardError.write(contentsOf: Data((
+            "blabee-coordinator: abandoned an interrupted journal write at startup"
+                + " (journal stays at sequence \(recovery.fromSequence);"
+                + " the unsaved write would have reached \(recovery.abandonedToSequence))\n"
+        ).utf8))
+    }
     let routing = try CoordinatorRoutingApplication(journal: journal)
     let petArrivalLedger = PetEventArrivalLedger()
     let productAccess = ProductAccessController(onVerifiedToken: { journal.secretCorpus.register($0) })

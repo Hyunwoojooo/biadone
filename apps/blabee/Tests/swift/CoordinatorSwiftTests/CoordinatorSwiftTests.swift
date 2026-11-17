@@ -1123,6 +1123,104 @@ func semanticPendingRecoveryRejectsChangedGate(code: String) throws {
     #expect(result == nil)
 }
 
+@Test("The product daemon abandons an interrupted pending write at startup only after a complete scan")
+func daemonStartupAbandonsInterruptedPendingWrite() throws {
+    let directory = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let database = directory.appendingPathComponent("journal.sqlite3")
+    let key = directory.appendingPathComponent("journal.key")
+    let store = TestFreshnessAnchorStore()
+    let material = try ContinuationTokenMaterial.generate()
+    let probe = SemanticPendingRecoveryProbe(tokenMaterial: material)
+    var journal: SQLiteJournal? = try testJournal(
+        databaseURL: database, keyURL: key, freshnessStore: store,
+        appendCommitGate: probe.gate
+    )
+    _ = try journal?.append(
+        expectedSequence: 0,
+        events: [try JSONData(event(sequence: 1, id: "event_startup_abandon_open"))]
+    )
+    let command = try semanticPendingRecoveryRepairCommand()
+    store.failAfterNextPendingWrite(with: "test_pending_write_interruption") {
+        probe.setGateBehavior(.refuse("test_process_stopped"))
+    }
+    expectCode("freshness_commit_ambiguous") {
+        _ = try CoordinatorSemanticApplication(
+            journal: try #require(journal), tokenGenerator: probe.generateToken
+        ).execute(command: command)
+    }
+    let pending = try #require(try store.load())
+    #expect(pending.record.state == .pending)
+    journal = nil
+
+    // A raw-append reopen keeps the explicit exact-retry contract.
+    let raw = try testJournal(databaseURL: database, keyURL: key, freshnessStore: store)
+    #expect(raw.startupRecovery == nil)
+    expectCode("freshness_transition_pending") { _ = try raw.load() }
+    #expect(try store.load() == pending)
+
+    // A product reopen with a tampered row refuses before touching the anchor.
+    try executeSQLite(database, "UPDATE runtime_events SET mac=zeroblob(32)")
+    expectCode("runtime_event_integrity_mismatch") {
+        _ = try SQLiteJournal(
+            databaseURL: database, keyURL: key, freshnessStore: store,
+            abandonsInterruptedPendingWrite: true
+        )
+    }
+    #expect(try store.load() == pending)
+}
+
+@Test("A product daemon start with an intact journal moves the anchor back to the stored head")
+func daemonStartupRecoveryResumesWrites() throws {
+    let directory = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let database = directory.appendingPathComponent("journal.sqlite3")
+    let key = directory.appendingPathComponent("journal.key")
+    let store = TestFreshnessAnchorStore()
+    let material = try ContinuationTokenMaterial.generate()
+    let probe = SemanticPendingRecoveryProbe(tokenMaterial: material)
+    var journal: SQLiteJournal? = try testJournal(
+        databaseURL: database, keyURL: key, freshnessStore: store,
+        appendCommitGate: probe.gate
+    )
+    _ = try journal?.append(
+        expectedSequence: 0,
+        events: [try JSONData(event(sequence: 1, id: "event_startup_resume_open"))]
+    )
+    let before = try #require(try journal?.load())
+    let committedBefore = try #require(try store.load())
+    store.failAfterNextPendingWrite(with: "test_pending_write_interruption") {
+        probe.setGateBehavior(.refuse("test_process_stopped"))
+    }
+    expectCode("freshness_commit_ambiguous") {
+        _ = try CoordinatorSemanticApplication(
+            journal: try #require(journal), tokenGenerator: probe.generateToken
+        ).execute(command: semanticPendingRecoveryRepairCommand())
+    }
+    #expect(try store.load()?.record.state == .pending)
+    journal = nil
+
+    let reopened = try SQLiteJournal(
+        databaseURL: database, keyURL: key, freshnessStore: store,
+        abandonsInterruptedPendingWrite: true
+    )
+    #expect(reopened.startupRecovery == JournalStartupRecovery(fromSequence: 1, abandonedToSequence: 2))
+    #expect(try store.load()?.record == committedBefore.record)
+    #expect(try reopened.load() == before)
+    #expect(try semanticPendingRecoveryStoredEventCount(database) == 1)
+    _ = try reopened.append(
+        expectedSequence: 1,
+        events: [try JSONData(event(sequence: 2, id: "event_startup_resume_next"))]
+    )
+    #expect(try reopened.load().journalSequence == 2)
+    // A clean reopen reports no recovery.
+    let again = try SQLiteJournal(
+        databaseURL: database, keyURL: key, freshnessStore: store,
+        abandonsInterruptedPendingWrite: true
+    )
+    #expect(again.startupRecovery == nil)
+}
+
 @Test("semantic pending recovery rejects changes to sequence, events, documents, or verification records")
 func semanticPendingRecoveryRejectsDifferentBatch() throws {
     let directory = try temporaryDirectory()
