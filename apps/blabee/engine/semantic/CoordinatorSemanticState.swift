@@ -351,10 +351,11 @@ public enum CoordinatorSemanticReplay {
         )
     }
 
-    /// Operation-local suffix of an already fully replayed authority. The
-    /// caller must discard this value on CAS conflict and never reuse it for
-    /// another request. New sidecars, envelopes, event IDs, sequence, binding
-    /// and final completeness pass the identical checks used by full replay.
+    /// Suffix of an already fully replayed authority. The caller must discard
+    /// the result on CAS conflict. Across requests only `RoutingRequestJournal`
+    /// reuses it, and only for its own confirmed append (item 12). New
+    /// sidecars, envelopes, event IDs, sequence, binding and final
+    /// completeness pass the identical checks used by full replay.
     static func applying(
         _ change: CoordinatorSemanticChange,
         to verifiedState: CoordinatorSemanticState,

@@ -47,6 +47,8 @@ private struct SQLiteClaimIOCounts: Equatable {
 
 private struct SQLiteClaimWorkCounts: Equatable {
     var fullValidationScans = 0
+    var projectionReuses = 0
+    var committedBatchEvents: [Int] = []
     var eventPreparations = 0
     var documentPreparations = 0
     var verificationPreparations = 0
@@ -101,6 +103,9 @@ private final class SQLiteClaimIOMeter: @unchecked Sendable {
         case .verificationPreparation: workCounts.verificationPreparations += 1
         case .strictJSONDecodingPass: workCounts.strictJSONDecodingPasses += 1
         case let .sidecarCandidates(count): workCounts.sidecarCandidates += count
+        case .verifiedProjectionReuse: workCounts.projectionReuses += 1
+        case let .committedBatchVerification(eventCount):
+            workCounts.committedBatchEvents.append(eventCount)
         }
     }
 
@@ -801,16 +806,18 @@ func sqliteQueuedClaimValidationWorkIsOperationLocal() throws {
         publicLoads: 1, publicAppends: 1, appendedEventCounts: [1],
         freshnessLoads: 3, freshnessCAS: 2
     ))
-    // Authority, preappend and postcommit all authenticate complete history.
-    // Before the fix the preappend history was parsed a fourth time; the new
-    // row is still prepared once on ingress and once on postcommit validation.
-    #expect(work.fullValidationScans == 3)
-    #expect(work.eventPreparations == 3 * before.events.count + 2)
-    #expect(work.documentPreparations == 3 * before.documents.count)
-    #expect(work.verificationPreparations == 3 * before.verificationRecords.count)
+    // Item 12: `before` already authenticated complete history, so authority
+    // and preappend reuse that projection and postcommit authenticates only
+    // the appended row. The new row is prepared once, on ingress.
+    #expect(work.fullValidationScans == 0)
+    #expect(work.projectionReuses == 2)
+    #expect(work.committedBatchEvents == [1])
+    #expect(work.eventPreparations == 1)
+    #expect(work.documentPreparations == 0)
+    #expect(work.verificationPreparations == 0)
     #expect(work.fullReplayEvents == [before.events.count])
     #expect(work.incrementalEvents == [1])
-    #expect(work.validationNanoseconds.count == 3)
+    #expect(work.validationNanoseconds.isEmpty)
     #expect(work.fullReplayNanoseconds.count == 1)
     #expect(work.incrementalNanoseconds.count == 1)
 
@@ -820,8 +827,9 @@ func sqliteQueuedClaimValidationWorkIsOperationLocal() throws {
     let retryWork = meter.measuredWork()
     #expect(retry.commit.eventCount == 0)
     #expect(retryIO == SQLiteClaimIOCounts(publicLoads: 1, freshnessLoads: 1))
-    #expect(retryWork.fullValidationScans == 1)
-    #expect(retryWork.eventPreparations == before.events.count + 1)
+    #expect(retryWork.fullValidationScans == 0)
+    #expect(retryWork.projectionReuses == 1)
+    #expect(retryWork.eventPreparations == 0)
     #expect(retryWork.fullReplayEvents == [before.events.count + 1])
     #expect(retryWork.incrementalEvents.isEmpty)
 
@@ -863,7 +871,10 @@ func sqliteQueuedClaimIncrementalProjectionReloadsAfterWriterChange() throws {
     }
     _ = meter.stop()
     let work = meter.measuredWork()
-    #expect(work.fullValidationScans == 2) // Rejected append, then fresh authority.
+    // The rejected append scans the moved history once; the fresh authority
+    // then reuses that scan at the same checkpoint.
+    #expect(work.fullValidationScans == 1)
+    #expect(work.projectionReuses == 1)
     #expect(work.incrementalEvents == [1])
     #expect(work.fullReplayEvents == [stale.snapshot.events.count + 1])
     let snapshot = try fixture.journalA.load()
@@ -904,8 +915,10 @@ func sqliteQueuedDeliveryUsesOneFullSemanticReplay() throws {
             publicLoads: 1, publicAppends: 1, appendedEventCounts: [3],
             freshnessLoads: 3, freshnessCAS: 2
         ))
-        #expect(work.fullValidationScans == 3)
-        #expect(work.eventPreparations == 3 * before.events.count + 6)
+        #expect(work.fullValidationScans == 0)
+        #expect(work.projectionReuses == 2)
+        #expect(work.committedBatchEvents == [3])
+        #expect(work.eventPreparations == 3)
         #expect(work.fullReplayEvents == [before.events.count])
         #expect(work.incrementalEvents == [1, 1, 1])
     }
@@ -1273,10 +1286,13 @@ private func sqlitePacketClaimExercise(
         publicLoads: 1, publicAppends: 1, appendedEventCounts: [appendedCount],
         freshnessLoads: 3, freshnessCAS: 2
     ))
-    #expect(work.fullValidationScans == 3)
-    #expect(work.eventPreparations == 3 * seed.events.count + 2 * appendedCount)
-    #expect(work.documentPreparations == 3 * seed.documents.count)
-    #expect(work.verificationPreparations == 3 * seed.verificationRecords.count)
+    // The seeding append left a verified projection; nothing rescans history.
+    #expect(work.fullValidationScans == 0)
+    #expect(work.projectionReuses == 2)
+    #expect(work.committedBatchEvents == [appendedCount])
+    #expect(work.eventPreparations == appendedCount)
+    #expect(work.documentPreparations == 0)
+    #expect(work.verificationPreparations == 0)
     #expect(work.fullReplayEvents == [seed.events.count])
     #expect(work.incrementalEvents == Array(repeating: 1, count: appendedCount))
     let after = try journal.load()
@@ -1322,6 +1338,64 @@ func sqliteQueuedClaimWorkWithPacketRichHistory(preReceipt: Bool) throws {
     // Each of seven bidirectional sidecar relationships inspects exactly one
     // candidate for each history packet and the target, on every full scan.
     #expect(work.sidecarCandidates == 7 * (history.documents.count + 1) * work.fullValidationScans)
+}
+
+// Item 12 evidence: the product path goes through RoutingRequestJournal, which
+// retains the verified replay across requests. A first request pays one scan
+// and one replay; the measured second request pays neither.
+@Test(
+    "Routing-path queued claim benchmark with 2500 events after a warm request",
+    .enabled(if: ProcessInfo.processInfo.environment["BLABEE_SQLITE_QUEUED_CLAIM_BENCHMARK"] == "1")
+)
+func routingQueuedClaimBenchmarkWithRetainedReplay() throws {
+    let history = try sqlitePacketClaimHistory(packetCount: 300, closedOnlyPairs: 50, padded: true)
+    let target = try sqlitePacketClaimLifecycle(
+        suffix: "routing_retained", firstSequence: history.journalSequence + 1,
+        completed: true, claimed: false, padded: false
+    )
+    let seed = JournalSnapshot(
+        events: history.events + target.snapshot.events,
+        documents: history.documents + target.snapshot.documents,
+        verificationRecords: history.verificationRecords + target.snapshot.verificationRecords,
+        journalSequence: target.snapshot.journalSequence
+    )
+    let directory = try sqliteClaimTemporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let meter = SQLiteClaimIOMeter()
+    let journal = try SQLiteJournal(
+        databaseURL: directory.appendingPathComponent("journal.sqlite"),
+        keyURL: directory.appendingPathComponent("journal.key"),
+        freshnessStore: SQLiteClaimFreshnessStore(meter: meter),
+        workObserver: { meter.observe($0) }
+    )
+    _ = try journal.append(
+        expectedSequence: 0, events: seed.events, documents: seed.documents,
+        verificationRecords: seed.verificationRecords
+    )
+    let port = RoutingRequestJournal(base: journal)
+    let semantic = CoordinatorSemanticApplication(journal: port)
+    // Warm request: a restarted service would scan and replay once here.
+    journal.fullRevalidationIntervalNanoseconds = 0
+    port.begin()
+    _ = try port.replayedState()
+    port.end()
+    journal.fullRevalidationIntervalNanoseconds = 3_600 * 1_000_000_000
+
+    port.begin()
+    let sample = try sqliteReceiptMeasure(meter) {
+        let result = try semantic.execute(command: target.claim, using: semantic.authorityProjection())
+        #expect(result.commit.eventCount == 1)
+    }
+    port.end()
+    let work = meter.measuredWork()
+    #expect(work.fullValidationScans == 0)
+    #expect(port.fullReplayCount == 1)
+    print(
+        "ROUTING_QUEUED_CLAIM_BENCHMARK history_events=\(history.events.count) seed_events=\(seed.events.count)"
+            + " elapsed_ms=\(String(format: "%.3f", sample.elapsedSeconds * 1_000))"
+            + " full_scans=\(work.fullValidationScans) projection_reuses=\(work.projectionReuses)"
+            + " full_replays_after_warm=\(port.fullReplayCount - 1)"
+    )
 }
 
 // Timings are comparative evidence, not a timing assertion or a claim about
@@ -1486,23 +1560,28 @@ func sqliteDismissalJournalBudgetWithAuthenticatedHistory(packetHistoryCount: In
     }
 }
 
-@Test("A head-reusing load skips the full scan only while the authenticated head is unchanged")
+@Test("A head-reusing load serves verified history only while the authenticated head is unchanged")
 func sqliteHeadReusingLoadRequiresUnchangedHead() throws {
     let fixture = try makeSQLiteClaimFixture("head_reuse", closedHistoryPairs: 3)
     defer { fixture.remove() }
     let meter = fixture.meter
+    let hour: UInt64 = 3_600 * 1_000_000_000
 
+    fixture.journalA.fullRevalidationIntervalNanoseconds = 0
     meter.start()
     let first = try fixture.journalA.loadReusingHead(nil)
     _ = meter.stop()
     #expect(meter.measuredWork().fullValidationScans == 1)
-    #expect(first.snapshot == (try fixture.journalA.load()))
+    fixture.journalA.fullRevalidationIntervalNanoseconds = hour
 
     meter.start()
     let reused = try fixture.journalA.loadReusingHead(first)
+    let plain = try fixture.journalA.load()
     _ = meter.stop()
     #expect(meter.measuredWork().fullValidationScans == 0)
+    #expect(meter.measuredWork().projectionReuses == 1)
     #expect(reused == first)
+    #expect(plain == first.snapshot)
 
     // A write through another instance moves the head; the stale snapshot is
     // never returned and complete history is authenticated again.
@@ -1515,10 +1594,40 @@ func sqliteHeadReusingLoadRequiresUnchangedHead() throws {
     _ = meter.stop()
     #expect(meter.measuredWork().fullValidationScans == 1)
     #expect(moved.snapshot.journalSequence == first.snapshot.journalSequence + 1)
-    #expect(moved.snapshot == (try fixture.journalA.load()))
+    #expect(moved.snapshot == (try fixture.journalB.load()))
+
+    // Once the revalidation interval has passed, an unchanged head is scanned.
+    let now = fixture.journalA.monotonicNanoseconds()
+    fixture.journalA.monotonicNanoseconds = { now + hour }
+    meter.start()
+    #expect(try fixture.journalA.load() == moved.snapshot)
+    _ = try fixture.journalA.load()
+    _ = meter.stop()
+    #expect(meter.measuredWork().fullValidationScans == 1)
+    #expect(meter.measuredWork().projectionReuses == 1)
 }
 
-@Test("Routing request journal reuses one verified snapshot per request and owner thread only")
+@Test("An instance's own appends extend its projection to exactly what a full scan reads")
+func sqliteOwnAppendProjectionMatchesFullScan() throws {
+    let fixture = try makeSQLiteClaimFixture("own_append", closedHistoryPairs: 3)
+    defer { fixture.remove() }
+    let meter = fixture.meter
+    _ = try fixture.journalA.load()
+    let command = try sqliteClaimCommand(
+        fixture: fixture, eventID: "event_own_append_claim", turnID: "turn_own_append"
+    )
+    _ = try CoordinatorSemanticApplication(journal: fixture.journalA).execute(command: command)
+    meter.start()
+    let projected = try fixture.journalA.load()
+    _ = meter.stop()
+    #expect(meter.measuredWork().fullValidationScans == 0)
+    fixture.journalB.fullRevalidationIntervalNanoseconds = 0
+    #expect(projected == (try fixture.journalB.load()))
+    fixture.journalA.fullRevalidationIntervalNanoseconds = 0
+    #expect(projected == (try fixture.journalA.load()))
+}
+
+@Test("Routing request journal retains replay across requests only for its own confirmed append")
 func routingRequestJournalScopesReuse() throws {
     let fixture = try makeSQLiteClaimFixture("request_scope", closedHistoryPairs: 3)
     defer { fixture.remove() }
@@ -1526,39 +1635,63 @@ func routingRequestJournalScopesReuse() throws {
     let journal = RoutingRequestJournal(base: fixture.journalA)
 
     journal.begin()
-    meter.start()
     let snapshot = try journal.load()
     let replayed = try journal.replayedState()
-    _ = try journal.load()
-    _ = meter.stop()
-    #expect(meter.measuredWork().fullValidationScans == 1)
     #expect(replayed.snapshot == snapshot)
     #expect(replayed.state == (try CoordinatorSemanticReplay.replay(snapshot)))
-
-    // Another thread inside the same scope never sees the request memo.
-    meter.start()
+    #expect(journal.fullReplayCount == 1)
+    // Another thread inside the same scope never sees the retained replay.
     let done = DispatchSemaphore(value: 0)
     DispatchQueue.global().async {
-        _ = try? journal.load()
+        #expect((try? journal.verifiedReplay()) == nil)
         done.signal()
     }
     #expect(done.wait(timeout: .now() + 10) == .success)
-    _ = meter.stop()
-    #expect(meter.measuredWork().fullValidationScans == 1)
     journal.end()
 
-    // Nothing survives the end of a request.
+    // A later request reuses the replay at the unchanged head.
     journal.begin()
     meter.start()
-    _ = try journal.load()
+    #expect(try journal.replayedState().state == replayed.state)
     _ = meter.stop()
+    #expect(meter.measuredWork().fullValidationScans == 0)
+    #expect(journal.fullReplayCount == 1)
+    // Its own confirmed append advances the replay incrementally.
+    let semantic = CoordinatorSemanticApplication(journal: journal)
+    let command = try sqliteClaimCommand(
+        fixture: fixture, eventID: "event_request_scope_claim", turnID: "turn_request_scope"
+    )
+    _ = try semantic.execute(command: command, using: semantic.authorityProjection())
     journal.end()
-    #expect(meter.measuredWork().fullValidationScans == 1)
 
-    // Outside a request every load is a plain full load.
-    meter.start()
-    _ = try journal.load()
-    _ = try journal.load()
-    _ = meter.stop()
-    #expect(meter.measuredWork().fullValidationScans == 2)
+    journal.begin()
+    let advanced = try journal.replayedState()
+    journal.end()
+    #expect(journal.fullReplayCount == 1)
+    #expect(advanced.snapshot == (try fixture.journalB.load()))
+    #expect(advanced.state == (try CoordinatorSemanticReplay.replay(advanced.snapshot)))
+
+}
+
+@Test("Routing request journal replays from scratch after a write it did not make")
+func routingRequestJournalReplaysAfterForeignWrite() throws {
+    let fixture = try makeSQLiteClaimFixture("request_foreign", closedHistoryPairs: 3)
+    defer { fixture.remove() }
+    let journal = RoutingRequestJournal(base: fixture.journalA)
+    journal.begin()
+    _ = try journal.replayedState()
+    journal.end()
+    #expect(journal.fullReplayCount == 1)
+
+    // Same SQLite instance, but not through this port: never applied as "own".
+    let command = try sqliteClaimCommand(
+        fixture: fixture, eventID: "event_request_foreign_claim", turnID: "turn_request_foreign"
+    )
+    _ = try CoordinatorSemanticApplication(journal: fixture.journalA).execute(command: command)
+    journal.begin()
+    let after = try journal.replayedState()
+    journal.end()
+    #expect(journal.fullReplayCount == 2)
+    #expect(after.snapshot == (try fixture.journalB.load()))
+    #expect(after.state == (try CoordinatorSemanticReplay.replay(after.snapshot)))
 }

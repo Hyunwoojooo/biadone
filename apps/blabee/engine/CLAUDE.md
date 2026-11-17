@@ -26,10 +26,10 @@ AppKit·SwiftUI·브릿지 모듈을 import하지 않는다. `Tests/support/refe
 | `semantic/CoordinatorSemanticApplication.swift` | command → event 결정(`CoordinatorSemanticDecision.decide`), CAS append 재시도, transport completion/not-submitted/queued delivery |
 | `semantic/CoordinatorSemanticState.swift` | replay로만 상태를 만드는 reducer(`CoordinatorSemanticReplay.applying`), `CoordinatorTransportStatus` |
 | `semantic/BlabeeSuggestionMode.swift` | 제안 모드 |
-| `routing/CoordinatorRoutingApplication.swift` | 락(잠금 구간마다 `RoutingRequestJournal`이 head가 같은 동안 검증된 snapshot·replay를 재사용, 요청 밖으로 남기지 않음), in-flight/deadline/clock, `routeSelection`, `routeConsumePetAction`, `routeQueuedActionContextClaim`, `completeTransportAndCloseBoundary`, `failTransportBeforeSubmission`, 재시작 복구 quarantine |
+| `routing/CoordinatorRoutingApplication.swift` | 락(`RoutingRequestJournal`이 검증된 snapshot을 잠금 구간 안에서 재사용하고, replay 상태는 요청을 넘어 유지한다. 같은 checkpoint이거나 자기 append 하나만 더해진 경우에만 재사용·증분 적용, 그 밖은 처음부터 replay), in-flight/deadline/clock, `routeSelection`, `routeConsumePetAction`, `routeQueuedActionContextClaim`, `completeTransportAndCloseBoundary`, `failTransportBeforeSubmission`, 재시작 복구 quarantine |
 | `routing/CoordinatorNextTurnDispatcher.swift` | dispatcher 포트와 실패 증거(`commandInvocationAttempted`). 실제 구현 `CodexQueueNextTurnDispatcher`는 Codex 브릿지에서 `app/entrypoints/main.swift`가 주입 |
 | `routing/CoordinatorBinding.swift`, `routing/ContinuationToken.swift` | binding 키, token 생성·fingerprint |
-| `persistence/SQLiteJournal.swift` | WAL/FULL, `BEGIN IMMEDIATE`, CAS append, HMAC chain, `schemaVersion = 1`, 테이블 4개 정확 일치 검사. append 시 event·packet을 validator로 재검증 |
+| `persistence/SQLiteJournal.swift` | WAL/FULL, `BEGIN IMMEDIATE`, CAS append, HMAC chain, `schemaVersion = 1`, 테이블 4개 정확 일치 검사. append 시 event·packet을 validator로 재검증. 검증된 기록(`VerifiedProjection`)을 요청을 넘어 유지하고 신뢰 anchor checkpoint가 같을 때만 재사용, append 뒤에는 추가한 행만 인증, 1시간마다 전체 재검증(2026-11-16) |
 | `persistence/FreshnessAnchor.swift`, `KeychainFreshnessAnchorStore.swift`, `StorageKey.swift`, `StorageProcessLock.swift`, `MissingStorageRecovery.swift` | freshness anchor, 32-byte 외부 키, flock, 저장소 유실 복구 |
 | `../app/coordination/CoordinatorOperationalApplication.swift` | 같은 타깃. Hook/Pet 요청 어댑터(`handle(type:payload:)`, `emitDecision`, `select`, `userPromptSubmit`, `complete`). 승인·managed approval 로직도 섞여 있어 Codex Bridge와 경계를 공유한다 |
 | `../app/coordination/PetEventArrivalLedger.swift` | 같은 타깃(`Package.swift`의 `coordinatorSwiftSources`). Pet 이벤트 도착 장부. 테스트는 `Tests/swift/CoordinatorSwiftTests/PetEventArrivalLedgerTests.swift` |

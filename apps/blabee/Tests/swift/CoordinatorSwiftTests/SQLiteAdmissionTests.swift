@@ -31,8 +31,13 @@ private final class AdmissionProbe: @unchecked Sendable {
         lock.unlock()
     }
 
+    /// Either a complete scan or reuse of the retained verified projection
+    /// counts as the storage validation that precedes admission.
     func observe(_ work: SQLiteJournalWork) {
-        guard case .fullValidationFinished = work else { return }
+        switch work {
+        case .fullValidationFinished, .verifiedProjectionReuse: break
+        default: return
+        }
         lock.lock()
         validationScans += 1
         if expireAfterValidation {

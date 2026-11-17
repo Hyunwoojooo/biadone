@@ -178,3 +178,16 @@
   지운 세션은 프로젝트만 울타리로 남긴다(최대 8,192개, 오래된 것부터 버림). 그래서 다른 프로젝트로 옮기거나 하위 에이전트 승인 경로를 쓰는 것은 등록돼 있을 때처럼 막힌다. 같은 프로젝트로 돌아오면 새로 등록된다.
   `unqualifiedCodexSessions`도 꽉 차면 가장 오래된 표시를 버린다. `boundaries`·`registrations`의 빈 항목 정리는 13번과 함께 한다.
 - **APP-13 App Nap.** Pet 폴링이 도는 동안 `ProcessInfo.beginActivity(.userInitiatedAllowingIdleSystemSleep)`를 유지하고 폴링이 멈추면 해제한다. 시스템 잠자기는 막지 않는다. 숨긴 패널에서 승인 카드가 뜨는지는 설치 앱에서 확인해야 하고, 배터리 영향은 측정하지 않았다.
+
+## 2순위 12번 (2026-11-16 구현)
+
+ENG-1. 요청마다 journal 전체를 다시 검증·replay하던 비용을 없앴다. 사용자가 승인한 원칙 변경이다(2026-11-16): 검증된 상태를 요청을 넘어 유지한다.
+
+- **저장소.** `SQLiteJournal`이 마지막으로 전체 검증한 기록(`VerifiedProjection`)을 들고 있다. 읽기·append 전 검사는 Keychain anchor가 committed이고 DB checkpoint(database ID, generation, sequence, head MAC)가 그 기록과 정확히 같을 때만 재사용한다. append 뒤에는 원래 하던 전체 재검사 대신 이전 head MAC부터 이어지는 새 행의 사슬·MAC·정확한 바이트, 새 sidecar(primary key 조회), chain anchor만 인증하고 기록을 늘린다. 순서는 `loadUnlocked`와 같다(packet은 `packet_id` 바이트·revision, verification은 `continuation_id` 바이트).
+- **전체 검증이 다시 도는 경우.** 서비스 시작 뒤 첫 요청, generation이 예상과 다를 때(다른 인스턴스·프로세스의 쓰기), anchor가 pending·initializing일 때, 마지막 전체 검증 뒤 1시간이 지났을 때. 전체 검증이 실패하면 들고 있던 기록을 버린다. append 확인이 실패해도 버린다.
+- **replay.** `RoutingRequestJournal`이 replay 상태를 요청을 넘어 유지한다. 같은 checkpoint면 그대로, 직전 상태 이후 이 포트 자신의 확인된 append 하나만 더해졌으면(generation + 1, 마지막 sequence와 event 바이트 일치) `CoordinatorSemanticReplay.applying`으로 더하고, 그 밖은 처음부터 replay한다. `CoordinatorSemanticApplication.authorityProjection`은 포트가 주는 이 상태를 쓴다(`verifiedReplay`).
+- **바뀐 보장.** 이전에는 checkpoint를 그대로 둔 채 오래된 행을 바꾸면 다음 요청에서 잡혔다. 이제는 다음 전체 검증(최대 1시간 또는 재시작)에서 잡힌다. 그 사이에도 판단은 이미 검증한 메모리의 바이트로만 한다. 이런 변조에는 저장 키(`journal.key`)가 필요하다.
+- **측정(debug 빌드, 메모리 freshness store).** 기록 2,500개·약 6 MiB에서 routing 경로 claim 한 번이 4.99ms(전체 검증 0회, 재사용 2회, 전체 replay 0회). 이전 문서 값은 같은 크기에서 3,464~3,947ms. routing을 거치지 않는 semantic 직접 경로는 저장소 검증 0회지만 replay가 490ms 남는다.
+- **메모리.** 검증된 기록을 계속 들고 있다(위 크기에서 약 6 MiB와 파싱된 객체). 압축은 13번에서 다룬다.
+- **남은 것.** `ClaudeCoreAdapter`(Claude Bridge)는 선택·무효화 때 `CoordinatorSemanticReplay.replay(journal.load())`로 여전히 전체 replay한다. 저장소 검증은 재사용하지만 replay 비용이 남는다. 첫 요청과 1시간마다의 재검증 요청은 이전과 같은 전체 비용을 낸다.
+

@@ -65,6 +65,11 @@ enum SQLiteJournalWork: Sendable {
     case strictJSONDecodingPass
     /// Candidate rows examined by persisted sidecar matching, not SQL reads.
     case sidecarCandidates(count: Int)
+    /// A read or append reused the retained verified projection instead of
+    /// authenticating complete history again.
+    case verifiedProjectionReuse
+    /// Post-commit confirmation authenticated only the appended rows.
+    case committedBatchVerification(eventCount: Int)
 }
 
 public final class SQLiteJournal: @unchecked Sendable {
@@ -151,6 +156,26 @@ public final class SQLiteJournal: @unchecked Sendable {
     private let lock = NSLock()
     private var database: OpaquePointer?
     private var workObserver: (@Sendable (SQLiteJournalWork) -> Void)?
+
+    /// Complete history that this instance authenticated, retained across
+    /// requests (2026-11-16, P1 solutions item 12). It is reused only while
+    /// the trusted freshness anchor is committed at exactly the checkpoint it
+    /// was verified at, so any append — by this or another instance — moves
+    /// the generation and forces a full scan unless this instance confirmed
+    /// that append's rows itself. Decisions use only these verified bytes;
+    /// tampering with older rows that leaves the checkpoint intact is found by
+    /// the next full scan (restart or `fullRevalidationIntervalNanoseconds`).
+    /// Guarded by `lock` (every reader and writer runs inside `synchronized`).
+    private struct VerifiedProjection {
+        let checkpoint: FreshnessCheckpoint
+        let load: ValidatedLoad
+        /// Monotonic time at which the complete history was last scanned.
+        let fullyVerifiedAt: UInt64
+    }
+    private var verifiedProjection: VerifiedProjection?
+    /// One hour by default. Tests shorten it; production does not change it.
+    var fullRevalidationIntervalNanoseconds: UInt64 = 3_600 * 1_000_000_000
+    var monotonicNanoseconds: @Sendable () -> UInt64 = { DispatchTime.now().uptimeNanoseconds }
 
     public init(
         databaseURL: URL,
@@ -256,23 +281,25 @@ public final class SQLiteJournal: @unchecked Sendable {
     public func load() throws -> JournalSnapshot {
         try synchronizedWithStorageLock {
             try withImmediateTransaction {
+                let databaseCheckpoint = try currentCheckpoint()
                 let precheck = try precheckFreshness(
                     stored: try requiredFreshnessRecord(),
-                    databaseCheckpoint: try currentCheckpoint(),
+                    databaseCheckpoint: databaseCheckpoint,
                     allowPendingSource: false
                 )
-                let snapshot = try loadUnlocked().snapshot
+                let validated = try validatedLoad(at: databaseCheckpoint, precheck: precheck)
                 try requireFreshnessReady(after: precheck)
-                return snapshot
+                retainScan(validated, at: databaseCheckpoint)
+                return validated.load.snapshot
             }
         }
     }
 
     /// Returns `previous` without a full validation scan only when the trusted
     /// anchor is committed and the database head still equals the checkpoint
-    /// `previous` was fully verified at. Anything else is an ordinary `load()`.
-    /// Callers must scope `previous` to one request (see routing) so every
-    /// request still authenticates complete history at least once.
+    /// `previous` was fully verified at. Anything else is an ordinary `load()`,
+    /// which itself reuses this instance's retained verified projection under
+    /// the same rule (see `VerifiedProjection`).
     public func loadReusingHead(_ previous: JournalHeadSnapshot?) throws -> JournalHeadSnapshot {
         try synchronizedWithStorageLock {
             try withImmediateTransaction {
@@ -287,9 +314,10 @@ public final class SQLiteJournal: @unchecked Sendable {
                    previous.snapshot.journalSequence == databaseCheckpoint.sequence {
                     return previous
                 }
-                let snapshot = try loadUnlocked().snapshot
+                let validated = try validatedLoad(at: databaseCheckpoint, precheck: precheck)
                 try requireFreshnessReady(after: precheck)
-                return JournalHeadSnapshot(snapshot: snapshot, checkpoint: databaseCheckpoint)
+                retainScan(validated, at: databaseCheckpoint)
+                return JournalHeadSnapshot(snapshot: validated.load.snapshot, checkpoint: databaseCheckpoint)
             }
         }
     }
@@ -442,6 +470,9 @@ public final class SQLiteJournal: @unchecked Sendable {
         pendingWriteAttempted = false
         var pendingStored: FreshnessStoredRecord?
         var targetCheckpoint: FreshnessCheckpoint?
+        var committedSourceCheckpoint: FreshnessCheckpoint?
+        var committedBaseLoad: ValidatedLoad?
+        var committedBaseVerifiedAt: UInt64 = 0
         try execute("BEGIN IMMEDIATE")
         do {
             try verifySchemaV1()
@@ -459,11 +490,13 @@ public final class SQLiteJournal: @unchecked Sendable {
                     "a different freshness transition is pending"
                 )
             }
-            let current = try loadUnlocked()
+            let validated = try validatedLoad(at: sourceCheckpoint, precheck: precheck)
+            let current = validated.load
             let currentSnapshot = current.snapshot
             let reconciliation = try finishFreshnessAfterReplay(precheck)
             switch reconciliation {
             case let .ready(stored):
+                retainScan(validated, at: sourceCheckpoint)
                 guard currentSnapshot.journalSequence == expectedSequence else {
                     throw CoordinatorError(
                         "journal_sequence_conflict",
@@ -483,9 +516,10 @@ public final class SQLiteJournal: @unchecked Sendable {
                 )
             }
             // These are the exact rows whose MAC, canonical form, schema,
-            // head, sequence and sidecars were checked above, under this same
-            // BEGIN IMMEDIATE transaction. Never retain them across loads or
-            // writers; postcommit confirmation still performs its own scan.
+            // head, sequence and sidecars were verified at `sourceCheckpoint`,
+            // which this BEGIN IMMEDIATE transaction just matched against the
+            // trusted anchor. Postcommit confirmation authenticates the
+            // appended rows on top of them.
             let existingEvents = current.events
             let existingDocuments = current.documents
             try assertSelectionUniqueness(existingEvents: existingEvents, events: preparedEvents)
@@ -555,6 +589,9 @@ public final class SQLiteJournal: @unchecked Sendable {
                 )
             }
             targetCheckpoint = target
+            committedSourceCheckpoint = sourceCheckpoint
+            committedBaseLoad = current
+            committedBaseVerifiedAt = validated.fullyVerifiedAt
             if crashPoint == .beforeCommit
                 || crashPoint == .afterFreshnessPendingBeforeSQLiteCommit {
                 _exit(crashPoint == .beforeCommit ? 85 : 87)
@@ -588,9 +625,14 @@ public final class SQLiteJournal: @unchecked Sendable {
             throw error
         }
 
-        guard pendingStored != nil, let targetCheckpoint else {
+        guard pendingStored != nil, let targetCheckpoint,
+              let committedSource = committedSourceCheckpoint,
+              let committedBaseLoad
+        else {
+            verifiedProjection = nil
             throw CoordinatorError("freshness_commit_ambiguous", "freshness transition state was lost")
         }
+        let committedBase = (load: committedBaseLoad, fullyVerifiedAt: committedBaseVerifiedAt)
         if crashPoint == .afterSQLiteCommitBeforeFreshnessFinalize { _exit(88) }
         do {
             try execute("BEGIN IMMEDIATE")
@@ -601,22 +643,33 @@ public final class SQLiteJournal: @unchecked Sendable {
                     databaseCheckpoint: committedCheckpoint,
                     allowPendingSource: false
                 )
-                let committed = try loadUnlocked().snapshot
-                let expectedSuffix = preparedEvents.map(\.json)
                 try require(
-                    committedCheckpoint == targetCheckpoint
-                        && committed.journalSequence == targetCheckpoint.sequence
-                        && Array(committed.events.suffix(preparedEvents.count)) == expectedSuffix,
+                    committedCheckpoint == targetCheckpoint,
                     "freshness_commit_ambiguous",
                     "committed journal effect does not match the freshness target"
                 )
+                try verifyCommittedBatch(
+                    source: committedSource,
+                    target: targetCheckpoint,
+                    events: preparedEvents,
+                    documents: preparedDocuments,
+                    verifications: preparedVerifications
+                )
                 try requireFreshnessReady(after: precheck)
                 try execute("COMMIT")
+                verifiedProjection = extendedProjection(
+                    base: committedBase,
+                    at: targetCheckpoint,
+                    events: preparedEvents,
+                    documents: preparedDocuments,
+                    verifications: preparedVerifications
+                )
             } catch {
                 try? execute("ROLLBACK")
                 throw error
             }
         } catch {
+            verifiedProjection = nil
             if (try? freshnessStore.load()?.record) == (try? FreshnessRecord.committed(
                 storageSlot: freshnessStore.storageSlot,
                 checkpoint: targetCheckpoint
@@ -1111,6 +1164,191 @@ public final class SQLiteJournal: @unchecked Sendable {
         let snapshot: JournalSnapshot
         let events: [PreparedEvent]
         let documents: [PreparedDocument]
+        let verifications: [PreparedVerification]
+    }
+
+    private struct ValidatedLoadResult {
+        let load: ValidatedLoad
+        let fullyVerifiedAt: UInt64
+        /// False when `load` is the retained projection.
+        let scanned: Bool
+    }
+
+    /// Reuses the retained projection only for a committed anchor at exactly
+    /// its checkpoint and within the revalidation interval; otherwise scans
+    /// complete history. A failed scan drops the projection.
+    private func validatedLoad(
+        at checkpoint: FreshnessCheckpoint,
+        precheck: FreshnessPrecheck
+    ) throws -> ValidatedLoadResult {
+        let now = monotonicNanoseconds()
+        if case .committed = precheck,
+           let projection = verifiedProjection,
+           projection.checkpoint == checkpoint,
+           now >= projection.fullyVerifiedAt,
+           now - projection.fullyVerifiedAt < fullRevalidationIntervalNanoseconds
+        {
+            workObserver?(.verifiedProjectionReuse)
+            return ValidatedLoadResult(
+                load: projection.load,
+                fullyVerifiedAt: projection.fullyVerifiedAt,
+                scanned: false
+            )
+        }
+        do {
+            let load = try loadUnlocked()
+            return ValidatedLoadResult(load: load, fullyVerifiedAt: now, scanned: true)
+        } catch {
+            verifiedProjection = nil
+            throw error
+        }
+    }
+
+    /// Call only after the trusted anchor is confirmed ready at `checkpoint`.
+    private func retainScan(_ result: ValidatedLoadResult, at checkpoint: FreshnessCheckpoint) {
+        guard result.scanned else { return }
+        verifiedProjection = VerifiedProjection(
+            checkpoint: checkpoint,
+            load: result.load,
+            fullyVerifiedAt: result.fullyVerifiedAt
+        )
+    }
+
+    /// Authenticates only the rows one append added on top of `source`: the
+    /// contiguous MAC chain from the source head, each row's identity and exact
+    /// canonical bytes, the sidecars by primary key, and the chain anchor.
+    /// Cross-row sidecar rules were enforced for this batch before commit.
+    private func verifyCommittedBatch(
+        source: FreshnessCheckpoint,
+        target: FreshnessCheckpoint,
+        events: [PreparedEvent],
+        documents: [PreparedDocument],
+        verifications: [PreparedVerification]
+    ) throws {
+        workObserver?(.committedBatchVerification(eventCount: events.count))
+        let mismatch = CoordinatorError(
+            "freshness_commit_ambiguous",
+            "committed journal effect does not match the freshness target"
+        )
+        var previousMAC = source.headMAC
+        var index = 0
+        try withStatement(
+            "SELECT event_sequence, event_id, json, prev_mac, mac FROM runtime_events WHERE event_sequence > ? ORDER BY event_sequence"
+        ) { statement in
+            sqlite3_bind_int64(statement, 1, source.sequence)
+            while true {
+                let result = sqlite3_step(statement)
+                if result == SQLITE_DONE { return }
+                guard result == SQLITE_ROW else { throw sqliteError(code: "database_integrity_failed") }
+                guard index < events.count else { throw mismatch }
+                let expected = events[index]
+                let rowSequence = sqlite3_column_int64(statement, 0)
+                let rowID = try columnText(statement, 1)
+                let json = try columnData(statement, 2)
+                let rowPreviousMAC = try columnData(statement, 3)
+                let mac = try columnData(statement, 4)
+                guard rowSequence == expected.sequence,
+                      rowID == expected.eventID,
+                      json == expected.json,
+                      rowPreviousMAC == previousMAC,
+                      authenticator.verify(
+                          mac,
+                          domain: SidecarAuthenticator.eventDomain,
+                          identity: eventIdentity(sequence: rowSequence, eventID: rowID),
+                          canonicalJSON: rowPreviousMAC + json
+                      )
+                else { throw mismatch }
+                previousMAC = mac
+                index += 1
+            }
+        }
+        guard index == events.count, events.last?.sequence == target.sequence,
+              previousMAC == target.headMAC
+        else { throw mismatch }
+        try verifyEventChainAnchor(sequence: target.sequence, headMAC: previousMAC)
+        for document in documents {
+            try withStatement("SELECT json, mac FROM packet_documents WHERE packet_id=? AND revision=?") { statement in
+                try bindText(document.packetID, to: statement, at: 1)
+                sqlite3_bind_int64(statement, 2, document.revision)
+                guard sqlite3_step(statement) == SQLITE_ROW,
+                      try columnData(statement, 0) == document.json,
+                      try columnData(statement, 1) == document.mac
+                else { throw mismatch }
+            }
+        }
+        for verification in verifications {
+            try withStatement(
+                "SELECT dispatch_event_id, token_fingerprint, json, mac FROM verification_records WHERE continuation_id=?"
+            ) { statement in
+                try bindText(verification.continuationID, to: statement, at: 1)
+                guard sqlite3_step(statement) == SQLITE_ROW,
+                      try columnText(statement, 0) == verification.dispatchEventID,
+                      try columnText(statement, 1) == verification.fingerprint,
+                      try columnData(statement, 2) == verification.json,
+                      try columnData(statement, 3) == verification.mac
+                else { throw mismatch }
+            }
+        }
+    }
+
+    /// The retained projection after a confirmed append, ordered exactly like
+    /// `loadUnlocked` (events by sequence; packets by packet_id bytes then
+    /// revision; verifications by continuation_id bytes).
+    private func extendedProjection(
+        base: (load: ValidatedLoad, fullyVerifiedAt: UInt64),
+        at checkpoint: FreshnessCheckpoint,
+        events: [PreparedEvent],
+        documents: [PreparedDocument],
+        verifications: [PreparedVerification]
+    ) -> VerifiedProjection {
+        var allDocuments = base.load.documents
+        for document in documents {
+            let index = Self.insertionIndex(in: allDocuments) {
+                Self.binaryPrecedes($0.packetID, document.packetID)
+                    || ($0.packetID.utf8.elementsEqual(document.packetID.utf8)
+                        && $0.revision < document.revision)
+            }
+            allDocuments.insert(document, at: index)
+        }
+        var allVerifications = base.load.verifications
+        for verification in verifications {
+            let index = Self.insertionIndex(in: allVerifications) {
+                Self.binaryPrecedes($0.continuationID, verification.continuationID)
+            }
+            allVerifications.insert(verification, at: index)
+        }
+        let allEvents = base.load.events + events
+        let load = ValidatedLoad(
+            snapshot: JournalSnapshot(
+                events: base.load.snapshot.events + events.map(\.json),
+                documents: allDocuments.map(\.json),
+                verificationRecords: allVerifications.map(\.json),
+                journalSequence: checkpoint.sequence
+            ),
+            events: allEvents,
+            documents: allDocuments,
+            verifications: allVerifications
+        )
+        return VerifiedProjection(checkpoint: checkpoint, load: load, fullyVerifiedAt: base.fullyVerifiedAt)
+    }
+
+    /// First index whose element does not satisfy `precedes` (array sorted).
+    private static func insertionIndex<Element>(
+        in elements: [Element],
+        where precedes: (Element) -> Bool
+    ) -> Int {
+        var low = 0
+        var high = elements.count
+        while low < high {
+            let middle = (low + high) / 2
+            if precedes(elements[middle]) { low = middle + 1 } else { high = middle }
+        }
+        return low
+    }
+
+    /// SQLite's default BINARY collation: memcmp of the UTF-8 bytes.
+    private static func binaryPrecedes(_ left: String, _ right: String) -> Bool {
+        left.utf8.lexicographicallyPrecedes(right.utf8)
     }
 
     private func loadUnlocked() throws -> ValidatedLoad {
@@ -1241,7 +1479,8 @@ public final class SQLiteJournal: @unchecked Sendable {
                 journalSequence: lastSequence
             ),
             events: preparedEvents,
-            documents: preparedDocuments
+            documents: preparedDocuments,
+            verifications: preparedVerifications
         )
     }
 

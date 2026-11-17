@@ -1460,7 +1460,55 @@ func persistedPacketIndexKeepsExactBinding(field: String) throws {
         canonicalJSON: canonical
     )
     try executeSQLite(database, "UPDATE packet_documents SET json=X'\(hexadecimal(canonical))',mac=X'\(hexadecimal(mac))'")
+    // The rewrite keeps the authenticated checkpoint, so this instance still
+    // serves the bytes it verified until its next complete scan.
+    #expect(try journal.load().documents == [prepared.data])
+    journal.fullRevalidationIntervalNanoseconds = 0
     expectCode("packet_document_integrity_mismatch") { _ = try journal.load() }
+    // A failed scan drops the retained projection; nothing stale is served.
+    journal.fullRevalidationIntervalNanoseconds = 3_600 * 1_000_000_000
+    expectCode("packet_document_integrity_mismatch") { _ = try journal.load() }
+}
+
+@Test("an instance's own appends with packets and verifications project exactly what a full scan reads")
+func ownAppendProjectionOrdersSidecarsLikeFullScan() throws {
+    let directory = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let journal = try testJournal(
+        databaseURL: directory.appendingPathComponent("journal.sqlite3"),
+        keyURL: directory.appendingPathComponent("journal.key")
+    )
+    let prepared = try sealedPacket()
+    // Later appends sort before earlier ones by packet and continuation id.
+    for (index, label) in ["zulu", "alpha", "mike"].enumerated() {
+        let sequence = Int64(index * 3 + 1)
+        var packet = prepared.packet
+        packet["packet_id"] = "packet:\(label)"
+        packet["session_id"] = "session:\(label)"
+        packet["valid_after_event_sequence"] = sequence
+        var seal = prepared.seal
+        seal["event_id"] = "seal_\(label)"
+        seal["event_sequence"] = sequence
+        seal["session_id"] = packet["session_id"]
+        var payload = try #require(seal["payload"] as? [String: Any])
+        payload["packet_id"] = packet["packet_id"]
+        seal["payload"] = payload
+        let continuation = actionContinuation(
+            packet: packet, actionID: "action_fixture_recommended_001",
+            firstSequence: Int(sequence) + 1, identifierSuffix: "order_\(label)",
+            fingerprintCharacter: ["a", "b", "c"][index]
+        )
+        _ = try journal.append(
+            expectedSequence: sequence - 1,
+            events: try ([seal] + continuation.events).map(JSONData),
+            documents: [try JSONData(packet)], verificationRecords: [try JSONData(continuation.verification)]
+        )
+    }
+    let projected = try journal.load()
+    #expect(projected.documents.count == 3)
+    #expect(projected.verificationRecords.count == 3)
+    journal.fullRevalidationIntervalNanoseconds = 0
+    #expect(try journal.load() == projected)
 }
 
 @Test("selection index keeps complete bindings distinct within the same boundary bucket")

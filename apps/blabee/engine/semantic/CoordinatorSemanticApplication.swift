@@ -27,10 +27,16 @@ public protocol CoordinatorSemanticJournalPort: Sendable {
     /// head is unchanged. `nil` means the port cannot prove that, and callers
     /// fall back to `load()`.
     func reusableLoad(_ previous: JournalHeadSnapshot?) throws -> JournalHeadSnapshot?
+
+    /// A verified snapshot with its already replayed state, when the port can
+    /// prove the state belongs to that snapshot. `nil` means load and replay.
+    func verifiedReplay() throws -> (snapshot: JournalSnapshot, state: CoordinatorSemanticState)?
 }
 
 extension CoordinatorSemanticJournalPort {
     public func reusableLoad(_ previous: JournalHeadSnapshot?) throws -> JournalHeadSnapshot? { nil }
+
+    public func verifiedReplay() throws -> (snapshot: JournalSnapshot, state: CoordinatorSemanticState)? { nil }
 
     /// Compatibility for immediate in-memory ports. Storage-owning ports must
     /// override at their final transactional admission point; wrappers must
@@ -182,6 +188,13 @@ public final class CoordinatorSemanticApplication: @unchecked Sendable {
     /// Loads and verifies one authority projection for a routing operation that
     /// must inspect state before submitting its CAS command.
     func authorityProjection() throws -> CoordinatorSemanticAuthorityProjection {
+        if let replayed = try journal.verifiedReplay() {
+            return CoordinatorSemanticAuthorityProjection(
+                authorityID: authorityID,
+                snapshot: replayed.snapshot,
+                state: replayed.state
+            )
+        }
         let snapshot = try journal.load()
         return CoordinatorSemanticAuthorityProjection(
             authorityID: authorityID,

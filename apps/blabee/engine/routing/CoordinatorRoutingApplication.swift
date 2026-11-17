@@ -2248,46 +2248,82 @@ private extension CoordinatorRoutingApplication {
 /// One routing request's view of the journal (audit ENG-7).
 ///
 /// Between `begin()` and `end()` (the routing lock), repeated loads on the
-/// lock-holding thread reuse the snapshot that was fully verified earlier in
-/// the same request while the authenticated head is unchanged, and replay it
-/// once. Every request still authenticates complete history at least once,
-/// any append or foreign write moves the head and forces a full load, and
-/// nothing survives `end()`. Other threads always see the plain journal.
+/// lock-holding thread reuse the verified snapshot while the authenticated
+/// head is unchanged. The replayed semantic state is retained across requests
+/// (2026-11-16, P1 solutions item 12): it is reused only at the exact
+/// checkpoint it was built from, or advanced with `applying` when the only
+/// write since then is this port's own confirmed append (generation + 1, same
+/// sequence and event bytes). Anything else replays the verified snapshot from
+/// scratch. Other threads always see the plain journal.
 final class RoutingRequestJournal: CoordinatorSemanticJournalPort, @unchecked Sendable {
+    private struct RetainedReplay {
+        let head: JournalHeadSnapshot
+        let state: CoordinatorSemanticState
+    }
+
+    private struct OwnAppend {
+        let base: FreshnessCheckpoint
+        let lastSequence: Int64
+        let change: CoordinatorSemanticChange
+    }
+
     private let base: any CoordinatorSemanticJournalPort
     private let lock = NSLock()
     private var owner: pthread_t?
     private var head: JournalHeadSnapshot?
-    private var replayed: (head: JournalHeadSnapshot, state: CoordinatorSemanticState)?
+    private var replayed: RetainedReplay?
+    private var ownAppend: OwnAppend?
+    /// Owner-thread full replays; test instrumentation only.
+    private(set) var fullReplayCount = 0
 
     init(base: any CoordinatorSemanticJournalPort) {
         self.base = base
     }
 
     func begin() {
-        lock.withLock { owner = pthread_self(); head = nil; replayed = nil }
+        lock.withLock { owner = pthread_self(); head = nil }
     }
 
     func end() {
-        lock.withLock { owner = nil; head = nil; replayed = nil }
+        lock.withLock { owner = nil; head = nil }
     }
 
     func load() throws -> JournalSnapshot {
         try loadHead()?.snapshot ?? base.load()
     }
 
-    /// The replayed state of the current snapshot; replays once per head.
+    /// The replayed state of the current verified snapshot.
     func replayedState() throws -> (snapshot: JournalSnapshot, state: CoordinatorSemanticState) {
         guard let current = try loadHead() else {
             let snapshot = try base.load()
             return (snapshot, try CoordinatorSemanticReplay.replay(snapshot))
         }
-        if let replayed = lock.withLock({ self.replayed }), replayed.head.checkpoint == current.checkpoint {
-            return (current.snapshot, replayed.state)
+        let (retained, append) = lock.withLock { (replayed, ownAppend) }
+        if let retained, retained.head.checkpoint == current.checkpoint {
+            return (current.snapshot, retained.state)
         }
-        let state = try CoordinatorSemanticReplay.replay(current.snapshot)
-        lock.withLock { if isOwner { replayed = (current, state) } }
+        let state: CoordinatorSemanticState
+        if let retained, let append,
+           append.base == retained.head.checkpoint,
+           Self.isOnlyAppend(append, from: retained.head, to: current)
+        {
+            state = try CoordinatorSemanticReplay.applying(append.change, to: retained.state)
+        } else {
+            state = try CoordinatorSemanticReplay.replay(current.snapshot)
+            lock.withLock { fullReplayCount += 1 }
+        }
+        lock.withLock {
+            if isOwner {
+                replayed = RetainedReplay(head: current, state: state)
+                ownAppend = nil
+            }
+        }
         return (current.snapshot, state)
+    }
+
+    func verifiedReplay() throws -> (snapshot: JournalSnapshot, state: CoordinatorSemanticState)? {
+        guard lock.withLock({ isOwner }) else { return nil }
+        return try replayedState()
     }
 
     func reusableLoad(_ previous: JournalHeadSnapshot?) throws -> JournalHeadSnapshot? {
@@ -2296,15 +2332,67 @@ final class RoutingRequestJournal: CoordinatorSemanticJournalPort, @unchecked Se
 
     func append(expectedSequence: Int64, events: [Data], documents: [Data],
                 verificationRecords: [Data]) throws -> JournalAppendResult {
-        try base.append(expectedSequence: expectedSequence, events: events,
+        let base = lock.withLock { beginOwnAppend(expectedSequence: expectedSequence) }
+        let result = try self.base.append(expectedSequence: expectedSequence, events: events,
             documents: documents, verificationRecords: verificationRecords)
+        recordOwnAppend(base: base, result: result, events: events, documents: documents,
+            verificationRecords: verificationRecords)
+        return result
     }
 
     func append(expectedSequence: Int64, events: [Data], documents: [Data],
                 verificationRecords: [Data], validateAdmission: () throws -> Void) throws -> JournalAppendResult {
-        try base.append(expectedSequence: expectedSequence, events: events,
+        let base = lock.withLock { beginOwnAppend(expectedSequence: expectedSequence) }
+        let result = try self.base.append(expectedSequence: expectedSequence, events: events,
             documents: documents, verificationRecords: verificationRecords,
             validateAdmission: validateAdmission)
+        recordOwnAppend(base: base, result: result, events: events, documents: documents,
+            verificationRecords: verificationRecords)
+        return result
+    }
+
+    /// Clears any earlier record and returns the retained checkpoint this
+    /// append extends, when the retained state is exactly its source.
+    private func beginOwnAppend(expectedSequence: Int64) -> FreshnessCheckpoint? {
+        ownAppend = nil
+        guard isOwner, let replayed,
+              replayed.head.snapshot.journalSequence == expectedSequence,
+              replayed.state.eventSequence == expectedSequence
+        else { return nil }
+        return replayed.head.checkpoint
+    }
+
+    private func recordOwnAppend(base: FreshnessCheckpoint?, result: JournalAppendResult,
+                                 events: [Data], documents: [Data], verificationRecords: [Data]) {
+        guard let base else { return }
+        lock.withLock {
+            guard isOwner, replayed?.head.checkpoint == base else { return }
+            ownAppend = OwnAppend(
+                base: base,
+                lastSequence: result.lastSequence,
+                change: CoordinatorSemanticChange(
+                    events: events, documents: documents, verificationRecords: verificationRecords
+                )
+            )
+        }
+    }
+
+    /// Exactly one append (generation + 1) moved `from` to `to`, and it ended at
+    /// the recorded sequence with the recorded event bytes.
+    private static func isOnlyAppend(
+        _ append: OwnAppend,
+        from: JournalHeadSnapshot,
+        to: JournalHeadSnapshot
+    ) -> Bool {
+        let (nextGeneration, overflow) = from.checkpoint.generation.addingReportingOverflow(1)
+        let events = append.change.events
+        return !overflow
+            && to.checkpoint.databaseID == from.checkpoint.databaseID
+            && to.checkpoint.generation == nextGeneration
+            && to.checkpoint.sequence == append.lastSequence
+            && to.snapshot.journalSequence == append.lastSequence
+            && to.snapshot.events.count == from.snapshot.events.count + events.count
+            && to.snapshot.events.suffix(events.count).elementsEqual(events)
     }
 
     private var isOwner: Bool {
