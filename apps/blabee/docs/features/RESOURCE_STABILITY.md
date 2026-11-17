@@ -9,11 +9,16 @@ continuous redraw loop.
 
 ## Runtime history
 
-- A service instance admits up to 1,024 distinct registered sessions. Existing
-  sessions continue to work at capacity; new registrations return
-  `session_capacity_exceeded`. The Hook edge treats this as unavailable and
-  leaves the native Codex workflow in control. Registering additional sessions
-  requires a safe service restart after pending work is resolved.
+- A service instance keeps up to 1,024 registered sessions. Since 2026-11-15
+  (P1 solutions item 26) a full table drops the least recently used idle
+  session (no live decision, approval, delivery, running prompt or queued
+  action) to admit a new one. Only when every session is live does a new
+  registration return `session_capacity_exceeded`; the Hook edge treats this
+  as unavailable and leaves the native Codex workflow in control.
+- An evicted session keeps a project fence (up to 8,192, oldest first) so it
+  cannot move to another project or reach the subagent approval path while
+  unregistered. Since 2026-11-16 (item 13-A) its settled boundaries and their
+  proposal registrations are dropped with it, as a restart would drop them.
 - `get_state.sessions` is a presentation list: the most recent 64 sessions plus
   every session needed by active choices, approvals, pending delivery ACKs and
   recovery. Absence from that list does not remove a session's authority.
@@ -23,16 +28,21 @@ continuous redraw loop.
   retries. An exact terminal retry reconstructs the original response from the
   durable packet instead of caching its large payload again.
 
-The Hook protocol does not provide an authoritative session-end signal. Idle
-sessions therefore cannot safely be evicted solely by age: doing so would lose
-current prompt authority and known-session project fences. The registration
-limit is an explicit admission boundary, not an automatic session expiry.
+The Hook protocol does not provide an authoritative session-end signal, so
+eviction is by least recent use only when the table is full, never by age, and
+never for a session with live authority.
+
+Runtime secret detection keeps storage keys and account/bridge tokens for the
+process lifetime. One-time proposal correlation and delivery tokens leave the
+corpus 24 hours after their latest registration, at most 4,096 at once
+(item 13-A).
 
 Small deduplication records and authenticated journal/replay history remain.
-This change does not implement journal compaction, bound all possible active
-card/project payloads, or guarantee every snapshot fits the 1 MiB transport
-limit. Authenticated history compaction requires a separate design and recovery
-validation.
+Since 2026-11-16 (item 12) the verified history is held in memory and only new
+rows are authenticated per request; startup still verifies and replays complete
+history once (about 0.9 s open plus 0.5 s first replay at 2,500 events in a
+debug build). Journal compaction is not implemented: it would change the
+stored chain start and break downgrade, and needs a separate design.
 
 ## UI request lifetime
 

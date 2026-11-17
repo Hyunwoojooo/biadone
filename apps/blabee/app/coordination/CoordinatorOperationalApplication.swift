@@ -1298,6 +1298,41 @@ public actor CoordinatorOperationalApplication {
         if skippedPermissionCardSessionID.map({ Self.byteExact($0, evicted) }) == true {
             skippedPermissionCardSessionID = nil
         }
+        forgetSettledBoundaries(ofEvictedSession: evicted)
+    }
+
+    /// Test instrumentation for item 13-A; no authority or payload content.
+    func retainedBoundaryCounts() -> (boundaries: Int, registrations: Int) {
+        (boundaries.count, registrations.count)
+    }
+
+    /// Item 13-A: an evicted session's settled boundaries and their proposal
+    /// registrations are dropped with it, as a restart would. Durable history
+    /// keeps them; an exact proposal retry after this behaves as after a
+    /// restart. Anything still referenced by a workflow is kept.
+    private func forgetSettledBoundaries(ofEvictedSession sessionID: String) {
+        let referenced = Set(activeByTurn.values)
+            .union(stagedByTurn.values)
+            .union(pendingInitialActivations)
+            .union(pendingCompletionClosures)
+            .union(pendingUnsubmittedTransports.keys)
+            .union(initialActivationFailures.keys)
+            .union(quarantinedInitialActivations.keys)
+        let forgotten = Set(boundaries.compactMap { key, boundary -> CoordinatorBindingKey? in
+            guard Self.byteExact(key.binding.sessionID, sessionID),
+                  boundary.phase.isTerminal,
+                  boundary.nextTurnDispatchPhase != .inFlight,
+                  !referenced.contains(key)
+            else { return nil }
+            return key
+        })
+        guard !forgotten.isEmpty else { return }
+        for key in forgotten {
+            boundaries.removeValue(forKey: key)
+            terminalPayloadCandidates.remove(key)
+            unsubmittedTransportFailureCounts.removeValue(forKey: key)
+        }
+        registrations = registrations.filter { !forgotten.contains($0.value.boundaryKey) }
     }
 
     private func snapshotSessions() -> [Session] {
@@ -1641,7 +1676,7 @@ private extension CoordinatorOperationalApplication {
 
         // Preserve the existing error priority: token copies in proposal text
         // are rejected before an isolated prompt ID transcription mismatch.
-        secretCorpus.register(correlationToken)
+        secretCorpus.registerEphemeral(correlationToken)
         var proposalWithoutDesignatedToken = proposal
         proposalWithoutDesignatedToken["correlation_token"] = NSNull()
         try secretCorpus.assertNoKnownSecret(inJSONObject: proposalWithoutDesignatedToken)
@@ -1956,7 +1991,7 @@ private extension CoordinatorOperationalApplication {
         // per-prompt token. Register it only after the session token and all
         // non-prompt bindings succeed. Reject any copy embedded in free text
         // before classifying an isolated prompt transcription mismatch.
-        secretCorpus.register(correlationToken)
+        secretCorpus.registerEphemeral(correlationToken)
         var proposalWithoutDesignatedToken = proposal
         proposalWithoutDesignatedToken["correlation_token"] = NSNull()
         try secretCorpus.assertNoKnownSecret(inJSONObject: proposalWithoutDesignatedToken)
@@ -4089,7 +4124,7 @@ private extension CoordinatorOperationalApplication {
             )
             let effectActionJSON = try StrictJSONTransport.data(forJSONObject: action)
             try require(effectActionJSON == preparedActionJSON, "continuation_action_mismatch")
-            secretCorpus.registerKnownSecrets(inJSONObject: envelope)
+            secretCorpus.registerKnownEphemeralSecrets(inJSONObject: envelope)
             // Check decoded values too: quoting may insert characters into a
             // known secret, which a scan of the final preview cannot match.
             try secretCorpus.assertNoKnownSecret(inJSONObject: action)

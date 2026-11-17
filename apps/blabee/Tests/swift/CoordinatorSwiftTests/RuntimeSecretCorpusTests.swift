@@ -100,4 +100,55 @@ struct RuntimeSecretCorpusTests {
         #expect(!corpus.containsKnownSecret(inJSONObject: ordinary))
         try corpus.assertNoKnownSecret(inJSONObject: ordinary)
     }
+
+    @Test("one-time tokens leave the corpus 24 hours after their latest registration; others stay")
+    func ephemeralTokensExpire() throws {
+        let clock = CorpusTestClock()
+        let corpus = RuntimeSecretCorpus(monotonicNanoseconds: clock.now)
+        corpus.register("FictionalStorageKey_0123456789")
+        corpus.registerEphemeral("FictionalCorrelation_0123456789")
+        corpus.registerKnownEphemeralSecrets(inJSONObject: ["continuation_token": "FictionalContinuation_0123456789"])
+        #expect(corpus.count == 3)
+        let hour: UInt64 = 3_600 * 1_000_000_000
+        clock.advance(23 * hour)
+        corpus.registerEphemeral("FictionalCorrelation_0123456789")  // refreshed
+        #expect(corpus.containsKnownSecret(in: Data("x FictionalContinuation_0123456789".utf8)))
+        clock.advance(hour)
+        #expect(!corpus.containsKnownSecret(in: Data("x FictionalContinuation_0123456789".utf8)))
+        #expect(corpus.containsKnownSecret(in: Data("x FictionalCorrelation_0123456789".utf8)))
+        #expect(corpus.containsKnownSecret(in: Data("x FictionalStorageKey_0123456789".utf8)))
+        clock.advance(24 * hour)
+        #expect(corpus.count == 1)
+        #expect(corpus.containsKnownSecret(in: Data("x FictionalStorageKey_0123456789".utf8)))
+    }
+
+    @Test("one-time tokens are bounded; the oldest registration leaves first")
+    func ephemeralTokensAreBounded() {
+        let corpus = RuntimeSecretCorpus(monotonicNanoseconds: { 0 })
+        for index in 0..<(RuntimeSecretCorpus.maximumEphemeralSecrets + 1) {
+            corpus.registerEphemeral("FictionalBurstToken_\(index)")
+        }
+        #expect(corpus.count == RuntimeSecretCorpus.maximumEphemeralSecrets)
+        #expect(!corpus.containsKnownSecret(in: Data("FictionalBurstToken_0 ".utf8)))
+        #expect(corpus.containsKnownSecret(in: Data("FictionalBurstToken_1 ".utf8)))
+    }
+
+    @Test("a secret registered as permanent never expires even if also registered as one-time")
+    func permanentWinsOverEphemeral() {
+        let clock = CorpusTestClock()
+        let corpus = RuntimeSecretCorpus(monotonicNanoseconds: clock.now)
+        corpus.registerEphemeral("FictionalSharedToken_0123456789")
+        corpus.register("FictionalSharedToken_0123456789")
+        clock.advance(48 * 3_600 * 1_000_000_000)
+        #expect(corpus.containsKnownSecret(in: Data("FictionalSharedToken_0123456789".utf8)))
+        #expect(corpus.count == 1)
+    }
+}
+
+private final class CorpusTestClock: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value: UInt64 = 1_000
+
+    func now() -> UInt64 { lock.withLock { value } }
+    func advance(_ nanoseconds: UInt64) { lock.withLock { value += nanoseconds } }
 }

@@ -1362,10 +1362,11 @@ func routingQueuedClaimBenchmarkWithRetainedReplay() throws {
     let directory = try sqliteClaimTemporaryDirectory()
     defer { try? FileManager.default.removeItem(at: directory) }
     let meter = SQLiteClaimIOMeter()
+    let freshness = SQLiteClaimFreshnessStore(meter: meter)
     let journal = try SQLiteJournal(
         databaseURL: directory.appendingPathComponent("journal.sqlite"),
         keyURL: directory.appendingPathComponent("journal.key"),
-        freshnessStore: SQLiteClaimFreshnessStore(meter: meter),
+        freshnessStore: freshness,
         workObserver: { meter.observe($0) }
     )
     _ = try journal.append(
@@ -1390,6 +1391,26 @@ func routingQueuedClaimBenchmarkWithRetainedReplay() throws {
     let work = meter.measuredWork()
     #expect(work.fullValidationScans == 0)
     #expect(port.fullReplayCount == 1)
+    // Startup cost (item 13-A evidence): opening verifies complete history once
+    // and the first routed request replays it once.
+    let openStarted = DispatchTime.now().uptimeNanoseconds
+    let reopened = try SQLiteJournal(
+        databaseURL: directory.appendingPathComponent("journal.sqlite"),
+        keyURL: directory.appendingPathComponent("journal.key"),
+        freshnessStore: freshness
+    )
+    let openNanoseconds = DispatchTime.now().uptimeNanoseconds - openStarted
+    let reopenedPort = RoutingRequestJournal(base: reopened)
+    let replayStarted = DispatchTime.now().uptimeNanoseconds
+    reopenedPort.begin()
+    _ = try reopenedPort.replayedState()
+    reopenedPort.end()
+    let replayNanoseconds = DispatchTime.now().uptimeNanoseconds - replayStarted
+    print(
+        "ROUTING_STARTUP_BENCHMARK seed_events=\(seed.events.count)"
+            + " open_ms=\(String(format: "%.1f", Double(openNanoseconds) / 1_000_000))"
+            + " first_replay_ms=\(String(format: "%.1f", Double(replayNanoseconds) / 1_000_000))"
+    )
     print(
         "ROUTING_QUEUED_CLAIM_BENCHMARK history_events=\(history.events.count) seed_events=\(seed.events.count)"
             + " elapsed_ms=\(String(format: "%.3f", sample.elapsedSeconds * 1_000))"

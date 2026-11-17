@@ -9887,6 +9887,43 @@ func operationalSkippedPermissionCardIsReported() async throws {
 }
 
 
+@Test("Evicting an idle session also drops its settled boundaries and proposal registrations (13-A)")
+func operationalEvictionForgetsSettledBoundaries() async throws {
+    let fixture = try operationalFixture()
+    let ids = try await operationalBegin(fixture, suffix: "evict_settled")
+    _ = try await fixture.app.handle(
+        type: "emit_decision",
+        payload: operationalData(operationalWrapper(ids, proposal: operationalProposal(ids, suffix: "evict_settled")))
+    )
+    // The next human prompt supersedes the card; Stop ends that prompt.
+    var next = ids
+    next["source_turn_id"] = "turn_operational_evict_settled_next"
+    _ = try await fixture.app.handle(type: "user_prompt_submit", payload: operationalData([
+        "session_id": ids["session_id"]!, "turn_id": next["source_turn_id"]!, "cwd": ids["cwd"]!,
+        "prompt": "A later human prompt", "hook_event_name": "UserPromptSubmit",
+    ]))
+    _ = try await fixture.app.handle(
+        type: "stop", payload: operationalStop(ids: next, active: false, message: "done")
+    )
+    let before = await fixture.app.retainedBoundaryCounts()
+    #expect(before.boundaries >= 1)
+    #expect(before.registrations == 1)
+
+    for index in 0..<1_024 {
+        _ = try await fixture.app.handle(type: "session_start", payload: operationalData([
+            "session_id": "session_evict_filler_\(index)", "cwd": ids["cwd"]!, "hook_event_name": "SessionStart",
+        ]))
+    }
+    let after = await fixture.app.retainedBoundaryCounts()
+    #expect(after.boundaries == 0)
+    #expect(after.registrations == 0)
+    // The session returns in its own project with a fresh registration.
+    let returned = try operationalObject(await fixture.app.handle(type: "session_start", payload: operationalData([
+        "session_id": ids["session_id"]!, "cwd": ids["cwd"]!, "hook_event_name": "SessionStart",
+    ])))
+    #expect(returned["enabled"] as? Bool == true)
+}
+
 @Test("A full session table refuses new sessions only while every session is live (ENG-13)")
 func operationalSessionCapacityFailsClosedWhenAllLive() async throws {
     let fixture = try operationalFixture()

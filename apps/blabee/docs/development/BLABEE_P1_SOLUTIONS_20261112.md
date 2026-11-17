@@ -213,3 +213,13 @@ ENG-6. Keychain anchor를 pending으로 쓴 뒤 SQLite COMMIT 전에 프로세�
 - **`fullfsync`.** `PRAGMA fullfsync=ON`, `checkpoint_fullfsync=ON`. macOS의 fsync는 드라이브 캐시를 비우지 않아 정전 때 anchor는 확정됐는데 마지막 commit이 사라지는 rollback 오탐이 날 수 있었다. 측정상 claim 한 번 비용은 거의 그대로다(약 5ms).
 - **종료 대기.** 데몬이 멈출 때 진행 중인 연결이 끝나기를 최대 3초 기다린다(`ConnectionAdmissionGate.waitUntilIdle`). 승인처럼 오래 기다리는 연결이 있으면 종료가 최대 3초 늦어진다.
 - **시작 비용 한 번 줄임.** 시작 시 무결성 검사에서 한 전체 검사를 12번의 검증된 기록으로 바로 쓴다. 그래서 첫 요청이 다시 전체를 읽지 않는다.
+
+## 2순위 13-A번 (2026-11-16 구현)
+
+ENG-2·ENG-3 중 지금 할 수 있는 부분. 13-B(journal 압축)는 사용자 승인으로 미뤘다.
+
+- **비밀값 목록(ENG-3).** `RuntimeSecretCorpus`가 계속 유지하는 값(저장 키, 계정 토큰, Claude hook·bridge 토큰)과 일회성 토큰을 나눈다. 일회성 토큰은 제안의 `correlation_token`과 전달 envelope의 토큰이다(`registerEphemeral`, `registerKnownEphemeralSecrets`). 마지막 등록 뒤 24시간이 지나면 목록에서 빠지고, 동시에 최대 4,096개다(가장 오래된 것부터). 같은 토큰을 다시 등록하면 시간이 갱신된다. 중복 검사는 Set으로 바꿨다.
+  승인 때 말한 "경계가 끝난 뒤 24시간" 대신 "마지막 등록 뒤 24시간"으로 했다. 카드는 10분 안에 끝나고 전달은 다음 턴에 claim되므로 그 차이는 작고, 경계 종료를 추적하지 않아도 된다. 24시간이 지난 토큰이 그 뒤에 저장 데이터로 새면 잡지 못한다.
+- **지운 세션의 빈 항목.** 26번에서 세션을 지울 때 그 세션의 끝난 boundary(진행 중 전달이나 다른 작업이 참조하지 않는 것)와 proposal 등록도 같이 지운다. 재시작했을 때와 같은 상태다.
+- **시작 시간 측정(debug 빌드, 기록 2,500개·약 6 MiB).** 열기(무결성·전체 인증) 약 0.9초, 첫 요청의 전체 replay 약 0.47초. 기록 수에 비례한다. 12번 이후 요청마다의 비용은 기록 수와 무관하므로 압축은 시작 시간이 문제가 될 때 다시 본다.
+- `docs/features/RESOURCE_STABILITY.md`의 "세션을 지우지 않는다" 설명을 26번·13-A에 맞게 고쳤다.
