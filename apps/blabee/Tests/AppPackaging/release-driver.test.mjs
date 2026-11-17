@@ -3,7 +3,7 @@ import { mkdtemp, readdir, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import test from 'node:test';
-import { parseReleaseArguments, runRelease } from '../../scripts/release/release.mjs';
+import { createReleaseTag, parseReleaseArguments, releaseTagName, runRelease } from '../../scripts/release/release.mjs';
 
 test('release arguments require a known step and a build number', () => {
   assert.deepEqual(parseReleaseArguments(['inspect', '--build', '92']).build, 92);
@@ -38,4 +38,25 @@ test('README release links move to the new build without touching other text', a
   assert.match(after, /r63 development-Channel qualification and macOS 13 stay unchanged/);
   assert.equal(updateReadmeRelease(after, 92), after);
   assert.throws(() => updateReadmeRelease(before, 0));
+});
+
+test('finalize tags the build commit and refuses a tag that points elsewhere', async () => {
+  const commit = 'a'.repeat(40);
+  const calls = [];
+  const fakeGit = existing => async args => {
+    calls.push(args);
+    if (args[0] === 'rev-parse') {
+      if (!existing) throw new Error('missing');
+      return { stdout: `${existing}\n` };
+    }
+    return { stdout: '' };
+  };
+  assert.equal(releaseTagName(92), 'blabee-v0.1.0+build.92');
+  assert.deepEqual(await createReleaseTag(92, commit, fakeGit(null)), { name: 'blabee-v0.1.0+build.92', commit, created: true });
+  assert.deepEqual(calls.at(-1), ['tag', '-a', 'blabee-v0.1.0+build.92', commit, '-m', 'Blabee 0.1.0 r92']);
+  calls.length = 0;
+  assert.equal((await createReleaseTag(92, commit, fakeGit(commit))).created, false);
+  assert.equal(calls.some(args => args[0] === 'tag'), false);
+  await assert.rejects(createReleaseTag(92, commit, fakeGit('b'.repeat(40))), /already points at/);
+  await assert.rejects(createReleaseTag(92, null, fakeGit(null)), /full commit id/);
 });

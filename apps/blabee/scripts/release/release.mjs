@@ -73,6 +73,25 @@ const exists = path => access(path).then(() => true, () => false);
 const readJSON = async path => JSON.parse(await readFile(path, 'utf8'));
 const today = () => new Date().toISOString().slice(0, 10).replaceAll('-', '');
 
+export const releaseTagName = build => `blabee-v${VERSION}+build.${build}`;
+
+// Tags the provenance commit locally so every published build maps to its source.
+// An existing tag is accepted only when it already points at the same commit;
+// pushing the tag stays a manual publication step.
+export async function createReleaseTag(build, commit, git = args => execFile('git', args, { cwd: root })) {
+  assert.match(commit ?? '', /^[0-9a-f]{40}$/, 'provenance source_commit must be a full commit id');
+  const name = releaseTagName(build);
+  let existing = null;
+  try { existing = (await git(['rev-parse', '--verify', '--quiet', `refs/tags/${name}^{commit}`])).stdout.trim(); }
+  catch { existing = null; }
+  if (existing) {
+    if (existing !== commit) throw new Error(`Tag ${name} already points at ${existing}, not the build commit ${commit}`);
+    return { name, commit, created: false };
+  }
+  await git(['tag', '-a', name, commit, '-m', `Blabee ${VERSION} r${build}`]);
+  return { name, commit, created: true };
+}
+
 async function previousReleaseFolder(build) {
   const folders = (await readdir(join(root, 'build')).catch(() => []))
     .map(name => ({ name, build: Number(name.match(/^release-public-\d{8}-r(\d+)$/)?.[1]) }))
@@ -299,6 +318,8 @@ const steps = {
     } });
     await rmdir(work);
     const preflight = await readJSON(evidencePath(ctx, 'preflight'));
+    // Before any write-once evidence, so a conflicting tag stops finalize cleanly.
+    const tag = await createReleaseTag(ctx.build, preflight.source_commit);
     const provenance = { schema_version: 'blabee.local-build-provenance.v2', version: VERSION, build: ctx.build,
       source_commit: preflight.source_commit, source_contains_uncommitted_changes: false,
       artifact: { name: ctx.dmgName, sha256: state.final_sha256, bytes: (await stat(dmg)).size },
@@ -306,12 +327,12 @@ const steps = {
       tests: await readJSON(evidencePath(ctx, 'test')), packaged_runtime_qualifier_passed: true };
     await writeFile(join(ctx.folder, `r${ctx.build}-provenance.json`), JSON.stringify(provenance, null, 2) + '\n', { flag: 'wx' });
     const evidence = await record(ctx, 'finalize', { artifact: provenance.artifact, ticket, embedded_app: embedded,
-      source_commit: preflight.source_commit });
+      source_commit: preflight.source_commit, tag: tag.name });
     // After the evidence: README edits must not change the recorded source tree.
     const readmes = await updateReadmes(ctx.build);
     console.log(['', `Release r${ctx.build} is notarized. Publication checklist (manual):`,
-      `  1. git tag blabee-v${VERSION}+build.${ctx.build} ${preflight.source_commit} && push the tag`,
-      `  2. Create the GitHub release with ${ctx.dmgName} and its .sha256, notes from the CHANGELOG entry`,
+      `  1. ${tag.created ? 'Created' : 'Kept'} local tag ${tag.name} at ${tag.commit}; push it: git push origin ${tag.name}`,
+      `  2. Create the GitHub release from that tag (gh release create ${tag.name} --verify-tag) with ${ctx.dmgName} and its .sha256, notes from the CHANGELOG entry`,
       `  3. ${readmes.length ? `README links now point at r${ctx.build} (${readmes.join(', ')}); commit them after the release is public.`
         : 'README links already point at this build.'} Update the public docs repository (Biadone/blabee)`,
       '  4. Run an in-app update from the previous build on a test Mac and record the result',

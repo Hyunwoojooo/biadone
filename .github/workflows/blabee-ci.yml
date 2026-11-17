@@ -1,0 +1,89 @@
+# Blabee CI (informational). Runs the local release test set that does not need
+# a signed app, a live Codex/Claude, or the user's Keychain. It does not gate
+# anything yet; the release gate is still `npm run release -- test` locally.
+# See apps/blabee/docs/development/RELEASE.md.
+name: Blabee CI
+
+on:
+  push:
+    paths:
+      - "apps/blabee/**"
+      - ".github/workflows/blabee-ci.yml"
+  pull_request:
+    paths:
+      - "apps/blabee/**"
+      - ".github/workflows/blabee-ci.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: blabee-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  node:
+    name: Node (root, Cloud SQL, Claude bridge)
+    runs-on: macos-26
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: apps/blabee
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22.23.2"
+          cache: npm
+          cache-dependency-path: |
+            apps/blabee/package-lock.json
+            apps/blabee/bridges/claude/package-lock.json
+      - name: Record runner toolchain
+        run: |
+          /usr/bin/uname -a
+          /usr/bin/xcodebuild -version
+          node --version
+          npm --version
+      - run: npm ci
+      - run: npm ci --prefix bridges/claude
+      - name: Node tests
+        run: npm test
+      - name: Cloud SQL tests (PGlite, no production access)
+        run: |
+          npm run test:access-sql
+          npm run test:connection-sql
+          npm run test:usage-sql
+      - name: Claude bridge tests
+        run: |
+          npm --prefix bridges/claude run check
+          npm --prefix bridges/claude test
+          npm --prefix bridges/claude run test:shared-engine
+
+  swift:
+    name: Swift
+    runs-on: macos-26
+    timeout-minutes: 60
+    defaults:
+      run:
+        working-directory: apps/blabee
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # Some Swift tests run the bundled Node scripts.
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22.23.2"
+          cache: npm
+          cache-dependency-path: apps/blabee/package-lock.json
+      - run: npm ci
+      - name: Record runner toolchain
+        run: |
+          /usr/bin/uname -a
+          /usr/bin/xcodebuild -version
+          DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer /usr/bin/xcrun swift --version
+      - name: Swift tests
+        run: npm run test:swift
