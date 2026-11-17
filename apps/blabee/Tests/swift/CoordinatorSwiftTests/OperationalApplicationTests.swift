@@ -4551,16 +4551,17 @@ func operationalInitialActivationQuarantine(suggestionKind: String?) async throw
     #expect(quarantinedSnapshot.events.isEmpty)
     #expect(quarantinedSnapshot.documents.isEmpty)
 
-    await expectOperationalError("operational_reconciliation_quarantined") {
-        _ = try await fixture.app.processTime()
-    }
+    // Item 15-A: the scheduler and other sessions keep running, and neither
+    // retries the quarantined boundary. Only its own session stays blocked.
+    _ = try await fixture.app.processTime()
+    let other = try await operationalBegin(
+        fixture, suffix: "initial_quarantine_other", activatePetConsumerLease: false
+    )
+    #expect(other["session_id"] != ids["session_id"])
     await expectOperationalError("operational_reconciliation_quarantined") {
         _ = try await fixture.app.handle(
-            type: "enable_project",
-            payload: operationalData([
-                "cwd": "/tmp/blabee-quarantine-must-not-append",
-                "project_id": "project_quarantine_must_not_append",
-            ])
+            type: "user_prompt_submit",
+            payload: operationalQuarantinedSessionPrompt(ids)
         )
     }
     var mismatchedProposal = proposal
@@ -4596,9 +4597,7 @@ func operationalInitialActivationQuarantine(suggestionKind: String?) async throw
         fixture.journal.appendAttemptCount(eventType: "decision_packet_sealed") == 6
     )
     #expect(await fixture.app.millisecondsUntilNextDeadline() == nil)
-    await expectOperationalError("operational_reconciliation_quarantined") {
-        _ = try await fixture.app.processTime()
-    }
+    _ = try await fixture.app.processTime()
     #expect(
         fixture.journal.appendAttemptCount(eventType: "decision_packet_sealed") == 6
     )
@@ -4633,7 +4632,7 @@ func operationalInitialActivationQuarantine(suggestionKind: String?) async throw
     #expect(reconciliation["milliseconds_until_retry"] is NSNull)
 }
 
-@Test("Operational slows known transient activation failures before bounded quarantine")
+@Test("Operational keeps retrying known transient activation failures at the slowest cooldown")
 func operationalTransientInitialActivationRetryBudget() async throws {
     let transientCodes = [
         "freshness_anchor_unavailable",
@@ -4646,7 +4645,7 @@ func operationalTransientInitialActivationRetryBudget() async throws {
         let proposal = operationalProposal(ids, suffix: errorCode)
         let wrapper = operationalWrapper(ids, proposal: proposal)
 
-        for _ in 0..<10 {
+        for _ in 0..<11 {
             fixture.journal.failNextAppend(
                 eventType: "decision_packet_sealed",
                 errorCode: errorCode
@@ -4659,7 +4658,7 @@ func operationalTransientInitialActivationRetryBudget() async throws {
             )
         }
 
-        let retryDelays = [250, 500, 1_000, 2_000, 4_000, 15_000, 30_000, 60_000, 120_000]
+        let retryDelays = [250, 500, 1_000, 2_000, 4_000, 15_000, 30_000, 60_000, 120_000, 120_000]
         for (index, cooldown) in retryDelays.enumerated() {
             fixture.cooldownClock.advance(milliseconds: UInt64(cooldown))
             await expectOperationalError(errorCode) {
@@ -4680,39 +4679,154 @@ func operationalTransientInitialActivationRetryBudget() async throws {
             }
         }
 
+        // ENG-5: eleven failures (~6 minutes) no longer quarantine. The
+        // activation stays pending at the slowest cooldown and clears itself.
         #expect(
-            fixture.journal.appendAttemptCount(eventType: "decision_packet_sealed") == 10
+            fixture.journal.appendAttemptCount(eventType: "decision_packet_sealed") == 11
         )
-        #expect(await fixture.app.millisecondsUntilNextDeadline() == nil)
         var doctor = try operationalObject(
             await fixture.app.doctorStatus(payload: operationalData([:]))
         )
         var reconciliation = try #require(doctor["reconciliation"] as? [String: Any])
-        #expect(reconciliation["state"] as? String == "quarantined")
+        #expect(reconciliation["state"] as? String == "retrying")
         #expect(ExactJSONInteger.int64(reconciliation["consecutive_failure_count"]) == 10)
+        #expect(ExactJSONInteger.int64(
+            reconciliation["quarantined_initial_activation_count"]
+        ) == 0)
         #expect(reconciliation["last_error_code"] as? String == errorCode)
+        #expect(await fixture.app.millisecondsUntilNextDeadline() == 120_000)
 
-        fixture.journal.failNextAppend(
-            eventType: "decision_packet_sealed",
-            errorCode: errorCode
-        )
-        await expectOperationalError(errorCode) {
-            _ = try await fixture.app.handle(
-                type: "emit_decision",
-                payload: operationalData(wrapper)
-            )
-        }
+        fixture.cooldownClock.advance(milliseconds: 120_000)
+        _ = try await fixture.app.processTime()
         #expect(
-            fixture.journal.appendAttemptCount(eventType: "decision_packet_sealed") == 11
+            fixture.journal.appendAttemptCount(eventType: "decision_packet_sealed") == 12
         )
-        #expect(await fixture.app.millisecondsUntilNextDeadline() == nil)
+        #expect(try fixture.journal.load().journalSequence == 2)
         doctor = try operationalObject(
             await fixture.app.doctorStatus(payload: operationalData([:]))
         )
         reconciliation = try #require(doctor["reconciliation"] as? [String: Any])
-        #expect(reconciliation["state"] as? String == "quarantined")
-        #expect(ExactJSONInteger.int64(reconciliation["consecutive_failure_count"]) == 10)
+        #expect(reconciliation["state"] as? String == "healthy")
     }
+}
+
+@Test("A quarantined activation retries once on its session's first request after the hold")
+func operationalQuarantinedActivationRetriesAfterHold() async throws {
+    let fixture = try operationalFixture()
+    let ids = try await operationalBegin(fixture, suffix: "quarantine_hold")
+    let wrapper = operationalWrapper(ids, proposal: operationalProposal(ids, suffix: "quarantine_hold"))
+    for _ in 0..<5 {
+        fixture.journal.failNextAppend(eventType: "decision_packet_sealed")
+    }
+    await expectOperationalError("injected_append_failure") {
+        _ = try await fixture.app.handle(type: "emit_decision", payload: operationalData(wrapper))
+    }
+    for cooldown in [250, 500, 1_000, 2_000] as [UInt64] {
+        fixture.cooldownClock.advance(milliseconds: cooldown)
+        await expectOperationalError("injected_append_failure") {
+            _ = try await fixture.app.processTime()
+        }
+    }
+    #expect(fixture.journal.appendAttemptCount(eventType: "decision_packet_sealed") == 5)
+
+    // Within the hold the session stays blocked without another attempt.
+    fixture.cooldownClock.advance(milliseconds: 299_000)
+    await expectOperationalError("operational_reconciliation_quarantined") {
+        _ = try await fixture.app.handle(
+            type: "user_prompt_submit", payload: operationalQuarantinedSessionPrompt(ids)
+        )
+    }
+    #expect(fixture.journal.appendAttemptCount(eventType: "decision_packet_sealed") == 5)
+
+    // After the hold one exact retry runs. A failure re-arms a new hold.
+    fixture.cooldownClock.advance(milliseconds: 1_000)
+    fixture.journal.failNextAppend(eventType: "decision_packet_sealed")
+    await expectOperationalError("injected_append_failure") {
+        _ = try await fixture.app.handle(
+            type: "user_prompt_submit", payload: operationalQuarantinedSessionPrompt(ids)
+        )
+    }
+    #expect(fixture.journal.appendAttemptCount(eventType: "decision_packet_sealed") == 6)
+    await expectOperationalError("operational_reconciliation_quarantined") {
+        _ = try await fixture.app.handle(
+            type: "user_prompt_submit", payload: operationalQuarantinedSessionPrompt(ids)
+        )
+    }
+    #expect(fixture.journal.appendAttemptCount(eventType: "decision_packet_sealed") == 6)
+
+    // The next hold's retry succeeds; the request continues normally.
+    fixture.cooldownClock.advance(milliseconds: 300_000)
+    _ = try await fixture.app.handle(
+        type: "user_prompt_submit", payload: operationalQuarantinedSessionPrompt(ids)
+    )
+    #expect(fixture.journal.appendAttemptCount(eventType: "decision_packet_sealed") == 7)
+    #expect(try CoordinatorSemanticReplay.replay(fixture.journal.load()).boundaries.count == 1)
+    let doctor = try operationalObject(
+        await fixture.app.doctorStatus(payload: operationalData([:]))
+    )
+    let reconciliation = try #require(doctor["reconciliation"] as? [String: Any])
+    #expect(ExactJSONInteger.int64(reconciliation["quarantined_initial_activation_count"]) == 0)
+}
+
+@Test("A held retry that hits a transient error leaves quarantine and waits for the cooldown")
+func operationalQuarantinedActivationTransientRetryLeavesQuarantine() async throws {
+    let fixture = try operationalFixture()
+    let ids = try await operationalBegin(fixture, suffix: "quarantine_transient")
+    let wrapper = operationalWrapper(ids, proposal: operationalProposal(ids, suffix: "quarantine_transient"))
+    for _ in 0..<5 {
+        fixture.journal.failNextAppend(eventType: "decision_packet_sealed")
+    }
+    await expectOperationalError("injected_append_failure") {
+        _ = try await fixture.app.handle(type: "emit_decision", payload: operationalData(wrapper))
+    }
+    for cooldown in [250, 500, 1_000, 2_000] as [UInt64] {
+        fixture.cooldownClock.advance(milliseconds: cooldown)
+        await expectOperationalError("injected_append_failure") {
+            _ = try await fixture.app.processTime()
+        }
+    }
+    fixture.cooldownClock.advance(milliseconds: 300_000)
+    fixture.journal.failNextAppend(
+        eventType: "decision_packet_sealed", errorCode: "freshness_anchor_unavailable"
+    )
+    await expectOperationalError("freshness_anchor_unavailable") {
+        _ = try await fixture.app.handle(
+            type: "user_prompt_submit", payload: operationalQuarantinedSessionPrompt(ids)
+        )
+    }
+    #expect(fixture.journal.appendAttemptCount(eventType: "decision_packet_sealed") == 6)
+    var doctor = try operationalObject(
+        await fixture.app.doctorStatus(payload: operationalData([:]))
+    )
+    var reconciliation = try #require(doctor["reconciliation"] as? [String: Any])
+    #expect(ExactJSONInteger.int64(reconciliation["quarantined_initial_activation_count"]) == 0)
+    #expect(reconciliation["state"] as? String == "retrying")
+    // No immediate re-attempt from the same session's next request.
+    await expectOperationalError("operational_reconciliation_cooldown") {
+        _ = try await fixture.app.handle(
+            type: "user_prompt_submit", payload: operationalQuarantinedSessionPrompt(ids)
+        )
+    }
+    #expect(fixture.journal.appendAttemptCount(eventType: "decision_packet_sealed") == 6)
+    // After the cooldown the pending activation completes.
+    fixture.cooldownClock.advance(milliseconds: 120_000)
+    _ = try await fixture.app.processTime()
+    #expect(fixture.journal.appendAttemptCount(eventType: "decision_packet_sealed") == 7)
+    doctor = try operationalObject(
+        await fixture.app.doctorStatus(payload: operationalData([:]))
+    )
+    reconciliation = try #require(doctor["reconciliation"] as? [String: Any])
+    #expect(reconciliation["state"] as? String == "healthy")
+}
+
+private func operationalQuarantinedSessionPrompt(_ ids: [String: String]) throws -> Data {
+    try operationalData([
+        "session_id": ids["session_id"] ?? "",
+        "turn_id": "\(ids["source_turn_id"] ?? "")_next",
+        "cwd": ids["cwd"] ?? "",
+        "prompt": "A later prompt in the quarantined session",
+        "hook_event_name": "UserPromptSubmit",
+    ])
 }
 
 @Test("Operational automatically recovers a transient activation after the fast retry budget")

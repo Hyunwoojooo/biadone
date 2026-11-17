@@ -27,6 +27,7 @@ Draft. The release date, download link and the full list of changes are added wh
 #### Changed
 
 - **Faster with a long history.** Blabee keeps the history it has already verified instead of re-reading and re-checking all of it on every proposal, selection and delivery. With 2,500 recorded events a delivery claim drops from several seconds to a few milliseconds, well inside the Codex Hook time limit. The full history is still verified when the service starts and again every hour.
+- **One failing card no longer stops every session.** When the first card of a turn repeatedly fails to save, only that session waits; other sessions and the scheduler keep running, and the session retries on its own after 5 minutes. Short Keychain or storage hiccups are retried slowly until they clear instead of stopping Blabee until a restart.
 - **Codex 0.167.2, 0.168.0 and 0.169.0 support.** The three exact versions join the supported list with the same capabilities and package layout as 0.167.1.
 - **Steadier Pet connection.** The Pet no longer shows a brief false disconnect when two status requests overlap, keeps approval cards available while its panel is hidden, and accepts new Codex sessions after very long uptimes instead of stopping at 1,024.
 - **Claude cards stay selectable for their whole life.** A Claude card can now be chosen for its full 10 minutes instead of only the first 5. When Claude Code reuses a prompt for a task notification, Blabee withdraws the open card quietly instead of reporting a Hook error.

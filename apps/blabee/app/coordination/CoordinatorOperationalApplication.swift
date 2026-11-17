@@ -67,7 +67,12 @@ public actor CoordinatorOperationalApplication {
         "operational_reconciliation_quarantined"
     )
     private static let maximumPermanentInitialActivationAttempts = 5
+    /// Caps the cooldown index only. Known transient storage codes keep
+    /// retrying at the slowest cooldown instead of quarantining (item 15-A).
     private static let maximumTransientInitialActivationAttempts = 10
+    /// A quarantined activation blocks only its own session. A request from
+    /// that session after this hold grants one automatic exact retry.
+    static let quarantinedActivationRetryDelayNanoseconds: UInt64 = 300_000_000_000
     // Same bounds for the not-submitted cleanup marker. Unlike an initial
     // activation, a marker that reaches its limit is set aside instead of
     // stopping every request: the dispatcher was never invoked, and the
@@ -275,6 +280,8 @@ public actor CoordinatorOperationalApplication {
     private struct InitialActivationFailure {
         let consecutiveFailureCount: Int
         let errorCode: String
+        /// Monotonic time the boundary entered quarantine.
+        var quarantinedAt: UInt64? = nil
     }
 
     /// Only evidence returned by this adapter's current dispatch attempt is
@@ -849,16 +856,21 @@ public actor CoordinatorOperationalApplication {
         }
         generation = try nextGeneration(generation)
         let requestGeneration = generation
-        if !quarantinedInitialActivations.isEmpty {
+        if let quarantinedKey = quarantinedActivationKey(forRequest: payload) {
             // Stop a persistently failing initial activation loop without
-            // allowing another journal write to pass this circuit breaker.
-            // Only an exact duplicate proposal may make one explicit retry.
+            // letting its own session write past it (item 15-A: other
+            // sessions are no longer blocked; a quarantined boundary is not
+            // in the pending set, so their reconciliation never retries it).
+            // An exact duplicate proposal makes one explicit retry, and so
+            // does the session's first request after the hold expires.
             if type == "emit_decision",
                explicitQuarantinedActivationRetryKey(payload) != nil
             {
                 return try emitDecision(payload)
             }
-            throw Self.reconciliationQuarantinedError
+            guard try retryQuarantinedActivationIfDue(quarantinedKey) else {
+                throw Self.reconciliationQuarantinedError
+            }
         }
         if reconciliationCooldownIsActive() {
             // Pet polling remains useful during a storage outage, but it must
@@ -924,9 +936,6 @@ public actor CoordinatorOperationalApplication {
         guard !routing.recoveryStatus().isQuarantined else {
             throw CoordinatorError("routing_restart_unsealed_boundary_quarantined")
         }
-        guard quarantinedInitialActivations.isEmpty else {
-            throw Self.reconciliationQuarantinedError
-        }
         guard !reconciliationCooldownIsActive() else {
             throw Self.reconciliationCooldownError
         }
@@ -946,7 +955,6 @@ public actor CoordinatorOperationalApplication {
 
     public func millisecondsUntilNextDeadline() -> Int32? {
         guard !routing.recoveryStatus().isQuarantined else { return nil }
-        guard quarantinedInitialActivations.isEmpty else { return nil }
         var deadline = routing.millisecondsUntilNextDeadline()
         if hasPendingOperationalWork,
            deadline == nil || deadline! > 250
@@ -1107,6 +1115,45 @@ public actor CoordinatorOperationalApplication {
     private func reconciliationErrorCode(_ error: Error) -> String {
         let code = error.coordinatorError.code
         return Self.isStableCode(code) ? code : "internal_error"
+    }
+
+    /// The quarantined activation that belongs to this request's session.
+    /// Requests without a top-level `session_id` (project setup and Pet card
+    /// actions) never touch a quarantined, card-less activating boundary.
+    private func quarantinedActivationKey(forRequest payload: Data) -> CoordinatorBindingKey? {
+        guard !quarantinedInitialActivations.isEmpty,
+              let request = try? StrictJSONTransport.object(from: payload),
+              let sessionID = request["session_id"] as? String
+        else { return nil }
+        return quarantinedInitialActivations.keys
+            .first { Self.byteExact($0.binding.sessionID, sessionID) }
+    }
+
+    /// After the hold, retry the exact retained activation once. Success
+    /// clears the quarantine; failure re-arms it with a new hold and throws.
+    private func retryQuarantinedActivationIfDue(_ key: CoordinatorBindingKey) throws -> Bool {
+        guard let quarantined = quarantinedInitialActivations[key],
+              let quarantinedAt = quarantined.quarantinedAt
+        else { return false }
+        let now = monotonicInstantGenerator()
+        guard now >= quarantinedAt,
+              now - quarantinedAt >= Self.quarantinedActivationRetryDelayNanoseconds
+        else { return false }
+        // Leave quarantine for the attempt itself; a permanent failure re-enters
+        // it with a new hold, a transient one stays pending under cooldown.
+        quarantinedInitialActivations.removeValue(forKey: key)
+        initialActivationFailures[key] = InitialActivationFailure(
+            consecutiveFailureCount: max(quarantined.consecutiveFailureCount - 1, 0),
+            errorCode: quarantined.errorCode
+        )
+        pendingInitialActivations.insert(key)
+        do {
+            try resumeInitialActivation(boundaryKey: key)
+        } catch {
+            recordReconciliationFailure(error)
+            throw error
+        }
+        return true
     }
 
     private func explicitQuarantinedActivationRetryKey(
@@ -1468,17 +1515,22 @@ public actor CoordinatorOperationalApplication {
                 try discardUnstartedProductBoundary(boundaryKey)
                 return
             }
-            let maximumAttempts = Self.transientInitialActivationErrorCodes.contains(errorCode)
+            let transient = Self.transientInitialActivationErrorCodes.contains(errorCode)
+            let maximumAttempts = transient
                 ? Self.maximumTransientInitialActivationAttempts
                 : Self.maximumPermanentInitialActivationAttempts
-            let failure = InitialActivationFailure(
+            var failure = InitialActivationFailure(
                 consecutiveFailureCount: min(
                     (initialActivationFailures[boundaryKey]?.consecutiveFailureCount ?? 0) + 1,
                     maximumAttempts
                 ),
                 errorCode: errorCode
             )
-            if failure.consecutiveFailureCount >= maximumAttempts {
+            // Known transient storage conditions (Keychain, ambiguous commit,
+            // pending freshness) keep retrying at the slowest cooldown; they
+            // clear on their own and must not need a restart (ENG-5).
+            if !transient, failure.consecutiveFailureCount >= maximumAttempts {
+                failure.quarantinedAt = monotonicInstantGenerator()
                 pendingInitialActivations.remove(boundaryKey)
                 initialActivationFailures.removeValue(forKey: boundaryKey)
                 quarantinedInitialActivations[boundaryKey] = failure
@@ -1941,9 +1993,11 @@ private extension CoordinatorOperationalApplication {
                 if let quarantined = quarantinedInitialActivations[
                     existing.boundaryKey
                 ] {
-                    // Keep the write barrier armed during the explicit retry.
-                    // Seeding the final attempt makes a repeated failure
-                    // return directly to quarantine without another hot loop.
+                    // Seeding the final attempt makes a repeated permanent
+                    // failure return directly to quarantine (with a new hold)
+                    // without another hot loop. A transient failure stays
+                    // pending under cooldown instead of keeping a stale hold.
+                    quarantinedInitialActivations.removeValue(forKey: existing.boundaryKey)
                     initialActivationFailures[existing.boundaryKey] =
                         InitialActivationFailure(
                             consecutiveFailureCount: max(
