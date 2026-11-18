@@ -41,6 +41,20 @@ jobs:
           cache-dependency-path: |
             apps/blabee/package-lock.json
             apps/blabee/bridges/claude/package-lock.json
+      # The image default Xcode can be older than the one Blabee is built with
+      # (Xcode 26.6 / Swift 6.3.3 crashes compiling app/ui/PetLocalization.swift).
+      # Use the newest installed Xcode for xcrun and /Applications/Xcode.app.
+      - name: Select the newest Xcode
+        run: |
+          newest=$(ls -d /Applications/Xcode_*.app | sort -V | tail -1)
+          echo "Available: $(ls -d /Applications/Xcode_*.app | xargs -n1 basename | tr '\n' ' ')"
+          echo "Selected: $newest"
+          sudo xcode-select -s "$newest/Contents/Developer"
+          if [ -L /Applications/Xcode.app ] || [ ! -e /Applications/Xcode.app ]; then
+            sudo ln -sfn "$newest" /Applications/Xcode.app
+          fi
+          /usr/bin/xcodebuild -version
+          DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer /usr/bin/xcrun swift --version
       - name: Record runner toolchain
         run: |
           /usr/bin/uname -a
@@ -80,6 +94,20 @@ jobs:
           cache: npm
           cache-dependency-path: apps/blabee/package-lock.json
       - run: npm ci
+      # The image default Xcode can be older than the one Blabee is built with
+      # (Xcode 26.6 / Swift 6.3.3 crashes compiling app/ui/PetLocalization.swift).
+      # Use the newest installed Xcode for xcrun and /Applications/Xcode.app.
+      - name: Select the newest Xcode
+        run: |
+          newest=$(ls -d /Applications/Xcode_*.app | sort -V | tail -1)
+          echo "Available: $(ls -d /Applications/Xcode_*.app | xargs -n1 basename | tr '\n' ' ')"
+          echo "Selected: $newest"
+          sudo xcode-select -s "$newest/Contents/Developer"
+          if [ -L /Applications/Xcode.app ] || [ ! -e /Applications/Xcode.app ]; then
+            sudo ln -sfn "$newest" /Applications/Xcode.app
+          fi
+          /usr/bin/xcodebuild -version
+          DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer /usr/bin/xcrun swift --version
       - name: Record runner toolchain
         run: |
           /usr/bin/uname -a
