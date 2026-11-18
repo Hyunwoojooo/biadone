@@ -233,6 +233,14 @@ struct PetClaudeLauncherTests {
         #expect(!observed.arguments[1].contains(fixture.project.path))
     }
 
+    @Test("Ghostty receives the quoted command text without a shell: prefix")
+    func ghosttyCommandHasNoPrefix() {
+        let script = ClaudeInstalledLauncher.terminalScript(for: .ghostty)
+        #expect(script.contains("set command of launchConfiguration to commandText"))
+        #expect(!script.contains("\"shell:\""))
+        #expect(script.contains("quoted form of (contents of argumentValue)"))
+    }
+
     @Test("Connection folder cancellation returns no launch receipt and has no side effects")
     func cancelConnection() async throws {
         let observed = PetClaudeLaunchObservations()

@@ -79,7 +79,9 @@ its own native conversation. Neither route resumes old Blabee authority.
 The launcher returns the requested native UUID, canonical project and selected terminal. An
 unconfirmed terminal request preserves that receipt for observation and is never automatically
 retried or rerouted. Ghostty uses its official AppleScript surface configuration/new window API;
-both terminals quote each argument as data. Existing windows receive no input or close command.
+both terminals quote each argument as data. Ghostty's surface `command` is already run through a
+shell, so the quoted command text is passed without a `shell:` prefix (Ghostty 1.4.0 ran the
+prefixed text as a path; fixed for r93, 2026-11-18). Existing windows receive no input or close command.
 
 Pet retains the directory's existing native-session UUID and fresh authenticated service evidence
 in its in-process model; no wire schema or core contract changes. The controller matches UUID,

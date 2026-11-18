@@ -260,6 +260,9 @@ enum ClaudeInstalledLauncher {
     // Ghostty 1.3+ exposes a surface configuration/new-window AppleScript API.
     // Do not use `open -e`: macOS may also interpret its executable argv as a
     // file-open event. Each argument stays data until `quoted form` below.
+    // The surface `command` is already run through a shell. Ghostty 1.4 does
+    // not strip a `shell:` prefix there and ran it as a path (r92, 2026-11-18),
+    // so pass the quoted command text alone.
     private static let ghosttyScript = """
     on run argv
         if (count of argv) < 3 then error "Invalid Claude launcher arguments"
@@ -272,7 +275,7 @@ enum ClaudeInstalledLauncher {
         tell application id "com.mitchellh.ghostty"
             set launchConfiguration to new surface configuration
             set initial working directory of launchConfiguration to launchDirectory
-            set command of launchConfiguration to "shell:" & commandText
+            set command of launchConfiguration to commandText
             new window with configuration launchConfiguration
             activate
         end tell
