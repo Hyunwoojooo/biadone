@@ -1,18 +1,16 @@
-# Blabee CI (informational). Runs the local release test set that does not need
-# a signed app, a live Codex/Claude, or the user's Keychain. It does not gate
-# anything yet; the release gate is still `npm run release -- test` locally.
+# Blabee CI (manual, informational). Runs the local release test set that does
+# not need a signed app, a live Codex/Claude, or the user's Keychain. The release
+# gate is still `npm run release -- test` locally.
+#
+# Automatic push/PR runs are off (2026-11-18): the newest Xcode on macos-26
+# runners is 26.6 (Swift 6.3.3), which crashes compiling SwiftUI Bindings whose
+# setter is a method reference (app/ui/PetLocalization.swift and others), while
+# releases build with Xcode 27. Re-enable push/pull_request when the runner image
+# ships Xcode 27 or when outside PRs need a gate.
 # See apps/blabee/docs/development/RELEASE.md.
 name: Blabee CI
 
 on:
-  push:
-    paths:
-      - "apps/blabee/**"
-      - ".github/workflows/blabee-ci.yml"
-  pull_request:
-    paths:
-      - "apps/blabee/**"
-      - ".github/workflows/blabee-ci.yml"
   workflow_dispatch:
 
 permissions:

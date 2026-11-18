@@ -228,6 +228,6 @@ ENG-2·ENG-3 중 지금 할 수 있는 부분. 13-B(journal 압축)는 사용자
 
 REPO-4·REPO-2 중 지금 할 수 있는 부분. 한 브랜치에 몰린 작업을 main에 합치는 것은 r92 뒤에 사용자가 정한다.
 
-- **CI(REPO-4).** 루트 `.github/workflows/blabee-ci.yml`. 9월의 `ci/blabee-pr-gate` 초안은 PR에서만 돌아 한 번도 실행되지 않았다. 이제 `apps/blabee`를 바꾼 push·PR마다 macOS 26 러너에서 Node 전체·Cloud SQL·Claude 브릿지(job `node`)와 Swift 전체(job `swift`)를 돌린다. 공개 저장소라 러너 비용은 없다. 정보용이라 아무것도 막지 않으며, 실제 Codex·Claude·Keychain·서명이 필요한 검사는 릴리스 단계에만 있다. 첫 실행 결과(러너에서만 실패하는 테스트)는 푸시 뒤 확인한다.
+- **CI(REPO-4).** 루트 `.github/workflows/blabee-ci.yml`. 9월의 `ci/blabee-pr-gate` 초안은 PR에서만 돌아 한 번도 실행되지 않았다. 이제 `apps/blabee`를 바꾼 push·PR마다 macOS 26 러너에서 Node 전체·Cloud SQL·Claude 브릿지(job `node`)와 Swift 전체(job `swift`)를 돌린다. 공개 저장소라 러너 비용은 없다. 정보용이라 아무것도 막지 않으며, 실제 Codex·Claude·Keychain·서명이 필요한 검사는 릴리스 단계에만 있다. 2026-11-18 첫 두 실행은 러너 Swift 6.3.3 컴파일러 충돌로 실패했고(코드 회귀 아님), 자동 실행을 끄고 수동 실행만 남겼다(`RELEASE.md`의 CI 절).
 - **빌드와 커밋(REPO-2).** 릴리스 `finalize`가 provenance 커밋에 로컬 태그 `blabee-v0.1.0+build.N`을 만든다. 같은 이름의 태그가 다른 커밋을 가리키면 provenance를 쓰기 전에 실패한다. 체크리스트는 그 태그를 푸시하고 `gh release create --verify-tag`로 릴리스를 만들게 한다. r84~r89 원격 태그가 r83 체크포인트를 가리키는 것은 `RELEASE.md`에 기록만 했다. r91 태그는 이미 빌드 커밋을 가리킨다.
 - **worktree.** 폴더가 사라진 worktree 기록 8개를 `git worktree prune`으로 지웠다. 파일은 건드리지 않았다. `ci/blabee-pr-gate` 브랜치는 남겨 두었다.

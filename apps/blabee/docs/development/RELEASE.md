@@ -50,6 +50,10 @@ npm run release -- test --build 92
 
 ## CI
 
-`.github/workflows/blabee-ci.yml`(2026-11-17)이 `apps/blabee`를 바꾼 push와 PR마다 GitHub macOS 러너에서 Node 전체, Claude 브릿지 Node,
-Swift 전체를 돌린다. 아직 정보용이라 무엇도 막지 않는다. 릴리스 게이트는 여전히 로컬 `npm run release -- test`다.
+`.github/workflows/blabee-ci.yml`(2026-11-17)은 GitHub macOS 러너에서 Node 전체, Cloud SQL, Claude 브릿지 Node, Swift 전체를 돌린다.
+2026-11-18부터 자동 실행(push·PR)을 끄고 수동 실행(`workflow_dispatch`)만 남겼다. 수동 실행은 이 파일이 기본 브랜치에 있어야 보인다.
+끈 이유: macos-26 러너의 가장 새 Xcode가 26.6(Swift 6.3.3)이고, 이 컴파일러는 `Binding(set:)`에 메서드 참조를 넘긴 SwiftUI 코드
+(`app/ui/PetLocalization.swift:124` 외 4곳)에서 충돌한다. 릴리스는 Xcode 27로 빌드하므로 실제와 다른 컴파일러를 검사하게 된다.
+첫 두 실행(run 44242472820, 44245092748)의 실패는 모두 이 충돌이었다. 러너에 Xcode 27이 들어오거나 외부 PR을 받게 되면 다시 켠다.
+릴리스 게이트는 여전히 로컬 `npm run release -- test`다.
 CI에서 돌릴 수 없는 검사(실제 Codex·Claude 실행, Keychain, 서명·공증)는 릴리스 단계에만 있다.
