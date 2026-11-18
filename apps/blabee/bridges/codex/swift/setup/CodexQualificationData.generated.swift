@@ -2405,5 +2405,199 @@ enum CodexQualificationData {
                     "a1637876c7683e284e1f056bf4696cb258b77d550b263d99d01effda1cea1230"
             )
         ),
+        // Official rust-v0.169.1 codex-package-aarch64-apple-darwin.tar.gz sha256:1f39d0dc51f55103d8b043332e0b3dba53b35295392899a911a7714a4c342dcd (172465794 bytes, published 2026-11-17T22:21:10Z).
+        // Registered 2026-11-18 by scripts/codex/register-version.mjs: 42 file digests from production inspection, Team ID 2DC432GLL2, every native file notarized (paced online lookup), declares bin/codex-exec-server.
+        Release(
+            version: "0.169.1", target: "aarch64-apple-darwin",
+            capabilities: [.managedAppServer, .pluginCLI, .serverOwnedWorkspaceRoots, .updateLifecycle],
+            catalog: Catalog(
+                signingTeamIdentifier: "2DC432GLL2",
+                fileDigests: [
+                    "bin/codex":
+                        "ae90a6779b8f91073c392f6873f2481e4b06bf73f59c6dac31f8983e45dccca5",
+                    "bin/codex-code-mode-host":
+                        "c77bd35bcc105845c59c963d7a75d9d9852b4536cd378eed34944a0a343e6684",
+                    "bin/codex-exec-server":
+                        "a1d314d7510a52d1c07ed503b6aa6ab58870b8eba49109434f8f37c5e7034c1a",
+                    "codex-package.json":
+                        "3fcbea530e1e8e494c1a1e540b92a345ed15614c9f017b2910a730bcfd53a358",
+                    "codex-path/rg":
+                        "f0d2739597c591a3e2dc897d482ccb363813641a2941f1eef08f303a4da15d2e",
+                    "codex-resources/voice/NOTICE.md":
+                        "40097a1799441051aa0b6645cdc819cceb19be73cdd265eb602aa2b15e0b1f48",
+                    "codex-resources/voice/bin/codex-voice-host":
+                        "01b6c4f062b3fe3f57a626a0cded5057bce52179c85e3673910ae9a5b2ab44da",
+                    "codex-resources/voice/lib/libffi.8.dylib":
+                        "2ceb140dc4b5cf26b6e45eeff6c15f77e39b95eab9535c4d78b2ab35c9a29b41",
+                    "codex-resources/voice/lib/libgio-2.0.0.dylib":
+                        "70319a7885ac84413d177b3499445bfb0ea8156d851737567f6de6a7eb361af6",
+                    "codex-resources/voice/lib/libglib-2.0.0.dylib":
+                        "6996268deb84262d3df44c151979c24358691121a7debe8d157afee95d3932a4",
+                    "codex-resources/voice/lib/libgmodule-2.0.0.dylib":
+                        "cb88cac6dab763b122b31f2b5e87842907ab4831757abeb09597dd2f2e58d2ef",
+                    "codex-resources/voice/lib/libgobject-2.0.0.dylib":
+                        "d48e8bc3c7f4ef0b0ae964f296da5b469a5f6185b8a46c888d7cb5c9223dc6b6",
+                    "codex-resources/voice/lib/libgstapp-1.0.0.dylib":
+                        "19309b789995bb8f21b3abc4f07b785befd390f9b7f26f8ed006893ef7bc4109",
+                    "codex-resources/voice/lib/libgstaudio-1.0.0.dylib":
+                        "87bb874181d6a0abfe7e74fa40a3330ecd4705e19939f7f4f70f0d592505e71f",
+                    "codex-resources/voice/lib/libgstbase-1.0.0.dylib":
+                        "6d42c4ee2e27eefa1c5b025f75791752e5ea10846f962ee109c05e9731a10df8",
+                    "codex-resources/voice/lib/libgstnet-1.0.0.dylib":
+                        "02e05f89b3e38381de570b4de0e7f56958a45ca4f58a702dfd7fb5aeaafe1337",
+                    "codex-resources/voice/lib/libgstpbutils-1.0.0.dylib":
+                        "4c973cee6686b2f7c18cd9306a9033c531fc3b2be909cc0df7e45a953e287c2f",
+                    "codex-resources/voice/lib/libgstreamer-1.0.0.dylib":
+                        "a867f92282183ccb600e5c3a30a6634d0138dcccc5df0dda5aafab23e43e14b5",
+                    "codex-resources/voice/lib/libgstrtp-1.0.0.dylib":
+                        "0149f240f3f36c44dc0945c718f67d5d532af5f93ddbde6baf53dac54be31043",
+                    "codex-resources/voice/lib/libgsttag-1.0.0.dylib":
+                        "27132ce6c5653297a99b05f19badb09c27266c9954e50892325a08c1a1732d72",
+                    "codex-resources/voice/lib/libgstvideo-1.0.0.dylib":
+                        "a65e098ae3954c00af6c6817dbd167354922d7f7b705643567180557de666a44",
+                    "codex-resources/voice/lib/libintl.8.dylib":
+                        "199eec54c86897f42847153755ec4c4a86052a55688814345678cc26459876ad",
+                    "codex-resources/voice/lib/libopus.0.dylib":
+                        "ee2c67da87672a39b7e6c3147e99754996706195a8c3afd8c9b02a05c9440fde",
+                    "codex-resources/voice/lib/libpcre2-8.0.dylib":
+                        "c511d79fe1a8aea14170b41579386908185d03ac4efbd6d16089862b999a3348",
+                    "codex-resources/voice/lib/libz.1.dylib":
+                        "9fce71b0c3b02e92224ff9f29b96b074c72f8aaedc53e0a9f19bb3f715cdb43e",
+                    "codex-resources/voice/licenses/LGPL-2.1.txt":
+                        "ad2eec519ebd4b5df86ea84dff24ae3bfa2edea846a703b58902dd221ae375db",
+                    "codex-resources/voice/licenses/Opus.txt":
+                        "01e1167d54a096d123cf6dfbbeb19587278845c6481d2d66d545669846079551",
+                    "codex-resources/voice/licenses/PCRE2.md":
+                        "197d8a73ffee0d6b09adba2f9c677b5f5aede24edf89258a68e48248d010d811",
+                    "codex-resources/voice/licenses/libffi.txt":
+                        "17b64dc60f3b6897a60f971e288b973f655c2edcdf08b25f3c3dd5549857881c",
+                    "codex-resources/voice/licenses/proxy-libintl.txt":
+                        "d245807f90032872d1438d741ed21e2490e1175dc8aa3afa5ddb6c8e529b58e5",
+                    "codex-resources/voice/licenses/sljit.txt":
+                        "5f216505c0f6ea3273caec89e766eef93cdeb7bbb0c429f9360116d7c938feeb",
+                    "codex-resources/voice/licenses/zlib.txt":
+                        "e32ff4e00d9d94930537635291da39e7e612703334bf6fde8c7f1686fe8a45a2",
+                    "codex-resources/voice/manifest.json":
+                        "ba4597cdc7b67d99f966fb5fb3b7c9ac7a8529668fbe3e708aef8522b658301b",
+                    "codex-resources/voice/plugins/libgstapp.dylib":
+                        "48fe63b406316131fd64e2431b92aacecb1c6c85702745cf9c6403f461b166d8",
+                    "codex-resources/voice/plugins/libgstaudioconvert.dylib":
+                        "9ba86b8866d9f3f36d9226c48c6612d25017dcfc98dce632b8efe62b0b0d141a",
+                    "codex-resources/voice/plugins/libgstaudioresample.dylib":
+                        "2d7cb21a0d597f7e83a6c06c8a9e356f8fec7cb690e5023a5ecda29eddad4439",
+                    "codex-resources/voice/plugins/libgstcoreelements.dylib":
+                        "d55cf9fac4006ce96653975496d510d2a7f701c2ccaa36828fef4f857085bda4",
+                    "codex-resources/voice/plugins/libgstopus.dylib":
+                        "078eeb2d4abc38435c0b21927eb3ff788c0a50bccbd4b25a3c2d3c49593d8f15",
+                    "codex-resources/voice/plugins/libgstrtp.dylib":
+                        "832570be89b5ce1bf2849beb74f9ee3a96c46835553c8f96f0c722eb382ab3f6",
+                    "codex-resources/voice/plugins/libgstrtpmanager.dylib":
+                        "aebefe78c121368ed4a04d06c9b2bfa8759e8ef4c52126e33b88351a79c29c67",
+                    "codex-resources/voice/runtime.json":
+                        "f0525f9eee904464afc521998c81a55411408257dd94ae2279f59a303333141a",
+                    "codex-resources/voice/sources.json":
+                        "5613f37012effc3e28cdad52a7c88b9098aaaf7aae43f3cb7199f55ffbb15908",
+                ],
+                fingerprint:
+                    "50fdc422db06d34cc62e65d3f4eaffcabe40640635a3e0309132392bd9a4c479"
+            )
+        ),
+        // Official rust-v0.170.0 codex-package-aarch64-apple-darwin.tar.gz sha256:975524bf13aedd1b122d8d0e00c09ee67091b8f688c0b374943dbb3cf22c7893 (173593904 bytes, published 2026-11-18T03:40:48Z).
+        // Registered 2026-11-18 by scripts/codex/register-version.mjs: 42 file digests from production inspection, Team ID 2DC432GLL2, every native file notarized (paced online lookup), declares bin/codex-exec-server.
+        Release(
+            version: "0.170.0", target: "aarch64-apple-darwin",
+            capabilities: [.managedAppServer, .pluginCLI, .serverOwnedWorkspaceRoots, .updateLifecycle],
+            catalog: Catalog(
+                signingTeamIdentifier: "2DC432GLL2",
+                fileDigests: [
+                    "bin/codex":
+                        "9248cfeebec9b4cc3034d5114caab10fbf426cbfa79dba410c5fa1b72762abd6",
+                    "bin/codex-code-mode-host":
+                        "7007fd77fcc428d80542dc272013a187691f5aab3014b0c7a4f11fad3b47c40e",
+                    "bin/codex-exec-server":
+                        "0ee7589c2e14f9bc36de13da37785c741093b33fe7cc147ac6ff7bdf59589e3e",
+                    "codex-package.json":
+                        "d00c7765fb8cf180d81aaf1e701d19e18140211f48fef16abacfe66d2f03b112",
+                    "codex-path/rg":
+                        "5899d42cf98592ec0f95a2cb24b243fab870c25de5e77c9861591fde766d4bf7",
+                    "codex-resources/voice/NOTICE.md":
+                        "40097a1799441051aa0b6645cdc819cceb19be73cdd265eb602aa2b15e0b1f48",
+                    "codex-resources/voice/bin/codex-voice-host":
+                        "1e92897643edd62685d2396eaa1f6952a83fdedbc50d4adcf5610dd14d366a7a",
+                    "codex-resources/voice/lib/libffi.8.dylib":
+                        "ec6adf7d60902541cb24daf68e3ee20f55a5a133a40de738d8cc7329e9f96159",
+                    "codex-resources/voice/lib/libgio-2.0.0.dylib":
+                        "e95b1ba8859460cda2581bffbb4fb39e882590b35b4a13a01183396fa7f259b8",
+                    "codex-resources/voice/lib/libglib-2.0.0.dylib":
+                        "9420e5dfd4232b892affebe2cc2b8aded3b7dab491c8d41d7e0c43ab7734975e",
+                    "codex-resources/voice/lib/libgmodule-2.0.0.dylib":
+                        "c0a65895c9342883596ca80880f3e924e6e83367f3f5de32468605613c783e94",
+                    "codex-resources/voice/lib/libgobject-2.0.0.dylib":
+                        "19e41f9df26c170a5cb061f3896840cdbd06e6820456b4c35262aa3740913153",
+                    "codex-resources/voice/lib/libgstapp-1.0.0.dylib":
+                        "b176ed643f1fa3f7e6b8921c0d88f713b5590e7c721c1e56260bf4fc9b81d929",
+                    "codex-resources/voice/lib/libgstaudio-1.0.0.dylib":
+                        "103d05c61ca58dca112c1f8873a6923c7b33133b8d3b6c069ef63ff8a2f836cf",
+                    "codex-resources/voice/lib/libgstbase-1.0.0.dylib":
+                        "2fc0ccd7a296bcbd7f903525ea5df76901715b2eeaa806fab73bc2c070d34895",
+                    "codex-resources/voice/lib/libgstnet-1.0.0.dylib":
+                        "2ed3db80908ad6725023fc3e3b4c3c3b51d7f19417069d034bd8f9fc6146cd51",
+                    "codex-resources/voice/lib/libgstpbutils-1.0.0.dylib":
+                        "59f558886e79a7c10a15142e2259c0067032734b7c903e744956aae3aea68c40",
+                    "codex-resources/voice/lib/libgstreamer-1.0.0.dylib":
+                        "da9501c3ead92a5e62290c8a2297ce93ee8dd178154921b29a43a6249c4ee8f8",
+                    "codex-resources/voice/lib/libgstrtp-1.0.0.dylib":
+                        "d40fd4c774a0599ff4eae65bfc11fe36ecbb72a48052ad43379cb4f7a732d892",
+                    "codex-resources/voice/lib/libgsttag-1.0.0.dylib":
+                        "a6b3b169f55bdc269bb97e26983f5cdc304c92f662090ad72285c6dcd8b49b4d",
+                    "codex-resources/voice/lib/libgstvideo-1.0.0.dylib":
+                        "97b0a2fd137a6ab95509db3ed8c8e4dcea4fe50bd9823cc10ea718bcb33bd5e6",
+                    "codex-resources/voice/lib/libintl.8.dylib":
+                        "de140304187806b77b02eafe73a3b99338e5ae2c2ed3083b8708844a0fde936a",
+                    "codex-resources/voice/lib/libopus.0.dylib":
+                        "78326c2ed211d64e504b31433c0a4d8bf7de622ad473d399e83537197fc985ec",
+                    "codex-resources/voice/lib/libpcre2-8.0.dylib":
+                        "c28c65e150f85a6b542bfe046891b0cf44f4b5fb58adfefe6cb2990493c467d6",
+                    "codex-resources/voice/lib/libz.1.dylib":
+                        "6b9724989aeae0b4fd033b7bedc18b3d74b66ebd6f5774fbbdc917aabae45a0e",
+                    "codex-resources/voice/licenses/LGPL-2.1.txt":
+                        "ad2eec519ebd4b5df86ea84dff24ae3bfa2edea846a703b58902dd221ae375db",
+                    "codex-resources/voice/licenses/Opus.txt":
+                        "01e1167d54a096d123cf6dfbbeb19587278845c6481d2d66d545669846079551",
+                    "codex-resources/voice/licenses/PCRE2.md":
+                        "197d8a73ffee0d6b09adba2f9c677b5f5aede24edf89258a68e48248d010d811",
+                    "codex-resources/voice/licenses/libffi.txt":
+                        "17b64dc60f3b6897a60f971e288b973f655c2edcdf08b25f3c3dd5549857881c",
+                    "codex-resources/voice/licenses/proxy-libintl.txt":
+                        "d245807f90032872d1438d741ed21e2490e1175dc8aa3afa5ddb6c8e529b58e5",
+                    "codex-resources/voice/licenses/sljit.txt":
+                        "5f216505c0f6ea3273caec89e766eef93cdeb7bbb0c429f9360116d7c938feeb",
+                    "codex-resources/voice/licenses/zlib.txt":
+                        "e32ff4e00d9d94930537635291da39e7e612703334bf6fde8c7f1686fe8a45a2",
+                    "codex-resources/voice/manifest.json":
+                        "9ca1b2f235683e5eedc91354707eccd7be7a102f9793115051d2dd81f2bf772b",
+                    "codex-resources/voice/plugins/libgstapp.dylib":
+                        "1bcf81666eb3a972f8b63894aa43ecde587a880978662d2798f4a4db07d23e7b",
+                    "codex-resources/voice/plugins/libgstaudioconvert.dylib":
+                        "495e9ea0d2124ba103f446c328d326da5b193256dc8e46b024271e31cf6f26fd",
+                    "codex-resources/voice/plugins/libgstaudioresample.dylib":
+                        "ec47dd7ae391bc62ea2b2d3023b6e20a3b5f7b82e5b4e72e2cda048f4144b1ad",
+                    "codex-resources/voice/plugins/libgstcoreelements.dylib":
+                        "71d001f535fc8470cbb364178c20f96440a4bc8bf2c13767f26f2da175e35903",
+                    "codex-resources/voice/plugins/libgstopus.dylib":
+                        "146973a9bcb2029c732fa3310cd3d82226b60742bb4074d52c40a647698af82d",
+                    "codex-resources/voice/plugins/libgstrtp.dylib":
+                        "0e3331af87129b7f6d09dd80470ceb395c5a951a5496377eaadd2e7bf4c81608",
+                    "codex-resources/voice/plugins/libgstrtpmanager.dylib":
+                        "c32b9a4d0f6b50da35b96ca541bfe2230aab308ff22c00d0890081367d9f7130",
+                    "codex-resources/voice/runtime.json":
+                        "b8e2d00c7f67a9e3691e98e6b44f7651b0705f28f6b42dd385d947e0a4ad40ba",
+                    "codex-resources/voice/sources.json":
+                        "5613f37012effc3e28cdad52a7c88b9098aaaf7aae43f3cb7199f55ffbb15908",
+                ],
+                fingerprint:
+                    "6ad49e3b13202665c713baad8ca9c23ff36c608c5be5519f72288bac7becd4c1"
+            )
+        ),
     ]
 }

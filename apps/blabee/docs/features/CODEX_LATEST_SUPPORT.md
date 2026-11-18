@@ -1,5 +1,12 @@
 # Codex 버전별 지원·검증 기록
 
+## 2026-11-18: 0.169.1·0.170.0 지원
+
+r92 설치 날 Homebrew가 Codex를 0.170.0으로 올려 연결이 막혔다. 미등록 두 버전을 `npm run codex:register`로 등록했고
+기능·패키지 구성(42파일, exec-server)·Hook·queue·명령 승인 schema는 0.169.0과 같다.
+[공식 근거·검증·남은 경계](CODEX_0170_QUALIFICATION.md). qualify smoke 72개(두 버전), native lifecycle, Swift Codex 묶음을 통과했다.
+r93에 포함한다.
+
 ## 2026-11-14: 0.167.2·0.168.0·0.169.0 지원
 
 매일 새 버전 확인을 처음 돌려 미등록 세 버전을 찾았다(0.167.2는 직전 등록 때 놓쳤다). `npm run codex:register`로 등록했고

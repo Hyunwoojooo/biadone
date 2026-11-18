@@ -31,5 +31,7 @@ extension HookPermissionPolicy {
         .init(version: "0.167.2", cdHash: "9e1388eb5dd51c8e5a9b5ce2159fbe9ba8304543"),
         .init(version: "0.168.0", cdHash: "d43461cbf362926747f9e467e479a64619b6028f"),
         .init(version: "0.169.0", cdHash: "e76484c19332652b8bbec1579fefb733f8e32a9d"),
+        .init(version: "0.169.1", cdHash: "7a08a805d5821177544ee449d555d305ab1bc1c2"),
+        .init(version: "0.170.0", cdHash: "54b54ef3e470117d723c27413fc117df3148aa32"),
     ]
 }
