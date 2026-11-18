@@ -20,21 +20,59 @@ See the [README](README.md) for the current download and setup instructions.
 
 ## App updates
 
-### r92 (Unreleased)
-
-Draft. The release date, download link and the full list of changes are added when r92 is published.
+### r93 (Unreleased)
 
 #### Changed
 
-- **Faster with a long history.** Blabee keeps the history it has already verified instead of re-reading and re-checking all of it on every proposal, selection and delivery. With 2,500 recorded events a delivery claim drops from several seconds to a few milliseconds, well inside the Codex Hook time limit. The full history is still verified when the service starts and again every hour.
-- **Starts again after an interrupted save.** If Blabee stopped in the middle of saving, it used to refuse to start until the storage was repaired by hand. It now checks the whole history at startup and drops only the unfinished save, which had not been written and had not sent anything. Saves are also flushed to disk more strictly, and Blabee waits up to 3 seconds for requests in progress before quitting.
-- **One failing card no longer stops every session.** When the first card of a turn repeatedly fails to save, only that session waits; other sessions and the scheduler keep running, and the session retries on its own after 5 minutes. Short Keychain or storage hiccups are retried slowly until they clear instead of stopping Blabee until a restart.
-- **Codex 0.167.2, 0.168.0 and 0.169.0 support.** The three exact versions join the supported list with the same capabilities and package layout as 0.167.1.
-- **Steadier Pet connection.** The Pet no longer shows a brief false disconnect when two status requests overlap, keeps approval cards available while its panel is hidden, and accepts new Codex sessions after very long uptimes instead of stopping at 1,024.
-- **Claude cards stay selectable for their whole life.** A Claude card can now be chosen for its full 10 minutes instead of only the first 5. When Claude Code reuses a prompt for a task notification, Blabee withdraws the open card quietly instead of reporting a Hook error.
+- **Codex 0.169.1 and 0.170.0 support.** The exact versions join the supported list for the plugin CLI, the managed App Server, workspace routing, and the update lifecycle, with the same package layout as 0.169.0. Only each version's primary `codex` executable is trusted for one-shot Hook approvals.
+
+#### Fixed
+
+- **Opening a Claude window in Ghostty.** With Ghostty 1.4, a connected Claude window opened from the Pet closed at once with "No such file or directory". Blabee now passes the command in the form Ghostty runs.
+
+#### Update notes
+
+- r93 has to be installed by hand once (see r92 below). From r93 on, the Pet tells you when a new release is out.
+- The Claude connection changes apply to `claude` windows started after installing r93. Windows that are already open keep the previous behavior until they are restarted.
+- After the Codex Plugin moves to 0.1.4, Codex asks once to review the changed Hooks.
+- r93 adds no new history record types and does not change `Contracts/v1`. Installation does not reset history.
+- Failed selections are still **not automatically resent**. Codex and Claude Code still require their own installation and sign-in. Blabee uses its separate Google or GitHub sign-in.
+
+### r92 (not published)
+
+**Built:** 2026-11-18. **App version:** 0.1.0 (build 92, arm64).
+r92 was signed and notarized but not published: Codex 0.170.0 came out the same day and r92 does not support it.
+Every change below is included in r93. The `blabee-v0.1.0+build.92` tag remains as the build record.
+
+#### Changed
+
+- **Automatic update checks.** Blabee now checks for a new release 30 seconds after launch and then every 24 hours, and shows a new version in the panel status line and the menu bar menu. Downloading and installing still wait for you. A release tag that cannot be read is skipped instead of failing the whole check. Because r91 and older only check when you press the button, r93 has to be installed by hand once.
+- **Claude windows stay connected.** Moving to another folder with `cd` no longer ends the connection; the window keeps the folder it was started in. A single failed heartbeat, sleeping for more than an hour, a service restart and an app update no longer end it either: the open window registers again with the same Claude session and the next prompt works. Cards that were open at that moment are withdrawn and are not resent. `/resume` and `/clear` inside a window still need a new `claude`.
+- **Faster with a long history.** Blabee keeps the history it has already verified instead of re-reading and re-checking all of it on every proposal, selection and delivery. With 2,500 recorded events a delivery claim drops from several seconds to a few milliseconds, well inside the Codex Hook time limit. The full history is still verified when the service starts and again every hour. Claude session records are verified once per change instead of four times.
+- **Unsupported Codex versions are turned off clearly.** A session started by an OpenAI-signed Codex that is not on the supported list no longer gets cards that can never be delivered. The session is turned off and the Pet says that this Codex version is not supported yet.
+- **Codex 0.167.0, 0.167.1, 0.167.2, 0.168.0 and 0.169.0 support.** The exact versions join the supported list for the plugin CLI, the managed App Server, workspace routing, and the update lifecycle, with the same package layout as 0.166.0. Only each version's primary `codex` executable is trusted for one-shot Hook approvals. From 0.167.0, commands that an administrator policy marks as requiring a human decision ignore a Hook approval, so for those Codex asks in its own window even after a Pet approval.
 - **Codex delivery uses the session's own Codex.** A selected card is sent through the `codex` that started the session, with its `CODEX_HOME`, instead of the first `codex` found on a fixed list. Codex installed with bun, pnpm, mise or asdf is now found.
 - **Codex approval cards.** A command run in a subfolder of the project now gets a Pet card showing its real folder. When an approval request cannot become a card, the Pet says to answer it in the Codex window instead of staying silent. The Plugin (0.1.4) no longer cuts the session guidance short and only runs its approval Hook for shell commands; Codex asks you to review the updated Hooks once.
-- **Codex 0.167.0 and 0.167.1 support.** Both exact versions join the supported list for the plugin CLI, the managed App Server, workspace routing, and the update lifecycle, with the same package layout as 0.166.0. Only each version's primary `codex` executable is trusted for one-shot Hook approvals. From 0.167.0, commands that an administrator policy marks as requiring a human decision ignore a Hook approval, so for those Codex asks in its own window even after a Pet approval.
+- **Claude cards stay selectable for their whole life.** A Claude card can now be chosen for its full 10 minutes instead of only the first 5. When Claude Code reuses a prompt for a task notification, Blabee withdraws the open card quietly instead of reporting a Hook error. If a selection prompt arrives in a format Blabee has not verified, the Hook says so instead of failing silently; the selection is still not delivered.
+- **Your usage statistics.** Settings has a button that deletes the usage statistics stored on the server for your account. Usage statistics are not sent until onboarding is finished.
+
+#### Fixed
+
+- **Approvals and selections only from the Pet.** Approval answers, selections and other Pet-only requests are refused unless they come from the Pet with its own credential. Before, any process running as the same user could send them.
+- **The updater no longer locks itself.** An update that was interrupted is closed automatically when the installed app shows whether it succeeded, and a remaining record can be dismissed by hand. The new app's service gets 120 seconds to answer instead of 30.
+- **Temporary Codex failures expire.** A delivery failure caused by the environment (a notarization lookup, a timeout, a process that could not start) is cleared after 10 minutes instead of blocking every delivery until a manual recheck. Failures of the Codex executable itself still wait for a recheck. Failed deliveries are still not resent.
+- **The service restarts once.** If the service stops unexpectedly, the app starts it again after 5 seconds, once. While it is stopped or blocked, the menu bar icon is dimmed and its help says so.
+- **Starts again after an interrupted save.** If Blabee stopped in the middle of saving, it used to refuse to start until the storage was repaired by hand. It now checks the whole history at startup and drops only the unfinished save, which had not been written and had not sent anything. Saves are also flushed to disk more strictly, and Blabee waits up to 3 seconds for requests in progress before quitting.
+- **One failing card no longer stops every session.** When the first card of a turn repeatedly fails to save, only that session waits; other sessions and the scheduler keep running, and the session retries on its own after 5 minutes. Short Keychain or storage hiccups are retried slowly until they clear instead of stopping Blabee until a restart.
+- **Steadier Pet connection.** The Pet no longer shows a brief false disconnect when two status requests overlap, keeps approval cards available while its panel is hidden, and accepts new Codex sessions after very long uptimes instead of stopping at 1,024.
+- **Account checks.** A server answer other than 200, 401 or 403 is treated as temporary, so a valid permission stays in place until it expires instead of locking the Pet at once. The check now runs about every 3.5 minutes instead of every 60 seconds and backs off after failures.
+
+#### Validation
+
+- Release tests on the build commit: 1161 Node tests (root, Cloud SQL, Claude bridge and shared engine) and 101, 353 and 2057 Swift tests passed with no failures.
+- Build checks: 279 packaging checks passed (one optional isolated-environment check skipped), and the signed app accepted its own bundled Claude runtime. Developer ID signatures, Apple notarization, stapling, DMG integrity and app Gatekeeper checks passed, and the app is the same before and after notarization.
+
+The installed-app checks (in-app update from r91, `cd` and sleep with an open Claude window, a hidden-panel approval card, the automatic update notice) were not performed before publication.
 
 ### r91
 
