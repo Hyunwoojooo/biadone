@@ -131,6 +131,8 @@ async function requireSteps(ctx, steps) {
   }
 }
 async function record(ctx, step, value) {
+  // `passed` is the gate that later steps read; a step's own fields must not overwrite it.
+  assert.ok(!Object.hasOwn(value, 'passed'), `Step "${step}" evidence must not set "passed"`);
   const evidence = { step, build: ctx.build, passed: true, completed_at: new Date().toISOString(), ...value };
   await writeFile(evidencePath(ctx, step), JSON.stringify(evidence, null, 2) + '\n', { flag: 'wx' });
   console.log(JSON.stringify(evidence));
@@ -275,10 +277,10 @@ const steps = {
     const env = cleanEnvironment({ BLABEE_CLAUDE_PACKAGED_RUNTIME: join(ctx.folder, 'signed-app/Blabee.app/Contents/Resources/claude') });
     const result = await run(ctx, 'actual-payload-swift.log', 'npm', ['run', 'test:swift', '--', '--disable-keychain',
       '--disable-netrc', '--filter', 'ClaudeRuntimePayloadTests/actualPackagedRuntime'], env);
-    const passed = Number(result.log.match(/Test run with (\d+) tests? in \d+ suites? passed/)?.[1]);
+    const testsPassed = Number(result.log.match(/Test run with (\d+) tests? in \d+ suites? passed/)?.[1]);
     assert.equal(result.exit_code, 0, `The app rejects its own bundled Claude runtime; see ${result.logPath}`);
-    assert.equal(passed, 1);
-    return record(ctx, 'payload', { passed });
+    assert.equal(testsPassed, 1);
+    return record(ctx, 'payload', { tests_passed: testsPassed });
   },
 
   async notarize(ctx) {
