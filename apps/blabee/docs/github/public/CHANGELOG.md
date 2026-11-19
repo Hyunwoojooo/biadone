@@ -20,6 +20,12 @@ See the [README](README.md) for the current download and setup instructions.
 
 ## App updates
 
+### r94 (Unreleased)
+
+#### Fixed
+
+- **Claude cards no longer depend on a tool lookup.** Claude Code keeps MCP tools behind its tool search and shows the model only their names. The model often never loaded the Blabee tool that creates a card, so no card appeared even though the connection worked. Blabee now marks its five tools as always loaded. This applies to `claude` windows started after installing r94.
+
 ### r93
 
 **Released:** 2026-11-18. **App version:** 0.1.0 (build 93, arm64).

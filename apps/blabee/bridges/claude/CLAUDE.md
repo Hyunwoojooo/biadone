@@ -17,6 +17,7 @@ shim은 `blabee-coordinator claude-auto-launch --claude-bin <원본> -- "$@"`를
 - MCP 서버 `blabee-claude` → `src/session-v2-mcp.mjs`(자동 연결은 `src/auto-connect-mcp.mjs`). 도구는 `_v1` 다섯 개:
   `check_connection_v1`→`readiness.begin`, `ack_readiness_probe_v1`→`readiness.ack`, `emit_decision_v1`→`proposal.emit`,
   `claim_selection_v1`→`selection.claim`, `complete_selection_v1`→`selection.complete`(`src/session-v2-tools.mjs`).
+  생성한 `mcp.json`의 서버 항목은 `alwaysLoad: true`다(2026-11-19). 도구가 tool search 뒤로 미뤄지면 모델이 `emit_decision_v1`을 거의 부르지 않는다.
 - wire 스키마 `blabee.claude-session.v3`. lease 60분, owner 5분 갱신(`ClaudeSessionAuthority`, `ClaudeOwnerRenewalController`).
 - 세션 수명: SessionStart → UserPromptSubmit마다 새 boundary → Stop에서 waiter가 `hook.poll`(500ms, 최대 600s), 선택이 오면 exit 2로 rewake
   → compact는 prompt_id 일치 시 새 내부 boundary, 불일치면 `new_prompt_required` → StopFailure는 미claim 작업 폐기, SessionEnd는 보고 권한까지 회수.

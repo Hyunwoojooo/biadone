@@ -49,6 +49,8 @@ struct ClaudeInstalledLauncherTests {
         let servers = try #require(StrictJSONTransport.object(from: documents.mcp)["mcpServers"] as? [String: [String: Any]])
         let server = try #require(servers["blabee-claude"])
         #expect(server["args"] as? [String] == [root.appendingPathComponent("src/auto-connect-mcp.mjs").path])
+        // Deferred behind tool search, the model rarely loads emit_decision_v1.
+        #expect(server["alwaysLoad"] as? Bool == true)
         let environment = try #require(server["env"] as? [String: String])
         #expect(environment["BLABEE_CLAUDE_BOOTSTRAP_HOOK_TOKEN"] == "")
         #expect(environment[ClaudeInstalledLaunchConfiguration.prefix + "HOOK_TOKEN"] == "")
@@ -162,6 +164,7 @@ struct ClaudeInstalledLauncherTests {
         }
         let mcp = try StrictJSONTransport.object(from: documents.mcp)
         let servers = try #require(mcp["mcpServers"] as? [String: [String: Any]])
+        #expect(servers["blabee-claude"]?["alwaysLoad"] as? Bool == true)
         let environment = try #require(servers["blabee-claude"]?["env"] as? [String: String])
         let prefix = ClaudeInstalledLaunchConfiguration.prefix
         #expect(Set(environment.keys) == Set((ClaudeInstalledLaunchConfiguration.publicEnvironmentNames

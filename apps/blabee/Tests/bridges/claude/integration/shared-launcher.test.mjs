@@ -18,6 +18,7 @@ test('launcher settings preserve literal paths but never serialize issued capabi
   assert.equal(encoded.includes(bridge), false);
   const server = config.mcp.mcpServers['blabee-claude'];
   assert.deepEqual(server.args, ['/tmp/a $(literal)/src/product-mcp.mjs']);
+  assert.equal(server.alwaysLoad, true);
   assert.equal(server.env.BLABEE_CLAUDE_SHARED_BRIDGE_TOKEN, '${BLABEE_CLAUDE_SHARED_BRIDGE_TOKEN}');
   for (const name of ['HOOK', 'SELECTOR', 'CONTROL']) assert.equal(server.env[`BLABEE_CLAUDE_SHARED_${name}_TOKEN`], '');
   assert.equal(config.settings.permissions, undefined);

@@ -75,10 +75,13 @@ enum ClaudeInstalledLaunchConfiguration {
             environment["BLABEE_CLAUDE_BOOTSTRAP_HOOK_TOKEN"] = ""
             environment[prefix + "HOOK_TOKEN"] = ""
         }
+        // alwaysLoad keeps the five tools out of Claude Code's tool search.
+        // Deferred, the model rarely loaded emit_decision_v1 and no card
+        // appeared on a healthy connection (ALWAYS_LOAD_DESIGN, 2026-11-19).
         return try Documents(settings: StrictJSONTransport.data(forJSONObject: ["hooks": hooks]),
             mcp: StrictJSONTransport.data(forJSONObject: ["mcpServers": [serverName: [
                 "command": nodeExecutable.path, "args": [mcp.path] + binding,
-                "env": environment
+                "env": environment, "alwaysLoad": true
             ]]]))
     }
 

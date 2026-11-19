@@ -196,8 +196,10 @@ export function createSharedLaunchConfiguration(host, { node = process.execPath,
     [`${sessionPrefix}BRIDGE_TOKEN`]: '${BLABEE_CLAUDE_SHARED_BRIDGE_TOKEN}',
     [`${sessionPrefix}HOOK_TOKEN`]: '', [`${sessionPrefix}SELECTOR_TOKEN`]: '', [`${sessionPrefix}CONTROL_TOKEN`]: '',
   };
+  // alwaysLoad keeps these tools out of tool search; a deferred emit tool is
+  // rarely loaded by the model (docs: ALWAYS_LOAD_DESIGN).
   const mcp = { mcpServers: { 'blabee-claude': {
-    command: node, args: [join(root, 'src/product-mcp.mjs')], env: environment,
+    command: node, args: [join(root, 'src/product-mcp.mjs')], env: environment, alwaysLoad: true,
   } } };
   const hooks = Object.fromEntries(['SessionStart', 'UserPromptSubmit', 'Stop', 'SessionEnd'].map(event => [event,
     [{ hooks: [{ type: 'command', command: node,

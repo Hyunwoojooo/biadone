@@ -10,6 +10,7 @@
   `Tests/bridges/claude/`, `scripts/prepare-claude-runtime.mjs`, `scripts/sign-claude-runtime.mjs`, `dev/claude-standalone/`.
 - 제품 연결은 설치된 Blabee의 자동 연결 shim(`shell/claude-v1/bin/claude`)이 실행마다 임시 Hook·MCP 설정을 주입하는 구조다.
   `launchers/claude-shared.mjs`(`claude:shared`, `claude:live`)는 레거시 개발 경로다.
+- 생성한 `mcp.json`의 `blabee-claude` 항목은 `alwaysLoad: true`다(2026-11-19). tool search 뒤로 미뤄진 `emit_decision_v1`은 모델이 거의 부르지 않는다.
 - Hook 주입은 boundary 한 줄뿐이고 규칙은 MCP instructions에만 둔다. 성공한 `emit_decision_v1`이 readiness를 카드 만료(10분)까지 갱신한다(2026-11-06, 10분은 2026-11-14). 재사용된 `prompt_id`는 Hook 실패 대신 `new_prompt_required`로 답한다.
 - 자동 연결 Hook은 관측 cwd를 실행 폴더로 고정한다(세션 안 `cd`로 끊기지 않음). 서비스 종료·전송 실패·lease 만료로 owner를 잃으면 실행기가
   같은 native 세션으로 새 owner를 등록하고 MCP는 새 bridge를 연다. `revoked`·`rejected`는 재연결하지 않는다(2026-11-13).
