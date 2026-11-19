@@ -20,7 +20,11 @@ See the [README](README.md) for the current download and setup instructions.
 
 ## App updates
 
-### r93 (Unreleased)
+### r93
+
+**Released:** 2026-11-18. **App version:** 0.1.0 (build 93, arm64).
+Developer ID signed and Apple notarized.
+[Download r93](https://github.com/Hyunwoojooo/biadone/releases/tag/blabee-v0.1.0%2Bbuild.93).
 
 #### Changed
 

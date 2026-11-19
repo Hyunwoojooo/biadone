@@ -19,7 +19,11 @@
 
 ## 앱 업데이트
 
-### r93 (미배포)
+### r93
+
+**배포일:** 2026-11-18. **앱 버전:** 0.1.0 (빌드 93, arm64).
+Developer ID 서명과 Apple 공증을 완료했습니다.
+[r93 다운로드](https://github.com/Hyunwoojooo/biadone/releases/tag/blabee-v0.1.0%2Bbuild.93).
 
 #### 변경 사항
 
