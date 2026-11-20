@@ -20,6 +20,12 @@ See the [README](README.md) for the current download and setup instructions.
 
 ## App updates
 
+### r95 (Unreleased)
+
+#### Changed
+
+- **New Codex versions work right away.** Blabee used to connect only to the Codex versions it had registered, so a Codex upgrade stopped suggestion cards and selection delivery until a Blabee update arrived. An official stable Codex newer than every registered version now gets suggestion cards and selection delivery once its signature and notarization are verified. For such a version the Pet shows a "not reviewed yet" notice and command approval happens in the Codex window; Pet approval cards return after installing a Blabee update that registers that version. Preview versions, versions older than the registered list and a new major version still do not connect. Managed `blabee-codex` keeps accepting registered versions only.
+
 ### r94 (Unreleased)
 
 #### Changed

@@ -2177,8 +2177,62 @@ struct PetCodexRuntimeNoticeTests {
         #expect(try PetSnapshot.parse(petTestData(object)).codexRuntimeUnqualified == false)
         object["codex_runtime_status"] = "unqualified"
         #expect(try PetSnapshot.parse(petTestData(object)).codexRuntimeUnqualified)
+        #expect(try PetSnapshot.parse(petTestData(object)).codexRuntimeUnreviewed == false)
         object["codex_runtime_status"] = "qualified"
         #expect(throws: (any Error).self) { try PetSnapshot.parse(petTestData(object)) }
+    }
+
+    @Test("A newer unreviewed Codex is its own exact snapshot value, not the unsupported one")
+    func codexRuntimeUnreviewedFlag() throws {
+        var object = petTestSnapshotObject(cards: [])
+        #expect(try PetSnapshot.parse(petTestData(object)).codexRuntimeUnreviewed == false)
+        object["codex_runtime_status"] = "unreviewed"
+        let snapshot = try PetSnapshot.parse(petTestData(object))
+        #expect(snapshot.codexRuntimeUnreviewed)
+        #expect(snapshot.codexRuntimeUnqualified == false)
+        for invalid in ["Unreviewed", "reviewed", ""] as [Any] + [true, 1] {
+            object["codex_runtime_status"] = invalid
+            #expect(throws: (any Error).self) { try PetSnapshot.parse(petTestData(object)) }
+        }
+    }
+
+    @Test("The unreviewed notice says what works and where approvals go", .petLanguage(.korean))
+    @MainActor func codexRuntimeUnreviewedMessageKorean() {
+        #expect(PetViewModel.codexRuntimeUnreviewedMessage
+            == "이 Codex 버전은 아직 검토 전이에요. 제안 카드는 쓸 수 있고, 명령 승인은 Codex 창에서 해 주세요.")
+        #expect(PetViewModel.codexRuntimeUnreviewedMessage != PetViewModel.codexRuntimeUnsupportedMessage)
+    }
+
+    @Test("The unreviewed notice has an English form", .petLanguage(.english))
+    @MainActor func codexRuntimeUnreviewedMessageEnglish() {
+        #expect(PetViewModel.codexRuntimeUnreviewedMessage
+            == "This Codex version hasn't been reviewed yet. Suggestion cards work; approve commands in the Codex window.")
+    }
+
+    @Test("Each Codex notice forces an update check once per run, however often the notice comes back")
+    @MainActor func codexNoticeUpdateCheckIsBounded() {
+        typealias VM = PetViewModel
+        #expect(VM.codexNoticeNeedingUpdateCheck(unqualified: false, unreviewed: false, alreadyChecked: []) == nil)
+        #expect(VM.codexNoticeNeedingUpdateCheck(unqualified: true, unreviewed: false, alreadyChecked: []) == "unqualified")
+        #expect(VM.codexNoticeNeedingUpdateCheck(unqualified: false, unreviewed: true, alreadyChecked: []) == "unreviewed")
+        // Two Codex installs alternating between prompts must not check again and again.
+        #expect(VM.codexNoticeNeedingUpdateCheck(unqualified: false, unreviewed: true, alreadyChecked: ["unreviewed"]) == nil)
+        #expect(VM.codexNoticeNeedingUpdateCheck(unqualified: true, unreviewed: false, alreadyChecked: ["unqualified"]) == nil)
+        #expect(VM.codexNoticeNeedingUpdateCheck(unqualified: true, unreviewed: false, alreadyChecked: ["unreviewed"])
+            == "unqualified")
+        #expect(VM.codexNoticeNeedingUpdateCheck(unqualified: false, unreviewed: true,
+                                                 alreadyChecked: ["unqualified", "unreviewed"]) == nil)
+    }
+
+    @Test("The panel diagnostic prefers unsupported over unreviewed over a skipped approval card", .petLanguage(.korean))
+    @MainActor func codexRuntimeDiagnosticOrder() {
+        #expect(PetViewModel.codexRuntimeDiagnostic(unqualified: false, unreviewed: false) == nil)
+        #expect(PetViewModel.codexRuntimeDiagnostic(unqualified: false, unreviewed: true)
+            == PetViewModel.codexRuntimeUnreviewedMessage)
+        #expect(PetViewModel.codexRuntimeDiagnostic(unqualified: true, unreviewed: false)
+            == PetViewModel.codexRuntimeUnsupportedMessage)
+        #expect(PetViewModel.codexRuntimeDiagnostic(unqualified: true, unreviewed: true)
+            == PetViewModel.codexRuntimeUnsupportedMessage)
     }
 
     @Test("A skipped Codex approval card is an optional, exact snapshot flag (CDX-5)")

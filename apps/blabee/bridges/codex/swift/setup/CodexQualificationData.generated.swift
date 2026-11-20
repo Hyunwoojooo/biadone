@@ -2697,4 +2697,8 @@ enum CodexQualificationData {
             )
         ),
     ]
+
+    /// Releases excluded from the newer-version basic-feature allowance
+    /// (`CodexCompatibility.pluginAdmission`). From bridges/codex/blocked-versions.json.
+    static let blockedPluginVersions: Set<String> = []
 }

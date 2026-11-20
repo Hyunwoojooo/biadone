@@ -827,7 +827,9 @@ enum CodexPluginSetupProductionTrust {
                 : CodexNativeDiagnostic.launchUnavailable).error
         }
         guard let parsed else { throw CodexNativeDiagnostic.probeOutputInvalid.error }
-        guard supportedPluginCLIVersions.contains(parsed)
+        // Registered releases and newer same-major stable ones pass; the
+        // signature, path and notarization checks have already run.
+        guard CodexCompatibility.pluginAdmission(version: parsed) != .rejected
         else { throw CodexRuntimeTrustError.unsupportedVersion(parsed) }
         return parsed
     }
@@ -859,7 +861,7 @@ enum CodexPluginSetupProductionTrust {
         guard let expected = selection.trustSnapshot,
               expected.stableSourcePath == selection.sourceURL.path,
               expected.canonicalPath == selection.canonicalURL.path,
-              supportedPluginCLIVersions.contains(selection.version)
+              CodexCompatibility.pluginAdmission(version: selection.version) != .rejected
         else { throw CodexRuntimeTrustError.approvalDrift }
         let current = try trustInspector(selection.sourceURL)
         guard current == expected else { throw CodexRuntimeTrustError.approvalDrift }

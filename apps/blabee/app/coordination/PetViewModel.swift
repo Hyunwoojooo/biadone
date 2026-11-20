@@ -996,14 +996,38 @@ final class PetViewModel: ObservableObject {
         supportsProviderSessions && provider == .claude && selectedProviderContext != nil
             && !isSwitchingProvider && !isProviderConnectionOperationInFlight && !isShuttingDown
     }
+    /// Codex notice kinds that already forced an update check in this run.
+    private var codexNoticeUpdateChecks: Set<String> = []
     var providerDiagnostic: String? {
         if let diagnostic = snapshot?.providerDiagnostic { return diagnostic }
-        if snapshot?.codexRuntimeUnqualified == true { return Self.codexRuntimeUnsupportedMessage }
+        if let diagnostic = Self.codexRuntimeDiagnostic(
+            unqualified: snapshot?.codexRuntimeUnqualified == true,
+            unreviewed: snapshot?.codexRuntimeUnreviewed == true
+        ) { return diagnostic }
         if snapshot?.permissionCardSkipped == true { return Self.permissionCardSkippedMessage }
         return nil
     }
     static var permissionCardSkippedMessage: String {
         PetL10n.text("Blabee couldn't show a Codex approval request here. Choose allow or deny in the Codex window.", korean: "Codex 승인 요청 하나를 Pet에 띄우지 못했어요. Codex 창에서 승인 여부를 선택해 주세요.")
+    }
+    /// The notice that should force an update check now, if any. Each kind
+    /// does so once per run: with two Codex installs the notice can alternate
+    /// on every prompt, and the forced check has no rate limit of its own.
+    static func codexNoticeNeedingUpdateCheck(
+        unqualified: Bool, unreviewed: Bool, alreadyChecked: Set<String>
+    ) -> String? {
+        if unqualified, !alreadyChecked.contains("unqualified") { return "unqualified" }
+        if unreviewed, !alreadyChecked.contains("unreviewed") { return "unreviewed" }
+        return nil
+    }
+    /// "Unsupported" (Blabee is off) outranks "not reviewed yet" (Blabee works).
+    static func codexRuntimeDiagnostic(unqualified: Bool, unreviewed: Bool) -> String? {
+        if unqualified { return codexRuntimeUnsupportedMessage }
+        if unreviewed { return codexRuntimeUnreviewedMessage }
+        return nil
+    }
+    static var codexRuntimeUnreviewedMessage: String {
+        PetL10n.text("This Codex version hasn't been reviewed yet. Suggestion cards work; approve commands in the Codex window.", korean: "이 Codex 버전은 아직 검토 전이에요. 제안 카드는 쓸 수 있고, 명령 승인은 Codex 창에서 해 주세요.")
     }
     static var codexRuntimeUnsupportedMessage: String {
         PetL10n.text("This Codex version is not supported yet, so Blabee stays off in its sessions. Check for a Blabee update.", korean: "이 Codex 버전은 아직 지원되지 않아 해당 세션에서는 Blabee가 꺼져 있어요. Blabee 업데이트를 확인해 주세요.")
@@ -4017,9 +4041,14 @@ final class PetViewModel: ObservableObject {
             && priorHead?.reminderDue == true
             ? priorHead?.identity
             : nil
-        // An unsupported Codex can only be fixed by a Blabee update: check now
+        // An unsupported Codex can only be fixed by a Blabee update, and an
+        // unreviewed one gets its approval cards back the same way: check now
         // instead of waiting for the daily schedule.
-        if newSnapshot.codexRuntimeUnqualified, snapshot?.codexRuntimeUnqualified != true {
+        if let notice = Self.codexNoticeNeedingUpdateCheck(
+            unqualified: newSnapshot.codexRuntimeUnqualified, unreviewed: newSnapshot.codexRuntimeUnreviewed,
+            alreadyChecked: codexNoticeUpdateChecks
+        ) {
+            codexNoticeUpdateChecks.insert(notice)
             Task { [weak self] in await self?.runAutomaticUpdateCheckIfDue(force: true) }
         }
         if snapshot != newSnapshot { snapshot = newSnapshot }

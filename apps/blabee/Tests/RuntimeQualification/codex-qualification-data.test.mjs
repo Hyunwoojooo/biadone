@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { readFile, readdir } from 'node:fs/promises';
 import test from 'node:test';
-import { checkGenerated, loadRecords, validateRecord } from '../../scripts/codex/qualification.mjs';
+import { checkGenerated, loadBlockedVersions, loadRecords, renderReleases, validateBlockedVersions, validateRecord } from '../../scripts/codex/qualification.mjs';
 
 const root = new URL('../../', import.meta.url);
 
@@ -97,4 +97,34 @@ test('check-latest reports only stable releases newer than every registered vers
   ];
   assert.deepEqual(unregisteredReleases(releases, ['0.164.0', '0.166.0']).map(r => r.version), ['0.167.0', '0.167.1']);
   assert.deepEqual(unregisteredReleases(releases, ['0.166.0', '0.167.1']), []);
+});
+
+test('blocked versions file is strict', async () => {
+  const records = await loadRecords();
+  const schema = 'blabee.codex-blocked-versions.v1';
+  assert.deepEqual(validateBlockedVersions({ schema, blocked: [] }, records), []);
+  assert.deepEqual(validateBlockedVersions({ schema, blocked: [
+    { version: '0.999.1', reason: 'second' }, { version: '0.999.0', reason: 'first' }] }, records).map(e => e.version),
+    ['0.999.0', '0.999.1']);
+  const registered = records.find(r => r.capabilities.includes('pluginCLI')).version;
+  for (const bad of [
+    { schema, blocked: [], extra: true }, { schema: 'other', blocked: [] }, { schema }, { schema, blocked: {} },
+    { schema, blocked: [{ version: '0.999', reason: 'x' }] },
+    { schema, blocked: [{ version: '0.999.0-alpha.1', reason: 'x' }] },
+    { schema, blocked: [{ version: '0.999.0' }] }, { schema, blocked: [{ version: '0.999.0', reason: '' }] },
+    { schema, blocked: [{ version: '0.999.0', reason: 'two\nlines' }] },
+    { schema, blocked: [{ version: '0.999.0', reason: 'x', extra: 1 }] },
+    { schema, blocked: [{ version: '0.999.0', reason: 'x' }, { version: '0.999.0', reason: 'y' }] },
+    { schema, blocked: [{ version: registered, reason: 'registered' }] },
+  ]) assert.throws(() => validateBlockedVersions(bad, records), JSON.stringify(bad));
+  // The shipped file loads and starts without a blocked release that is also registered.
+  assert.ok(Array.isArray(await loadBlockedVersions(undefined, records)));
+});
+
+test('blocked versions are rendered into the generated release data', async () => {
+  const records = await loadRecords();
+  const rendered = renderReleases(records, [{ version: '0.999.0', reason: 'queue changed' }, { version: '0.999.1', reason: 'hook changed' }]);
+  assert.match(rendered, /static let blockedPluginVersions: Set<String> = \[\n        \/\/ queue changed\n        "0\.999\.0",\n        \/\/ hook changed\n        "0\.999\.1",\n    \]/);
+  assert.match(renderReleases(records, []), /static let blockedPluginVersions: Set<String> = \[\]\n/);
+  assert.match(renderReleases(records), /static let blockedPluginVersions: Set<String> = \[\]\n/);
 });

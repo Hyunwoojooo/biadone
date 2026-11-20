@@ -105,9 +105,12 @@ enum CodexHookApprovalQualification {
         currentAttestedCaller().caller
     }
 
-    /// Also returns the kernel-reported path of the registered Codex that ran
-    /// this Hook (audit CDX-6: delivery prefers the session's own Codex). The
-    /// path is present only for `.qualified`.
+    /// Also returns the kernel-reported path of the OpenAI-signed Codex that
+    /// ran this Hook (audit CDX-6: delivery prefers the session's own Codex).
+    /// Present for `.qualified` and `.unqualified`; the service qualifies an
+    /// unregistered Codex by that path before turning its session on
+    /// (docs/features/CODEX_UNREVIEWED_VERSION_DESIGN.md). The path is a
+    /// preference that is qualified again before use, never a trust grant.
     static func currentAttestedCaller() -> (caller: CallerCodex, executablePath: String?) {
         attestedCaller(processID: getpid(), effectiveUserID: geteuid(),
                        processEvidence: runningProcessEvidence, signatureEvidence: runningSignatureEvidence)
@@ -203,8 +206,9 @@ enum CodexHookApprovalQualification {
         guard chain.allSatisfy({ processEvidence($0.processID) == $0 }) else {
             return unknown
         }
-        guard let qualifiedRuntime else { return (.unqualified, nil) }
-        return (.qualified(qualifiedRuntime), chain[chain.count - 1].executablePath)
+        let executablePath = chain[chain.count - 1].executablePath
+        guard let qualifiedRuntime else { return (.unqualified, executablePath) }
+        return (.qualified(qualifiedRuntime), executablePath)
     }
 
     private static func runningProcessEvidence(_ processID: Int32) -> ProcessEvidence? {

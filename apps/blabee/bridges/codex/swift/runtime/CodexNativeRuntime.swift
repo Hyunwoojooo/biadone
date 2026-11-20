@@ -26,7 +26,7 @@ enum CodexNativeDiagnostic: String, CaseIterable, Sendable {
         case .notInstalled:
             PetL10n.text("Codex executable not found. Install official Codex, then check again.", korean: "Codex 실행 파일을 찾지 못했습니다. 공식 Codex 설치 후 다시 검사하세요.")
         case .versionUnqualified:
-            PetL10n.text("Blabee compatibility with the installed Codex version has not been verified yet. Standard Codex settings were not changed.", korean: "설치된 Codex 버전의 Blabee 호환성이 아직 검증되지 않았습니다. 일반 Codex 설정은 변경하지 않았습니다.")
+            PetL10n.text("Blabee does not support this Codex version. Update Codex or check for a Blabee update. Standard Codex settings were not changed.", korean: "이 Codex 버전은 Blabee가 지원하지 않습니다. Codex를 최신 버전으로 올리거나 Blabee 업데이트를 확인하세요. 일반 Codex 설정은 변경하지 않았습니다.")
         case .signatureInvalid:
             PetL10n.text("Unable to verify Codex's official signature. Check the official installation and retry.", korean: "Codex의 공식 서명을 확인하지 못했습니다. 공식 설치본을 확인한 뒤 다시 검사하세요.")
         case .pathUnsafe:
@@ -291,6 +291,11 @@ struct CodexNativeRuntime: Sendable {
     let preflight: CodexNativePreflight
     let failureGuard: CodexNativeFailureGuard
 
+    /// Failure records are scoped to the Plugin version rule, the registered
+    /// list and the blocklist: changing any of them re-examines a Codex that
+    /// was rejected before (for example a newer release recorded by r93).
+    static var livePolicyRevision: String { CodexCompatibility.pluginPolicyRevision }
+
     static func live(
         explicitExecutableURL: URL? = nil,
         environment: [String: String] = ProcessInfo.processInfo.environment,
@@ -345,7 +350,7 @@ struct CodexNativeRuntime: Sendable {
                     CodexNotarizationCache.insert(fileKey)
                 }
             },
-            failureGuard: .live(policyRevision: "native-v1-notarized:" + CodexCompatibility.pluginCLISupportedVersions.sorted().joined(separator: ","))
+            failureGuard: .live(policyRevision: livePolicyRevision)
         )
     }
 

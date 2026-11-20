@@ -187,6 +187,7 @@ let blabeeCoordinatorSources: [String] = [
     "bridges/codex/swift/runtime/CodexNativeRuntime.swift",
     "bridges/codex/swift/runtime/CodexRuntimeBundle.swift",
     "bridges/codex/swift/runtime/CodexRuntimeTrust.swift",
+    "bridges/codex/swift/runtime/CodexUnreviewedRuntimeAdmission.swift",
     "bridges/codex/swift/runtime/ManagedCodexApprovalRuntime.swift",
     "bridges/codex/swift/runtime/ManagedCodexLauncher.swift",
     "bridges/codex/swift/runtime/ManagedCodexResumeConflictObserver.swift",

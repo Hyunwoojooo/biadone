@@ -97,3 +97,51 @@ func codexCompatibilityQualification() {
     #expect(!unavailable.isApprovedForManagedUse)
     #expect(unavailable.diagnosticCode == "codex_version_unavailable")
 }
+
+@Test("Plugin admission lets only newer same-major stable versions through")
+func codexPluginAdmissionRule() {
+    let registered: Set<String> = ["0.170.0", "0.171.0", "0.153.2"]
+    let blocked: Set<String> = ["0.172.1"]
+    func admission(_ version: String) -> CodexCompatibility.PluginAdmission {
+        CodexCompatibility.pluginAdmission(version: version, registered: registered, blocked: blocked)
+    }
+    for version in ["0.171.0", "0.153.2"] { #expect(admission(version) == .reviewed, "\(version)") }
+    for version in ["0.171.1", "0.172.0", "0.200.3"] { #expect(admission(version) == .unreviewedNewer, "\(version)") }
+    #expect(admission("0.172.1") == .rejected)
+    for version in ["0.170.1", "0.169.9", "0.0.1"] { #expect(admission(version) == .rejected, "\(version)") }
+    for version in ["1.0.0", "9.9.9"] { #expect(admission(version) == .rejected, "\(version)") }
+    for version in ["0.171", "0.171.1.0", "00.171.1", "0.0171.1", "0.171.1-alpha.1",
+                    "0.99999999999999999999.0", "", "0.171.x", " 0.171.1", "0.171.1\n", "٠.١٧١.١"] {
+        #expect(admission(version) == .rejected, "\(version)")
+    }
+    #expect(CodexCompatibility.pluginAdmission(version: "0.172.0", registered: [], blocked: []) == .rejected)
+}
+
+@Test("Live Plugin admission follows the registered list and never widens managed use")
+func codexPluginAdmissionLiveData() throws {
+    for version in CodexCompatibility.pluginCLISupportedVersions {
+        #expect(CodexCompatibility.pluginAdmission(version: version) == .reviewed, "\(version)")
+    }
+    let newest = try #require(CodexCompatibility.pluginCLISupportedVersions.max {
+        $0.compare($1, options: .numeric) == .orderedAscending
+    })
+    let parts = newest.split(separator: ".").compactMap { Int($0) }
+    try #require(parts.count == 3)
+    let newer = "\(parts[0]).\(parts[1]).\(parts[2] + 1)"
+    #expect(CodexCompatibility.pluginAdmission(version: newer) == .unreviewedNewer)
+    #expect(CodexCompatibility.qualify(version: newer) == .notAllowlisted(version: newer))
+    #expect(!CodexCompatibility.qualify(version: newer).isApprovedForManagedUse)
+    #expect(CodexCompatibility.pluginAdmission(version: "0.149.0") == .rejected)
+    #expect(CodexCompatibility.blockedPluginVersions.isDisjoint(with: CodexCompatibility.pluginCLISupportedVersions))
+}
+
+@Test("The Plugin policy revision changes with the registered list and the blocklist")
+func codexPluginPolicyRevision() {
+    #expect(CodexCompatibility.pluginPolicyRevision(registered: ["0.2.0", "0.1.0"], blocked: [])
+        == "native-v2-newer:0.1.0,0.2.0|blocked:")
+    #expect(CodexCompatibility.pluginPolicyRevision(registered: ["0.2.0", "0.1.0"], blocked: ["0.3.1", "0.3.0"])
+        == "native-v2-newer:0.1.0,0.2.0|blocked:0.3.0,0.3.1")
+    #expect(CodexCompatibility.pluginPolicyRevision == CodexCompatibility.pluginPolicyRevision(
+        registered: CodexCompatibility.pluginCLISupportedVersions, blocked: CodexCompatibility.blockedPluginVersions
+    ))
+}

@@ -272,7 +272,47 @@ enum HookQueuedPromptOutputPolicy {
     }
 }
 
+/// What a prompt-event Hook tells the coordinator about the Codex that ran it.
+/// Every value comes from this process's own observation; a marker already in
+/// the payload is replaced or removed, never passed through.
+enum HookCodexRuntimePayloadPolicy {
+    static func annotated(
+        _ payload: [String: Any], eventName: String,
+        caller: CodexHookApprovalQualification.CallerCodex,
+        executablePath: String?, codexHome: String?
+    ) -> [String: Any] {
+        guard eventName == "SessionStart" || eventName == "UserPromptSubmit" else { return payload }
+        var payload = payload
+        // Sent with every prompt as well as SessionStart, so a restarted
+        // service judges a running session again at its next prompt.
+        // An unreadable lineage reports nothing and keeps the current behavior.
+        switch caller {
+        case .qualified: payload["codex_runtime"] = "qualified"
+        case .unqualified: payload["codex_runtime"] = "unqualified"
+        case .unknown: payload.removeValue(forKey: "codex_runtime")
+        }
+        // Audit CDX-6: deliver later turns through this session's own Codex
+        // and CODEX_HOME. Only an attested OpenAI-signed Codex supplies a path;
+        // CODEX_HOME is passed as the session's (unverified) configuration.
+        payload.removeValue(forKey: "codex_executable")
+        payload.removeValue(forKey: "codex_home")
+        if let executablePath { payload["codex_executable"] = executablePath }
+        if let codexHome, codexHome.hasPrefix("/"), codexHome.utf8.count <= 4_096,
+           !codexHome.contains("\0") {
+            payload["codex_home"] = codexHome
+        }
+        return payload
+    }
+}
+
 enum HookPermissionOutputPolicy {
+    /// An OpenAI-signed Codex whose CDHash is not registered cannot be given
+    /// allow-once. Its sessions may be on (newer unreviewed release), so the
+    /// request is not sent at all and Codex shows its own prompt at once.
+    static func forwardsToCoordinator(caller: CodexHookApprovalQualification.CallerCodex) -> Bool {
+        caller != .unqualified
+    }
+
     static func qualifiedPayload(
         _ input: [String: Any], qualification: String?
     ) -> [String: Any] {
@@ -368,31 +408,26 @@ func runHookCommand(arguments: [String]) {
         // The coordinator may expose Hook allow-once only after attesting the
         // live Codex ancestry. Never trust a caller-supplied marker; derive it
         // locally and omit it when the attestation cannot be established.
-        // Once per session: an OpenAI-signed Codex that is not registered cannot
-        // receive a card, so the coordinator turns Blabee off for this session.
-        // An unreadable lineage reports nothing and keeps the current behavior.
+        // The coordinator decides from the marker whether Blabee is on for an
+        // OpenAI-signed Codex that is not registered.
         if eventName == "SessionStart" || eventName == "UserPromptSubmit" {
             let attested = CodexHookApprovalQualification.currentAttestedCaller()
-            if eventName == "SessionStart" {
-                switch attested.caller {
-                case .qualified: payload["codex_runtime"] = "qualified"
-                case .unqualified: payload["codex_runtime"] = "unqualified"
-                case .unknown: payload.removeValue(forKey: "codex_runtime")
-                }
-            }
-            // Audit CDX-6: deliver later turns through this session's own Codex
-            // and CODEX_HOME. Only an attested registered Codex supplies a path;
-            // CODEX_HOME is passed as the session's (unverified) configuration.
-            payload.removeValue(forKey: "codex_executable")
-            payload.removeValue(forKey: "codex_home")
-            if let executable = attested.executablePath { payload["codex_executable"] = executable }
-            if let home = ProcessInfo.processInfo.environment["CODEX_HOME"],
-               home.hasPrefix("/"), home.utf8.count <= 4_096, !home.contains("\0") {
-                payload["codex_home"] = home
-            }
+            payload = HookCodexRuntimePayloadPolicy.annotated(
+                payload, eventName: eventName, caller: attested.caller,
+                executablePath: attested.executablePath,
+                codexHome: ProcessInfo.processInfo.environment["CODEX_HOME"]
+            )
         }
         if eventName == "PermissionRequest" {
-            let qualification = CodexHookApprovalQualification.currentQualification()
+            let caller = CodexHookApprovalQualification.currentAttestedCaller().caller
+            guard HookPermissionOutputPolicy.forwardsToCoordinator(caller: caller) else {
+                // No output: Codex asks in its own window, without waiting on
+                // a card that could not offer allow-once.
+                HookPermissionDiagnostics.record(.callerUnqualified)
+                return
+            }
+            let qualification: String?
+            if case .qualified(let runtime) = caller { qualification = runtime } else { qualification = nil }
             payload = HookPermissionOutputPolicy.qualifiedPayload(
                 payload, qualification: qualification
             )

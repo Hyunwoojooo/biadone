@@ -6,6 +6,9 @@ description: 새 Codex CLI 안정 버전(예 0.167.0)을 Blabee 지원 목록에
 # 새 Codex 버전 지원 등록
 
 Codex Bridge 영역 작업이다. 버전은 **정확한 문자열**로만 등록한다. 인접 버전·prerelease·범위 비교로 일반화하지 않는다.
+2026-11-20부터 등록 전 새 버전도 제안 카드와 선택 전달은 동작한다(`CodexCompatibility.pluginAdmission`, 설계 `docs/features/CODEX_UNREVIEWED_VERSION_DESIGN.md`).
+등록은 그 버전의 승인 카드(CDHash)와 관리형 경로를 켜는 일이고, 이 규칙은 등록 자체의 정확 일치 원칙을 바꾸지 않는다.
+소스 비교에서 Hook·queue가 깨지는 버전을 찾으면 등록하지 말고 `bridges/codex/blocked-versions.json`에 넣는다(`npm run codex:qualification -- generate`).
 증거 없이 값을 추측하지 않는다. 공식 release asset을 내려받아 직접 계산한 해시·CDHash만 쓴다.
 직전 사례: `docs/features/CODEX_0166_QUALIFICATION.md`.
 

@@ -176,3 +176,69 @@ func hookPermissionResponseRejectsUnsupportedRequestMode() {
         ))
     }
 }
+
+@Suite("Hook Codex runtime payload")
+struct HookCodexRuntimePayloadPolicyTests {
+    private typealias Caller = CodexHookApprovalQualification.CallerCodex
+
+    private func annotated(
+        _ payload: [String: Any] = [:], event: String, caller: Caller,
+        executablePath: String? = nil, codexHome: String? = nil
+    ) -> [String: Any] {
+        HookCodexRuntimePayloadPolicy.annotated(
+            payload, eventName: event, caller: caller,
+            executablePath: executablePath, codexHome: codexHome
+        )
+    }
+
+    @Test("both prompt events carry the attested runtime, and an unreadable lineage carries none")
+    func runtimeMarker() {
+        for event in ["SessionStart", "UserPromptSubmit"] {
+            #expect(annotated(event: event, caller: .qualified("codex-x"))["codex_runtime"] as? String == "qualified")
+            #expect(annotated(event: event, caller: .unqualified)["codex_runtime"] as? String == "unqualified")
+            // A caller-supplied marker is never passed through.
+            #expect(annotated(["codex_runtime": "qualified"], event: event, caller: .unknown)["codex_runtime"] == nil)
+            #expect(annotated(["codex_runtime": "unqualified"], event: event, caller: .qualified("codex-x"))["codex_runtime"]
+                as? String == "qualified")
+        }
+    }
+
+    @Test("the executable and CODEX_HOME come only from this Hook's own observation")
+    func executableAndHome() {
+        for event in ["SessionStart", "UserPromptSubmit"] {
+            let supplied: [String: Any] = ["codex_executable": "/forged/codex", "codex_home": "/forged/home", "kept": 1]
+            let observed = annotated(supplied, event: event, caller: .unqualified,
+                                     executablePath: "/opt/codex/bin/codex", codexHome: "/Users/u/.codex")
+            #expect(observed["codex_executable"] as? String == "/opt/codex/bin/codex")
+            #expect(observed["codex_home"] as? String == "/Users/u/.codex")
+            #expect(observed["kept"] as? Int == 1)
+
+            let none = annotated(supplied, event: event, caller: .unknown)
+            #expect(none["codex_executable"] == nil)
+            #expect(none["codex_home"] == nil)
+
+            for invalid in ["relative/home", "/with\u{0}nul", "/" + String(repeating: "a", count: 4_096)] {
+                #expect(annotated(event: event, caller: .unknown, codexHome: invalid)["codex_home"] == nil)
+            }
+            let longest = "/" + String(repeating: "a", count: 4_095)
+            #expect(annotated(event: event, caller: .unknown, codexHome: longest)["codex_home"] as? String == longest)
+        }
+    }
+
+    @Test("other events are passed through untouched")
+    func otherEvents() {
+        let payload: [String: Any] = ["codex_runtime": "qualified", "codex_executable": "/x", "codex_home": "/y"]
+        for event in ["Stop", "PermissionRequest"] {
+            let result = annotated(payload, event: event, caller: .unqualified,
+                                   executablePath: "/opt/codex/bin/codex", codexHome: "/Users/u/.codex")
+            #expect(NSDictionary(dictionary: result).isEqual(to: payload))
+        }
+    }
+
+    @Test("an approval request from an unregistered signed Codex stays in Codex")
+    func permissionForwarding() {
+        #expect(!HookPermissionOutputPolicy.forwardsToCoordinator(caller: .unqualified))
+        #expect(HookPermissionOutputPolicy.forwardsToCoordinator(caller: .qualified("codex-x")))
+        #expect(HookPermissionOutputPolicy.forwardsToCoordinator(caller: .unknown))
+    }
+}

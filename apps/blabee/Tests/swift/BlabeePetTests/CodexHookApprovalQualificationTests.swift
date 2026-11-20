@@ -263,7 +263,7 @@ struct CodexHookApprovalQualificationTests {
         #expect(wrapped.caller() == .unknown)
     }
 
-    @Test("only a registered caller reports its executable path for delivery (CDX-6)")
+    @Test("registered and unregistered signed callers report their executable path; an unreadable lineage reports none")
     func attestedCallerExecutablePath() {
         let registered = HookQualificationFixture()
         let attested = registered.attestedCaller()
@@ -276,7 +276,10 @@ struct CodexHookApprovalQualificationTests {
             cdHash: String(repeating: "e", count: 40), requirementSatisfied: true
         )
         #expect(unregistered.attestedCaller().caller == .unqualified)
-        #expect(unregistered.attestedCaller().executablePath == nil)
+        // The path lets the service qualify this Codex by version; it is a
+        // preference that is qualified again, never an approval grant.
+        #expect(unregistered.attestedCaller().executablePath == "/official/standalone/current/bin/codex")
+        #expect(unregistered.evaluate() == nil)
 
         let wrapped = HookQualificationFixture()
         wrapped.replaceProcess(90, path: "/usr/local/bin/process-broker")

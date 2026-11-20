@@ -3569,3 +3569,72 @@ func codexPluginSetupSkipsDanglingAndNonregularCandidates() throws {
     #expect(attempted == [safe])
     #expect(result.sourceURL == safe)
 }
+
+private func codexPluginSetupNewerUnregisteredVersion() throws -> String {
+    let newest = try #require(CodexCompatibility.pluginCLISupportedVersions.max {
+        $0.compare($1, options: .numeric) == .orderedAscending
+    })
+    let parts = newest.split(separator: ".").compactMap { Int($0) }
+    try #require(parts.count == 3)
+    return "\(parts[0]).\(parts[1]).\(parts[2] + 1)"
+}
+
+@Test("The version probe admits a newer unregistered stable Codex and still rejects older or preview output")
+func pluginVersionProbeAdmitsNewer() throws {
+    let newer = try codexPluginSetupNewerUnregisteredVersion()
+    func probe(_ output: String) throws -> String {
+        try CodexPluginSetupProductionTrust.supportedVersion(
+            from: CodexPluginSetupProcessResult(exitCode: 0, stdout: Data(output.utf8))
+        )
+    }
+    #expect(try probe("codex-cli \(newer)\n") == newer)
+    for rejected in ["0.149.0", "9.9.9"] {
+        #expect(throws: CodexRuntimeTrustError.unsupportedVersion(rejected)) {
+            try probe("codex-cli \(rejected)\n")
+        }
+    }
+    #expect {
+        try probe("codex-cli \(newer)-alpha.1\n")
+    } throws: { error in
+        error.coordinatorError.code == CodexNativeDiagnostic.probeOutputInvalid.rawValue
+    }
+}
+
+@Test("A newer unregistered Codex that qualified also passes the pre-command revalidation")
+func pluginRevalidationAdmitsNewer() throws {
+    let newer = try codexPluginSetupNewerUnregisteredVersion()
+    let root = URL(fileURLWithPath: "/tmp", isDirectory: true)
+        .appendingPathComponent("blabee-plugin-newer-\(UUID().uuidString)", isDirectory: true)
+    let executable = root.appendingPathComponent("codex", isDirectory: false)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    try Data("#!/bin/sh\nexit 0\n".utf8).write(to: executable)
+    #expect(chmod(executable.path, mode_t(0o700)) == 0)
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    let trustSnapshot = try codexPluginSetupTrustSnapshot(at: executable)
+    let unexpectedPinned: CodexPluginSetupPinnedExecutableValidating = { _, _, _ in
+        throw CoordinatorError("codex_plugin_setup_signature_invalid")
+    }
+    let qualified = try CodexPluginSetupProductionTrust.qualify(
+        sourceURL: executable,
+        processRunner: { _, _, _ in
+            CodexPluginSetupProcessResult(exitCode: 0, stdout: Data("codex-cli \(newer)\n".utf8))
+        },
+        trustInspector: { _ in trustSnapshot },
+        signatureValidator: { _ in },
+        pinnedExecutableValidator: unexpectedPinned
+    )
+    #expect(qualified.version == newer)
+    #expect(try CodexPluginSetupProductionTrust.revalidate(
+        qualified,
+        trustInspector: { _ in trustSnapshot },
+        signatureValidator: { _ in },
+        pinnedExecutableValidator: unexpectedPinned
+    ) == qualified.canonicalURL)
+}
+
+@Test("Native failure records follow the Plugin version rule")
+func livePolicyRevisionTracksPluginRule() {
+    #expect(CodexNativeRuntime.livePolicyRevision == CodexCompatibility.pluginPolicyRevision)
+    #expect(CodexNativeRuntime.livePolicyRevision.hasPrefix("native-v2-newer:"))
+}

@@ -37,6 +37,19 @@ public struct CoordinatorOperationalRequestTiming: Sendable, Equatable {
 /// Product-level coordinator boundary used by Hook, MCP, and Pet adapters.
 /// Adapters exchange only JSON `Data`; raw continuation envelopes stay inside
 /// this actor and are consumed before any public response is produced.
+/// The service's answer about an OpenAI-signed Codex whose CDHash is not
+/// registered: may its sessions use suggestion cards and next-turn delivery?
+/// Command approval is unaffected and still needs a registered CDHash.
+/// Design: docs/features/CODEX_UNREVIEWED_VERSION_DESIGN.md.
+public enum CoordinatorCodexRuntimeAdmission: Sendable {
+    /// A newer stable release that passed the delivery qualification.
+    case eligible
+    /// A version Blabee does not accept (older, blocked or a preview).
+    case ineligible
+    /// Not known yet; the session stays off and is asked again per prompt.
+    case undetermined
+}
+
 public actor CoordinatorOperationalApplication {
     public typealias IDGenerator = @Sendable (_ purpose: String) -> String
     public typealias WallInstantGenerator = @Sendable () throws -> RFC3339Instant
@@ -509,6 +522,9 @@ public actor CoordinatorOperationalApplication {
     /// Audit CDX-6: the session's own Codex executable (registered, attested by
     /// the Hook) and CODEX_HOME, for queue delivery. Never an approval input.
     private let codexSessionRuntimeObserver: @Sendable (_ sessionID: String, _ executablePath: String?, _ codexHome: String?) -> Void
+    /// Must not block: called inside the actor for every SessionStart and
+    /// human prompt of an unregistered signed Codex.
+    private let codexRuntimeAdmission: @Sendable (_ executablePath: String?) -> CoordinatorCodexRuntimeAdmission
     private let permissionRequestDeliveryTimeoutNanoseconds: UInt64
     private let maximumPendingPermissionRequests: Int
     private let petConsumerLeaseDurationNanoseconds: UInt64
@@ -527,9 +543,11 @@ public actor CoordinatorOperationalApplication {
     private var pendingTimeNotices: [Data] = []
     private var pendingCompletionClosures: Set<CoordinatorBindingKey> = []
     private var pendingUnsubmittedTransports: [CoordinatorBindingKey: PendingUnsubmittedTransport] = [:]
-    /// Sessions whose SessionStart Hook was spawned by an OpenAI-signed Codex
-    /// with an unregistered CDHash. Blabee stays off for them: a card could not
-    /// be delivered, so injecting instructions would only waste the model's work.
+    /// Sessions whose Hook was last spawned by an OpenAI-signed Codex with an
+    /// unregistered CDHash that the service did not judge eligible. Blabee
+    /// stays off for them: a card could not be delivered, so injecting
+    /// instructions would only waste the model's work. A later Hook that
+    /// reports a registered or eligible Codex removes the marker.
     private var unqualifiedCodexSessions: Set<String> = []
     /// Insertion order for `unqualifiedCodexSessions`, oldest first, so a full
     /// set drops its oldest marker instead of refusing new ones (ENG-13).
@@ -620,9 +638,12 @@ public actor CoordinatorOperationalApplication {
         productAccessCheck: (@Sendable () throws -> UInt64)? = nil,
         nextTurnDispatchRecorder: CoordinatorNextTurnDispatchRecording? = nil,
         dispatchDiagnosticFailureObserver: @escaping @Sendable () -> Void = {},
-        codexSessionRuntimeObserver: @escaping @Sendable (_ sessionID: String, _ executablePath: String?, _ codexHome: String?) -> Void = { _, _, _ in }
+        codexSessionRuntimeObserver: @escaping @Sendable (_ sessionID: String, _ executablePath: String?, _ codexHome: String?) -> Void = { _, _, _ in },
+        // Without a service-side judge an unregistered Codex stays off, as before.
+        codexRuntimeAdmission: @escaping @Sendable (_ executablePath: String?) -> CoordinatorCodexRuntimeAdmission = { _ in .ineligible }
     ) {
         self.codexSessionRuntimeObserver = codexSessionRuntimeObserver
+        self.codexRuntimeAdmission = codexRuntimeAdmission
         let ids: IDGenerator = idGenerator ?? { purpose in
             "\(purpose)_\(UUID().uuidString.lowercased())"
         }
@@ -1737,24 +1758,8 @@ private extension CoordinatorOperationalApplication {
         guard let project = project(containing: cwd), project.enabled else {
             return try publicData(["enabled": false])
         }
-        // Set only by the Hook's own ancestry attestation; absent when unknown.
-        switch payload["codex_runtime"] as? String {
-        case "unqualified":
-            if unqualifiedCodexSessions.insert(sessionID).inserted {
-                unqualifiedCodexSessionOrder.append(sessionID)
-                if unqualifiedCodexSessionOrder.count > Self.maximumRegisteredSessions {
-                    unqualifiedCodexSessions.remove(unqualifiedCodexSessionOrder.removeFirst())
-                }
-            }
-            lastCodexRuntimeObservation = "unqualified"
+        if observeCodexRuntime(sessionID: sessionID, payload: payload) == false {
             return try publicData(["enabled": false])
-        case "qualified":
-            if unqualifiedCodexSessions.remove(sessionID) != nil {
-                unqualifiedCodexSessionOrder.removeAll { Self.byteExact($0, sessionID) }
-            }
-            lastCodexRuntimeObservation = "qualified"
-        default:
-            break
         }
         _ = try session(
             registeringIfNeeded: sessionID,
@@ -1769,7 +1774,52 @@ private extension CoordinatorOperationalApplication {
         ])
     }
 
-    /// Only a Hook-attested registered Codex supplies `codex_executable`; the
+    /// Applies the Hook's own ancestry attestation (`codex_runtime`, absent
+    /// when the lineage is unreadable). Returns whether Blabee is on for this
+    /// session, or nil when the Hook reported nothing and the caller keeps its
+    /// previous decision. An unregistered signed Codex is on only when the
+    /// service judged the reported executable eligible.
+    private func observeCodexRuntime(sessionID: String, payload: [String: Any]) -> Bool? {
+        switch payload["codex_runtime"] as? String {
+        case "qualified":
+            unmarkUnqualifiedCodexSession(sessionID)
+            lastCodexRuntimeObservation = "qualified"
+            return true
+        case "unqualified":
+            switch codexRuntimeAdmission(payload["codex_executable"] as? String) {
+            case .eligible:
+                unmarkUnqualifiedCodexSession(sessionID)
+                lastCodexRuntimeObservation = "unreviewed"
+                return true
+            case .ineligible:
+                markUnqualifiedCodexSession(sessionID)
+                lastCodexRuntimeObservation = "unqualified"
+                return false
+            case .undetermined:
+                // Off without a notice: "unsupported version" is not known.
+                markUnqualifiedCodexSession(sessionID)
+                lastCodexRuntimeObservation = nil
+                return false
+            }
+        default:
+            return nil
+        }
+    }
+
+    private func markUnqualifiedCodexSession(_ sessionID: String) {
+        guard unqualifiedCodexSessions.insert(sessionID).inserted else { return }
+        unqualifiedCodexSessionOrder.append(sessionID)
+        if unqualifiedCodexSessionOrder.count > Self.maximumRegisteredSessions {
+            unqualifiedCodexSessions.remove(unqualifiedCodexSessionOrder.removeFirst())
+        }
+    }
+
+    private func unmarkUnqualifiedCodexSession(_ sessionID: String) {
+        guard unqualifiedCodexSessions.remove(sessionID) != nil else { return }
+        unqualifiedCodexSessionOrder.removeAll { Self.byteExact($0, sessionID) }
+    }
+
+    /// Only a Hook-attested OpenAI-signed Codex supplies `codex_executable`; the
     /// value is a delivery preference that is qualified again before use.
     private func observeCodexSessionRuntime(sessionID: String, payload: [String: Any]) {
         let executable = payload["codex_executable"] as? String
@@ -1790,7 +1840,11 @@ private extension CoordinatorOperationalApplication {
         guard let project = project(containing: cwd), project.enabled else {
             return try publicData(["enabled": false])
         }
-        if unqualifiedCodexSessions.contains(sessionID), case .human = QueuedPromptEnvelope.classify(prompt) {
+        // Human prompts only: a queued Blabee prompt carries a selection the
+        // user already made and is delivered whatever the Codex verdict says.
+        if case .human = QueuedPromptEnvelope.classify(prompt),
+           !(observeCodexRuntime(sessionID: sessionID, payload: payload)
+               ?? !unqualifiedCodexSessions.contains(sessionID)) {
             return try publicData(["enabled": false])
         }
         var session = try session(
@@ -4638,8 +4692,8 @@ private extension CoordinatorOperationalApplication {
             ),
             "managed_command_approval_notice_count": managedCommandApprovalNoticeCount,
             "event_navigation": try petEventNavigationSnapshot(interactions: interactionObjects),
-        ].merging(lastCodexRuntimeObservation == "unqualified"
-            ? ["codex_runtime_status": "unqualified"] : [:]) { current, _ in current }
+        ].merging(lastCodexRuntimeObservation == "unqualified" || lastCodexRuntimeObservation == "unreviewed"
+            ? ["codex_runtime_status": lastCodexRuntimeObservation ?? ""] : [:]) { current, _ in current }
          .merging(permissionCardSkippedIsRecent
             ? ["permission_card_status": "skipped"] : [:]) { current, _ in current })
         if recordsPetConsumerHeartbeat {

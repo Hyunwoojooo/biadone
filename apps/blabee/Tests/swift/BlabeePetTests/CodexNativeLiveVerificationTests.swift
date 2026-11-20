@@ -63,3 +63,38 @@ func codexNativeInstalledRuntimeVerification() async throws {
     }
     print("NATIVE_LIVE_VERSION \(version)")
 }
+
+
+/// Opt-in: judges the installed Codex the way the service judges a session run
+/// by it (docs/features/CODEX_UNREVIEWED_VERSION_DESIGN.md), on the real install
+/// layout. Isolated failure records; only `--version` is invoked.
+@Test(.enabled(if: ProcessInfo.processInfo.environment["BLABEE_NATIVE_LIVE_VERIFY"] == "1"))
+func codexUnreviewedAdmissionInstalledRuntime() throws {
+    let source = try #require(ProcessInfo.processInfo.environment["BLABEE_NATIVE_LIVE_EXECUTABLE"])
+    // What the kernel reports for a Codex started through `source`.
+    let hookPath = URL(fileURLWithPath: source).resolvingSymlinksInPath().path
+    let root = FileManager.default.temporaryDirectory
+        .appendingPathComponent("blabee-admission-live-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(
+        at: root, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700]
+    )
+    defer { try? FileManager.default.removeItem(at: root) }
+    let failures = CodexNativeFailureGuard(
+        directoryURL: root.appendingPathComponent("failures", isDirectory: true),
+        policyRevision: "isolated-live-admission-v1"
+    )
+    let verdict = CodexUnreviewedRuntimeAdmission.liveVerdict(
+        hookExecutablePath: hookPath,
+        runtime: { executable, environment in
+            let live = CodexNativeRuntime.live(explicitExecutableURL: executable, environment: environment)
+            return CodexNativeRuntime(
+                candidates: live.candidates, qualifier: live.qualifier, revalidator: live.revalidator,
+                processRunner: live.processRunner, preflight: live.preflight, failureGuard: failures
+            )
+        },
+        observer: { candidate, outcome in print("ADMISSION_LIVE_CANDIDATE \(candidate) \(outcome)") }
+    )
+    print("ADMISSION_LIVE_VERDICT hook=\(hookPath) verdict=\(String(describing: verdict))")
+    #expect(verdict == .eligible)
+}
+

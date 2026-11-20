@@ -912,6 +912,7 @@ private func runDaemon(
         runtimeIdentity: try? OperationalRuntimeIdentity.requireCurrent()
     )
     let codexSessionRuntimeHints = CodexSessionRuntimeHints()
+    let codexUnreviewedRuntimeAdmission = CodexUnreviewedRuntimeAdmission()
     let operational = CoordinatorOperationalApplication(
         routing: routing,
         enabledProjectPaths: arguments.enabledProjectPaths,
@@ -933,6 +934,13 @@ private func runDaemon(
             guard let hint = CodexSessionRuntimeHint(executablePath: executable, codexHome: codexHome)
             else { return }
             codexSessionRuntimeHints.record(sessionID: sessionID, hint: hint)
+        },
+        codexRuntimeAdmission: { executablePath in
+            switch codexUnreviewedRuntimeAdmission.verdict(forExecutablePath: executablePath) {
+            case .eligible: .eligible
+            case .ineligible: .ineligible
+            case .undetermined: .undetermined
+            }
         }
     )
     let legacyApplication = try ClaudeBridgeCoordinator(

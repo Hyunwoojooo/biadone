@@ -36,6 +36,65 @@ enum CodexCompatibility {
         })
     }
 
+    /// Plugin/Hook path only (suggestion cards, `codex queue`, Plugin setup).
+    /// The managed path keeps `qualify(version:)`, and command approval keeps
+    /// the exact CDHash list: neither is widened by `unreviewedNewer`.
+    /// Design: docs/features/CODEX_UNREVIEWED_VERSION_DESIGN.md.
+    enum PluginAdmission: Equatable, Sendable {
+        case reviewed
+        /// Not registered, but newer than every registered Plugin release in
+        /// the same major version and not on the blocklist.
+        case unreviewedNewer
+        case rejected
+    }
+
+    static let blockedPluginVersions = CodexQualificationData.blockedPluginVersions
+
+    static func pluginAdmission(version: String) -> PluginAdmission {
+        pluginAdmission(version: version, registered: pluginCLISupportedVersions, blocked: blockedPluginVersions)
+    }
+
+    static func pluginAdmission(
+        version: String, registered: Set<String>, blocked: Set<String>
+    ) -> PluginAdmission {
+        if registered.contains(version) { return .reviewed }
+        guard !blocked.contains(version), let candidate = stableComponents(version),
+              let newest = registered.compactMap(stableComponents).max(by: precedes),
+              candidate[0] == newest[0], precedes(newest, candidate)
+        else { return .rejected }
+        return .unreviewedNewer
+    }
+
+    /// Any rule or list change gives failure records a new policy, so a
+    /// version rejected under the old rule is examined again.
+    static var pluginPolicyRevision: String {
+        pluginPolicyRevision(registered: pluginCLISupportedVersions, blocked: blockedPluginVersions)
+    }
+
+    static func pluginPolicyRevision(registered: Set<String>, blocked: Set<String>) -> String {
+        "native-v2-newer:" + registered.sorted().joined(separator: ",")
+            + "|blocked:" + blocked.sorted().joined(separator: ",")
+    }
+
+    /// Exactly `X.Y.Z` in ASCII digits without leading zeros; anything else,
+    /// including a component that does not fit `Int`, is not a stable version.
+    private static func stableComponents(_ version: String) -> [Int]? {
+        let parts = version.split(separator: ".", omittingEmptySubsequences: false)
+        guard parts.count == 3 else { return nil }
+        var components: [Int] = []
+        for part in parts {
+            guard !part.isEmpty, part.utf8.allSatisfy({ (0x30...0x39).contains($0) }),
+                  part == "0" || part.utf8.first != 0x30, let value = Int(part)
+            else { return nil }
+            components.append(value)
+        }
+        return components
+    }
+
+    private static func precedes(_ lhs: [Int], _ rhs: [Int]) -> Bool {
+        lhs.lexicographicallyPrecedes(rhs)
+    }
+
     enum Qualification: Equatable, Sendable {
         case supported(version: String)
         case alphaQualificationRequired(version: String)

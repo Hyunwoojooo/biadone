@@ -426,7 +426,8 @@ private func operationalFixture(
     productAccessCheck: (@Sendable () throws -> UInt64)? = nil,
     nextTurnDispatchRecorder: CoordinatorNextTurnDispatchRecording? = nil,
     dispatchDiagnosticFailureObserver: @escaping @Sendable () -> Void = {},
-    codexSessionRuntimeObserver: @escaping @Sendable (String, String?, String?) -> Void = { _, _, _ in }
+    codexSessionRuntimeObserver: @escaping @Sendable (String, String?, String?) -> Void = { _, _, _ in },
+    codexRuntimeAdmission: @escaping @Sendable (String?) -> CoordinatorCodexRuntimeAdmission = { _ in .ineligible }
 ) throws -> OperationalFixture {
     let journal = try OperationalMemoryJournal(closedHistoryCount: closedHistoryCount)
     let clock = OperationalClock()
@@ -469,7 +470,8 @@ private func operationalFixture(
         productAccessCheck: productAccessCheck,
         nextTurnDispatchRecorder: nextTurnDispatchRecorder,
         dispatchDiagnosticFailureObserver: dispatchDiagnosticFailureObserver,
-        codexSessionRuntimeObserver: codexSessionRuntimeObserver
+        codexSessionRuntimeObserver: codexSessionRuntimeObserver,
+        codexRuntimeAdmission: codexRuntimeAdmission
     )
     return OperationalFixture(
         app: app,
@@ -9792,6 +9794,168 @@ func operationalUnqualifiedCodexSessionStaysOff() async throws {
     #expect(qualified["enabled"] as? Bool == true)
     let cleared = try operationalObject(await fixture.app.handle(type: "get_state", payload: operationalData([:])))
     #expect(cleared["codex_runtime_status"] == nil)
+}
+
+
+/// A verdict the test can change between requests, recording what was asked.
+private final class OperationalCodexAdmission: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value: CoordinatorCodexRuntimeAdmission
+    private var paths: [String?] = []
+    init(_ value: CoordinatorCodexRuntimeAdmission) { self.value = value }
+    func set(_ value: CoordinatorCodexRuntimeAdmission) { lock.withLock { self.value = value } }
+    var requestedPaths: [String?] { lock.withLock { paths } }
+    var closure: @Sendable (String?) -> CoordinatorCodexRuntimeAdmission {
+        { [self] path in lock.withLock { paths.append(path); return value } }
+    }
+}
+
+private func operationalCodexPrompt(
+    _ fixture: OperationalFixture, session: String, turn: String, cwd: String,
+    prompt: String = "Do something", runtime: String? = "unqualified", executable: String? = "/opt/codex/bin/codex"
+) async throws -> [String: Any] {
+    var payload: [String: Any] = [
+        "session_id": session, "turn_id": turn, "cwd": cwd,
+        "prompt": prompt, "hook_event_name": "UserPromptSubmit",
+    ]
+    if let runtime { payload["codex_runtime"] = runtime }
+    if let executable { payload["codex_executable"] = executable }
+    return try operationalObject(await fixture.app.handle(type: "user_prompt_submit", payload: operationalData(payload)))
+}
+
+private func operationalCodexRuntimeStatus(_ fixture: OperationalFixture) async throws -> String? {
+    try operationalObject(await fixture.app.handle(type: "get_state", payload: operationalData([:])))["codex_runtime_status"]
+        as? String
+}
+
+@Test("A newer unreviewed Codex that the service judged eligible gets a working session and its own Pet status")
+func operationalUnreviewedCodexSessionWorks() async throws {
+    let admission = OperationalCodexAdmission(.eligible)
+    let fixture = try operationalFixture(codexRuntimeAdmission: admission.closure)
+    let cwd = "/tmp/blabee-operational-unreviewed"
+    _ = try await fixture.app.handle(type: "enable_project", payload: operationalData([
+        "cwd": cwd, "project_id": "project_operational_unreviewed",
+    ]))
+    let start = try operationalObject(await fixture.app.handle(type: "session_start", payload: operationalData([
+        "session_id": "session_unreviewed", "cwd": cwd, "hook_event_name": "SessionStart",
+        "codex_runtime": "unqualified", "codex_executable": "/opt/codex/bin/codex",
+    ])))
+    #expect(start["enabled"] as? Bool == true)
+    #expect((start["additionalContext"] as? String)?.isEmpty == false)
+    #expect(try await operationalCodexRuntimeStatus(fixture) == "unreviewed")
+
+    let prompt = try await operationalCodexPrompt(fixture, session: "session_unreviewed", turn: "turn_unreviewed_1", cwd: cwd)
+    #expect(prompt["enabled"] as? Bool == true)
+    #expect(prompt["identifiers"] as? [String: Any] != nil)
+    #expect(try await operationalCodexRuntimeStatus(fixture) == "unreviewed")
+    #expect(admission.requestedPaths == ["/opt/codex/bin/codex", "/opt/codex/bin/codex"])
+
+    // A registered Codex clears the notice, as it does for "unqualified".
+    _ = try await fixture.app.handle(type: "session_start", payload: operationalData([
+        "session_id": "session_registered", "cwd": cwd, "hook_event_name": "SessionStart",
+        "codex_runtime": "qualified",
+    ]))
+    #expect(try await operationalCodexRuntimeStatus(fixture) == nil)
+}
+
+@Test("An unregistered Codex whose verdict is not known yet stays off without a notice, then works from the next prompt")
+func operationalUndeterminedCodexSessionWaits() async throws {
+    let admission = OperationalCodexAdmission(.undetermined)
+    let fixture = try operationalFixture(codexRuntimeAdmission: admission.closure)
+    let cwd = "/tmp/blabee-operational-undetermined"
+    _ = try await fixture.app.handle(type: "enable_project", payload: operationalData([
+        "cwd": cwd, "project_id": "project_operational_undetermined",
+    ]))
+    let start = try operationalObject(await fixture.app.handle(type: "session_start", payload: operationalData([
+        "session_id": "session_undetermined", "cwd": cwd, "hook_event_name": "SessionStart",
+        "codex_runtime": "unqualified", "codex_executable": "/opt/codex/bin/codex",
+    ])))
+    #expect(start["enabled"] as? Bool == false)
+    #expect(start["additionalContext"] == nil)
+    let waiting = try await operationalCodexPrompt(fixture, session: "session_undetermined", turn: "turn_wait_1", cwd: cwd)
+    #expect(waiting["enabled"] as? Bool == false)
+    #expect(waiting["identifiers"] == nil)
+    #expect(try await operationalCodexRuntimeStatus(fixture) == nil)
+
+    admission.set(.eligible)
+    let working = try await operationalCodexPrompt(fixture, session: "session_undetermined", turn: "turn_wait_2", cwd: cwd)
+    #expect(working["enabled"] as? Bool == true)
+    #expect(working["identifiers"] as? [String: Any] != nil)
+    #expect((working["additionalContext"] as? String)?.contains("Blabee boundary") == true)
+    #expect(try await operationalCodexRuntimeStatus(fixture) == "unreviewed")
+}
+
+@Test("A working unreviewed session turns off at the next prompt once its Codex is judged unsupported")
+func operationalCodexSessionTurnsOffWhenVerdictChanges() async throws {
+    let admission = OperationalCodexAdmission(.eligible)
+    let fixture = try operationalFixture(codexRuntimeAdmission: admission.closure)
+    let cwd = "/tmp/blabee-operational-verdict-change"
+    _ = try await fixture.app.handle(type: "enable_project", payload: operationalData([
+        "cwd": cwd, "project_id": "project_operational_verdict_change",
+    ]))
+    let first = try await operationalCodexPrompt(fixture, session: "session_change", turn: "turn_change_1", cwd: cwd)
+    #expect(first["enabled"] as? Bool == true)
+
+    admission.set(.ineligible)
+    let second = try await operationalCodexPrompt(fixture, session: "session_change", turn: "turn_change_2", cwd: cwd)
+    #expect(second["enabled"] as? Bool == false)
+    #expect(second["identifiers"] == nil)
+    #expect(try await operationalCodexRuntimeStatus(fixture) == "unqualified")
+
+    // A prompt without a marker (unreadable lineage) keeps the session's last decision.
+    let unmarked = try await operationalCodexPrompt(fixture, session: "session_change", turn: "turn_change_3", cwd: cwd,
+                                                    runtime: nil, executable: nil)
+    #expect(unmarked["enabled"] as? Bool == false)
+
+    admission.set(.undetermined)
+    let undetermined = try await operationalCodexPrompt(fixture, session: "session_change", turn: "turn_change_4", cwd: cwd)
+    #expect(undetermined["enabled"] as? Bool == false)
+    #expect(try await operationalCodexRuntimeStatus(fixture) == nil)
+}
+
+@Test("A session marked off at SessionStart stays off for a later prompt that carries no runtime marker")
+func operationalPromptWithoutRuntimeKeepsSessionMarker() async throws {
+    let fixture = try operationalFixture(codexRuntimeAdmission: { _ in .ineligible })
+    let cwd = "/tmp/blabee-operational-marker"
+    _ = try await fixture.app.handle(type: "enable_project", payload: operationalData([
+        "cwd": cwd, "project_id": "project_operational_marker",
+    ]))
+    _ = try await fixture.app.handle(type: "session_start", payload: operationalData([
+        "session_id": "session_marker", "cwd": cwd, "hook_event_name": "SessionStart",
+        "codex_runtime": "unqualified", "codex_executable": "/opt/codex/bin/codex",
+    ]))
+    let prompt = try await operationalCodexPrompt(fixture, session: "session_marker", turn: "turn_marker", cwd: cwd,
+                                                  runtime: nil, executable: nil)
+    #expect(prompt["enabled"] as? Bool == false)
+    #expect(try await operationalCodexRuntimeStatus(fixture) == "unqualified")
+}
+
+@Test("A queued Blabee prompt is delivered whatever the Codex verdict says")
+func operationalQueuedPromptIgnoresCodexVerdict() async throws {
+    let admission = OperationalCodexAdmission(.eligible)
+    let fixture = try operationalFixture(codexRuntimeAdmission: admission.closure)
+    let ids = try await operationalBegin(fixture, suffix: "queued_verdict")
+    _ = try await fixture.app.handle(
+        type: "emit_decision",
+        payload: operationalData(operationalWrapper(ids, proposal: operationalProposal(ids, suffix: "queued_verdict")))
+    )
+    _ = try await fixture.app.handle(
+        type: "stop", payload: operationalStop(ids: ids, active: false, message: "Queued verdict")
+    )
+    let interaction = try await waitForOperationalInteraction(fixture.app, state: "waiting")
+    _ = try await fixture.app.handle(type: "select", payload: operationalData(operationalSelection(interaction, slot: 1)))
+    let dispatch = try #require(try await waitForRecordedDispatches(fixture.nextTurnDispatcher, count: 1).first)
+
+    // The Codex was blocked or replaced after the card was chosen: the queued
+    // action context must still reach the model, or the selection is lost.
+    admission.set(.ineligible)
+    let delivery = try await operationalCodexPrompt(
+        fixture, session: ids["session_id"]!, turn: "turn_queued_verdict_delivery", cwd: ids["cwd"]!,
+        prompt: dispatch.message
+    )
+    #expect(delivery["enabled"] as? Bool == true)
+    #expect(delivery["prompt_origin"] as? String == "blabee_next_turn")
+    #expect((delivery["additionalContext"] as? String)?.isEmpty == false)
 }
 
 

@@ -11,7 +11,9 @@
 - **관리형 `blabee-codex` 경로(fail-closed).** 사용자가 고른 경우에만 App Server를 WebSocket으로 중계한다.
   실패하면 관리형 기능만 멈추고 공식 `codex`는 건드리지 않는다. 신뢰 모델은 `docs/features/MANAGED_CODEX_TRUST.md`.
 
-미등록 Codex(2026-11-12): SessionStart Hook이 호출자 계보를 읽어 `codex_runtime`(`qualified`/`unqualified`)을 붙인다(`CodexHookApprovalQualification.currentCaller()`). OpenAI 서명이지만 CDHash가 `qualifiedProfiles`에 없으면 `unqualified`이고, 코디네이터는 그 세션의 SessionStart·사람 프롬프트에 `enabled:false`를 돌려주며 Pet 스냅샷에 `codex_runtime_status`를 싣는다. 계보를 읽을 수 없으면 값을 보내지 않고 기존 동작을 유지한다. `signedCodex` 요구는 판별용일 뿐 승인 권한을 주지 않는다.
+미등록 Codex(2026-11-12, 2026-11-20 변경): SessionStart·UserPromptSubmit Hook이 호출자 계보를 읽어 `codex_runtime`(`qualified`/`unqualified`)과 실행 파일 경로를 붙인다(`HookCodexRuntimePayloadPolicy`). OpenAI 서명이지만 CDHash가 `qualifiedProfiles`에 없으면 `unqualified`다.
+서비스의 `CodexUnreviewedRuntimeAdmission`이 그 Codex를 전달과 같은 검사로 백그라운드에서 판정하고, 코디네이터는 판정이 `eligible`(등록된 가장 높은 버전보다 새롭고 major가 같은 stable, 차단 목록 제외: `CodexCompatibility.pluginAdmission`)일 때만 세션을 켠다. Pet 스냅샷 `codex_runtime_status`는 `unreviewed`(켜짐) 또는 `unqualified`(지원 안 함)다. 판정 전이거나 판정할 수 없으면 안내 없이 꺼 둔다. 판정은 Hook 경로와 같은 파일로 이어지는 후보(Homebrew는 `/opt/homebrew/bin/codex`)를 통해 한다.
+이런 세션의 PermissionRequest는 코디네이터에 보내지 않아 Codex 창에서 바로 승인한다. 승인 권한은 계속 등록된 CDHash만 갖는다. 계보를 읽을 수 없으면 값을 보내지 않고 기존 동작을 유지한다. 설계: `docs/features/CODEX_UNREVIEWED_VERSION_DESIGN.md`.
 
 선택 전달은 `codex queue --thread <session> --message <msg>`(`swift/delivery/CodexQueueNextTurnDispatcher.swift`)로 다음 턴에 들어간다. 실패한 전달은 재전송하지 않는다.
 
@@ -28,7 +30,8 @@
 | `runtime/CodexRuntimeBundle.swift` | 공식 패키지 검사: 파일별 SHA-256, 서명, Team ID, 공증, `QualificationCatalog`, fingerprint(v1/v2), private copy·seal·재검증 |
 | `runtime/ManagedCodexTrust.swift`, `ManagedCodexLauncher.swift`, `ManagedCodexWebSocket.swift`, `ManagedCodexApprovalRuntime.swift` | 관리형 실행 파일 신뢰, TUI·App Server 실행(workspace 라우팅), WebSocket, 승인 브로커 |
 | `runtime/CodexRuntimeTrust.swift`, `CodexNativeRuntime.swift`, `CodexNativeFailureGuard.swift` | PATH 런타임 진단, native CLI 조회, 실패 캐시 |
-| `setup/CodexCompatibility.swift` | 버전별 capability(`.managedAppServer`, `.pluginCLI`, `.serverOwnedWorkspaceRoots`, `.updateLifecycle`) 정확 일치 목록. 지원 버전의 유일한 출처 |
+| `runtime/CodexUnreviewedRuntimeAdmission.swift` | 등록 전 Codex 세션을 켤지 정하는 판정 저장소(메모리, 백그라운드 검사). 권한을 주지 않는다 |
+| `setup/CodexCompatibility.swift` | 버전별 capability(`.managedAppServer`, `.pluginCLI`, `.serverOwnedWorkspaceRoots`, `.updateLifecycle`) 정확 일치 목록. 지원 버전의 유일한 출처. Plugin 경로의 새 버전 허용 규칙 `pluginAdmission` |
 | `setup/CodexPluginSetup.swift`, `CodexPluginCheckReport.swift` | marketplace 조회·설치·마이그레이션·진단 |
 | `update/UpdateManagedCodex*.swift` | 업데이트 중 세션 lifecycle(`UpdateManagedCodexProfile.supportedVersions` = `.updateLifecycle` capability). 승인 권한 없음 |
 
@@ -42,6 +45,7 @@ Plugin: `plugin/.codex-plugin/plugin.json`, `plugin/.mcp.json`, `plugin/hooks/ho
 버전 데이터는 `bridges/codex/qualification/<ver>.json`이 유일한 출처이고 Swift는 생성 파일(`*.generated.swift`)을 읽는다. 등록은 `npm run codex:register`(2026-11-13).
 
 `/codex-version-support` 스킬의 체크리스트를 따른다. 버전은 정확한 문자열로만 등록하고 범위·prerelease로 일반화하지 않는다.
+2026-11-20부터 등록 전 새 버전도 제안 카드와 선택 전달은 동작한다. 등록은 그 버전의 승인 카드와 관리형 경로를 켜는 일이다. 문제가 확인된 버전은 `bridges/codex/blocked-versions.json`에 넣고 `npm run codex:qualification -- generate`를 돌린다.
 기록은 `docs/features/CODEX_LATEST_SUPPORT.md`(최신이 맨 위)와 `docs/features/CODEX_<ver>_QUALIFICATION.md`.
 
 ## 바꾸면 안 되는 것
@@ -54,7 +58,8 @@ Plugin: `plugin/.codex-plugin/plugin.json`, `plugin/.mcp.json`, `plugin/hooks/ho
 - 번들 경로 `Contents/Resources/Plugin/blabee`. `scripts/release-signing.mjs`, `Tests/AppPackaging/`, `app/service/AppRuntimeUseLease.swift`가 의존한다.
 - `BLABEE_MANAGED_CODEX_AUTH_TOKEN`이 App Server 환경으로 새면 안 된다(`ManagedCodexBrokerTests`, `CodexPluginSetupTests`의 must-not-leak 테스트).
   Hook 출력·MCP 응답은 `RuntimeSecretCorpus`를 거친다. delivery_token·토큰은 해시만 기록한다.
-- 실패 캐시 정책 revision은 지원 목록에서 계산된다. 사용자 DB·실패 기록을 수동 초기화하지 않는다.
+- 실패 캐시 정책 revision은 허용 규칙·지원 목록·차단 목록에서 계산된다(`CodexCompatibility.pluginPolicyRevision`). 사용자 DB·실패 기록을 수동 초기화하지 않는다.
+- 새 버전 허용은 Plugin 경로의 기본 기능까지다. `pluginAdmission`의 `unreviewedNewer`를 승인(`qualifiedProfiles`)이나 관리형 경로(`qualify(version:)`)로 넓히지 않는다.
 - 실패 기록(2026-11-12, schema 2): 실행 파일 자체의 실패(서명·버전·출력)는 수동 재검사까지 유지하고, 환경 실패(공증 조회·시간 초과·실행 불가·도중 종료·결과 불명)는 10분 뒤 풀린다. 풀린 뒤에도 실패한 전달은 다시 보내지 않고 새 선택만 검사받는다. 32칸이 차면 경로가 사라졌거나 정책이 바뀐 기록부터 재사용한다. 공증 온라인 조회는 같은 파일에 대해 서비스 수명 동안 한 번만 한다(`CodexNotarizationCache`).
 - Logger subsystem `com.biadone.blabee`.
 - 승인 요청의 폴더 조건(2026-11-14 사용자 승인): `cwd`가 세션의 활성 프로젝트 안이면 받는다(`permissionPath(_:belongsTo:)`). 세션·turn 바이트 일치와
