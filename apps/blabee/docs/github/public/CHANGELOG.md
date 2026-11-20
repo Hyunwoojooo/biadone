@@ -22,6 +22,10 @@ See the [README](README.md) for the current download and setup instructions.
 
 ### r94 (Unreleased)
 
+#### Changed
+
+- **Codex 0.171.0 support.** The exact version joins the supported list for the plugin CLI, the managed App Server, workspace routing, and the update lifecycle, with the same package layout as 0.170.0. Only its primary `codex` executable is trusted for one-shot Hook approvals.
+
 #### Fixed
 
 - **Claude cards no longer depend on a tool lookup.** Claude Code keeps MCP tools behind its tool search and shows the model only their names. The model often never loaded the Blabee tool that creates a card, so no card appeared even though the connection worked. Blabee now marks its five tools as always loaded. This applies to `claude` windows started after installing r94.
