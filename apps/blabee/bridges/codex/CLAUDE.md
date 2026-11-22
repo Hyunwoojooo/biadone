@@ -12,7 +12,7 @@
   실패하면 관리형 기능만 멈추고 공식 `codex`는 건드리지 않는다. 신뢰 모델은 `docs/features/MANAGED_CODEX_TRUST.md`.
 
 미등록 Codex(2026-11-12, 2026-11-20 변경): SessionStart·UserPromptSubmit Hook이 호출자 계보를 읽어 `codex_runtime`(`qualified`/`unqualified`)과 실행 파일 경로를 붙인다(`HookCodexRuntimePayloadPolicy`). OpenAI 서명이지만 CDHash가 `qualifiedProfiles`에 없으면 `unqualified`다.
-서비스의 `CodexUnreviewedRuntimeAdmission`이 그 Codex를 전달과 같은 검사로 백그라운드에서 판정하고, 코디네이터는 판정이 `eligible`(등록된 가장 높은 버전보다 새롭고 major가 같은 stable, 차단 목록 제외: `CodexCompatibility.pluginAdmission`)일 때만 세션을 켠다. Pet 스냅샷 `codex_runtime_status`는 `unreviewed`(켜짐) 또는 `unqualified`(지원 안 함)다. 판정 전이거나 판정할 수 없으면 안내 없이 꺼 둔다. 판정은 Hook 경로와 같은 파일로 이어지는 후보(Homebrew는 `/opt/homebrew/bin/codex`)를 통해 한다.
+서비스의 `CodexUnreviewedRuntimeAdmission`이 그 Codex를 전달과 같은 검사로 백그라운드에서 판정하고, 코디네이터는 판정이 `eligible`일 때만 세션을 켠다. `eligible`은 전달과 같은 검사를 통과했다는 뜻이다: 등록된 가장 높은 버전보다 새롭고 major가 같은 stable(차단 목록 제외, `CodexCompatibility.pluginAdmission`)이거나, 등록된 버전인데 CDHash가 다른 빌드다. Pet 스냅샷 `codex_runtime_status`는 `unreviewed`(켜짐) 또는 `unqualified`(지원 안 함)다. 판정 전이거나 판정할 수 없으면 안내 없이 꺼 둔다. 판정은 Hook 경로와 같은 파일로 이어지는 후보(Homebrew는 `/opt/homebrew/bin/codex`)를 통해 한다.
 이런 세션의 PermissionRequest는 코디네이터에 보내지 않아 Codex 창에서 바로 승인한다. 승인 권한은 계속 등록된 CDHash만 갖는다. 계보를 읽을 수 없으면 값을 보내지 않고 기존 동작을 유지한다. 설계: `docs/features/CODEX_UNREVIEWED_VERSION_DESIGN.md`.
 
 선택 전달은 `codex queue --thread <session> --message <msg>`(`swift/delivery/CodexQueueNextTurnDispatcher.swift`)로 다음 턴에 들어간다. 실패한 전달은 재전송하지 않는다.

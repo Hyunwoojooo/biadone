@@ -117,6 +117,17 @@ test('blocked versions file is strict', async () => {
     { schema, blocked: [{ version: '0.999.0', reason: 'x' }, { version: '0.999.0', reason: 'y' }] },
     { schema, blocked: [{ version: registered, reason: 'registered' }] },
   ]) assert.throws(() => validateBlockedVersions(bad, records), JSON.stringify(bad));
+  // The reason becomes a `//` comment in generated Swift: anything that ends
+  // a line there would turn the rest of the reason into code.
+  for (const ending of ['\r', ' ', ' ', '\u0085', '\u000b', '\u000c', '\u0000', '\t']) {
+    assert.throws(() => validateBlockedVersions(
+      { schema, blocked: [{ version: '0.999.0', reason: `queue changed${ending}let x = 1` }] }, records
+    ), /needs a one-line reason/, JSON.stringify(ending));
+  }
+  // Registering a blocked release is the usual way a block ends, so the
+  // message has to say which file to change.
+  assert.throws(() => validateBlockedVersions({ schema, blocked: [{ version: registered, reason: 'registered' }] }, records),
+    /remove it from blocked-versions\.json/);
   // The shipped file loads and starts without a blocked release that is also registered.
   assert.ok(Array.isArray(await loadBlockedVersions(undefined, records)));
 });

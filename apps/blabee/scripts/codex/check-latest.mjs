@@ -32,7 +32,7 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
     console.log(`Newest registered Codex: ${versions.at(-1)}`);
     if (pending.length === 0) console.log('No newer stable Codex release.');
     else {
-      console.log('Not yet registered (users on these versions see "Codex version not supported"):');
+      console.log('Not yet registered (suggestion cards work; users approve commands in the Codex window until registered):');
       for (const r of pending) console.log(`  ${r.version}  published ${r.publishedAt?.slice(0, 10) ?? 'unknown'}`);
       console.log(`Register with: npm run codex:register -- --version ${pending.at(-1).version} --download --check-notarization`);
       if (failOnNew) process.exitCode = 2;

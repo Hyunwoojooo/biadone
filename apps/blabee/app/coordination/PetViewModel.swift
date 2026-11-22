@@ -98,8 +98,8 @@ struct PetSelectionDeliveryNotice: Sendable, Equatable, Identifiable {
         provider == .codex && deliveryState == .notSubmitted && code == "queued_prompt_preview_invalid"
     }
 
-    /// Rechecking cannot fix an unsupported Codex version; only a Blabee
-    /// update that registers it can. Do not send the person in a loop.
+    /// Rechecking cannot fix an unsupported Codex version; a newer Codex or
+    /// a Blabee update can. Do not send the person in a loop.
     var codexVersionUnsupported: Bool {
         provider == .codex && code == "codex_native_version_unqualified"
     }
@@ -116,7 +116,7 @@ struct PetSelectionDeliveryNotice: Sendable, Equatable, Identifiable {
             return PetL10n.text("Ask Codex for a shorter card, then choose the task again. The selected task was not sent.", korean: "Codex에 내용을 줄인 새 카드를 요청한 뒤 다시 선택해 주세요. 선택한 작업은 전달되지 않았어요.")
         }
         if codexVersionUnsupported {
-            return PetL10n.text("This Codex version is not supported by this Blabee yet, so the task was not sent. Check for a Blabee update.", korean: "이 Codex 버전은 아직 이 Blabee에서 지원되지 않아 작업을 보내지 않았어요. Blabee 업데이트를 확인해 주세요.")
+            return PetL10n.text("This Blabee does not support this Codex version, so the task was not sent. Update Codex to the latest stable release, or check for a Blabee update.", korean: "이 Codex 버전은 이 Blabee에서 지원되지 않아 작업을 보내지 않았어요. Codex를 최신 정식 버전으로 올리거나 Blabee 업데이트를 확인해 주세요.")
         }
         if nativeRecheckSucceeded {
             return deliveryState == .notSubmitted
@@ -1026,11 +1026,21 @@ final class PetViewModel: ObservableObject {
         if unreviewed { return codexRuntimeUnreviewedMessage }
         return nil
     }
+    /// "Not reviewed yet" is how Blabee normally runs between a Codex release
+    /// and its registration, so the panel does not show it as a warning.
+    static func codexRuntimeDiagnosticIsRoutine(unqualified: Bool, unreviewed: Bool) -> Bool {
+        unreviewed && !unqualified
+    }
+    var providerDiagnosticIsRoutine: Bool {
+        snapshot?.providerDiagnostic == nil && Self.codexRuntimeDiagnosticIsRoutine(
+            unqualified: snapshot?.codexRuntimeUnqualified == true,
+            unreviewed: snapshot?.codexRuntimeUnreviewed == true)
+    }
     static var codexRuntimeUnreviewedMessage: String {
         PetL10n.text("This Codex version hasn't been reviewed yet. Suggestion cards work; approve commands in the Codex window.", korean: "이 Codex 버전은 아직 검토 전이에요. 제안 카드는 쓸 수 있고, 명령 승인은 Codex 창에서 해 주세요.")
     }
     static var codexRuntimeUnsupportedMessage: String {
-        PetL10n.text("This Codex version is not supported yet, so Blabee stays off in its sessions. Check for a Blabee update.", korean: "이 Codex 버전은 아직 지원되지 않아 해당 세션에서는 Blabee가 꺼져 있어요. Blabee 업데이트를 확인해 주세요.")
+        PetL10n.text("This Codex version is not supported, so Blabee stays off in its sessions. Update Codex to the latest stable release, or check for a Blabee update.", korean: "이 Codex 버전은 지원되지 않아 해당 세션에서는 Blabee가 꺼져 있어요. Codex를 최신 정식 버전으로 올리거나 Blabee 업데이트를 확인해 주세요.")
     }
     var providerPendingResultDescription: String? {
         guard supportsProviderSessions, provider == .claude, providerHasPendingResult else { return nil }
@@ -4041,9 +4051,10 @@ final class PetViewModel: ObservableObject {
             && priorHead?.reminderDue == true
             ? priorHead?.identity
             : nil
-        // An unsupported Codex can only be fixed by a Blabee update, and an
-        // unreviewed one gets its approval cards back the same way: check now
-        // instead of waiting for the daily schedule.
+        // A Blabee update may already register this Codex: it is one way out
+        // of "unsupported" and the only way an unreviewed version gets its
+        // approval cards back. Check now instead of waiting for the daily
+        // schedule.
         if let notice = Self.codexNoticeNeedingUpdateCheck(
             unqualified: newSnapshot.codexRuntimeUnqualified, unreviewed: newSnapshot.codexRuntimeUnreviewed,
             alreadyChecked: codexNoticeUpdateChecks

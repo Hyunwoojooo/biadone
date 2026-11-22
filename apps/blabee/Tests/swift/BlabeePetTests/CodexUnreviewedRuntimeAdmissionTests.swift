@@ -324,6 +324,13 @@ struct CodexUnreviewedRuntimeCandidateTests {
         #expect(repeated.recorded == [hook, homebrew])
     }
 
+    @Test("the background check allows as long as the other native qualifications do")
+    func liveQualificationTimeout() {
+        // A shorter limit times out first on a cold start, and that failure is
+        // cached for ten minutes for delivery and the Pet's own check too.
+        #expect(CodexUnreviewedRuntimeAdmission.liveQualificationTimeoutMilliseconds >= 15_000)
+    }
+
     @Test("the live file identity follows symlinks and tells files apart")
     func liveFileIdentity() throws {
         let root = FileManager.default.temporaryDirectory

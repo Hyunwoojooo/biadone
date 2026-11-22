@@ -182,7 +182,8 @@ struct PetRootView: View {
             }
             if let diagnostic = viewModel.providerDiagnostic, diagnostic != viewModel.lastError {
                 Text(diagnostic)
-                    .foregroundStyle(.orange)
+                    .foregroundStyle(viewModel.providerDiagnosticIsRoutine
+                        ? PetAirPalette.secondary(for: colorScheme) : Color.orange)
                     .lineLimit(PetPanelContentPolicy.statusMessageLineLimit)
                     .help(diagnostic)
                     .accessibilityIdentifier("provider-diagnostic")

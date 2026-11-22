@@ -24,7 +24,13 @@ See the [README](README.md) for the current download and setup instructions.
 
 #### Changed
 
-- **New Codex versions work right away.** Blabee used to connect only to the Codex versions it had registered, so a Codex upgrade stopped suggestion cards and selection delivery until a Blabee update arrived. An official stable Codex newer than every registered version now gets suggestion cards and selection delivery once its signature and notarization are verified. For such a version the Pet shows a "not reviewed yet" notice and command approval happens in the Codex window; Pet approval cards return after installing a Blabee update that registers that version. Preview versions, versions older than the registered list and a new major version still do not connect. Managed `blabee-codex` keeps accepting registered versions only.
+- **New Codex versions keep working.** Blabee used to connect only to the Codex versions it had registered, so a Codex upgrade stopped suggestion cards and selection delivery until a Blabee update arrived. An official stable Codex newer than every registered version now gets suggestion cards and selection delivery once its signature and notarization are verified. For such a version the Pet shows a "not reviewed yet" notice and command approval happens in the Codex window; Pet approval cards return after installing a Blabee update that registers that version. The first time Blabee sees such a Codex it checks it in the background, so cards start with the prompt after that check. Preview versions, unregistered versions older than the newest registered one and a new major version still do not connect. Managed `blabee-codex` keeps accepting registered versions only.
+- **Quieter "not reviewed yet" notice.** It describes normal operation, so the Pet shows it in the secondary text color instead of the warning color.
+
+#### Fixed
+
+- **The "unsupported Codex" notice could stay hidden.** When a session was opened with an older or preview Codex, Blabee turned off for it, but the Pet did not show why until something else changed. The notice now appears right away.
+- **Advice for an unsupported Codex.** Settings and the Pet pointed only to a Blabee update. They now say to update Codex to the latest stable release first, then to check for a Blabee update.
 
 ### r94 (Unreleased)
 

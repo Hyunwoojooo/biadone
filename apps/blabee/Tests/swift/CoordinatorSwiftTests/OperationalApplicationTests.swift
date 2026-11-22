@@ -10000,6 +10000,53 @@ func operationalReportsCodexSessionRuntime() async throws {
     ])
 }
 
+@Test("An unreviewed session reports its own Codex for delivery only while it is on, and can come back on")
+func operationalUnreviewedSessionReportsRuntimeWhileOn() async throws {
+    let observations = OperationalRuntimeObservations()
+    let admission = OperationalCodexAdmission(.undetermined)
+    let fixture = try operationalFixture(
+        codexSessionRuntimeObserver: { session, executable, home in
+            observations.append([session, executable, home])
+        },
+        codexRuntimeAdmission: admission.closure
+    )
+    let cwd = "/tmp/blabee-operational-unreviewed-runtime"
+    _ = try await fixture.app.handle(type: "enable_project", payload: operationalData([
+        "cwd": cwd, "project_id": "project_operational_unreviewed_runtime",
+    ]))
+    // Outside the fixed candidates: without the report, delivery would use
+    // another install or fail.
+    let executable = "/Users/test/.nvm/versions/node/v22/bin/codex"
+    func prompt(_ turn: String) async throws -> [String: Any] {
+        try await operationalCodexPrompt(fixture, session: "session_hint", turn: turn, cwd: cwd, executable: executable)
+    }
+
+    #expect(try await prompt("turn_hint_1")["enabled"] as? Bool == false)
+    #expect(observations.values.isEmpty)
+
+    admission.set(.eligible)
+    #expect(try await prompt("turn_hint_2")["enabled"] as? Bool == true)
+    #expect(observations.values == [["session_hint", executable, nil]])
+
+    admission.set(.ineligible)
+    #expect(try await prompt("turn_hint_3")["enabled"] as? Bool == false)
+    #expect(observations.values.count == 1)
+
+    admission.set(.eligible)
+    let back = try await prompt("turn_hint_4")
+    #expect(back["enabled"] as? Bool == true)
+    #expect(back["identifiers"] as? [String: Any] != nil)
+    #expect(try await operationalCodexRuntimeStatus(fixture) == "unreviewed")
+    #expect(observations.values == [["session_hint", executable, nil], ["session_hint", executable, nil]])
+
+    let start = try operationalObject(await fixture.app.handle(type: "session_start", payload: operationalData([
+        "session_id": "session_hint_start", "cwd": cwd, "hook_event_name": "SessionStart",
+        "codex_runtime": "unqualified", "codex_executable": executable,
+    ])))
+    #expect(start["enabled"] as? Bool == true)
+    #expect(observations.values.last == ["session_hint_start", executable, nil])
+}
+
 @Test("A Bash approval that cannot become a card tells the Pet until the session's next prompt (CDX-5)")
 func operationalSkippedPermissionCardIsReported() async throws {
     let fixture = try operationalFixture()

@@ -50,6 +50,14 @@ struct PetCodexConnectionRecoveryTests {
         #expect(version.offersAppUpdate)
         #expect(!version.offersInstallGuide)
         #expect(version.detail.contains("Blabee 업데이트"))
+        // Most remaining rejections (an older or preview Codex) end with a
+        // Codex update, so that advice comes first.
+        for code in ["codex_native_version_unqualified", "codex_native_probe_output_invalid"] {
+            let recovery = try #require(PetCodexConnectionRecovery(state: .error(code: code)))
+            #expect(recovery.offersAppUpdate)
+            #expect(recovery.detail
+                == "Blabee가 이 Codex 버전을 지원하지 않거나 버전 응답을 확인하지 못했습니다. Codex를 최신 정식 버전으로 올린 뒤 다시 검사하세요. 그래도 해결되지 않으면 Blabee 업데이트를 확인하세요.")
+        }
         let missing = try #require(PetCodexConnectionRecovery(state: .error(code: "codex_native_not_installed")))
         #expect(missing.offersInstallGuide)
         #expect(PetCodexConnectionRecovery(state: .notInstalled) == nil)

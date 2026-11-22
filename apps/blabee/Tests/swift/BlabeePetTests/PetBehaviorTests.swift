@@ -2235,6 +2235,57 @@ struct PetCodexRuntimeNoticeTests {
             == PetViewModel.codexRuntimeUnsupportedMessage)
     }
 
+    @Test("Snapshots that differ only in the Codex or approval-card status are different snapshots")
+    func statusOnlySnapshotsDiffer() throws {
+        var object = petTestSnapshotObject(cards: [])
+        let plain = try PetSnapshot.parse(petTestData(object))
+        #expect(plain == (try PetSnapshot.parse(petTestData(object))))
+        object["codex_runtime_status"] = "unqualified"
+        let unsupported = try PetSnapshot.parse(petTestData(object))
+        object["codex_runtime_status"] = "unreviewed"
+        let unreviewed = try PetSnapshot.parse(petTestData(object))
+        object["codex_runtime_status"] = nil
+        object["permission_card_status"] = "skipped"
+        let skipped = try PetSnapshot.parse(petTestData(object))
+        // The Pet replaces its snapshot only when the new one differs, so a
+        // status that is not compared is a notice that never appears.
+        #expect(plain != unsupported)
+        #expect(plain != unreviewed)
+        #expect(unsupported != unreviewed)
+        #expect(plain != skipped)
+    }
+
+    @Test("The unsupported notice names a Codex update first, then a Blabee update", .petLanguage(.korean))
+    @MainActor func codexRuntimeUnsupportedMessageKorean() {
+        #expect(PetViewModel.codexRuntimeUnsupportedMessage
+            == "이 Codex 버전은 지원되지 않아 해당 세션에서는 Blabee가 꺼져 있어요. Codex를 최신 정식 버전으로 올리거나 Blabee 업데이트를 확인해 주세요.")
+    }
+
+    @Test("The unsupported notice has an English form", .petLanguage(.english))
+    @MainActor func codexRuntimeUnsupportedMessageEnglish() {
+        #expect(PetViewModel.codexRuntimeUnsupportedMessage
+            == "This Codex version is not supported, so Blabee stays off in its sessions. Update Codex to the latest stable release, or check for a Blabee update.")
+    }
+
+    @Test("Only the not-reviewed-yet notice is routine; unsupported stays a warning")
+    @MainActor func codexRuntimeDiagnosticRoutine() {
+        #expect(PetViewModel.codexRuntimeDiagnosticIsRoutine(unqualified: false, unreviewed: true))
+        #expect(!PetViewModel.codexRuntimeDiagnosticIsRoutine(unqualified: true, unreviewed: true))
+        #expect(!PetViewModel.codexRuntimeDiagnosticIsRoutine(unqualified: true, unreviewed: false))
+        #expect(!PetViewModel.codexRuntimeDiagnosticIsRoutine(unqualified: false, unreviewed: false))
+    }
+
+    @Test("A delivery refused for an unsupported Codex names both ways out", .petLanguage(.korean))
+    func deliveryNoticeDetailKorean() throws {
+        let identity = try PetSnapshot.parse(petTestSnapshotData(cards: [PetTestCard(suffix: "notice_detail")]))
+            .interactions[0].identity
+        let notice = PetSelectionDeliveryNotice(id: UUID(), identity: identity, selectionID: "selection_notice_detail",
+            provider: .codex, deliveryState: .notSubmitted, code: "codex_native_version_unqualified",
+            requiresCodexRecheck: true)
+        #expect(notice.detail
+            == "이 Codex 버전은 이 Blabee에서 지원되지 않아 작업을 보내지 않았어요. Codex를 최신 정식 버전으로 올리거나 Blabee 업데이트를 확인해 주세요.")
+    }
+
     @Test("A skipped Codex approval card is an optional, exact snapshot flag (CDX-5)")
     func permissionCardSkippedFlag() throws {
         var object = petTestSnapshotObject(cards: [])

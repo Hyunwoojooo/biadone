@@ -143,7 +143,7 @@ SessionStart와 사람 프롬프트마다 payload의 `codex_runtime`과 경로�
 | 세션에 Blabee 안내문 주입, 제안 카드 | 예 |
 | `codex queue --thread --message`로 선택 전달 | 예 (서명·공증 확인 뒤) |
 | Plugin 설치·갱신 명령 | 예 |
-| Hook 신뢰 상태 조회(`PetHookReadiness`의 `codex app-server` `hooks/list`) | 예. 연결 설정을 끝내려면 필요한 읽기 전용 조회다 |
+| Hook 신뢰 상태 조회(`PetHookReadiness`의 `codex app-server` `hooks/list`) | 예. 연결 설정을 끝내려면 필요한 조회다. 검사 중 Codex가 기존 Hook 신뢰 정보를 갱신할 수 있다(Pet 안내 문구와 같다) |
 | 명령 한 번 허용 | 아니오 |
 | 관리형 `blabee-codex`(App Server 중계) | 아니오 |
 
@@ -184,15 +184,31 @@ Plugin manifest와 Hook 정의(Plugin 버전 유지), 소켓 요청 종류, 운�
 
 - 허용 규칙: `CodexCompatibility.pluginAdmission`, 정책 revision `pluginPolicyRevision`(`native-v2-newer:…|blocked:…`).
 - 차단 목록: `bridges/codex/blocked-versions.json`(비어 있음) → 생성 Swift `CodexQualificationData.blockedPluginVersions`. 등록된 Plugin 버전을 넣으면 생성이 실패한다.
-- 판정 저장소: `bridges/codex/swift/runtime/CodexUnreviewedRuntimeAdmission.swift`. 최대 32개, 재검사 간격 10분, 검사 제한 10초.
-- Hook: `HookCodexRuntimePayloadPolicy`, `HookPermissionOutputPolicy.forwardsToCoordinator`.
+- 판정 저장소: `bridges/codex/swift/runtime/CodexUnreviewedRuntimeAdmission.swift`. 최대 32개, 재검사 간격 10분, 검사 제한 15초(다른 native 검사와 같다).
+- Hook: `HookCodexRuntimePayloadPolicy`, `HookPermissionOutputPolicy.route`(보낼지와 함께 실을 qualification을 한 곳에서 정한다).
 - 코디네이터: `CoordinatorCodexRuntimeAdmission`, `observeCodexRuntime`. 판정 클로저를 주입하지 않으면 `ineligible`(이전 동작)이다.
 - 설계와 다르게 둔 것: SessionStart에 `codex_runtime`이 없으면(계보 불명) 이전처럼 켠다. 표시가 없는 사람 프롬프트만 세션에 남은 표시를 따른다.
 - 구현 뒤 검토에서 고친 것: (1) Homebrew에서 거부 버전이 Caskroom 경로의 `path_unsafe`에 가려 `ineligible`이 되지 않던 문제,
   (2) 잠금 2초 대기 실패가 "미정"으로 10분 기억되던 문제, (3) 안내가 바뀔 때마다 강제 업데이트 확인이 돌던 문제.
 - 알려진 한계: Homebrew가 Codex를 올려 옛 파일을 지우면, 열려 있던 등록 전 세션은 Codex를 다시 열 때까지 꺼진다(파일이 없어 판정할 수 없다).
-  꺼진 사람 프롬프트는 이전 턴의 카드를 정리하지 않는다. 등록 전 안내는 Pet의 진단 자리에 계속 보인다.
+  꺼진 사람 프롬프트는 이전 턴의 카드를 정리하지 않는다(제품 접근이 끊겨 꺼질 때와 같은 동작이라 그대로 둔다).
+  등록 전 안내는 Pet의 진단 자리에 계속 보인다(2차 검토 뒤 경고색이 아닌 보조색으로 바꿨다).
+  검사가 끝나지 않고 멈추면 그 파일은 서비스 재시작 전까지 다시 검사하지 않는다(검사 안의 단계마다 제한 시간이 있어 그대로 둔다).
 - 테스트로 확인하지 못한 것: `revalidate`가 거부 버전을 막는 경우(테스트에서 그런 선택값을 만들 수 없다. 같은 판정 함수를 `supportedVersion` 테스트가 덮는다)와 실제 등록 전 Codex에서의 왕복.
+
+## 2차 검토에서 고친 것 (2026-11-21)
+
+커밋 `8c74bcd` 뒤 새 검토자가 전체를 다시 읽었다. Critical 없음.
+
+- Pet이 상태만 바뀐 스냅샷을 버렸다. `PetSnapshot.==`가 `codexRuntimeUnqualified`·`codexRuntimeUnreviewed`·`permissionCardSkipped`를 비교하지 않아,
+  세션이 거부될 때(스냅샷에서 `codex_runtime_status`만 바뀐다) "지원되지 않는 버전" 안내가 뜨지 않을 수 있었다. r93에도 있던 문제다. 세 필드를 비교한다.
+- 안내 문구가 서로 달랐다. 남은 거부 사유 대부분(등록된 가장 높은 버전보다 낮은 미등록 버전, 미리보기)은 Codex를 올리면 풀린다.
+  설정 화면·Pet 패널·전달 실패 안내·native 진단을 "Codex를 최신 정식 버전으로, 그래도 안 되면 Blabee 업데이트"로 맞췄다.
+- "검토 전" 안내는 정상 동작 중의 안내라 보조색으로 보인다(`providerDiagnosticIsRoutine`). "지원 안 함"은 주황색 그대로다.
+- 백그라운드 검사 제한 10초 → 15초. 차단 목록 `reason`은 줄을 끝내는 문자를 모두 거부한다(생성 Swift 주석으로 들어간다).
+- 테스트 보강: 상태만 다른 스냅샷의 안내와 강제 업데이트 확인 횟수(view model), PermissionRequest 경로(`route`), 등록 전 세션의 실행 파일 보고와 켜짐 → 꺼짐 → 켜짐.
+- 여전히 확인하지 못한 것: `main.swift`가 판정 저장소를 코디네이터에 잇는 부분과 실제 등록 전 Codex에서의 왕복.
+  0.171.0 등록을 뺀 시험 빌드를 쓰면 지금 설치된 Codex로 확인할 수 있다.
 
 ## 검토 기록
 

@@ -26,7 +26,7 @@ enum CodexNativeDiagnostic: String, CaseIterable, Sendable {
         case .notInstalled:
             PetL10n.text("Codex executable not found. Install official Codex, then check again.", korean: "Codex 실행 파일을 찾지 못했습니다. 공식 Codex 설치 후 다시 검사하세요.")
         case .versionUnqualified:
-            PetL10n.text("Blabee does not support this Codex version. Update Codex or check for a Blabee update. Standard Codex settings were not changed.", korean: "이 Codex 버전은 Blabee가 지원하지 않습니다. Codex를 최신 버전으로 올리거나 Blabee 업데이트를 확인하세요. 일반 Codex 설정은 변경하지 않았습니다.")
+            PetL10n.text("Blabee does not support this Codex version. Update Codex to the latest stable release or check for a Blabee update. Standard Codex settings were not changed.", korean: "이 Codex 버전은 Blabee가 지원하지 않습니다. Codex를 최신 정식 버전으로 올리거나 Blabee 업데이트를 확인하세요. 일반 Codex 설정은 변경하지 않았습니다.")
         case .signatureInvalid:
             PetL10n.text("Unable to verify Codex's official signature. Check the official installation and retry.", korean: "Codex의 공식 서명을 확인하지 못했습니다. 공식 설치본을 확인한 뒤 다시 검사하세요.")
         case .pathUnsafe:

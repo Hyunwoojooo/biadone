@@ -50,6 +50,9 @@ final class CodexUnreviewedRuntimeAdmission: @unchecked Sendable {
     /// The failure guard's lifetime for environmental failures.
     static let defaultRecheckNanoseconds: UInt64 = 600 * 1_000_000_000
     static let maximumEntries = 32
+    /// Same limit as the other native qualifications. A timeout is cached in
+    /// the shared failure records for ten minutes, for delivery too.
+    static let liveQualificationTimeoutMilliseconds = 15_000
 
     private struct Entry {
         var verdict: Verdict
@@ -186,7 +189,7 @@ final class CodexUnreviewedRuntimeAdmission: @unchecked Sendable {
                 let outcome: CandidateOutcome
                 do {
                     let selection = try runtime(URL(fileURLWithPath: candidate, isDirectory: false), environment)
-                        .qualify(timeoutMilliseconds: 10_000)
+                        .qualify(timeoutMilliseconds: liveQualificationTimeoutMilliseconds)
                     outcome = .qualified(canonicalPath: selection.canonicalURL.path)
                 } catch {
                     outcome = .failed(code: error.coordinatorError.code)

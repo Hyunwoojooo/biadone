@@ -1138,6 +1138,10 @@ struct PetSnapshot: Sendable, Equatable {
             && lhs.providerDiagnostic == rhs.providerDiagnostic
             && lhs.providerDirectory == rhs.providerDirectory
             && lhs.providerInbox == rhs.providerInbox
+            // A refused Codex session changes nothing else in the snapshot.
+            && lhs.codexRuntimeUnqualified == rhs.codexRuntimeUnqualified
+            && lhs.codexRuntimeUnreviewed == rhs.codexRuntimeUnreviewed
+            && lhs.permissionCardSkipped == rhs.permissionCardSkipped
     }
 
     static func parse(_ data: Data) throws -> PetSnapshot {

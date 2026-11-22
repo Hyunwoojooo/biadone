@@ -34,15 +34,13 @@ public struct CoordinatorOperationalRequestTiming: Sendable, Equatable {
     public let succeeded: Bool
 }
 
-/// Product-level coordinator boundary used by Hook, MCP, and Pet adapters.
-/// Adapters exchange only JSON `Data`; raw continuation envelopes stay inside
-/// this actor and are consumed before any public response is produced.
 /// The service's answer about an OpenAI-signed Codex whose CDHash is not
 /// registered: may its sessions use suggestion cards and next-turn delivery?
 /// Command approval is unaffected and still needs a registered CDHash.
 /// Design: docs/features/CODEX_UNREVIEWED_VERSION_DESIGN.md.
 public enum CoordinatorCodexRuntimeAdmission: Sendable {
-    /// A newer stable release that passed the delivery qualification.
+    /// Passed the delivery qualification: a newer stable release, or a
+    /// registered version in a build whose CDHash is not registered.
     case eligible
     /// A version Blabee does not accept (older, blocked or a preview).
     case ineligible
@@ -50,6 +48,9 @@ public enum CoordinatorCodexRuntimeAdmission: Sendable {
     case undetermined
 }
 
+/// Product-level coordinator boundary used by Hook, MCP, and Pet adapters.
+/// Adapters exchange only JSON `Data`; raw continuation envelopes stay inside
+/// this actor and are consumed before any public response is produced.
 public actor CoordinatorOperationalApplication {
     public typealias IDGenerator = @Sendable (_ purpose: String) -> String
     public typealias WallInstantGenerator = @Sendable () throws -> RFC3339Instant

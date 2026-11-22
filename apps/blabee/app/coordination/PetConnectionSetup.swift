@@ -37,7 +37,7 @@ struct PetCodexConnectionRecovery: Equatable {
         case .pathUnsafe:
             PetL10n.text("Blabee could not verify this installation path. This can depend on how Codex was installed and does not mean the file is malicious. Review the installation help below before changing folder permissions.", korean: "이 설치 경로를 확인하지 못했습니다. Codex 설치 방식에 따라 발생할 수 있으며, 악성 파일이라는 뜻은 아닙니다. 폴더 권한을 바꾸기 전에 아래 설치 도움말을 확인하세요.")
         case .versionUnqualified, .probeOutputInvalid:
-            PetL10n.text("Blabee could not verify compatibility with this Codex version or version response. Check for a Blabee update before changing Codex. Installing the latest Codex alone may not resolve compatibility.", korean: "현재 Codex 버전 또는 버전 응답의 호환성을 확인하지 못했습니다. Codex를 변경하기 전에 Blabee 업데이트를 확인하세요. Codex를 최신으로 설치하는 것만으로는 호환성이 해결되지 않을 수 있습니다.")
+            PetL10n.text("Blabee does not support this Codex version, or could not read its version response. Update Codex to the latest stable release, then check again. If that does not help, check for a Blabee update.", korean: "Blabee가 이 Codex 버전을 지원하지 않거나 버전 응답을 확인하지 못했습니다. Codex를 최신 정식 버전으로 올린 뒤 다시 검사하세요. 그래도 해결되지 않으면 Blabee 업데이트를 확인하세요.")
         default:
             diagnostic.detail
         }

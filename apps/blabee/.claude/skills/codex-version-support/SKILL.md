@@ -1,6 +1,6 @@
 ---
 name: codex-version-support
-description: 새 Codex CLI 안정 버전(예 0.167.0)을 Blabee 지원 목록에 등록하는 체크리스트. "Codex 0.x 지원 추가", codex_native_version_unqualified 오류, 새 버전 qualification 요청에 쓴다.
+description: 새 Codex CLI 안정 버전(예 0.167.0)을 Blabee 지원 목록에 등록하는 체크리스트. "Codex 0.x 지원 추가", Pet의 "검토 전" 안내나 codex:check-latest 알림, codex_native_version_unqualified 오류, 새 버전 qualification 요청에 쓴다.
 ---
 
 # 새 Codex 버전 지원 등록

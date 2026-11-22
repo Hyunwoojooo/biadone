@@ -2,10 +2,11 @@ import Foundation
 
 /// The Codex executable and CODEX_HOME a session's own Hook observed (audit
 /// CDX-6). The executable comes only from the Hook's signed-ancestry check of
-/// a registered Codex; it is a preference, never a trust grant: delivery still
-/// qualifies it like any discovered candidate. CODEX_HOME is the Hook's
-/// unverified configuration value (wrappers need it too); it only selects the
-/// Codex configuration the same user could already edit.
+/// an OpenAI-signed Codex, registered or not, in a session that is on. It is
+/// a preference, never a trust grant: delivery still qualifies it like any
+/// discovered candidate. CODEX_HOME is the Hook's unverified configuration
+/// value (wrappers need it too); it only selects the Codex configuration the
+/// same user could already edit.
 struct CodexSessionRuntimeHint: Sendable, Equatable {
     let executablePath: String?
     let codexHome: String?

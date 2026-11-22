@@ -306,11 +306,25 @@ enum HookCodexRuntimePayloadPolicy {
 }
 
 enum HookPermissionOutputPolicy {
+    /// Where a PermissionRequest goes. The Hook switches over this one
+    /// answer, so nothing else decides whether the request is sent or which
+    /// qualification travels with it.
+    enum Route: Equatable {
+        /// No request and no output: Codex asks in its own window.
+        case codexOwnPrompt
+        /// `qualification` is the attested runtime, absent when unreadable.
+        case coordinator(qualification: String?)
+    }
+
     /// An OpenAI-signed Codex whose CDHash is not registered cannot be given
     /// allow-once. Its sessions may be on (newer unreviewed release), so the
     /// request is not sent at all and Codex shows its own prompt at once.
-    static func forwardsToCoordinator(caller: CodexHookApprovalQualification.CallerCodex) -> Bool {
-        caller != .unqualified
+    static func route(caller: CodexHookApprovalQualification.CallerCodex) -> Route {
+        switch caller {
+        case .unqualified: .codexOwnPrompt
+        case .qualified(let runtime): .coordinator(qualification: runtime)
+        case .unknown: .coordinator(qualification: nil)
+        }
     }
 
     static func qualifiedPayload(
@@ -419,22 +433,23 @@ func runHookCommand(arguments: [String]) {
             )
         }
         if eventName == "PermissionRequest" {
-            let caller = CodexHookApprovalQualification.currentAttestedCaller().caller
-            guard HookPermissionOutputPolicy.forwardsToCoordinator(caller: caller) else {
+            switch HookPermissionOutputPolicy.route(
+                caller: CodexHookApprovalQualification.currentAttestedCaller().caller
+            ) {
+            case .codexOwnPrompt:
                 // No output: Codex asks in its own window, without waiting on
                 // a card that could not offer allow-once.
                 HookPermissionDiagnostics.record(.callerUnqualified)
                 return
+            case .coordinator(let qualification):
+                payload = HookPermissionOutputPolicy.qualifiedPayload(
+                    payload, qualification: qualification
+                )
+                HookPermissionDiagnostics.record(
+                    HookPermissionPolicy.allowsOnce(qualification: qualification)
+                        ? .callerQualified : .callerUnqualified
+                )
             }
-            let qualification: String?
-            if case .qualified(let runtime) = caller { qualification = runtime } else { qualification = nil }
-            payload = HookPermissionOutputPolicy.qualifiedPayload(
-                payload, qualification: qualification
-            )
-            HookPermissionDiagnostics.record(
-                HookPermissionPolicy.allowsOnce(qualification: qualification)
-                    ? .callerQualified : .callerUnqualified
-            )
         }
         // Keep initialization failures inside the same diagnostic boundary as
         // request failures, without repeating runtime identity validation.

@@ -89,9 +89,15 @@ export function validateBlockedVersions(value, records) {
     if (typeof entry.version !== 'string' || !/^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$/.test(entry.version)) {
       fail(`${where}invalid version ${JSON.stringify(entry.version)}`);
     }
-    if (typeof entry.reason !== 'string' || !entry.reason.trim() || entry.reason.includes('\n')) fail(`${where}${entry.version} needs a one-line reason`);
+    // The reason is rendered as a `//` comment in generated Swift, so nothing
+    // in it may end a line.
+    if (typeof entry.reason !== 'string' || !entry.reason.trim()
+        || /[\u0000-\u001f\u007f\u0085\u2028\u2029]/.test(entry.reason)) fail(`${where}${entry.version} needs a one-line reason`);
     if (seen.has(entry.version)) fail(`${where}duplicate ${entry.version}`);
-    if (registered.has(entry.version)) fail(`${where}${entry.version} is a registered Plugin release; remove its capability instead`);
+    if (registered.has(entry.version)) {
+      fail(`${where}${entry.version} is a registered Plugin release: remove it from blocked-versions.json `
+        + '(a block ends when the release is registered), or remove its pluginCLI capability to stop supporting it');
+    }
     seen.add(entry.version);
   }
   return [...value.blocked].sort((a, b) => compareVersions(a.version, b.version));

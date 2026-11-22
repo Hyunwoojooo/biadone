@@ -236,9 +236,12 @@ struct HookCodexRuntimePayloadPolicyTests {
     }
 
     @Test("an approval request from an unregistered signed Codex stays in Codex")
-    func permissionForwarding() {
-        #expect(!HookPermissionOutputPolicy.forwardsToCoordinator(caller: .unqualified))
-        #expect(HookPermissionOutputPolicy.forwardsToCoordinator(caller: .qualified("codex-x")))
-        #expect(HookPermissionOutputPolicy.forwardsToCoordinator(caller: .unknown))
+    func permissionRoute() {
+        // The Hook switches over this one answer: there is no second place
+        // that could forward the request or attach a qualification.
+        #expect(HookPermissionOutputPolicy.route(caller: .unqualified) == .codexOwnPrompt)
+        #expect(HookPermissionOutputPolicy.route(caller: .qualified("codex-x"))
+            == .coordinator(qualification: "codex-x"))
+        #expect(HookPermissionOutputPolicy.route(caller: .unknown) == .coordinator(qualification: nil))
     }
 }

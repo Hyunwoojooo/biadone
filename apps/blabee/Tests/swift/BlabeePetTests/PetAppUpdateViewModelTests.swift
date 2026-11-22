@@ -163,6 +163,54 @@ struct PetAppUpdateViewModelTests {
     }
 
     @MainActor
+    @Test("A Codex notice that is the snapshot's only change is shown and forces one update check per kind")
+    func codexNoticeSnapshots() async throws {
+        let suite = "blabee-codex-notice-\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let checker = AppUpdateTestChecker(result: .upToDate)
+        let vm = PetViewModel(transport: PetFakeTransport(), externalApplicationOpener: PetFakeApplicationOpener(),
+            appUpdateChecker: checker, automaticUpdateDefaults: defaults)
+        defer { vm.stopPolling() }
+        var object = petTestSnapshotObject(cards: [])
+        func receive(_ status: String?) throws {
+            object["codex_runtime_status"] = status
+            try vm.receiveSnapshotDataForTesting(petTestData(object))
+        }
+        func waitForChecks(_ count: Int) async throws {
+            let deadline = ContinuousClock.now.advanced(by: .seconds(2))
+            while await checker.calls < count, ContinuousClock.now < deadline {
+                try await Task.sleep(for: .milliseconds(2))
+            }
+            #expect(await checker.calls == count)
+        }
+
+        try receive(nil)
+        #expect(vm.providerDiagnostic == nil)
+        #expect(!vm.providerDiagnosticIsRoutine)
+
+        // Nothing else in the snapshot changes when a session is refused.
+        try receive("unqualified")
+        #expect(vm.providerDiagnostic == PetViewModel.codexRuntimeUnsupportedMessage)
+        #expect(!vm.providerDiagnosticIsRoutine)
+        try await waitForChecks(1)
+        try receive("unqualified")  // every poll repeats the notice
+
+        try receive("unreviewed")
+        #expect(vm.providerDiagnostic == PetViewModel.codexRuntimeUnreviewedMessage)
+        #expect(vm.providerDiagnosticIsRoutine)
+        try await waitForChecks(2)
+
+        // Two Codex installs alternating between prompts.
+        try receive("unqualified")
+        try receive("unreviewed")
+        try receive(nil)
+        #expect(vm.providerDiagnostic == nil)
+        try await Task.sleep(for: .milliseconds(50))
+        #expect(await checker.calls == 2)
+    }
+
+    @MainActor
     private func viewModel(
         checker: AppUpdateTestChecker,
         onboarding: any PetOnboardingAdapting = PetUnavailableOnboardingAdapter(),
