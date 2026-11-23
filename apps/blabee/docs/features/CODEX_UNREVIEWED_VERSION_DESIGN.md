@@ -1,6 +1,6 @@
 # 등록 전 Codex 새 버전에서 기본 기능 쓰기 (설계, 2026-11-20)
 
-상태: 사용자 승인(2026-11-20, 승인 카드는 등록 버전으로 유지하는 권장안). 같은 날 구현했다. r95 대상(2-A). r94는 이 변경 없이 먼저 빌드했다.
+상태: 사용자 승인(2026-11-20, 승인 카드는 등록 버전으로 유지하는 권장안). 같은 날 구현했다. r95 대상(2-A). r94는 이 변경 없이 먼저 빌드했고 게시하지 않았다(2026-11-23 결정, r94 내용은 r95로 함께 나간다).
 
 ## 문제
 
@@ -172,7 +172,7 @@ Plugin manifest와 Hook 정의(Plugin 버전 유지), 소켓 요청 종류, 운�
    - Pet: 스냅샷 `unreviewed` 파싱과 문구.
    - 실패 기록: 차단 목록이 바뀌면 revision이 바뀜.
 2. 기존 묶음: Swift `Codex|ManagedCodex|UpdateManagedCodex|Hook|PetHookReadiness|DoctorApplication`, CoordinatorSwift `OperationalApplication`, `test:t005`, `test:codex-compatibility`.
-3. 실사용: r94가 0.171.0을 등록하므로 지금은 시험할 등록 전 버전이 없다. 다음 Codex 버전이 나오면 등록하기 전에
+3. 실사용: r95가 0.171.0을 등록하므로 지금은 시험할 등록 전 버전이 없다. 다음 Codex 버전이 나오면 등록하기 전에
    세션 시작, 카드 생성, 선택 전달, 승인 창이 Codex에 바로 뜨는지, Pet 문구를 확인한다.
 
 ## builder에게 맡기는 것

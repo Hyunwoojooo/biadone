@@ -1,7 +1,7 @@
 # Codex 0.171.0 호환성 갱신
 
 2026-11-20, macOS arm64. r93을 설치한 다음 날 Homebrew가 Codex를 0.171.0으로 올려 Codex 연결이 다시 막혔다.
-0.171.0은 그날 매일 확인(09:00 KST)이 돈 뒤인 09:44 KST에 공개됐다. `npm run codex:register -- --download --check-notarization`으로 등록했다. r94에 포함한다.
+0.171.0은 그날 매일 확인(09:00 KST)이 돈 뒤인 09:44 KST에 공개됐다. `npm run codex:register -- --download --check-notarization`으로 등록했다. r94에 포함했지만 r94는 게시하지 않았다. r95로 나간다.
 
 ## 변경
 
@@ -57,5 +57,5 @@ openai/codex 태그 `rust-v0.170.0`, `rust-v0.171.0`의 파일 트리(blob SHA)�
 
 ## 남은 경계
 
-- 실제 세션의 Hook → Pet → queue 왕복은 r94 설치 후 확인한다. 큐 배선이 바뀐 버전이므로 대기 중 세션과 작업 중 세션 모두에서 선택이 다음 턴으로 들어가는지 본다.
+- 실제 세션의 Hook → Pet → queue 왕복은 r95 설치 후 확인한다. 큐 배선이 바뀐 버전이므로 대기 중 세션과 작업 중 세션 모두에서 선택이 다음 턴으로 들어가는지 본다.
 - 0.167.0부터의 "사람 승인 필수" 명령 동작([0.167 기록](CODEX_0167_QUALIFICATION.md))은 그대로다.

@@ -123,7 +123,7 @@ the connection, the model calls `check_connection_v1` and passes that successful
 latest Hook boundary also refreshes readiness until the card expires (10 minutes), so the model does not probe before
 every proposal. Workflow rules are MCP server instructions only; each SessionStart/UserPromptSubmit
 Hook adds a single line (`blabee-claude boundary_id=<uuid>` or the no-boundary line). No Channel notification is expected in the current product path.
-The generated `mcp.json` sets `alwaysLoad: true` on `blabee-claude` (2026-11-19, for r94), so Claude Code does not defer the five tools
+The generated `mcp.json` sets `alwaysLoad: true` on `blabee-claude` (2026-11-19, built into r94, first published in r95), so Claude Code does not defer the five tools
 behind tool search. Deferred, the model rarely loaded `emit_decision_v1` and no card appeared; see [ALWAYS_LOAD_DESIGN](ALWAYS_LOAD_DESIGN.md).
 The historical r63 development-Channel qualification below does not qualify this new path.
 

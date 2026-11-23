@@ -12,7 +12,7 @@
 r93 설치 다음 날 Homebrew가 Codex를 0.171.0으로 올려 연결이 다시 막혔다. `npm run codex:register`로 등록했다.
 기능·패키지 구성(42파일, exec-server)·Hook 형식·승인 변환·명령 승인 schema는 0.170.0과 같다. 바뀐 소스 파일이 2,078개로 많고 큐 내부 배선이 바뀌었다.
 [공식 근거·소스 비교·검증·남은 경계](CODEX_0171_QUALIFICATION.md). qualify smoke 72개, native lifecycle, Swift Codex 묶음(12 + 616)을 통과했다.
-r94에 포함한다.
+r94에 포함했지만 r94는 게시하지 않았다. r95로 나간다.
 
 ## 2026-11-18: 0.169.1·0.170.0 지원
 

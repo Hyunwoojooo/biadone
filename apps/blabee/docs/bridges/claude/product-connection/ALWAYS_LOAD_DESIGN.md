@@ -1,6 +1,6 @@
 # Blabee 도구를 항상 싣기 (설계, 2026-11-19)
 
-상태: 사용자 승인(2026-11-19). r94 대상.
+상태: 사용자 승인(2026-11-19). r94 대상이었고, r94를 게시하지 않아 r95로 나간다.
 
 ## 문제
 
@@ -42,7 +42,7 @@
 1. 사전 확인(완료): 도구 하나짜리 stdio MCP 서버를 `--mcp-config --strict-mcp-config`로 붙여 `claude -p`를 두 번 실행했다.
    옵션이 없으면 그 도구가 `deferred_tools_delta`에 있었고, `"alwaysLoad": true`면 없었다(2.1.328, Sonnet 5.5).
 2. 단위 테스트: Swift `ClaudeInstalledLauncherTests`(생성 문서의 서버 항목), Node `shared-launcher.test.mjs`.
-3. r94 설치 뒤: 새 자동 연결 세션의 transcript에서 Blabee 도구가 `deferred_tools_delta`에 없고, 작업 뒤 `emit_decision_v1`이 호출되는지 본다.
+3. r95 설치 뒤: 새 자동 연결 세션의 transcript에서 Blabee 도구가 `deferred_tools_delta`에 없고, 작업 뒤 `emit_decision_v1`이 호출되는지 본다.
 
 ## 기대하지 않는 것
 

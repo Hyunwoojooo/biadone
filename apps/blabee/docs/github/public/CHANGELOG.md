@@ -32,7 +32,11 @@ See the [README](README.md) for the current download and setup instructions.
 - **The "unsupported Codex" notice could stay hidden.** When a session was opened with an older or preview Codex, Blabee turned off for it, but the Pet did not show why until something else changed. The notice now appears right away.
 - **Advice for an unsupported Codex.** Settings and the Pet pointed only to a Blabee update. They now say to update Codex to the latest stable release first, then to check for a Blabee update.
 
-### r94 (Unreleased)
+### r94 (not published)
+
+**Built:** 2026-11-20. **App version:** 0.1.0 (build 94, arm64).
+r94 was signed and notarized but not published: the r95 change that keeps new Codex versions working ships in the same release instead.
+Every change below is included in r95.
 
 #### Changed
 
@@ -40,7 +44,7 @@ See the [README](README.md) for the current download and setup instructions.
 
 #### Fixed
 
-- **Claude cards no longer depend on a tool lookup.** Claude Code keeps MCP tools behind its tool search and shows the model only their names. The model often never loaded the Blabee tool that creates a card, so no card appeared even though the connection worked. Blabee now marks its five tools as always loaded. This applies to `claude` windows started after installing r94.
+- **Claude cards no longer depend on a tool lookup.** Claude Code keeps MCP tools behind its tool search and shows the model only their names. The model often never loaded the Blabee tool that creates a card, so no card appeared even though the connection worked. Blabee now marks its five tools as always loaded. This applies to `claude` windows started after installing r95.
 
 ### r93
 
