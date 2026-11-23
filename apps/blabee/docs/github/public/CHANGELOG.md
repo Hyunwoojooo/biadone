@@ -20,7 +20,11 @@ See the [README](README.md) for the current download and setup instructions.
 
 ## App updates
 
-### r95 (Unreleased)
+### r95
+
+**Released:** 2026-11-23. **App version:** 0.1.0 (build 95, arm64).
+Developer ID signed and Apple notarized.
+[Download r95](https://github.com/Hyunwoojooo/biadone/releases/tag/blabee-v0.1.0%2Bbuild.95).
 
 #### Changed
 
@@ -31,6 +35,13 @@ See the [README](README.md) for the current download and setup instructions.
 
 - **The "unsupported Codex" notice could stay hidden.** When a session was opened with an older or preview Codex, Blabee turned off for it, but the Pet did not show why until something else changed. The notice now appears right away.
 - **Advice for an unsupported Codex.** Settings and the Pet pointed only to a Blabee update. They now say to update Codex to the latest stable release first, then to check for a Blabee update.
+
+#### Update notes
+
+- From r93 on, the Pet tells you when a new release is out. r91 and older only check when you press the button, so they have to install r95 by hand once.
+- The Claude tool change applies to `claude` windows started after installing r95. Windows that are already open keep the previous behavior until they are restarted.
+- r95 does not change `Contracts/v1` or the stored history format. Installation does not reset history.
+- Failed selections are still **not automatically resent**. Codex and Claude Code still require their own installation and sign-in. Blabee uses its separate Google or GitHub sign-in.
 
 ### r94 (not published)
 

@@ -11,9 +11,9 @@
 
 Codex와 Claude Code의 다음 작업을 Mac 메뉴바에서 확인하세요.<br>카드를 살펴보고 선택하면, 원래 대화에서 작업을 이어갑니다.
 
-[![macOS 13+](https://img.shields.io/badge/macOS-13%2B-253746?style=flat-square)](#사용-조건) [![Apple Silicon](https://img.shields.io/badge/Apple_Silicon-arm64-456779?style=flat-square)](#사용-조건) [![Release r93](https://img.shields.io/badge/release-r93-C4A64C?style=flat-square)](https://github.com/Hyunwoojooo/biadone/releases/tag/blabee-v0.1.0%2Bbuild.93)
+[![macOS 13+](https://img.shields.io/badge/macOS-13%2B-253746?style=flat-square)](#사용-조건) [![Apple Silicon](https://img.shields.io/badge/Apple_Silicon-arm64-456779?style=flat-square)](#사용-조건) [![Release r95](https://img.shields.io/badge/release-r95-C4A64C?style=flat-square)](https://github.com/Hyunwoojooo/biadone/releases/tag/blabee-v0.1.0%2Bbuild.95)
 
-**[macOS용 다운로드](https://github.com/Hyunwoojooo/biadone/releases/download/blabee-v0.1.0%2Bbuild.93/Blabee-0.1.0-arm64-r93.dmg)** · [시작하기](#시작하기) · [웹사이트](https://biadone.com/blabee/) · [English](README.md)
+**[macOS용 다운로드](https://github.com/Hyunwoojooo/biadone/releases/download/blabee-v0.1.0%2Bbuild.95/Blabee-0.1.0-arm64-r95.dmg)** · [시작하기](#시작하기) · [웹사이트](https://biadone.com/blabee/) · [English](README.md)
 
 </div>
 
@@ -43,9 +43,9 @@ Codex·Claude Code의 계정과 사용 요금은 각 서비스에 따릅니다.
 
 ### 1. Blabee 설치
 
-[**Blabee 0.1.0 r93**](https://github.com/Hyunwoojooo/biadone/releases/tag/blabee-v0.1.0%2Bbuild.93)를 다운로드하고 DMG를 엽니다. **Blabee.app**을 **응용 프로그램**에 설치한 뒤 그 위치에서 실행하세요.
+[**Blabee 0.1.0 r95**](https://github.com/Hyunwoojooo/biadone/releases/tag/blabee-v0.1.0%2Bbuild.95)를 다운로드하고 DMG를 엽니다. **Blabee.app**을 **응용 프로그램**에 설치한 뒤 그 위치에서 실행하세요.
 
-r93 앱과 DMG는 Developer ID 서명과 Apple 공증을 완료했습니다. 릴리스에서 SHA-256 체크섬과 빌드 출처도 확인할 수 있습니다.
+r95 앱과 DMG는 Developer ID 서명과 Apple 공증을 완료했습니다. 릴리스에서 SHA-256 체크섬과 빌드 출처도 확인할 수 있습니다.
 
 ### 2. 첫 실행 안내 완료
 
@@ -170,6 +170,6 @@ npm --prefix dev/claude-standalone test
 
 앱 조립은 `build:macos-app`, `build:internal-dmg`, `build:release-dmg`, `notarize:dmg` 명령을 사용합니다. 필요한 인자와 입력은 [배포 안내](docs/development/RELEASE_DMG_PACKAGING.md)를 확인하세요. `build/`는 생성물입니다. 테스트·패키징·공증·실제 사용자 세션 검증은 별도 단계입니다.
 
-r93은 릴리스 태그가 가리키는 깨끗한 커밋에서 빌드했습니다. 릴리스의 출처 파일에 그 커밋과 DMG 체크섬이 기록되어 있습니다.
+r95는 릴리스 태그가 가리키는 깨끗한 커밋에서 빌드했습니다. 릴리스의 출처 파일에 그 커밋과 DMG 체크섬이 기록되어 있습니다.
 
 **더 보기:** [문서 색인](docs/README.md) · [아키텍처](docs/architecture/README.md) · [디렉터리 구성](docs/development/DIRECTORY_MIGRATION.md) · [전용 저장소 분리 검토](docs/development/GITHUB_REPOSITORY.md)
